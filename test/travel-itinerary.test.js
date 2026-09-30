@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   timeToMinutes, addMinutes, orderStops, collectDayStops, buildDayTimeline,
-  tripDayKeys, daySummary,
+  tripDayKeys, daySummary, parseDurationMinutes,
 } from "../travel-itinerary.js";
 
 // Minimal trip fixtures using the real storage shape: trip.days[dateKey][section][]
@@ -178,5 +178,29 @@ describe("daySummary", () => {
     expect(s1.openTransitions).toBe(1);
     expect(s1.isEmpty).toBe(false);
     expect(daySummary(t, D2).isEmpty).toBe(true);
+  });
+});
+
+describe("parseDurationMinutes (TRV-8)", () => {
+  it("reads hours, minutes and mixed forms", () => {
+    expect(parseDurationMinutes("2h")).toBe(120);
+    expect(parseDurationMinutes("2 hours")).toBe(120);
+    expect(parseDurationMinutes("1.5 hr")).toBe(90);
+    expect(parseDurationMinutes("90 min")).toBe(90);
+    expect(parseDurationMinutes("1h30")).toBe(90);
+    expect(parseDurationMinutes("1h 30m")).toBe(90);
+    expect(parseDurationMinutes("1 hour 30 minutes")).toBe(90);
+    expect(parseDurationMinutes("1:30")).toBe(90);
+  });
+  it("treats a bare number as minutes and rejects junk", () => {
+    expect(parseDurationMinutes("45")).toBe(45);
+    expect(parseDurationMinutes(120)).toBe(120);
+    expect(parseDurationMinutes("")).toBeNull();
+    expect(parseDurationMinutes(null)).toBeNull();
+    expect(parseDurationMinutes("a while")).toBeNull();
+  });
+  it("an activity lasting \"2 hours\" ends two hours later, not two minutes", () => {
+    const t = { id: "t", startDate: D1, endDate: D1, days: { [D1]: { activities: [{ id: "a", itemType: "activity", name: "Tour", activityTime: "10:00", duration: "2 hours" }] } } };
+    expect(collectDayStops(t, D1)[0].endTime).toBe("12:00");
   });
 });

@@ -38422,7 +38422,8 @@ function travelActivityEndTime(startTime, durationMin) {
   if (!startTime || !durationMin) return "";
   const [h, m] = startTime.split(":").map(Number);
   if (!Number.isFinite(h) || !Number.isFinite(m)) return "";
-  const total = h * 60 + m + (parseInt(durationMin) || 0);
+  // "2 hours" / "1h30" / "90 min" — not parseInt (which read "2 hours" as 2 min).
+  const total = h * 60 + m + (TravelItinerary.parseDurationMinutes(durationMin) || 0);
   return String(Math.floor(total / 60) % 24).padStart(2, "0") + ":" + String(total % 60).padStart(2, "0");
 }
 
@@ -40123,7 +40124,7 @@ function renderExploreTripPanel(tab, trip) {
 
   // One day shown at a time: day tabs across the top (like the meal plan),
   // swipe left/right on touch devices to change days.
-  const dayKeys = tripDays.map(d => d.toISOString().slice(0, 10));
+  const dayKeys = tripDays.map(d => dateKeyFromDate(d));
   const activeDayIdx = Math.max(0, dayKeys.indexOf(exploreActiveDayKey));
 
   const tabsHtml = tripDays.map((d, i) => {
@@ -40158,7 +40159,7 @@ function renderExploreTripPanel(tab, trip) {
   }, { passive: true });
 
   const buildDayCard = (d, i) => {
-    const dateKey   = d.toISOString().slice(0, 10);
+    const dateKey   = dateKeyFromDate(d);
     const dayNum    = `Day ${i + 1}`;
     const dateLabel = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 
@@ -40170,7 +40171,7 @@ function renderExploreTripPanel(tab, trip) {
     let incomingLodgingKey = dateKey;
     let stableLodgingKey   = null;
     for (const od of tripDays) {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       for (const lo of tripDayItems(trip, ok, "lodging")) {
         if (lo.itemType === "lodging" && lo.checkOutDate === dateKey) { outgoingLodging = lo; outgoingLodgingKey = ok; break; }
       }
@@ -40181,7 +40182,7 @@ function renderExploreTripPanel(tab, trip) {
     }
     if (!outgoingLodging && !incomingLodging) {
       for (const od of tripDays) {
-        const ok = od.toISOString().slice(0, 10);
+        const ok = dateKeyFromDate(od);
         for (const lo of tripDayItems(trip, ok, "lodging")) {
           if (lo.itemType === "lodging" && lo.checkInDate && lo.checkOutDate &&
               lo.checkInDate < dateKey && lo.checkOutDate > dateKey) {
@@ -40437,7 +40438,7 @@ function renderExploreTripPanel(tab, trip) {
         const items = tripDayItems(trip, dateKey, s.key);
         if (s.key === "travel") {
           tripDays.forEach(od => {
-            const ok = od.toISOString().slice(0, 10);
+            const ok = dateKeyFromDate(od);
             if (ok === dateKey) return;
             tripDayItems(trip, ok, "travel").forEach(leg => {
               if (leg.arriveDate === dateKey)
@@ -40459,7 +40460,7 @@ function renderExploreTripPanel(tab, trip) {
               pushItem(lodgingTime(item.checkInTime), buildLodgingCard(item, dateKey, false), item);
           });
           tripDays.forEach(od => {
-            const ok = od.toISOString().slice(0, 10);
+            const ok = dateKeyFromDate(od);
             if (ok === dateKey) return;
             tripDayItems(trip, ok, "lodging").forEach(lo => {
               if (lo.checkOutDate === dateKey)
@@ -40603,7 +40604,7 @@ function renderExploreTripPanel(tab, trip) {
     // Car badge — a vehicle (own or rental) is available this day
     const carsToday = [];
     tripDays.forEach(od => {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       tripDayItems(trip, ok, "travel").forEach(item => {
         if (item.mode !== "car-own" && item.mode !== "car-rental") return;
         const from = item.departDate || ok;
@@ -40685,12 +40686,14 @@ function renderExploreTripPanel(tab, trip) {
 function getTripDates(trip) {
   if (!trip.startDate || !trip.endDate) return [];
   const dates = [];
-  const start = new Date(trip.startDate + "T12:00:00");
-  const end   = new Date(trip.endDate   + "T12:00:00");
+  // Local-midnight dates keyed with local getters (dateKeyFromDate): the old
+  // T12:00 + toISOString() shifted keys a day at UTC+13/+14.
+  const start = new Date(trip.startDate + "T00:00:00");
+  const end   = new Date(trip.endDate   + "T00:00:00");
   const limit = new Date(start);
   limit.setDate(limit.getDate() + 60);
   for (let d = new Date(start); d <= end && d <= limit; d.setDate(d.getDate() + 1)) {
-    dates.push(d.toISOString().slice(0, 10));
+    dates.push(dateKeyFromDate(d));
   }
   return dates;
 }
@@ -41100,7 +41103,7 @@ function buildDayMapSrc(trip, dateKey, tripDays) {
   });
 
   tripDays.forEach(od => {
-    const ok = od.toISOString().slice(0, 10);
+    const ok = dateKeyFromDate(od);
     if (ok === dateKey) return;
     tripDayItems(trip, ok, "travel").forEach(leg => {
       if (leg.arriveDate === dateKey) addMarker("0x0D7247", "A", leg.toCode || leg.to);
@@ -41111,7 +41114,7 @@ function buildDayMapSrc(trip, dateKey, tripDays) {
     .forEach(item => addMarker("0x1A73E8", "H", item.address || item.name));
 
   tripDays.forEach(od => {
-    const ok = od.toISOString().slice(0, 10);
+    const ok = dateKeyFromDate(od);
     if (ok === dateKey) return;
     tripDayItems(trip, ok, "lodging").forEach(item => {
       if (item.checkInDate && item.checkOutDate && dateKey > item.checkInDate && dateKey <= item.checkOutDate)
@@ -41166,7 +41169,7 @@ function printTripItinerary(trip) {
   }
 
   const daysHtml = tripDays.map((day, idx) => {
-    const dateKey   = day.toISOString().slice(0, 10);
+    const dateKey   = dateKeyFromDate(day);
     const mapSrc    = buildDayMapSrc(trip, dateKey, tripDays);
     const dateLabel = day.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
     let sects = "";
@@ -41175,7 +41178,7 @@ function printTripItinerary(trip) {
     const ownLegs = tripDayItems(trip, dateKey, "travel").filter(i => i.mode || i.from || i.to);
     const arrLegs = [];
     tripDays.forEach(od => {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       if (ok !== dateKey) tripDayItems(trip, ok, "travel").forEach(l => { if (l.arriveDate === dateKey) arrLegs.push(l); });
     });
     const allLegs = [...ownLegs.map(l => Object.assign({},l,{_arr:false})), ...arrLegs.map(l => Object.assign({},l,{_arr:true}))];
@@ -41195,7 +41198,7 @@ function printTripItinerary(trip) {
     const ownLodge = tripDayItems(trip, dateKey, "lodging").filter(i => i.itemType === "lodging");
     const spanLodge = [];
     tripDays.forEach(od => {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       if (ok !== dateKey) tripDayItems(trip, ok, "lodging").forEach(item => {
         if (item.checkInDate && item.checkOutDate && dateKey > item.checkInDate && dateKey <= item.checkOutDate)
           spanLodge.push(Object.assign({},item,{_span:true}));
