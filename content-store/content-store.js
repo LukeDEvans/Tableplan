@@ -73,6 +73,8 @@ export function createContentStore({ storage, cloudClient = null, bucket = null,
      * Layered read: local → remote (rehydrating local) → typed error. Throws:
      *   code "missing"           — no local bytes and no remote location on the asset
      *   code "remote-unavailable"— a remote location exists but no cloud client is configured
+   *   code "corrupt"           — downloaded bytes don't match the asset's sha-256 hash
+   *                              (nothing is written locally in that case)
      * Genuine download errors (network / permission / corrupt) propagate as-is so a
      * caller never mistakes an auth failure for "not found".
      */
@@ -84,6 +86,14 @@ export function createContentStore({ storage, cloudClient = null, bucket = null,
       if (!cloud) { const e = new Error("content-store: no local bytes and no remote location"); e.code = "missing"; throw e; }
       if (!cloudClient) { const e = new Error("content-store: a remote location exists but no cloud client is configured"); e.code = "remote-unavailable"; throw e; }
       const bytes = await downloadBlob(cloudClient, { bucket: cloud.bucket, path: cloud.path });
+      if (asset.hash) {
+        const got = await hashBytes(bytes);
+        if (got.toLowerCase() !== String(asset.hash).toLowerCase()) {
+          const e = new Error("content-store: downloaded bytes failed sha-256 verification");
+          e.code = "corrupt";
+          throw e; // never rehydrate local storage with bytes that aren't this asset
+        }
+      }
       if (blobId) await storage.put(bytesStore, blobId, bytes); // rehydrate local
       return bytes;
     },

@@ -46,3 +46,17 @@ describe("acceptedArticleRecord", () => {
     expect(r).toMatchObject({ id: "nl-abc123", publication: "nyt", url: card.url, text: null });
   });
 });
+
+describe("filterResolvedNews (PUB-1: no resurrection of swiped cards)", () => {
+  it("drops cards that are queued or already resolved this session", async () => {
+    const { filterResolvedNews } = await import("../news-notif-ui.js");
+    const list = [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }];
+    const out = filterResolvedNews(list, [{ id: "b", decision: "dismiss" }], new Set(["c"]));
+    expect(out.map((x) => x.id)).toEqual(["a", "d"]);
+  });
+  it("tolerates missing inputs", async () => {
+    const { filterResolvedNews } = await import("../news-notif-ui.js");
+    expect(filterResolvedNews(null, null, null)).toEqual([]);
+    expect(filterResolvedNews([{ id: "x" }], [], new Set()).map((x) => x.id)).toEqual(["x"]);
+  });
+});
