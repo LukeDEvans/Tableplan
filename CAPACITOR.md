@@ -119,7 +119,8 @@ package files), so a Swift error shows up on the PR.
 
 ### Sending a build
 - **GitHub mobile app:** Tableplan → Actions → *iOS → TestFlight* → **Run
-  workflow** (branch: `main`).
+  workflow** (branch: `main`). To test a branch, pick it under "Use workflow
+  from"; the build uses that branch unless you type a different ref.
 - **Website:** the same place, under the Actions tab.
 - **Or ask Claude** in a session: "send main to TestFlight". It can start the
   workflow.
@@ -131,6 +132,22 @@ before it appears in TestFlight. If a step fails, the run log shows the
 **Cost:** macOS runners use GitHub Actions minutes at 10× the Linux rate on
 private repos. The free 2,000 min/month comes to roughly 200 macOS minutes,
 about 8–12 TestFlight builds, less whatever the compile check uses.
+
+## Native Apple Music
+
+In the app, Apple Music runs on Apple's native MusicKit (`AppleMusicPlugin.swift`)
+instead of MusicKit JS: sign-in is Apple's own permission prompt (no popup), songs
+play natively, and music keeps going with the phone locked. The browser/PWA still
+uses MusicKit JS. The web side is `music-applemusic-native.js`.
+
+**One-time setup:** developer.apple.com → Certificates, Identifiers & Profiles →
+Identifiers → `com.mrlukedevans.live` → **App Services** tab → tick **MusicKit** →
+Save. Without it the Apple Music API calls fail with an authorization error.
+(Already enabled for `com.mrlukedevans.live` — Luke, 2026-09-30.)
+
+**Check on the phone after a TestFlight build:** Settings → Apple Music → turn it on
+→ Sign in (Apple's prompt appears) → play a Discover song; lock the phone and let it
+run into the next song; use the lock-screen play/pause and next buttons.
 
 ## Coming next (not now)
 - **Stage 1:** CORS + Supabase auth + Gmail native OAuth + confirm asset serving.

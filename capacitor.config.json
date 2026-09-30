@@ -4,7 +4,8 @@
   "webDir": "dist",
   "ios": {
     "contentInset": "never",
-    "limitsNavigationsToAppBoundDomains": false
+    "limitsNavigationsToAppBoundDomains": false,
+    "webContentsDebuggingEnabled": true
   },
   "server": {
     "iosScheme": "capacitor"
@@ -13,8 +14,5 @@
     "CapacitorHttp": {
       "enabled": true
     }
-  },
-  "packageClassList": [
-    "LiveTtsPlugin"
-  ]
+  }
 }
