@@ -93,7 +93,8 @@ export function parseQuantityMeasurements(quantity) {
   return clean(quantity)
     .split(/\s*\+\s*/)
     .map((part) => {
-      const match = part.match(/^(\d+(?:\.\d+)?(?:\s+\d+\/\d+)?|\d+\/\d+)\s*(.*)$/);
+      // Mixed numbers and pure fractions first, so "1/2 cup" is not read as "1" + "/2 cup".
+      const match = part.match(/^(\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?)\s*(.*)$/);
       if (!match) return null;
       const amount = parseAmount(match[1]);
       const unit = UNIT_ALIASES[clean(match[2]).toLowerCase().replace(/\.$/, "")];

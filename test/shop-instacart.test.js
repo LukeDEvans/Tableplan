@@ -77,6 +77,10 @@ describe("line items", () => {
   it("parses measurements from the list's quantity string", () => {
     expect(parseQuantityMeasurements("2 cups + 1 lb")).toEqual([{ quantity: 2, unit: "cup" }, { quantity: 1, unit: "pound" }]);
     expect(parseQuantityMeasurements("1 1/2 tbsp")).toEqual([{ quantity: 1.5, unit: "tablespoon" }]);
+    expect(parseQuantityMeasurements("1/2 cup")).toEqual([{ quantity: 0.5, unit: "cup" }]);
+    expect(parseQuantityMeasurements("1/2 cup + 1 cup")).toEqual([{ quantity: 0.5, unit: "cup" }, { quantity: 1, unit: "cup" }]);
+    expect(parseQuantityMeasurements("3/4")).toEqual([{ quantity: 0.75, unit: "each" }]);
+    expect(parseQuantityMeasurements("1.5 lb")).toEqual([{ quantity: 1.5, unit: "pound" }]);
     expect(parseQuantityMeasurements("3")).toEqual([{ quantity: 3, unit: "each" }]);
     expect(parseQuantityMeasurements("a pinch")).toEqual([]);
     expect(parseQuantityMeasurements("2 splorks")).toEqual([]);
