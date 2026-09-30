@@ -1,5 +1,7 @@
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const BUCKET = "article-audio";
+// Upper bound on input text (MED-10) — bounds the paid TTS fan-out per request.
+const MAX_TTS_CHARS = 60000;
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return cors(json(200, {}));
@@ -20,6 +22,9 @@ exports.handler = async (event) => {
 
   const { articleId, text, cacheKey } = body;
   if (!articleId || !text) return cors(json(400, { error: "articleId and text are required" }));
+  if (typeof text !== "string" || text.length > MAX_TTS_CHARS) {
+    return cors(json(400, { error: `text must be a string of at most ${MAX_TTS_CHARS} characters` }));
+  }
 
   const cleanText = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   if (!cleanText) return cors(json(400, { error: "No text content." }));
@@ -28,7 +33,9 @@ exports.handler = async (event) => {
   // in voice/provider/model/speed via tts-cache-identity.js) so different voices
   // never collide; fall back to the legacy article-id path for older clients.
   // Sanitized to a single path segment so a client can't traverse the bucket.
-  const keyPrefix = sanitizeKey(cacheKey) || String(articleId);
+  // articleId is sanitized too (SRV-5) — it was used raw as a path segment.
+  const keyPrefix = sanitizeKey(cacheKey) || sanitizeKey(articleId);
+  if (!keyPrefix) return cors(json(400, { error: "Invalid articleId." }));
 
   // Bump when the generation format changes so older cached audio (which has
   // no word timings) is regenerated on next play instead of served stale.
@@ -176,3 +183,5 @@ function json(statusCode, body) {
 function cors(response) {
   return { ...response, headers: { ...(response.headers || {}), "access-control-allow-origin": "*", "access-control-allow-headers": "content-type, authorization" } };
 }
+
+exports._test = { sanitizeKey, MAX_TTS_CHARS };
