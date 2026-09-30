@@ -372,6 +372,10 @@ export function createRecipesModule(deps) {
   } = deps;
 
   let activeCookingInterval = null;
+  // Signature of the last full active-cooking render; the 1s tick only rewrites timer
+  // text while it's unchanged (rebuilding innerHTML every second reloaded photos and
+  // swallowed taps that landed mid-rebuild).
+  let activeCookingRenderKey = "";
   let activeFolder = "";
   let activeRecipeTag = "";
   let currentActiveRecipeViewId = "";
@@ -739,6 +743,20 @@ function renderActiveCooking() {
     return;
   }
   elements.activeCookingSection.hidden = cooking.length === 0;
+  const renderKey = JSON.stringify(cooking.map((item) => {
+    const recipe = activeRecipes().find((candidate) => candidate.id === item.recipeId);
+    return [item.id, item.recipeId, item.servings, recipe?.name || "", recipe?.photoUrl || ""];
+  }));
+  if (renderKey === activeCookingRenderKey && elements.activeCookingList.childElementCount) {
+    // Same cards — just refresh each timer label in place.
+    cooking.forEach((item) => {
+      const timer = elements.activeCookingList.querySelector(`[data-active-cooking-timer="${CSS.escape(item.id)}"]`);
+      if (timer) timer.textContent = cookingTimerText(item);
+    });
+    syncActiveCookingClock();
+    return;
+  }
+  activeCookingRenderKey = renderKey;
   elements.activeCookingList.innerHTML = cooking.map(activeCookingTemplate).join("");
 
   elements.activeCookingList.querySelectorAll("[data-view-active-recipe]").forEach((button) => {
@@ -760,7 +778,7 @@ function activeCookingTemplate(item) {
         <span class="active-cooking-title">${escapeHtml(recipe.name)}</span>
         <div class="active-cooking-status">
           <span class="active-cooking-servings">${escapeHtml(formatServingsLabel(item.servings))}</span>
-          <span class="active-cooking-timer">${escapeHtml(cookingTimerText(item))}</span>
+          <span class="active-cooking-timer" data-active-cooking-timer="${escapeHtml(item.id)}">${escapeHtml(cookingTimerText(item))}</span>
         </div>
       </button>
       <button class="secondary-btn compact-btn active-cooking-done" type="button" data-finish-cooking="${escapeHtml(item.id)}">Done</button>
