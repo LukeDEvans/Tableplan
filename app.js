@@ -548,6 +548,11 @@ const PLAN_RANGE_CACHE_MAX = 8;
 // re-scan the whole meal-plan/workout/to-do history each time.
 let planAppDataIndex = null;
 let userGroup = null;
+// True when the signed-in user's group membership could not be READ (network /
+// server error after bounded retries) — distinct from "no group yet" (a new
+// user). While set, hydration and writes stay blocked (see runHydrate…).
+let groupLoadFailed = false;
+let groupLoadInFlight = null;
 let groupMembers = [];
 let adminDisabledPages = [];
 let personalDisabledPages = [];
@@ -3754,15 +3759,38 @@ function handleInviteUrlParameter() {
   if (stored) pendingInviteToken = stored;
 }
 
-async function loadOrCreateUserGroup() {
-  if (!supabaseClient || !authSession?.access_token) return;
-  try {
-    const res = await fetch(
-      `${supabaseBaseUrl()}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(authSession.user.id)}&select=group_id,role,display_name,personal_disabled_pages,live_groups(id,disabled_pages)`,
-      { headers: supabaseHeaders() }
-    );
-    if (res.ok) {
+// Resolve the signed-in user's group. Only a SUCCESSFUL membership read that
+// returns zero rows means "new user" (→ setup dialog). A failed read is retried
+// a bounded number of times, then surfaced as "can't reach server" with the group
+// left null — which blocks hydrate/write, so nothing lands in the wrong rows and
+// an existing member is never shown the "Welcome, set up your group" dialog
+// (INF-2). Re-entrant calls share the in-flight attempt (no auth request storm).
+const GROUP_LOAD_RETRY_DELAYS_MS = [1000, 3000]; // 3 attempts total
+
+function loadOrCreateUserGroup() {
+  if (!supabaseClient || !authSession?.access_token) return Promise.resolve();
+  if (!groupLoadInFlight) {
+    groupLoadInFlight = runLoadOrCreateUserGroup().finally(() => { groupLoadInFlight = null; });
+  }
+  return groupLoadInFlight;
+}
+
+async function runLoadOrCreateUserGroup() {
+  const userId = authSession.user.id;
+  for (let attempt = 0; attempt <= GROUP_LOAD_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) await new Promise((r) => window.setTimeout(r, GROUP_LOAD_RETRY_DELAYS_MS[attempt - 1]));
+    // Session changed/ended while waiting — this lookup is no longer relevant.
+    if (!authSession?.access_token || authSession.user?.id !== userId) return;
+    try {
+      const res = await fetch(
+        // order= makes the pick deterministic for a user in more than one group
+        // (oldest membership first — what an unordered heap read returned in practice).
+        `${supabaseBaseUrl()}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id,role,display_name,personal_disabled_pages,live_groups(id,disabled_pages)&order=joined_at.asc,group_id.asc`,
+        { headers: supabaseHeaders() }
+      );
+      if (!res.ok) throw new Error(`membership lookup failed with status ${res.status}`);
       const rows = await res.json();
+      groupLoadFailed = false;
       if (rows.length) {
         const member = rows[0];
         const group = member.live_groups;
@@ -3772,11 +3800,15 @@ async function loadOrCreateUserGroup() {
         updateGroupSettingsSection();
         return;
       }
+      openGroupSetupDialog(); // confirmed: signed in, no membership → new user
+      return;
+    } catch (e) {
+      console.warn(`Could not load group (attempt ${attempt + 1}):`, e);
     }
-  } catch (e) {
-    console.warn("Could not load group:", e);
   }
-  openGroupSetupDialog();
+  groupLoadFailed = true;
+  updateSyncStatus("failed");
+  try { showVoiceToast("Can't reach the server — your data will sync when the connection returns."); } catch { /* toast is cosmetic */ }
 }
 
 async function migratePersonalStateIfNeeded() {
@@ -6216,6 +6248,15 @@ let financeSectionHydrated = false;
 // stays here; callers pass it + STATE_SECTIONS.finance into the pure guard.
 
 async function hydrateStateFromSharedStorage() {
+  // Signed in but the group is unknown (membership lookup failed, or a brand-new
+  // user who hasn't finished setup): loading/writing now would target the config
+  // default stateId ("personal") instead of the household rows. Stay not-ready;
+  // group setup / the came-online retry hydrate once the group is known.
+  if (canUseCloudStorage() && authSession?.access_token && !userGroup?.id) {
+    if (groupLoadFailed) updateSyncStatus("failed");
+    else hideHydrationOverlay(); // new user: the setup dialog is the next step
+    return;
+  }
   const providers = sharedStorageProviders();
   if (!providers.length) return;
 
@@ -6347,7 +6388,13 @@ function registerServiceWorker() {
 }
 
 async function handleCameOnline() {
-  if (!canUseCloudStorage() || !authSession?.access_token || !userGroup?.id) return;
+  if (!canUseCloudStorage() || !authSession?.access_token) return;
+  // A signed-in session whose group lookup failed (offline at boot) retries it
+  // now; hydration stays blocked until the group is known.
+  if (!userGroup?.id) {
+    await loadOrCreateUserGroup();
+    if (!userGroup?.id) return;
+  }
   // Hydrate-and-merge instead of blind-flushing: a device that was offline for
   // a while must fold the cloud's changes in before its own state goes up,
   // or it overwrites everything other devices wrote in the meantime.
@@ -6741,6 +6788,13 @@ async function loadStateFromSupabase() {
 async function writeStateToSupabase() {
   const config = supabaseConfig();
   const stateId = config.stateId;
+
+  // A signed-in session must never write before its group is known: with no
+  // userGroup, stateId falls back to the config default ("personal") and the
+  // household sections would land in the wrong rows (INF-2).
+  if (!localDevMode && authSession?.access_token && !userGroup?.id) {
+    throw new Error("Group not loaded — refusing to write state");
+  }
 
   // Never push the finance section before its cloud copy has loaded — the
   // boot-empty finance (mirror strips it) would blank budget picks and the
