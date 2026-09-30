@@ -271,3 +271,66 @@ describe("playback engine — guards", () => {
     expect(eng.isActive()).toBe(false);
   });
 });
+
+describe("playback engine — audit fixes (MED-6 seek clears waiting, MED-7 same-URL reload)", () => {
+  it("a fresh load() of the SAME url reassigns src + calls load() (radio reconnect)", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    eng.load({ id: "r1", providerId: "radio", segments: [{ url: "stream" }], startPosition: 0 });
+    expect(a.load).toHaveBeenCalledTimes(1);
+    eng.load({ id: "r1", providerId: "radio", segments: [{ url: "stream" }], startPosition: 0 });
+    expect(a.load).toHaveBeenCalledTimes(2);
+  });
+
+  it("replay-from-0 of the same track resets position even without a reload", () => {
+    const a = makeFakeAudio();
+    // An element whose load() does NOT reset currentTime/readyState (worst case).
+    a.load = vi.fn();
+    a.readyState = 4;
+    const eng = engineWith(a);
+    eng.load({ id: "t1", providerId: "music", segments: [{ url: "u1", duration: 200 }] });
+    a.currentTime = 120;
+    eng.load({ id: "t1", providerId: "music", segments: [{ url: "u1", duration: 200 }], startPosition: 0 });
+    expect(a.currentTime).toBe(0);
+  });
+
+  it("segment advance does NOT force a reload of an unchanged url", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    eng.load({ id: "x", providerId: "tts", segments: [{ url: "c0", duration: 10 }, { url: "c1", duration: 10 }] });
+    expect(a.load).toHaveBeenCalledTimes(1);
+    a._end();
+    expect(a.src).toBe("c1");
+    expect(a.load).toHaveBeenCalledTimes(2);
+  });
+
+  it("seeking while stalled (waiting) clears waiting and resumes at the target", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    eng.load({ id: "t", providerId: "tts", segments: [{ url: "c0", duration: 10 }, { url: "c1", duration: 10 }], expectedSegments: 4 });
+    a._end();                     // -> c1
+    a._end();                     // c1 ends, c2 not ready -> waiting
+    expect(eng.state().waiting).toBe(true);
+    expect(a.paused).toBe(true);
+    eng.seekTo(12);               // back into c1 (same segment)
+    expect(eng.state().waiting).toBe(false);
+    expect(a.paused).toBe(false); // resumed
+    expect(a.currentTime).toBe(2);
+    // A later append must NOT yank playback forward from where the user sought.
+    eng.appendSegment({ url: "c2" });
+    expect(eng.state().segIndex).toBe(1);
+    expect(a.src).toBe("c1");
+  });
+
+  it("seeking to a different segment while waiting autoplays that segment", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    eng.load({ id: "t", providerId: "tts", segments: [{ url: "c0", duration: 10 }, { url: "c1", duration: 10 }], expectedSegments: 4 });
+    a._end(); a._end();
+    expect(eng.state().waiting).toBe(true);
+    eng.seekTo(3);
+    expect(eng.state().waiting).toBe(false);
+    expect(a.src).toBe("c0");
+    expect(a.paused).toBe(false);
+  });
+});

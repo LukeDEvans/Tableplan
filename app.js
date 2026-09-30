@@ -27596,6 +27596,8 @@ let podcastSaveTimer = null;
 // while a music track is active, else null. See the music playback block below.
 let musicAudio = null;
 let musicPositionSaveTimer = null; // throttled resume-position saver (media-progress)
+let musicLastSavedPos = null;  // { id, pos } of the last resume-point write (skip no-op saves)
+let musicStartGen = 0;         // bumped per music start/stop; a start that awaits bails if superseded
 let musicCurTrack = null;      // track loaded into the shared element
 let musicQueueRest = [];       // remaining track ids to auto-advance through
 let musicCurUrl = null;        // object URL for the current local blob (revoked on change)
@@ -27642,6 +27644,7 @@ let musicSearchQuery = "";
 let musicSearchResults = null; // { query, items, providerStatuses } | null
 let musicSearchLoading = false;
 let musicSearchToken = 0;      // guards against out-of-order search responses
+let musicOpenToken = 0;        // guards openMusicItem against out-of-order getItem responses
 let musicOpenItem = null;      // { album, tracks } expanded from a result
 let musicOpenItemLoading = false;
 const musicItemCache = new Map(); // albumId → { album, tracks } (metadata cache)
@@ -29467,7 +29470,7 @@ function advanceMediaAllQueue(finishedId) {
   }
   mediaAllQueueId = null;
   if (activeMediaTab === "queue") renderMediaAllList();
-  return true;
+  return false; // nothing started — let the caller run its own end-of-queue path
 }
 
 // ── Playlist (queue) ──────────────────────────────────────────────────────────
@@ -30489,7 +30492,7 @@ const MEDIA_KINDS = {
     el: () => musicAudio,
     onTimeupdate: () => updateMiniPlayerProgress(),
     onPlay: () => { setMediaSessionPlaybackState("playing"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); },
-    onPause: () => { setMediaSessionPlaybackState("paused"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); },
+    onPause: () => { saveMusicPosition({ force: true }); setMediaSessionPlaybackState("paused"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); },
     onEnded: () => onMusicEnded(),
     onError: () => { showVoiceToast("Couldn't play this track"); updateMiniPlayerPlayBtn(); },
     toggle: () => toggleMusicPlayPause(),
@@ -30796,10 +30799,16 @@ function musicArtUrlFor(track) {
 // Save the current music position into the synced mediaProgress map (throttled by
 // the interval below). Reads the shared element's currentTime (music is one
 // segment, so element time == logical position). Skips trivially-short positions.
-function saveMusicPosition() {
+// The 10s interval passes nothing: it skips while paused (the pause handler saves
+// once with force) and when the position hasn't moved since the last write, so an
+// idle paused track doesn't persist() the same value forever.
+function saveMusicPosition({ force = false } = {}) {
   if (!musicAudio || !musicCurTrack?.id) return;
+  if (!force && musicAudio.paused) return;
   const pos = Math.floor(musicAudio.currentTime || 0);
   if (pos <= 5) return; // nothing worth resuming yet
+  if (musicLastSavedPos && musicLastSavedPos.id === musicCurTrack.id && musicLastSavedPos.pos === pos) return;
+  musicLastSavedPos = { id: musicCurTrack.id, pos };
   state.mediaProgress = pruneMediaProgress(setMediaPosition(state.mediaProgress, musicCurTrack.id, { position: pos, duration: musicAudio.duration || 0 }));
   persist();
 }
@@ -30819,25 +30828,37 @@ function playMusicDescriptor(desc, url, { isBlob = false } = {}) {
   const resumeAt = resumePositionFor(state.mediaProgress, desc.id);
   engine.load({ id: desc.id, providerId: "music", segments: [{ url }], startPosition: resumeAt, rate: mediaPlaybackSpeed }, { autoplay: true });
   window.clearInterval(musicPositionSaveTimer);
-  musicPositionSaveTimer = window.setInterval(saveMusicPosition, 10000);
+  musicLastSavedPos = null;
+  musicPositionSaveTimer = window.setInterval(() => saveMusicPosition(), 10000);
   setMiniPlayer(desc.title || "Untitled", desc.artist || desc.album || "", desc.artworkUrl || "");
   setMusicMediaSession(desc);
   pushMusicHistory(desc);
   if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
 }
 
-async function startLibraryTrack(track) {
+async function startLibraryTrack(track, gen = musicStartGen) {
   let url;
   try { url = await (await getMusicLib()).resolvePlayable(track); }
-  catch (e) { console.warn("music resolve failed", e); showVoiceToast("Couldn't play this track — the audio isn't on this device"); return false; }
+  catch (e) {
+    if (gen !== musicStartGen) return false; // superseded — stay quiet
+    console.warn("music resolve failed", e); showVoiceToast("Couldn't play this track — the audio isn't on this device"); return false;
+  }
+  if (gen !== musicStartGen) { try { URL.revokeObjectURL(url); } catch { /* noop */ } return false; } // a newer start won
   playMusicDescriptor({ id: track.id, title: track.title, artist: track.artist, album: track.album, artworkUrl: musicArtUrlFor(track), kind: "library" }, url, { isBlob: true });
   return true;
+}
+
+// Owns-playback provider transport calls (pause/resume/seek) are async — swallow
+// both sync throws and rejections so a MusicKit hiccup can't surface as an
+// unhandled rejection.
+function ownedMusicCall(fn) {
+  try { Promise.resolve(fn()).catch(() => {}); } catch { /* noop */ }
 }
 
 // Tear down any active owns-playback session (unsubscribe + pause the provider).
 function teardownOwnedMusic() {
   if (musicOwnedUnsub) { try { musicOwnedUnsub(); } catch { /* noop */ } musicOwnedUnsub = null; }
-  if (musicPlaybackProvider) { try { musicPlaybackProvider.pause(); } catch { /* noop */ } }
+  if (musicPlaybackProvider) { const prov = musicPlaybackProvider; ownedMusicCall(() => prov.pause()); }
   musicPlaybackProvider = null;
   musicOwnedNP = null;
 }
@@ -30847,7 +30868,7 @@ function teardownOwnedMusic() {
 // now-playing into the same mini-player / MediaSession / history the URL path uses.
 // Queue advance reuses the existing musicQueueRest machinery: each track is a
 // fresh setQueue+play, so a mixed (Apple + Internet Archive) queue still advances.
-async function startOwnedMusicTrack(canonical, provider) {
+async function startOwnedMusicTrack(canonical, provider, gen = musicStartGen) {
   stopPodcastAudio(); stopListen(); stopRadio();
   if (mediaEngine && musicAudio) { mediaEngine.stop(); }  // release the shared engine if it held music
   if (musicCurUrl) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } musicCurUrl = null; }
@@ -30899,13 +30920,22 @@ async function startOwnedMusicTrack(canonical, provider) {
   });
   try {
     await provider.play(canonical, { upcoming }); // sets the provider's queue to this track (+ upcoming), then plays
-    musicOwnedNP = provider.getNowPlaying();
   } catch (e) {
+    if (gen !== musicStartGen) return false; // superseded — the newer start owns the session; don't tear it down
     console.warn("apple music play failed", e);
     showVoiceToast("Couldn't play this Apple Music track");
     teardownOwnedMusic();
     return false;
   }
+  if (gen !== musicStartGen) {
+    // A newer start/stop superseded us while play() was in flight. If it already
+    // tore our session down (different provider / engine track / stop), this late
+    // start is now audible on its own — pause it. If the same provider now belongs
+    // to the newer session, leave it alone (its own play() replaces the queue).
+    if (musicPlaybackProvider !== provider) ownedMusicCall(() => provider.pause());
+    return false;
+  }
+  musicOwnedNP = provider.getNowPlaying();
   setMiniPlayer(desc.title || "Untitled", desc.artist || desc.album || "", desc.artworkUrl || "");
   setMusicMediaSession(desc);
   pushMusicHistory(desc);
@@ -30914,13 +30944,14 @@ async function startOwnedMusicTrack(canonical, provider) {
   return true;
 }
 
-async function startStreamingTrack(canonical) {
+async function startStreamingTrack(canonical, gen = musicStartGen) {
   // Playback-owning provider (Apple Music) → drive its transport, not a URL.
   try {
     const reg = await getMusicProviders();
+    if (gen !== musicStartGen) return false; // superseded
     const prov = reg.get(canonical.provider);
     if (prov && musicStreamMod && musicStreamMod.isPlaybackOwner(prov)) {
-      return await startOwnedMusicTrack(canonical, prov);
+      return await startOwnedMusicTrack(canonical, prov, gen);
     }
   } catch (e) { console.warn("owns-playback route failed", e); }
   let src = canonical.playable;
@@ -30929,6 +30960,7 @@ async function startStreamingTrack(canonical) {
     const p = reg.get(canonical.provider);
     if (p && p.getPlayable) src = await p.getPlayable(canonical);
   } catch (e) { console.warn("stream resolve failed", e); }
+  if (gen !== musicStartGen) return false; // superseded while resolving
   if (!src || !src.url) { showVoiceToast("This track isn't streamable right now"); return false; }
   const artist = canonical.artists?.[0]?.name || canonical.composer?.name || canonical.album || "";
   playMusicDescriptor({ id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "stream", canonical }, src.url, { isBlob: false });
@@ -30936,11 +30968,16 @@ async function startStreamingTrack(canonical) {
 }
 
 async function playMusicQueueItem(item, rest, opts = {}) {
+  // Each start takes a generation token; every awaiting start path re-checks it and
+  // bails if a newer start (or a stop) superseded it, so a slow resolve can't start
+  // a stale track over the one the user just picked.
+  const gen = ++musicStartGen;
   musicQueueRest = Array.isArray(rest) ? rest.slice() : [];
   let ok = false;
-  if (item.kind === "stream") ok = await startStreamingTrack(item.track);
-  else if (item.kind === "recording") ok = await startRecordingResolved(item.recording, { queueMode: !opts.interactive });
-  else { const t = (musicLibrary || []).find((x) => x.id === item.id); ok = t ? await startLibraryTrack(t) : false; }
+  if (item.kind === "stream") ok = await startStreamingTrack(item.track, gen);
+  else if (item.kind === "recording") ok = await startRecordingResolved(item.recording, { queueMode: !opts.interactive, gen });
+  else { const t = (musicLibrary || []).find((x) => x.id === item.id); ok = t ? await startLibraryTrack(t, gen) : false; }
+  if (gen !== musicStartGen) return; // superseded — the newer start owns the queue
   if (!ok) onMusicEnded(); // couldn't play → skip to the next queued item
 }
 
@@ -30966,17 +31003,20 @@ function onMusicEnded() {
   if (musicCurTrack?.id) { state.mediaProgress = clearMediaPosition(state.mediaProgress, musicCurTrack.id); persist(); }
   updateMiniPlayerPlayBtn();
   if (musicQueueRest.length) { const next = musicQueueRest.shift(); playMusicQueueItem(next, musicQueueRest); return; }
-  stopMusicPlayback(); // queue drained
+  stopMusicPlayback({ save: false }); // queue drained — don't re-save the resume point we just cleared
 }
 
-function stopMusicPlayback() {
-  saveMusicPosition(); // capture the final resume point before tearing down
+function stopMusicPlayback({ save = true } = {}) {
+  musicStartGen++; // a stop supersedes any start still awaiting its resolve
+  if (save) saveMusicPosition({ force: true }); // capture the final resume point before tearing down
   window.clearInterval(musicPositionSaveTimer);
+  // Clear the current track BEFORE stopping the engine: engine.stop() pauses the
+  // element, whose pause handler would otherwise save a position for this track.
+  musicCurTrack = null;
   teardownOwnedMusic(); // no-op unless an owns-playback session is active
   if (mediaEngine && musicAudio) mediaEngine.stop();
   if (musicCurUrl) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } musicCurUrl = null; }
   musicAudio = null;
-  musicCurTrack = null;
   musicQueueRest = [];
   setMediaSessionPlaybackState("none");
   hideMiniPlayer();
@@ -30985,7 +31025,8 @@ function stopMusicPlayback() {
 
 function toggleMusicPlayPause() {
   if (musicPlaybackProvider) {
-    if (musicOwnedNP && musicOwnedNP.isPlaying) musicPlaybackProvider.pause(); else musicPlaybackProvider.resume();
+    const prov = musicPlaybackProvider;
+    if (musicOwnedNP && musicOwnedNP.isPlaying) ownedMusicCall(() => prov.pause()); else ownedMusicCall(() => prov.resume());
     return;
   }
   if (!musicAudio) return;
@@ -30996,7 +31037,8 @@ function skipMusic(seconds) {
   if (musicPlaybackProvider) {
     const cur = (musicOwnedNP && musicOwnedNP.positionMs) || 0;
     const dur = (musicOwnedNP && musicOwnedNP.durationMs) || Infinity;
-    musicPlaybackProvider.seek(Math.max(0, Math.min(cur + seconds * 1000, dur)));
+    const prov = musicPlaybackProvider;
+    ownedMusicCall(() => prov.seek(Math.max(0, Math.min(cur + seconds * 1000, dur))));
     return;
   }
   if (!musicAudio) return;
@@ -31015,8 +31057,8 @@ function setMusicMediaSession(desc) {
     });
     // Route through the guarded controls so lock-screen play/pause drives the
     // owns-playback provider (Apple Music) as well as the shared element.
-    navigator.mediaSession.setActionHandler("play", () => { if (musicPlaybackProvider) musicPlaybackProvider.resume(); else musicAudio?.play().catch(() => {}); });
-    navigator.mediaSession.setActionHandler("pause", () => { if (musicPlaybackProvider) musicPlaybackProvider.pause(); else musicAudio?.pause(); });
+    navigator.mediaSession.setActionHandler("play", () => { const prov = musicPlaybackProvider; if (prov) ownedMusicCall(() => prov.resume()); else musicAudio?.play().catch(() => {}); });
+    navigator.mediaSession.setActionHandler("pause", () => { const prov = musicPlaybackProvider; if (prov) ownedMusicCall(() => prov.pause()); else musicAudio?.pause(); });
     navigator.mediaSession.setActionHandler("seekbackward", () => skipMusic(-10));
     navigator.mediaSession.setActionHandler("seekforward", () => skipMusic(10));
     navigator.mediaSession.setActionHandler("nexttrack", () => onMusicEnded());
@@ -31610,6 +31652,7 @@ async function doMusicSearch(query) {
   const q = String(query || "");
   musicSearchQuery = q;
   musicOpenItem = null;
+  musicOpenToken++; // a pending openMusicItem must not re-open over the new search
   const token = ++musicSearchToken;
   if (!q.trim()) { musicSearchResults = null; musicSearchLoading = false; updateDiscoverResults(); return; }
   musicSearchLoading = true; updateDiscoverResults();
@@ -31630,20 +31673,23 @@ async function doMusicSearch(query) {
 async function openMusicItem(album) {
   if (!album) return;
   if (album.entity === "track") { playStreamingTrack(album, []); return; } // a track result plays directly
-  if (musicItemCache.has(album.id)) { musicOpenItem = musicItemCache.get(album.id); updateDiscoverResults(); return; }
+  const token = ++musicOpenToken; // a later open/close/search supersedes this one
+  if (musicItemCache.has(album.id)) { musicOpenItem = musicItemCache.get(album.id); musicOpenItemLoading = false; updateDiscoverResults(); return; }
   musicOpenItem = { album, tracks: null }; musicOpenItemLoading = true; updateDiscoverResults();
   try {
     const reg = await getMusicProviders();
     const p = reg.get(album.provider);
     const detail = p && p.getItem ? await p.getItem(album) : { album, tracks: [] };
-    musicItemCache.set(album.id, detail);
+    musicItemCache.set(album.id, detail); // cache even if superseded — it's still valid metadata
+    if (token !== musicOpenToken) return;
     musicOpenItem = detail;
   } catch (e) {
+    if (token !== musicOpenToken) return;
     console.warn("open item failed", e);
     musicOpenItem = { album, tracks: [], error: "Couldn't load this item." };
-  } finally { musicOpenItemLoading = false; updateDiscoverResults(); }
+  } finally { if (token === musicOpenToken) { musicOpenItemLoading = false; updateDiscoverResults(); } }
 }
-function closeMusicItem() { musicOpenItem = null; updateDiscoverResults(); }
+function closeMusicItem() { musicOpenToken++; musicOpenItem = null; musicOpenItemLoading = false; updateDiscoverResults(); }
 
 function replayMusicHistory(id) {
   const h = getRecentMedia({ kind: "music" }).find((x) => x.id === id);
@@ -32198,12 +32244,14 @@ function playRecordingDescriptor(recording, source) {
   playMusicDescriptor({ id: recording.id || `rec:${source.url}`, title: recording.title || recording.workTitle || "Recording", artist, album: recording.album, artworkUrl: recording.artworkUrl || "", kind: "recording", recording }, source.url, { isBlob: false });
 }
 
-async function startRecordingResolved(recording, { queueMode = false } = {}) {
+async function startRecordingResolved(recording, { queueMode = false, gen = musicStartGen } = {}) {
   let resolver, reg;
   try { ({ resolver } = await getMusicCanon()); reg = await getMusicProviders(); }
   catch { return false; }
   let res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: false });
+  if (gen !== musicStartGen) return false; // superseded while resolving
   if (res.status !== "exact") res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: true });
+  if (gen !== musicStartGen) return false;
   // Found the same song on a provider this recording had no ref for (e.g. after
   // switching players): remember it on the saved entry so next time is direct.
   // Appended, so the favourite key (first ref) never changes.
@@ -32221,7 +32269,7 @@ async function startRecordingResolved(recording, { queueMode = false } = {}) {
       album: recording.album || null, artworkUrl: recording.artworkUrl || null, provider: res.source.provider,
       providerRefs: [res.providerRef],
     };
-    return await startOwnedMusicTrack(canonical, prov);
+    return await startOwnedMusicTrack(canonical, prov, gen);
   }
   if (res.status === "exact") { playRecordingDescriptor(recording, res.source); return true; }
   if (res.status === "alternate") {
