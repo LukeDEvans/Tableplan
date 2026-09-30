@@ -1085,6 +1085,10 @@ function removeGroceryStore(storeId) {
   const itemSections = { ...groceryStoreItemSections() };
   delete itemSections[storeId];
   state.groceryStoreItemSections = normalizeGroceryStoreItemSections(itemSections, state.groceryStores);
+  // Tombstone the dropped estimates so a sync from another device can't resurrect them.
+  groceryPriceObservations()
+    .filter((observation) => observation.storeId === storeId)
+    .forEach((observation) => recordDeletion("groceryPriceObservations", observation.id));
   state.groceryPriceObservations = groceryPriceObservations().filter((observation) => observation.storeId !== storeId);
   state.receipts = normalizeReceipts(state.receipts).map((receipt) => (
     receipt.storeId === storeId ? { ...receipt, storeId: "" } : receipt
@@ -1185,6 +1189,7 @@ function renderGroceryPriceObservations() {
   }).join("")}` : `<div class="empty-state">No manual estimates saved.</div>`;
   elements.groceryPriceObservations.querySelectorAll("[data-remove-price-observation]").forEach((button) => {
     button.addEventListener("click", () => {
+      recordDeletion("groceryPriceObservations", button.dataset.removePriceObservation);
       state.groceryPriceObservations = groceryPriceObservations().filter((item) => item.id !== button.dataset.removePriceObservation);
       persist();
       renderGroceryPriceObservations();
@@ -1303,9 +1308,19 @@ function saveReceiptEdit(event) {
   );
   state.receipts = normalizeReceipts((state.receipts || []).map((r) => r.id === editingReceiptId ? receipt : r));
   state.receiptItemMappings = LiveReceiptDomain.correctedMappingsFromReceipt(receipt, receiptItemMappings());
+  // Rebuild this receipt's history rows, reusing each line's existing history id
+  // (keyed by sourceReceiptLineItemId) so an edit doesn't mint a fresh id that
+  // unions alongside the stale one on sync; tombstone rows that no longer exist.
+  const previousHistory = receiptPriceHistory().filter((ph) => oldLineItemIds.has(ph.sourceReceiptLineItemId));
+  const previousIdByLine = new Map(previousHistory.map((ph) => [ph.sourceReceiptLineItemId, ph.id]));
+  const rebuiltHistory = LiveReceiptDomain.priceHistoryFromReceipt(receipt, createId).map((entry) => (
+    previousIdByLine.has(entry.sourceReceiptLineItemId) ? { ...entry, id: previousIdByLine.get(entry.sourceReceiptLineItemId) } : entry
+  ));
+  const rebuiltIds = new Set(rebuiltHistory.map((entry) => entry.id));
+  previousHistory.filter((ph) => !rebuiltIds.has(ph.id)).forEach((ph) => recordDeletion("priceHistory", ph.id));
   state.priceHistory = normalizePriceHistory([
     ...receiptPriceHistory().filter((ph) => !oldLineItemIds.has(ph.sourceReceiptLineItemId)),
-    ...LiveReceiptDomain.priceHistoryFromReceipt(receipt, createId)
+    ...rebuiltHistory
   ], groceryStores());
   state.groceryBaseItems = normalizeGroceryBaseItems([
     ...groceryBaseItems(),
@@ -1327,6 +1342,9 @@ function deleteReceipt() {
   const imageCount = Math.max(1, (receipt?.imageRefs || []).length);
   getScanContent().then((sc) => sc && sc.removeImages(deletedReceiptId, imageCount)).catch(() => {});
   recordDeletion("receipts", editingReceiptId);
+  receiptPriceHistory()
+    .filter((ph) => lineItemIds.has(ph.sourceReceiptLineItemId))
+    .forEach((ph) => recordDeletion("priceHistory", ph.id));
   state.receipts = (state.receipts || []).filter((r) => r.id !== editingReceiptId);
   state.priceHistory = normalizePriceHistory(
     receiptPriceHistory().filter((ph) => !lineItemIds.has(ph.sourceReceiptLineItemId)),
