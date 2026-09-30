@@ -4,7 +4,7 @@
 // ANTHROPIC_API_KEY and RESEND_API_KEY in Netlify environment variables.
 // Recipient comes from the app owner's auth account (see _recipient.js).
 
-const { buildWeeklyContext } = require("./build-weekly-context");
+const { buildWeeklyContext } = require("./_weekly-context");
 const { claudeCall } = require("./_claude");
 const { resolveRecipientEmail } = require("./_recipient");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
