@@ -41,7 +41,7 @@ const weatherCache = createWeatherCache(); // TTL cache + in-flight de-dup (test
 async function weatherRequest(params, ttl) {
   return weatherCache.request(JSON.stringify(params), ttl, async () => {
     // Bounded: a hung upstream shouldn't leave the page on "Loading…" forever.
-    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15000) : undefined;
+    const signal = typeof globalThis.AbortSignal?.timeout === "function" ? globalThis.AbortSignal.timeout(15000) : undefined;
     const res = await fetch(weatherApiUrl(params), { signal });
     if (!res.ok) { const e = new Error(`weather ${res.status}`); e.status = res.status; try { e.body = await res.json(); } catch {} throw e; }
     return res.json();
