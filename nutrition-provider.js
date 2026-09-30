@@ -7,26 +7,43 @@ async function getNutritionDomain() {
 }
 
 const USDA_BASE_URL = "https://api.nal.usda.gov/fdc/v1";
+const USDA_CONCURRENCY = 4;
+
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
 
 async function estimateRecipeNutrition(payload = {}, options = {}) {
   const { structureIngredient, calculateIngredientNutrition, sumNutrition, applySavedCorrection } = await getNutritionDomain();
   const apiKey = options.apiKey || process.env.USDA_FDC_API_KEY || process.env.USDA_API_KEY || "";
   const ingredients = (Array.isArray(payload.ingredients) ? payload.ingredients : []).map(structureIngredient);
   const corrections = payload.corrections && typeof payload.corrections === "object" ? payload.corrections : {};
-  const matches = [];
-  const uncached = [];
-  for (const ingredient of ingredients) {
+  // Look up ingredients concurrently (bounded) instead of one USDA request at a time.
+  // A per-ingredient lookup failure marks that ingredient unmatched rather than failing
+  // the whole estimate. Order of `matches` follows `ingredients`.
+  const results = await mapWithConcurrency(ingredients, USDA_CONCURRENCY, async (ingredient) => {
     if (!ingredient.normalizedName) {
-      matches.push(unmatchedIngredient(ingredient, "Ingredient name is missing."));
-      continue;
+      return { match: unmatchedIngredient(ingredient, "Ingredient name is missing.") };
     }
     const saved = applySavedCorrection(ingredient, corrections);
     let candidates = [];
+    let lookupFailed = false;
+    let lookupError = null;
     if (apiKey) {
       try {
         candidates = await searchFoods(ingredient.normalizedName, apiKey, options.fetchImpl);
       } catch (error) {
-        if (!saved) throw error;
+        lookupFailed = true;
+        lookupError = error;
       }
     }
     const reviewCandidates = saved && !candidates.some((candidate) => String(candidate.fdcId) === String(saved.fdcId))
@@ -36,16 +53,28 @@ async function estimateRecipeNutrition(payload = {}, options = {}) {
       ? reviewCandidates.find((candidate) => String(candidate.fdcId) === String(saved.fdcId)) || saved
       : candidates[0];
     if (!selected) {
-      uncached.push(ingredient.ingredientName || ingredient.rawLine);
-      matches.push({ ...unmatchedIngredient(ingredient, "No USDA match found."), candidates: [] });
-      continue;
+      const note = lookupFailed ? "USDA lookup failed for this ingredient." : "No USDA match found.";
+      return {
+        lookupError,
+        uncached: ingredient.ingredientName || ingredient.rawLine,
+        match: { ...unmatchedIngredient(ingredient, note), candidates: [] }
+      };
     }
-    matches.push({
-      ...calculateIngredientNutrition(ingredient, selected),
-      candidates: reviewCandidates,
-      savedCorrectionUsed: Boolean(saved)
-    });
-  }
+    return {
+      match: {
+        ...calculateIngredientNutrition(ingredient, selected),
+        candidates: reviewCandidates,
+        savedCorrectionUsed: Boolean(saved)
+      }
+    };
+  });
+  // Every attempted lookup failed and nothing matched (USDA down / rate-limited): fail
+  // the estimate rather than returning an all-zero one.
+  const attempted = results.filter((result) => result.match.normalizedName);
+  const failed = results.filter((result) => result.lookupError);
+  if (failed.length && failed.length === attempted.length) throw failed[0].lookupError;
+  const matches = results.map((result) => result.match);
+  const uncached = results.map((result) => result.uncached).filter(Boolean);
   if (!apiKey && uncached.length) {
     throw new Error(`Nutrition estimates require USDA_FDC_API_KEY for uncached ingredients: ${uncached.join(", ")}.`);
   }
