@@ -15,6 +15,7 @@
     }
   },
   "packageClassList": [
-    "LiveTtsPlugin"
+    "LiveTtsPlugin",
+    "AppleMusicPlugin"
   ]
 }

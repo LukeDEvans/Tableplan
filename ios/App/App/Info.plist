@@ -24,6 +24,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Live plays songs from your Apple Music subscription and shows your Apple Music library.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- Podcast feeds still publish plain-http enclosures; allow them for

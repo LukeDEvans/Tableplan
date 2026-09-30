@@ -31,7 +31,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeTts } from './native-bridge.js';
+import { isNativeApp, nativeTts, nativeAppleMusic } from './native-bridge.js';
 import { saveFile } from './save-file.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
@@ -30853,22 +30853,51 @@ async function startOwnedMusicTrack(canonical, provider) {
   musicAudio = null;
   teardownOwnedMusic();
   musicPlaybackProvider = provider;
-  const artist = canonical.artists?.[0]?.name || canonical.composer?.name || canonical.album || "";
-  const desc = { id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "owned", canonical };
+  const ownedDesc = (c) => {
+    const artist = c.artists?.[0]?.name || c.composer?.name || c.album || "";
+    return { id: c.id, title: c.title, artist, album: c.album, artworkUrl: c.artworkUrl || "", kind: "owned", canonical: c };
+  };
+  const desc = ownedDesc(canonical);
   musicCurTrack = desc;
+  // In the iOS app the next Apple songs go into the native queue too, so music
+  // keeps going with the phone locked (the web app is paused then). Only the run
+  // of Apple songs straight after this one; anything else still plays from here.
+  const upcoming = [];
+  if (nativeAppleMusic()) {
+    for (const it of musicQueueRest) {
+      if (it.kind !== "stream" || it.track?.provider !== provider.id || upcoming.length >= 25) break;
+      upcoming.push(it.track);
+    }
+  }
   // MusicKit reports the end of a song more than once (ended, then completed) —
   // advance the queue exactly once per started track, or every other song skips.
   let endedHandled = false;
   musicOwnedUnsub = provider.onChange((np) => {
     if (provider !== musicPlaybackProvider) return; // stale session
     musicOwnedNP = np;
+    // The native queue moved on to one of `upcoming`: catch the app's queue and
+    // mini-player up (without restarting playback).
+    const npId = np.track?.id;
+    if (upcoming.length && npId && npId !== musicCurTrack?.id) {
+      const k = musicQueueRest.findIndex((it) => it.kind === "stream" && it.track?.id === npId);
+      if (k >= 0 && upcoming.some((t) => t.id === npId)) {
+        if (musicCurTrack?.id) { state.mediaProgress = clearMediaPosition(state.mediaProgress, musicCurTrack.id); persist(); }
+        const next = musicQueueRest.splice(0, k + 1)[k];
+        const d = ownedDesc(next.track);
+        musicCurTrack = d;
+        setMiniPlayer(d.title || "Untitled", d.artist || d.album || "", d.artworkUrl || "");
+        setMusicMediaSession(d);
+        pushMusicHistory(d);
+        if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+      }
+    }
     updateMiniPlayerPlayBtn();
     updateMiniPlayerProgress();
     setMediaSessionPlaybackState(np.isPlaying ? "playing" : "paused");
     if (np.state === "ended" && !endedHandled) { endedHandled = true; onMusicEnded(); }
   });
   try {
-    await provider.play(canonical); // sets the provider's queue to this track, then plays
+    await provider.play(canonical, { upcoming }); // sets the provider's queue to this track (+ upcoming), then plays
     musicOwnedNP = provider.getNowPlaying();
   } catch (e) {
     console.warn("apple music play failed", e);
@@ -31475,7 +31504,11 @@ async function getMusicProviders() {
   const amCfg = state.appleMusic;
   if (amCfg && amCfg.enabled) {
     const am = await import("./music-provider-applemusic.js");
-    providers.push(am.createAppleMusicProvider({ storefront: amCfg.storefront || null }));
+    // In the iOS app, Apple's native MusicKit does sign-in and playback (MusicKit
+    // JS can't sign in or play reliably inside the app's web view).
+    const nativeAm = nativeAppleMusic();
+    const deps = nativeAm ? { getInstance: (await import("./music-applemusic-native.js")).nativeMusicKitLoader(nativeAm) } : {};
+    providers.push(am.createAppleMusicProvider({ storefront: amCfg.storefront || null }, deps));
   }
   providers.push(ia.createInternetArchiveProvider(), ia.createMusopenProvider());
   musicProviderRegistry = stream.createMusicProviderRegistry(providers);

@@ -58,4 +58,18 @@ export function nativeTts() {
   } catch { _liveTts = null; }
   return _liveTts;
 }
-export function nativeAppleMusic() { return null; }  // native MusicKit plugin
+// Native Apple Music (MusicKit via the AppleMusic plugin): sign-in, the Apple
+// Music API and playback. null in a browser/PWA → MusicKit JS as before.
+let _appleMusic;
+export function nativeAppleMusic() {
+  if (_appleMusic !== undefined) return _appleMusic;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _appleMusic = null;
+      return _appleMusic;
+    }
+    const p = registerPlugin("AppleMusic");
+    _appleMusic = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("AppleMusic")) ? p : null;
+  } catch { _appleMusic = null; }
+  return _appleMusic;
+}
