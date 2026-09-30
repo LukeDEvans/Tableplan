@@ -2789,8 +2789,18 @@ function bindEvents() {
       // Waking after a long suspension (phone PWAs sleep for days holding old
       // code in memory): reload so the current bundle runs before any sync.
       // All state is persisted on hide (below), so a reload loses nothing.
+      // The hide-time flush is fire-and-forget and may have been frozen/killed,
+      // so first await a bounded flush of anything still dirty, and skip the
+      // reload if it didn't land — reloading would drop those edits (INF-11).
       if (appHiddenAt && Date.now() - appHiddenAt > 6 * 3600 * 1000) {
-        window.location.reload();
+        appHiddenAt = 0;
+        flushBeforeStaleReload().then((ok) => {
+          if (ok) window.location.reload();
+          else {
+            console.warn("[resume] pending changes didn't save — skipping the stale-code reload this time.");
+            saveStateToSharedStorage(); // re-arm the normal save/retry loop
+          }
+        });
         return;
       }
       appHiddenAt = 0;
@@ -3654,6 +3664,26 @@ async function removePushSubscriptionForSignOut() {
     localStorage.removeItem("live_push_subscribed");
   } catch (e) {
     console.warn("[sign-out] push unsubscribe skipped:", e);
+  }
+}
+
+// Resolves true when there is nothing pending or the pending write succeeded
+// within the bound; false on failure/timeout (caller then keeps the page).
+async function flushBeforeStaleReload() {
+  window.clearTimeout(sharedStorageSaveTimer);
+  if (!sharedStorageReady || !activeSharedStorageProvider) {
+    // Not synced yet (or signed out): reloading can't lose cloud-bound edits
+    // that weren't going anywhere anyway; the localStorage mirror is current.
+    return true;
+  }
+  try {
+    return await Promise.race([
+      activeSharedStorageProvider.write().then(() => true),
+      new Promise((resolve) => window.setTimeout(() => resolve(false), SIGN_OUT_FLUSH_TIMEOUT_MS)),
+    ]);
+  } catch (e) {
+    console.warn("[resume] flush before reload failed:", e);
+    return false;
   }
 }
 
@@ -6993,6 +7023,33 @@ async function writeStateToSupabase() {
   if (error) throw error;
 }
 
+// Section writes issued while the page is hidden (the flush-on-hide) use
+// fetch keepalive so the browser finishes them even if the page is frozen or
+// discarded right after. Browsers cap keepalive bodies at 64 KiB IN TOTAL across
+// in-flight keepalive requests and REJECT anything over it, so only bodies that
+// fit a shared budget get the flag; larger ones go as ordinary fetches (the
+// stale-resume flush / next save retries them if they're cut off).
+const KEEPALIVE_BUDGET_BYTES = 60 * 1024;
+let keepaliveBytesInFlight = 0;
+
+async function sectionWriteFetch(url, init) {
+  const body = typeof init?.body === "string" ? init.body : "";
+  let reserved = 0;
+  if (typeof document !== "undefined" && document.visibilityState === "hidden"
+      && body.length <= KEEPALIVE_BUDGET_BYTES) {
+    const bytes = new TextEncoder().encode(body).length;
+    if (keepaliveBytesInFlight + bytes <= KEEPALIVE_BUDGET_BYTES) {
+      reserved = bytes;
+      keepaliveBytesInFlight += bytes;
+    }
+  }
+  try {
+    return await fetch(url, reserved ? { ...init, keepalive: true } : init);
+  } finally {
+    if (reserved) keepaliveBytesInFlight -= reserved;
+  }
+}
+
 // Writes one section row with optimistic locking. If another writer (other
 // device, server function) changed the row since we last saw it, the remote
 // data is fetched and key-level merged into local state first, then the write
@@ -7015,7 +7072,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
   const seen = lastSeenSectionStamp[rowId];
 
   if (seen) {
-    const res = await fetch(
+    const res = await sectionWriteFetch(
       // select=updated_at so the representation echoes ONLY the stamp we read
       // below — not the whole (multi-MB for media) state blob. Cuts write egress
       // dramatically; we never used the returned state here.
@@ -7035,7 +7092,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     if (!probe.ok) throw new Error(`Supabase section "${section}" probe failed: ${probe.status}`);
     const probeRows = await probe.json();
     if (!probeRows.length) {
-      const ins = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id&select=updated_at`, {
+      const ins = await sectionWriteFetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id&select=updated_at`, {
         // select=updated_at: same reason as the PATCH above — only the stamp is
         // read back, so don't have the insert echo the whole row.
         method: "POST",
