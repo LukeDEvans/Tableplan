@@ -140,6 +140,8 @@ _(none)_
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+- [ ] **[P3] Explore on a phone: the empty "Where to next?" text shows beside the trip list** (travel · styles/explore sidebar · 2026-09-30)
+      At 360px with no trips, the trip-list sidebar opens over the empty state and part of its text ("…r plan") shows at the right edge. Only when there are no trips. Found in the pre-deploy 360px pass. Suggest: hide the empty-state copy while the sidebar is open on narrow screens, or make the sidebar full-width there. Verdict: CONFIRMED (screenshot).
 - [ ] **[P3] Six older `node:test` files never run in CI** (tests · vitest.config.mjs · 2026-09-30)
       `daily-dozen`, `food-health`, `grocery-catalog`, `meal-plan-servings`, `nutrition-estimate` and `receipt-history` use `node:test`, so the vitest allowlist leaves them out on purpose. Nothing runs them, so they can rot silently. All pass today under `node --test` (43 tests). Suggest: add `node --test` for them to `npm test` / CI. Also found: `state-sync-resume.test.js` (PR #21) was never in the allowlist; added when merging #21.
 - [ ] **[P3] Local dev server still routes `/api/travel-map-url`** (dev · server.js:88 · 2026-09-30)
