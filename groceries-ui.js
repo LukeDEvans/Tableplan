@@ -3417,6 +3417,43 @@ function rekeyGroceryIdentityState() {
     nextDailyDozenTags[nextKey] = nextDailyDozenTags[nextKey] || tags;
   });
   state.groceryDailyDozenTags = normalizeGroceryDailyDozenTags(nextDailyDozenTags);
+
+  // Cycle-scoped "<cycle>::<itemKey>" maps follow the item's new identity too.
+  const rekeyCycleMap = (map, combine) => {
+    if (!map || typeof map !== "object" || Array.isArray(map)) return map;
+    const next = {};
+    Object.entries(map).forEach(([key, value]) => {
+      const separator = key.indexOf("::");
+      const nextKey = separator < 0
+        ? key
+        : `${key.slice(0, separator)}::${canonicalGroceryItemKey(key.slice(separator + 2)) || key.slice(separator + 2)}`;
+      next[nextKey] = nextKey in next ? combine(next[nextKey], value) : value;
+    });
+    return next;
+  };
+  state.groceryCleared = rekeyCycleMap(state.groceryCleared, (a, b) => Boolean(a || b));
+  state.groceryItemWeekOverride = rekeyCycleMap(state.groceryItemWeekOverride, (a, b) => a || b);
+
+  // Review dismissals are keyed "<recipeId>|<normalized display name>"; add the
+  // merged item's display-name key alongside the old one (old kept: harmless).
+  if (state.groceryReviewDismissed && typeof state.groceryReviewDismissed === "object") {
+    Object.entries({ ...state.groceryReviewDismissed }).forEach(([key, dismissed]) => {
+      if (!dismissed) return;
+      const separator = key.indexOf("|");
+      if (separator < 0) return;
+      const displayName = normalizeGroceryItemName(key.slice(separator + 1)).displayName;
+      if (!displayName) return;
+      state.groceryReviewDismissed[`${key.slice(0, separator)}|${normalize(displayName)}`] = true;
+    });
+  }
+
+  // Instacart orders remember which row keys were sent.
+  if (state.instacartOrders && typeof state.instacartOrders === "object") {
+    Object.values(state.instacartOrders).forEach((order) => {
+      if (!order || !Array.isArray(order.itemKeys)) return;
+      order.itemKeys = [...new Set(order.itemKeys.map((key) => canonicalGroceryItemKey(key) || key))];
+    });
+  }
 }
 
 function formatReceiptObservationDate(value) {
