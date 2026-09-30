@@ -388,6 +388,11 @@ export function createRecipesModule(deps) {
   let pendingNutritionEstimate = null;
   let pendingNutritionRecipeId = "";
   let pendingRecipePhotoFile = null;
+  // "Remove photo" must survive save: without this, saveRecipeFromForm's
+  // `recipePhotoUrl.value || currentRecipe.photoUrl` fallback restored the old photo.
+  let recipePhotoRemoved = false;
+  // Guards double-submit while a photo uploads (the await lets a second submit in).
+  let recipeSaveInFlight = false;
   let recipeTimer = null; // { totalSecs, remainingSecs, paused, intervalId }
   let recipeViewMealContext = null;
   let scanRecipeFiles = [];
@@ -1986,6 +1991,7 @@ function populateRecipeForm(recipe) {
   renderRecipeTagChoices(recipe?.tags || []);
   elements.recipeSourceUrl.value = recipe?.sourceUrl || "";
   pendingRecipePhotoFile = null;
+  recipePhotoRemoved = false;
   elements.recipePhotoInput.value = "";
   elements.recipePhotoUrl.value = recipe?.photoUrl || "";
   updateRecipePhotoPreview(recipe?.photoUrl || "");
@@ -2000,11 +2006,13 @@ function populateRecipeForm(recipe) {
 
 function handleRecipePhotoSelection() {
   pendingRecipePhotoFile = elements.recipePhotoInput.files?.[0] || null;
+  if (pendingRecipePhotoFile) recipePhotoRemoved = false;
   updateRecipePhotoPreview(elements.recipePhotoUrl.value, pendingRecipePhotoFile);
 }
 
 function removeRecipePhotoSelection() {
   pendingRecipePhotoFile = null;
+  recipePhotoRemoved = true;
   elements.recipePhotoInput.value = "";
   elements.recipePhotoUrl.value = "";
   updateRecipePhotoPreview("");
@@ -2035,9 +2043,25 @@ function renderRecipeTagChoices(selectedTags = []) {
 
 async function saveRecipeFromForm(event) {
   event.preventDefault();
+  if (recipeSaveInFlight) return;
+  recipeSaveInFlight = true;
+  const saveButton = document.getElementById("saveRecipeBtn");
+  if (saveButton) saveButton.disabled = true;
+  try {
+    await saveRecipeFromFormInner();
+  } finally {
+    recipeSaveInFlight = false;
+    if (saveButton) saveButton.disabled = false;
+  }
+}
+
+async function saveRecipeFromFormInner() {
   const id = elements.recipeId.value || createId("recipe");
+  // Pin the id before any await so a retry after a failed upload reuses it rather
+  // than minting a duplicate recipe.
+  elements.recipeId.value = id;
   const currentRecipe = activeRecipes().find((item) => item.id === id);
-  let photoUrl = elements.recipePhotoUrl.value || currentRecipe?.photoUrl || "";
+  let photoUrl = recipePhotoRemoved ? "" : (elements.recipePhotoUrl.value || currentRecipe?.photoUrl || "");
   if (pendingRecipePhotoFile) {
     try {
       photoUrl = await uploadRecipePhoto(pendingRecipePhotoFile, id, "recipe");
@@ -2091,6 +2115,7 @@ async function saveRecipeFromForm(event) {
   persist();
   saveRecipeRow(recipe);
   pendingRecipePhotoFile = null;
+  recipePhotoRemoved = false;
   elements.recipeDialog.close();
   render();
 
@@ -2151,6 +2176,7 @@ function renderCookLogRows(entries) {
     button.addEventListener("click", () => {
       elements.recipePhotoUrl.value = button.dataset.useLogPhoto || "";
       pendingRecipePhotoFile = null;
+      recipePhotoRemoved = !elements.recipePhotoUrl.value;
       elements.recipePhotoInput.value = "";
       updateRecipePhotoPreview(elements.recipePhotoUrl.value);
     });
