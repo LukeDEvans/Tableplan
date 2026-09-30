@@ -96,3 +96,24 @@ export async function writeDirtySections(dirty, writeOne) {
   });
   return { written, error };
 }
+
+// ── Resume refresh (ISSUES.md "app never re-reads cloud state on resume") ──
+// When the app comes back to the foreground it asks the server only for each
+// section row's updated_at (a few KB), then downloads just the rows whose stamp
+// differs from the one this session last saw. Bounded: runs only on a return
+// to the foreground, at most once per interval, never while one is in flight.
+
+/** Ids of probed rows ({id, updated_at}) whose stamp differs from the last-seen
+ *  stamp map — including rows this session has never seen. */
+export function changedSectionRowIds(probeRows, lastSeenStamps) {
+  return (probeRows || [])
+    .filter((r) => r && r.id && r.updated_at && lastSeenStamps?.[r.id] !== r.updated_at)
+    .map((r) => r.id);
+}
+
+/** True when a resume check may run: none in flight and at least minIntervalMs
+ *  since the last one started (0 = never checked). */
+export function resumeCheckDue({ now, lastCheckAt, inFlight, minIntervalMs }) {
+  if (inFlight) return false;
+  return !lastCheckAt || now - lastCheckAt >= minIntervalMs;
+}

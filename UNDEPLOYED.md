@@ -71,4 +71,16 @@ music, contacts and health. Inbox triage has a Mail AI toggle (on by default).
 3. Calendar: a subscribed ICS calendar shows events at the right local times.
 4. Next morning: the presynth cron log shows "triggered worker → 202" (not 403).
 
+## Refresh changed data when the app returns (PR #21)
+PR: https://github.com/LukeDEvans/Tableplan/pull/21
+
+When a tab or the iPhone app comes back to the foreground, it now checks which synced
+sections changed on the server (a few KB) and pulls in just those. So newsletters the mail
+sweep saved, or edits from another device, show up without restarting. At most once every
+2 minutes, only on return to the foreground (no polling).
+
+**After deploying:**
+1. Leave the iPhone app in the background, edit something on the web, reopen the app after
+   2+ minutes: the edit is there without a restart.
+
 Checks for work that's already live are in [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md).

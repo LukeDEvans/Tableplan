@@ -22,7 +22,7 @@ import { normalizeContacts, normalizeContactGroups, createContactsModule, buildC
 import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
-import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections } from './state-sync.js';
+import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
@@ -478,17 +478,102 @@ async function refreshActiveSectionFromServer(stateId, section, keys) {
   if (!res.ok) return;
   const rows = await res.json();
   if (!rows.length) return;
-  lastSeenSectionStamp[rowId] = rows[0].updated_at;
-  const { stateUpdatedAt: remoteTs, ...remoteData } = rows[0].state || {};
+  mergeRemoteSectionRow(section, keys, rows[0]);
+  mirrorStateToLocalStorage();
+  render();
+}
+
+// Key-level merge of one fetched section row ({id, state, updated_at}) into
+// `state` — the same merge the write-conflict path uses. If this section had
+// no unsaved local edits, it is marked as written (it now equals the server
+// plus nothing new), so the refresh doesn't trigger a pointless write-back;
+// if it did have unsaved edits, they stay pending and upload on the next save.
+function mergeRemoteSectionRow(section, keys, row) {
+  const hadUnsavedEdits = !!lastWrittenSections
+    && lastWrittenSections[section] !== JSON.stringify(extractSectionData(keys));
+  lastSeenSectionStamp[row.id] = row.updated_at;
+  const { stateUpdatedAt: remoteTs, ...remoteData } = row.state || {};
   const localFrag = { ...extractSectionData(keys), tombstones: state.tombstones, stateUpdatedAt: state.stateUpdatedAt || "" };
   const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
   const merged = (state.stateUpdatedAt || "") >= (remoteTs || "")
     ? mergeStates(localFrag, remoteFrag)
     : mergeStates(remoteFrag, localFrag);
   for (const key of keys) { if (merged[key] !== undefined) state[key] = merged[key]; }
-  mirrorStateToLocalStorage();
-  if (lastWrittenSections) lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
-  render();
+  if (lastWrittenSections && !hadUnsavedEdits) lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
+}
+
+// ── Resume refresh ────────────────────────────────────────────────────────────
+// State loads from Supabase at boot; a long-lived tab or the native app resumed
+// from the background otherwise keeps showing what it had (server-side writes —
+// e.g. the mail sweep's newsletter → Media article — never appeared until a
+// restart). On return to the foreground: fetch only id + updated_at for this
+// user's section rows (a few KB), then download just the rows whose stamp moved.
+// Bounded per CLAUDE.md's no-polling rule: fires only on visibilitychange →
+// visible, at most once per RESUME_REFRESH_MIN_INTERVAL_MS, never re-entrant,
+// and never triggers itself.
+const RESUME_REFRESH_MIN_INTERVAL_MS = 2 * 60 * 1000;
+let resumeRefreshAt = 0;
+let resumeRefreshInFlight = false;
+
+async function refreshChangedSectionsOnResume() {
+  if (!resumeCheckDue({ now: Date.now(), lastCheckAt: resumeRefreshAt, inFlight: resumeRefreshInFlight, minIntervalMs: RESUME_REFRESH_MIN_INTERVAL_MS })) return;
+  // Only once the boot hydrate has succeeded against Supabase, and signed in.
+  if (!sharedStorageReady || activeSharedStorageProvider?.load !== loadStateFromSupabase) return;
+  if (!authSession?.access_token || navigator.onLine === false) return;
+  resumeRefreshInFlight = true;
+  resumeRefreshAt = Date.now();
+  try {
+    const stateId = supabaseConfig().stateId;
+    const { allIds } = sectionRowIdsFor(stateId);
+    const probe = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${allIds.join(",")})&select=id,updated_at`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!probe.ok) return;
+    const changed = changedSectionRowIds(await probe.json(), lastSeenSectionStamp);
+    if (!changed.length) return;
+
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${changed.join(",")})&select=id,state,updated_at`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    // Map rows to sections by the scope in effect NOW (a household/personal
+    // flip during the fetch must not merge a row into the wrong scope).
+    const { activeIds } = sectionRowIdsFor(stateId);
+    let activeChanged = false;
+    let shadowChanged = false;
+    for (const row of rows) {
+      const activeIdx = activeIds.indexOf(row.id);
+      if (activeIdx >= 0) {
+        const section = Object.keys(STATE_SECTIONS)[activeIdx];
+        mergeRemoteSectionRow(section, STATE_SECTIONS[section], row);
+        activeChanged = true;
+        continue;
+      }
+      const shadowSection = Object.keys(STATE_SECTIONS).find((s) => inactiveSectionRowId(stateId, s) === row.id);
+      if (shadowSection) {
+        const { stateUpdatedAt, schemaVersion, ...data } = row.state || {};
+        shadowSections[shadowSection] = data;
+        lastSeenSectionStamp[row.id] = row.updated_at;
+        shadowChanged = true;
+      }
+    }
+    if (shadowChanged) persistShadowSections();
+    if (activeChanged) {
+      mirrorStateToLocalStorage();
+      invalidateFinanceLabeled();
+      planRangeCache.clear();
+      planAppDataIndex = null;
+      render();
+    }
+    console.info(`[sync] resume refresh: ${rows.length} changed section row(s) merged`);
+  } catch (e) {
+    console.warn("[sync] resume refresh failed (next resume will retry):", e.message);
+  } finally {
+    resumeRefreshInFlight = false;
+  }
 }
 
 // The gateable app pages — the single source of truth for every page-access
@@ -2805,6 +2890,9 @@ function bindEvents() {
         return;
       }
       appHiddenAt = 0;
+      // Back in the foreground: pull in anything the server or another device
+      // saved meanwhile (cheap stamp check, throttled — see the function).
+      refreshChangedSectionsOnResume();
       return;
     }
     appHiddenAt = Date.now();
@@ -6930,6 +7018,14 @@ function assembleSectionRows(rows) {
 // writer got there first and we merge before retrying.
 const lastSeenSectionStamp = {};
 
+// Row ids for every section: the active scope's rows (index-aligned with
+// Object.keys(STATE_SECTIONS)) plus the inactive-scope shadow rows.
+function sectionRowIdsFor(stateId) {
+  const activeIds = Object.keys(STATE_SECTIONS).map(s => sectionRowId(stateId, s));
+  const inactiveIds = Object.keys(STATE_SECTIONS).map(s => inactiveSectionRowId(stateId, s)).filter(Boolean);
+  return { activeIds, allIds: [...new Set([...activeIds, ...inactiveIds])] };
+}
+
 async function loadStateFromSupabase() {
   const config = supabaseConfig();
   const stateId = config.stateId;
@@ -6937,9 +7033,8 @@ async function loadStateFromSupabase() {
   // One fetch covers every row this user can see: the household's section
   // rows plus this member's personal rows. Which of the two feeds `state`
   // for a given section depends on its scope; the other lands in the shadow.
-  const activeIds = Object.keys(STATE_SECTIONS).map(s => sectionRowId(stateId, s));
-  const inactiveIds = Object.keys(STATE_SECTIONS).map(s => inactiveSectionRowId(stateId, s)).filter(Boolean);
-  const allIds = [...new Set([...activeIds, ...inactiveIds])].join(",");
+  const { activeIds, allIds: allIdList } = sectionRowIdsFor(stateId);
+  const allIds = allIdList.join(",");
 
   const res = await fetch(
     `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${allIds})&select=id,state,updated_at`,
