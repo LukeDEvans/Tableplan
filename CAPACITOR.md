@@ -142,6 +142,7 @@ uses MusicKit JS. The web side is `music-applemusic-native.js`.
 **One-time setup:** developer.apple.com → Certificates, Identifiers & Profiles →
 Identifiers → `com.mrlukedevans.live` → **App Services** tab → tick **MusicKit** →
 Save. Without it the Apple Music API calls fail with an authorization error.
+(Already enabled for `com.mrlukedevans.live` — Luke, 2026-09-30.)
 
 **Check on the phone after a TestFlight build:** Settings → Apple Music → turn it on
 → Sign in (Apple's prompt appears) → play a Discover song; lock the phone and let it
