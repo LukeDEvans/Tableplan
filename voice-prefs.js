@@ -41,3 +41,31 @@ export function voiceEnabledForDomain(aiSettings, domain) {
   const enabled = aiSettings?.voice?.enabledFor;
   return !enabled || enabled[domain] !== false;
 }
+
+// A per-device article voice layered over the synced (household) settings. The
+// iPhone app reads articles with the on-device Apple voice ("device") so they
+// keep playing with the phone locked, while the web keeps the household's
+// chosen voice. `deviceVoiceId` falls back to "device"; speed still comes from
+// the synced settings. Returns a new object; `aiSettings` isn't changed.
+export function withDeviceArticleVoice(aiSettings, deviceVoiceId) {
+  const ai = (aiSettings && typeof aiSettings === "object") ? aiSettings : {};
+  const voice = (ai.voice && typeof ai.voice === "object") ? ai.voice : {};
+  const overrides = (voice.overrides && typeof voice.overrides === "object") ? voice.overrides : {};
+  const article = (overrides.article && typeof overrides.article === "object") ? overrides.article : {};
+  return {
+    ...ai,
+    voice: { ...voice, overrides: { ...overrides, article: { ...article, voiceId: deviceVoiceId || "device" } } },
+  };
+}
+
+// The Apple voices worth listing for reading: English, no novelty voices, best
+// quality first. `defaultId` (the plugin's automatic pick) leads its tier.
+export function readableNativeVoices(voices, defaultId) {
+  const rank = { premium: 0, enhanced: 1, default: 2 };
+  return (Array.isArray(voices) ? voices : [])
+    .filter((v) => v && v.id && /^en/i.test(v.lang || "") && !v.novelty)
+    .sort((a, b) =>
+      ((rank[a.quality] ?? 3) - (rank[b.quality] ?? 3)) ||
+      ((b.id === defaultId) - (a.id === defaultId)) ||
+      String(a.name).localeCompare(String(b.name)));
+}

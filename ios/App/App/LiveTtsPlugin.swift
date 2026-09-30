@@ -97,20 +97,59 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
 
     @objc func getVoices(_ call: CAPPluginCall) {
         let voices = AVSpeechSynthesisVoice.speechVoices().map { v -> [String: Any] in
-            var quality = "default"
-            switch v.quality {
-            case .premium: quality = "premium"
-            case .enhanced: quality = "enhanced"
-            default: quality = "default"
-            }
             return [
                 "id": v.identifier,
                 "name": v.name,
                 "lang": v.language,
-                "quality": quality
+                "quality": LiveTtsPlugin.qualityName(v),
+                "novelty": LiveTtsPlugin.isNovelty(v)
             ]
         }
-        call.resolve(["voices": voices])
+        // The voice the plugin uses when the app hasn't picked one ("Automatic").
+        var out: [String: Any] = ["voices": voices]
+        if let best = LiveTtsPlugin.bestVoice() { out["defaultId"] = best.identifier }
+        call.resolve(out)
+    }
+
+    private static func qualityName(_ v: AVSpeechSynthesisVoice) -> String {
+        switch v.quality {
+        case .premium: return "premium"
+        case .enhanced: return "enhanced"
+        default: return "default"
+        }
+    }
+
+    // Novelty/effects voices (Bells, Zarvox, …) and the old Eloquence voices are
+    // not reading voices; never pick them automatically.
+    private static func isNovelty(_ v: AVSpeechSynthesisVoice) -> Bool {
+        if #available(iOS 17.0, *), v.voiceTraits.contains(.isNoveltyVoice) { return true }
+        let id = v.identifier
+        return id.contains("speech.synthesis.voice") || id.contains("eloquence")
+    }
+
+    // Best installed English reading voice: Premium > Enhanced > standard, the
+    // phone's own English region first (en-US for most), then en-US, then any en.
+    // Downloading a better voice in iOS Settings makes it the default next time,
+    // with nothing to change in the app.
+    static func bestVoice() -> AVSpeechSynthesisVoice? {
+        let region = AVSpeechSynthesisVoice.currentLanguageCode()
+        let preferredLang = region.hasPrefix("en") ? region : "en-US"
+        func qRank(_ v: AVSpeechSynthesisVoice) -> Int {
+            switch v.quality {
+            case .premium: return 0
+            case .enhanced: return 1
+            default: return 2
+            }
+        }
+        func lRank(_ v: AVSpeechSynthesisVoice) -> Int {
+            if v.language == preferredLang { return 0 }
+            if v.language == "en-US" { return 1 }
+            return 2
+        }
+        let pool = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") && !isNovelty($0) }
+        return pool.min { a, b in
+            (qRank(a), lRank(a), a.name) < (qRank(b), lRank(b), b.name)
+        } ?? AVSpeechSynthesisVoice(language: "en-US")
     }
 
     // Start reading `text` now, replacing whatever was playing and clearing the
@@ -322,10 +361,12 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         utteranceBase = base
         lastLocation = base
         let utterance = AVSpeechUtterance(string: base > 0 ? ns.substring(from: base) : item.text)
-        if let vid = voiceId, let voice = AVSpeechSynthesisVoice(identifier: vid) {
+        // The chosen voice if it's installed on this phone, else the best one
+        // that is (a synced choice may name a voice another device doesn't have).
+        if let vid = voiceId, !vid.isEmpty, let voice = AVSpeechSynthesisVoice(identifier: vid) {
             utterance.voice = voice
         } else {
-            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+            utterance.voice = LiveTtsPlugin.bestVoice()
         }
         // Map our "1.0 = normal" onto AVSpeech's rate scale (its default is normal).
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * max(0.5, min(2.0, rate))

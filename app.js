@@ -56,6 +56,7 @@ import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHisto
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
 import { createVoiceService } from './voice-service.js';
+import { resolveVoicePrefs, withDeviceArticleVoice, readableNativeVoices } from './voice-prefs.js';
 import { createGoogleProvider, createKokoroProvider, KOKORO_MODEL } from './tts-provider.js';
 import { chunkText as kokoroChunkText, sanitizeKey as kokoroSanitizeKey } from './kokoro-core.mjs';
 import { ttsCacheKey } from './tts-cache-identity.js';
@@ -15625,7 +15626,7 @@ const VOICE_SPIN_SVG = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
 // resolver reads (voice-prefs.js). Base on the currently-resolved values so a
 // partial patch ({voiceId} or {speed}) never drops the other field.
 function setVoiceDefaultPref(patch) {
-  const c = getVoiceService().voiceForDomain("article");
+  const c = resolveVoicePrefs(state.aiSettings || {}, "article"); // synced values, not this device's override
   if (!state.aiSettings || typeof state.aiSettings !== "object") state.aiSettings = {};
   const voice = (state.aiSettings.voice && typeof state.aiSettings.voice === "object") ? state.aiSettings.voice : {};
   state.aiSettings.voice = { ...voice, default: { voiceId: c.voiceId, speed: c.speed, ...patch } };
@@ -15924,11 +15925,25 @@ function renderContextSettingsDialog(kind) {
         <span class="vpick-mini" role="button" tabindex="0" data-native-preview-id="${escapeHtml(v.id)}" aria-label="Preview ${escapeHtml(v.name)}">${VOICE_PLAY_SVG}</span>
         <svg class="vpick-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
       </button>`;
+    // "Automatic" = the best voice installed on this iPhone (picked by the plugin),
+    // so there's nothing to set up; downloading a better voice upgrades it by itself.
+    const autoVoice = (nativeVoicesCache || []).find((v) => v.id === nativeDefaultVoiceId) || (nativeVoicesCache || [])[0] || null;
+    const autoSelected = curVoice?.id === "device" && !curNativeId;
+    const autoRow = `
+      <button class="vpick-voice" type="button" data-native-voice-id="" aria-selected="${autoSelected ? "true" : "false"}">
+        <span class="vpick-dot">★</span>
+        <span class="vpick-nm">
+          <span class="n">Automatic${autoVoice ? ` · ${escapeHtml(autoVoice.name)}` : ""}${autoVoice?.quality === "premium" ? ' <span class="vpick-badge">Premium</span>' : autoVoice?.quality === "enhanced" ? ' <span class="vpick-badge">Enhanced</span>' : ""}</span>
+          <span class="s">The best voice on this iPhone</span>
+        </span>
+        <span class="vpick-mini" role="button" tabindex="0" data-native-preview-id="" aria-label="Preview automatic voice">${VOICE_PLAY_SVG}</span>
+        <svg class="vpick-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      </button>`;
+    const hasGoodVoice = (nativeVoicesCache || []).some((v) => v.quality === "premium" || v.quality === "enhanced");
+    const voiceTip = `<p class="vpick-note">${hasGoodVoice ? "For more voices" : "For a much more natural voice"}, open iPhone Settings → Accessibility → Spoken Content (Read &amp; Speak on newer iPhones) → Voices → English, and download one marked Enhanced or Premium, such as Ava or Zoe. Automatic switches to it on its own.</p>`;
     const nativeGroupHtml = nativeVoicesCache === null
-      ? `<div class="vpick-group">On-device · your iPhone voices</div><p class="vpick-note">Loading device voices…</p>`
-      : (nativeVoicesCache.length
-          ? `<div class="vpick-group">On-device · your iPhone voices</div>${nativeVoicesCache.map(nativeVoiceRow).join("")}`
-          : `<div class="vpick-group">On-device</div><p class="vpick-note">No English voices installed. Add higher-quality voices in Settings → Accessibility → Spoken Content → Voices.</p>`);
+      ? `<div class="vpick-group">Apple voices · keep playing when locked</div><p class="vpick-note">Loading device voices…</p>`
+      : `<div class="vpick-group">Apple voices · keep playing when locked</div>${autoRow}${nativeVoicesCache.map(nativeVoiceRow).join("")}${voiceTip}`;
     const SPEEDS = [
       { v: 0.75, label: "0.75×" }, { v: 0.9, label: "0.9×" }, { v: 1.0, label: "1.0×" },
       { v: 1.1, label: "1.1×" }, { v: 1.25, label: "1.25×" }, { v: 1.5, label: "1.5×" }, { v: 2.0, label: "2.0×" },
@@ -15966,7 +15981,7 @@ function renderContextSettingsDialog(kind) {
       : (device.length ? " An on-device voice (your iPhone's own voices) starts instantly and stays on your device, but pauses when you leave the app or lock the screen." : "");
 
     elements.contextSettingsBody.innerHTML = `
-      <p class="settings-hint">One voice for reading your articles aloud. Voices marked <span class="vpick-badge">Private</span> are spoken on your own server — the text never goes to a third party.</p>
+      <p class="settings-hint">${nativeMode ? "Your voice choice here applies to this iPhone only. " : ""}One voice for reading your articles aloud. Voices marked <span class="vpick-badge">Private</span> are spoken on your own server — the text never goes to a third party.</p>
       <div class="vpick-card">
         <div class="vpick-head">Voice</div>
         <div class="vpick-current">
@@ -15984,8 +15999,9 @@ function renderContextSettingsDialog(kind) {
       </div>
       <div class="vpick-card">
         <div class="vpick-head">Choose a voice <span class="vpick-hint">tap ▶ to preview</span></div>
-        ${priv.length ? `<div class="vpick-group">Your voices · private</div>${priv.map(voiceRow).join("")}` : ""}
-        ${nativeMode ? nativeGroupHtml : (device.length ? `<div class="vpick-group">On-device · foreground only</div>${device.map(voiceRow).join("")}` : "")}
+        ${nativeMode ? nativeGroupHtml : ""}
+        ${priv.length ? `<div class="vpick-group">Your voices · private${nativeMode ? " · stop when locked" : ""}</div>${priv.map(voiceRow).join("")}` : ""}
+        ${!nativeMode && device.length ? `<div class="vpick-group">On-device · foreground only</div>${device.map(voiceRow).join("")}` : ""}
         ${cloud.length ? `<div class="vpick-group">Cloud</div>${cloud.map(voiceRow).join("")}` : ""}
       </div>
       <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.${onDeviceNote}</p>`;
@@ -15993,9 +16009,16 @@ function renderContextSettingsDialog(kind) {
     // Select a voice (writes the global default, preserving any other voice prefs).
     elements.contextSettingsBody.querySelectorAll(".vpick-voice").forEach((row) => {
       row.addEventListener("click", (e) => {
-        if (row.dataset.nativeVoiceId) return;               // native rows handled below
+        if (row.dataset.nativeVoiceId !== undefined) return;  // native rows handled below
         if (e.target.closest("[data-preview-id]")) return;   // preview handled separately
-        setVoiceDefaultPref({ voiceId: row.dataset.voiceId });
+        if (nativeMode) {
+          // In the app the article voice is this device's own choice (see effectiveAiSettings).
+          deviceVoiceSet(DEVICE_ARTICLE_VOICE_KEY, row.dataset.voiceId);
+          clearArticleTtsCaches();
+          warmKokoroVoiceIfKokoro();
+        } else {
+          setVoiceDefaultPref({ voiceId: row.dataset.voiceId });
+        }
         stopVoicePreview();
         renderContextSettingsDialog("voice");
       });
@@ -16005,10 +16028,9 @@ function renderContextSettingsDialog(kind) {
     elements.contextSettingsBody.querySelectorAll("[data-native-voice-id]").forEach((row) => {
       row.addEventListener("click", (e) => {
         if (e.target.closest("[data-native-preview-id]")) return;
-        if (!state.aiSettings || typeof state.aiSettings !== "object") state.aiSettings = {};
-        state.aiSettings.nativeVoiceId = row.dataset.nativeVoiceId;
-        setVoiceDefaultPref({ voiceId: "device" });
-        persist();
+        deviceVoiceSet(DEVICE_ARTICLE_VOICE_KEY, "");                      // Apple voice (this device's default)
+        deviceVoiceSet(DEVICE_NATIVE_VOICE_KEY, row.dataset.nativeVoiceId); // "" = Automatic
+        clearArticleTtsCaches();
         renderContextSettingsDialog("voice");
       });
     });
@@ -16023,7 +16045,11 @@ function renderContextSettingsDialog(kind) {
       });
     });
     elements.contextSettingsBody.querySelectorAll("[data-preview-id]").forEach((btn) => {
-      btn.addEventListener("click", (e) => { e.stopPropagation(); previewVoice(btn.dataset.previewId, btn); });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (nativeMode && btn.dataset.previewId === "device") { previewNativeVoice(curNativeId, btn); return; }
+        previewVoice(btn.dataset.previewId, btn);
+      });
     });
     return;
   }
@@ -29411,7 +29437,7 @@ registerMediaProvider({
   id: "podcast",
   canPlay: () => true,
   play: (item, { autoplay = true, advance = false } = {}) => {
-    // All queue + Apple voice in the native app → the plugin plays it (see
+    // All queue in the native app → the plugin plays it (see
     // nativeQueueHandlesPodcasts); falls back to the web player if it can't.
     if (autoplay && mediaAllQueueId === item.id && nativeQueueHandlesPodcasts()) {
       startNativePodcast(item.id).then((ok) => { if (!ok) openPodcastEpisode(item.id, { autoplay, advance }); });
@@ -30580,7 +30606,16 @@ function onPodcastEnded() {
   advanceMediaAllQueue(podcastCurEpisode.id); // seamless hand-off when playing the All queue
 }
 
-function startPodcastPlayback(episode, show, { autoplay = true, advance = false } = {}) {
+function startPodcastPlayback(episode, show, { autoplay = true, advance = false, forceWeb = false } = {}) {
+  // iPhone app: play on the native player (see nativeQueueHandlesPodcasts). A
+  // paused load (autoplay:false) stays on the web element until play is tapped,
+  // which hands it over (togglePodcastPlayPause).
+  if (autoplay && !forceWeb && nativeQueueHandlesPodcasts() && episode && episode.audioUrl) {
+    startNativePodcastEpisode(episode, show).then((ok) => {
+      if (!ok) startPodcastPlayback(episode, show, { autoplay, advance, forceWeb: true });
+    });
+    return;
+  }
   if (advance) {
     // Queue auto-advance: NEVER pause the engine first. A pause deactivates the
     // iOS audio session while backgrounded, and the follow-up play() on the new
@@ -30708,6 +30743,16 @@ function updatePodcastMarkBtn() {
 
 function togglePodcastPlayPause() {
   if (!podcastAudio) { if (nativePodcastSession()) toggleListenPlayPause(); return; }
+  if (podcastAudio.paused && nativeQueueHandlesPodcasts() && podcastCurEpisode?.audioUrl) {
+    // Loaded paused on the web element (autoplay:false) → start it natively from
+    // wherever the user left it.
+    const ep = podcastCurEpisode, sh = podcastCurShow;
+    const pos = Number(podcastAudio.currentTime) || 0;
+    if (pos > 10) saveNativePodcastProgress(ep.id, pos, Number(podcastAudio.duration) || 0, true);
+    stopPodcastAudio();
+    startNativePodcastEpisode(ep, sh).then((ok) => { if (!ok) startPodcastPlayback(ep, sh, { autoplay: true, forceWeb: true }); });
+    return;
+  }
   if (podcastAudio.paused) { podcastAudio.play().catch(() => {}); }
   else { podcastAudio.pause(); }
 }
@@ -34847,9 +34892,26 @@ function getVoiceService() {
       google: createGoogleProvider({ callFn: callNetlifyFunction }),
       kokoro: createKokoroProvider({ synthViaProxy: kokoroSynthViaProxy }), // Phase 1A: session-gated kokoro-tts proxy
     },
-    getAiSettings: () => state.aiSettings || {},
+    getAiSettings: () => effectiveAiSettings(),
   });
   return voiceServiceSingleton;
+}
+
+// ── Per-device voice (iPhone app) ────────────────────────────────────────────
+// The voice settings sync across the household, but the iPhone app reads
+// articles with an Apple voice so they keep playing (with lock-screen and AirPods
+// controls) while the phone is locked. So in the app the article voice is a
+// per-device choice, defaulting to the Apple voice, and choosing a voice there
+// never changes the web app's voice for anyone.
+const DEVICE_ARTICLE_VOICE_KEY = "live.device.articleVoiceId";
+const DEVICE_NATIVE_VOICE_KEY = "live.device.nativeVoiceId";
+function deviceVoiceGet(key) { try { return localStorage.getItem(key) || ""; } catch { return ""; } }
+function deviceVoiceSet(key, value) {
+  try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch { /* storage unavailable */ }
+}
+function effectiveAiSettings() {
+  const ai = state.aiSettings || {};
+  return nativeTts() ? withDeviceArticleVoice(ai, deviceVoiceGet(DEVICE_ARTICLE_VOICE_KEY)) : ai;
 }
 
 // Keep-warm: when a Listen is plausibly imminent (an article opened, the media
@@ -35216,27 +35278,25 @@ function systemVoiceElapsedSec() {
 // The user's chosen native (AVSpeechSynthesizer) voice identifier, or "" to let
 // the plugin pick a good en-US default.
 function nativeVoiceIdPref() {
-  try { return (state.aiSettings && state.aiSettings.nativeVoiceId) || ""; } catch { return ""; }
+  return deviceVoiceGet(DEVICE_NATIVE_VOICE_KEY); // "" = Automatic (the plugin's best installed voice)
 }
 
 // The device's installed voices (via the native plugin), loaded once and cached.
 // English only, best quality first (Premium/Enhanced are the near-Siri voices).
 let nativeVoicesCache = null;
+let nativeDefaultVoiceId = ""; // the plugin's automatic pick (best installed voice)
 async function loadNativeVoices() {
   const tts = nativeTts();
   if (!tts) { nativeVoicesCache = []; return []; }
   try {
     const r = await tts.getVoices();
-    let vs = Array.isArray(r && r.voices) ? r.voices : [];
-    vs = vs.filter((v) => /^en/i.test(v.lang || ""));
-    const rank = { premium: 0, enhanced: 1, default: 2 };
-    vs.sort((a, b) => ((rank[a.quality] ?? 3) - (rank[b.quality] ?? 3)) || String(a.name).localeCompare(String(b.name)));
-    nativeVoicesCache = vs;
+    nativeDefaultVoiceId = (r && r.defaultId) || "";
+    nativeVoicesCache = readableNativeVoices(r && r.voices, nativeDefaultVoiceId);
   } catch { nativeVoicesCache = []; }
   return nativeVoicesCache;
 }
 function nativeVoiceName(id) {
-  const v = (nativeVoicesCache || []).find((x) => x.id === id);
+  const v = (nativeVoicesCache || []).find((x) => x.id === (id || nativeDefaultVoiceId));
   return v ? v.name : null;
 }
 async function previewNativeVoice(voiceId, btn) {
@@ -35391,16 +35451,24 @@ async function startListenNativeTts(article) {
 // on the plugin — podcasts included — so every hand-off (article→podcast,
 // podcast→article, podcast→podcast) happens natively and survives a locked
 // screen. Podcasts played from the Podcasts tab keep the web player.
+// In the iPhone app every podcast plays on the native player (LiveTtsPlugin's
+// AVPlayer), like Apple Music: it keeps playing, pausing and resuming with the
+// phone locked and from AirPods, which the web view's player can't do once iOS
+// suspends the page. The web app keeps the web player.
 function nativeQueueHandlesPodcasts() {
-  return !!nativeTts() && isSystemArticleVoice();
+  return !!nativeTts();
 }
 
-// Start an All-queue podcast episode on the native player. Returns false when it
-// can't (no audio URL / no plugin) so the caller uses the web player instead.
+// Start a podcast episode on the native player. Returns false when it can't (no
+// audio URL / no plugin) so the caller uses the web player instead.
 async function startNativePodcast(episodeId) {
-  const tts = nativeTts();
   const { episode, show } = findPodcastEpisode(episodeId);
+  return startNativePodcastEpisode(episode, show);
+}
+async function startNativePodcastEpisode(episode, show) {
+  const tts = nativeTts();
   if (!tts || !episode || !episode.audioUrl) return false;
+  const episodeId = episode.id;
   // Same rule as startPodcastPlayback: nothing else plays at the same time.
   stopPodcastAudio(); stopListen(); stopMusicPlayback(); stopRadio();
   const genId = ++listenGenId;
@@ -35423,7 +35491,8 @@ async function startNativePodcast(episodeId) {
   } catch {
     if (session.genId !== listenGenId) return true;
     teardownSystemVoice();
-    openPodcastEpisode(episodeId); // fall back to the web player
+    showPodcastEpisodePanel(episodeId);
+    startPodcastPlayback(episode, show, { autoplay: true, forceWeb: true }); // fall back to the web player
   }
   return true;
 }
@@ -35454,6 +35523,7 @@ function nativeUpcomingItems(anchorId, listTab, n) {
       const item = byId.get(id);
       if (!item || !mediaItemPlayable(item)) continue; // advanceMediaAllQueue skips these too
       if (item.type === "article") {
+        if (!isSystemArticleVoice()) break; // a non-Apple voice reads it in the web player (JS advance)
         const a = byArticleId.get(id);
         if (!a) break;
         out.push({ type: "article", article: a });
