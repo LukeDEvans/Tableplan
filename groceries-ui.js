@@ -1263,6 +1263,18 @@ function closeReceiptEditView() {
   if (elements.shopReceiptsEditView) elements.shopReceiptsEditView.hidden = true;
 }
 
+const RECEIPT_LINE_UNITS = ["each", "count", "oz", "lb", "g", "kg", "ml", "l", "fl oz", "pt", "qt", "gal"];
+
+// Unit <select> options for a receipt line. An unknown scanned unit is kept as an
+// extra, selected option so saving doesn't silently rewrite it to "each".
+function receiptUnitOptionsHtml(selectedUnit) {
+  const selected = String(selectedUnit || "each").trim().toLowerCase() || "each";
+  const units = RECEIPT_LINE_UNITS.includes(selected) ? RECEIPT_LINE_UNITS : [...RECEIPT_LINE_UNITS, selected];
+  return units.map((unit) => (
+    `<option value="${escapeHtml(unit)}" ${selected === unit ? "selected" : ""}>${escapeHtml(unit)}</option>`
+  )).join("");
+}
+
 function addEditReceiptLine(line = {}) {
   const id = line.id || createId("rl");
   const row = document.createElement("div");
@@ -1276,11 +1288,9 @@ function addEditReceiptLine(line = {}) {
     <input data-receipt-category value="${escapeHtml(line.category || "")}" placeholder="Category" aria-label="Category" />
     <input data-receipt-quantity type="number" min="0.001" step="0.001" value="${escapeHtml(String(line.quantity ?? 1))}" aria-label="Quantity" />
     <select data-receipt-unit aria-label="Unit">
-      ${["each", "count", "oz", "lb", "g", "kg", "ml", "l", "fl oz"].map((unit) => (
-        `<option value="${unit}" ${(line.unit || "each") === unit ? "selected" : ""}>${unit}</option>`
-      )).join("")}
+      ${receiptUnitOptionsHtml(line.unit)}
     </select>
-    <input data-receipt-price type="number" min="0" step="0.01" value="${escapeHtml(String(line.totalPrice ?? 0))}" aria-label="Total price" />
+    <input data-receipt-price type="number" step="0.01" value="${escapeHtml(String(line.totalPrice ?? 0))}" aria-label="Total price" />
     <input data-receipt-discount type="number" min="0" step="0.01" value="${escapeHtml(String(line.discountAmount ?? 0))}" aria-label="Discount" />
     <button class="icon-btn" type="button" data-remove-receipt-line title="Remove" aria-label="Remove line">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /></svg>
@@ -1297,7 +1307,9 @@ function editedReceiptFromForm() {
     const normalizedName = row.querySelector("[data-receipt-name]").value.trim();
     const category = row.querySelector("[data-receipt-category]").value.trim();
     const quantity = Math.max(0.001, Number(row.querySelector("[data-receipt-quantity]").value) || 1);
-    const totalPrice = Math.max(0, Number(row.querySelector("[data-receipt-price]").value) || 0);
+    // Refund / coupon lines keep their negative sign (receipt-domain sums them into
+    // the line total and flags them for review; price history ignores <= 0 lines).
+    const totalPrice = Number(row.querySelector("[data-receipt-price]").value) || 0;
     return {
       id: row.dataset.receiptLineId,
       rawText: row.querySelector("[data-receipt-raw]").value.trim(),
@@ -1640,11 +1652,9 @@ function addReceiptReviewLine(line = {}) {
     <input data-receipt-category value="${escapeHtml(normalized.category)}" placeholder="Category" aria-label="Category" />
     <input data-receipt-quantity type="number" min="0.001" step="0.001" value="${escapeHtml(normalized.quantity)}" aria-label="Quantity" />
     <select data-receipt-unit aria-label="Unit">
-      ${["each", "count", "oz", "lb", "g", "kg", "ml", "l", "fl oz"].map((unit) => (
-        `<option value="${unit}" ${normalized.unit === unit ? "selected" : ""}>${unit}</option>`
-      )).join("")}
+      ${receiptUnitOptionsHtml(normalized.unit)}
     </select>
-    <input data-receipt-price type="number" min="0" step="0.01" value="${escapeHtml(normalized.totalPrice)}" aria-label="Total price" />
+    <input data-receipt-price type="number" step="0.01" value="${escapeHtml(normalized.totalPrice)}" aria-label="Total price" />
     <input data-receipt-discount type="number" min="0" step="0.01" value="${escapeHtml(normalized.discountAmount)}" aria-label="Discount" />
     <span class="receipt-line-confidence" title="OCR confidence">${Math.round(normalized.confidenceScore * 100)}%</span>
     <button class="icon-btn" type="button" data-remove-receipt-line title="Remove line" aria-label="Remove receipt line">
@@ -1662,7 +1672,9 @@ function reviewedReceiptFromForm() {
     const normalizedName = row.querySelector("[data-receipt-name]").value.trim();
     const category = row.querySelector("[data-receipt-category]").value.trim();
     const quantity = Math.max(0.001, Number(row.querySelector("[data-receipt-quantity]").value) || 1);
-    const totalPrice = Math.max(0, Number(row.querySelector("[data-receipt-price]").value) || 0);
+    // Refund / coupon lines keep their negative sign (receipt-domain sums them into
+    // the line total and flags them for review; price history ignores <= 0 lines).
+    const totalPrice = Number(row.querySelector("[data-receipt-price]").value) || 0;
     return {
       id: row.dataset.receiptLineId,
       rawText: row.querySelector("[data-receipt-raw]").value.trim(),
