@@ -232,3 +232,32 @@ describe("runInboxSweep — news email → Media notification cards (NEWS_INTAKE
     expect(mock.state.calls.some((c) => /\/messages\/m1\/(modify|trash)/.test(c.url))).toBe(false);
   });
 });
+
+describe("runInboxSweep — Mail AI inboxTriageSuggestions toggle", () => {
+  const otherTokens = { ...tokens, email: "me@example.com" }; // not from-self, so triage is reachable
+  const bookingIdea = '{"suggestions": [{"kind": "add_booking", "title": "Flight to SFO"}]}';
+
+  it("inboxTriageEnabled defaults on; only an explicit false disables it", () => {
+    expect(shared.inboxTriageEnabled({})).toBe(true);
+    expect(shared.inboxTriageEnabled(undefined)).toBe(true);
+    expect(shared.inboxTriageEnabled({ inboxTriageSuggestions: true })).toBe(true);
+    expect(shared.inboxTriageEnabled({ inboxTriageSuggestions: false })).toBe(false);
+  });
+
+  it("default (unset): the triage AI call runs", async () => {
+    const mock = makeMock();
+    vi.spyOn(global, "fetch").mockImplementation(mock);
+    await shared.runInboxSweep(otherTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    expect(mock.count("anthropic")).toBeGreaterThan(0);
+  });
+
+  it("switched off: no triage and no booking-scan AI calls, message still completes", async () => {
+    const mock = makeMock();
+    mock.state.mailAi = { receiptExtract: false, inboxTriageSuggestions: false };
+    mock.state.triage = bookingIdea;
+    vi.spyOn(global, "fetch").mockImplementation(mock);
+    await shared.runInboxSweep(otherTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    expect(mock.count("anthropic")).toBe(0);
+    expect(mock.state.done.has("m1")).toBe(true);
+  });
+});
