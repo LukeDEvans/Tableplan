@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { zipSync, unzipSync, strToU8, strFromU8 } from "fflate";
 import {
-  csvCell, toCsv, redactSecrets, explode, collectAttachmentLinks,
+  csvCell, toCsv, redactSecrets, keepRedactedSecrets, explode, collectAttachmentLinks,
   planEventsToIcs, rruleFor, buildExportFiles, buildExportZip, EXPORT_TABLES,
 } from "../data-export.js";
 
@@ -226,5 +226,33 @@ describe("registry hygiene", () => {
   });
   it("every table tolerates an empty state", () => {
     for (const t of EXPORT_TABLES) expect(() => t.rows({ state: {}, prepDays: [], finance: {}, history: [] }), t.name).not.toThrow();
+  });
+});
+
+describe("keepRedactedSecrets (full restore from an export)", () => {
+  const current = {
+    articleSync: { nytCookie: "live-cookie", lastSyncedAt: "2026-09-01" },
+    jellyfin: { url: "http://x", apiKey: "k-now" },
+    voiceCommandSecret: "v-now",
+    trips: [{ id: "t", shareToken: "array-secret" }],
+  };
+  it("keeps current credentials the export redacted, and nothing else", () => {
+    const restored = { articleSync: { lastSyncedAt: "2026-08-01" }, jellyfin: { url: "http://old" }, trips: [{ id: "t" }], plans: {} };
+    const { value, kept } = keepRedactedSecrets(restored, current);
+    expect(value.articleSync).toEqual({ lastSyncedAt: "2026-08-01", nytCookie: "live-cookie" });
+    expect(value.jellyfin).toEqual({ url: "http://old", apiKey: "k-now" });
+    expect(value.voiceCommandSecret).toBe("v-now");
+    expect(value.trips).toEqual([{ id: "t" }]); // array items are left as restored
+    expect(kept.sort()).toEqual(["articleSync.nytCookie", "jellyfin.apiKey", "voiceCommandSecret"]);
+    expect(restored.articleSync.nytCookie).toBeUndefined(); // input untouched
+  });
+  it("never overrides a credential the backup does carry", () => {
+    const { value, kept } = keepRedactedSecrets({ jellyfin: { apiKey: "k-backup" } }, current);
+    expect(value.jellyfin.apiKey).toBe("k-backup");
+    expect(kept).not.toContain("jellyfin.apiKey");
+  });
+  it("only creates the objects a kept secret needs", () => {
+    const { value } = keepRedactedSecrets({}, { a: { b: { token: "t" } }, other: { note: "x" } });
+    expect(value).toEqual({ a: { b: { token: "t" } } });
   });
 });

@@ -1,7 +1,8 @@
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
-import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport } from './finance-csv.js';
+import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport, findDuplicateCsvAccount } from './finance-csv.js';
+import { saveFile } from './save-file.js';
 import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns, manualTxnToRow, mergeManualTxns, manualRowsToCopy, planAccountRemap, remapCandidateAccounts, suggestRemapTarget, carrySupersededAnnotations } from './finance-transactions.js';
 import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn-store.js';
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
@@ -243,13 +244,9 @@ function exportFinanceCsv(monthKey) {
     t.account || "",
   ].map(esc).join(","));
   const csv = [header.map(esc).join(","), ...lines].join("\n");
-  try {
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `transactions-${monthKey}.csv`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch { showMailToast?.("Couldn't export CSV on this device."); }
+  // Share sheet in the iOS app (its web view ignores <a download>), else a download.
+  saveFile(new Blob([csv], { type: "text/csv" }), `transactions-${monthKey}.csv`, { title: "Transactions" })
+    .catch(() => showMailToast?.("Couldn't export CSV on this device."));
 }
 
 // "Export my data" (data-export.js): every transaction the app knows, with the
@@ -379,6 +376,11 @@ async function refreshCsvImportPreview() {
       await store.sync();
       const dd = dedupeImport(conv.txns, store.rows(), financeMerchantTokens);
       Object.assign(preview, { storeOk: true, fresh: dd.fresh, sameFile: dd.sameFile.length, fromBank: dd.fromBank.length });
+      // Same file under a different new-account name → new ids, so dedupe can't
+      // see it; warn when an earlier CSV account already holds most of these rows.
+      if (d.accountChoice === "__new__") {
+        preview.duplicateOf = findDuplicateCsvAccount(dd.fresh, store.rows(), { excludeAccountId: financeCsvImportAccountId(d) });
+      }
     } catch (e) {
       preview.storeError = e?.message || "Stored history unavailable";
     }
@@ -506,6 +508,7 @@ function financeCsvImportPanelHtml() {
   const body = !p ? `<p class="fin-hint">Checking what's new…</p>`
     : p.error === "missing-columns" ? `<p class="fin-hint">Couldn't find Date and Amount columns in that CSV. Export from your bank with at least Date, Amount, and (ideally) Description and Category columns.</p>`
     : `<ul class="fin-hint fin-csv-preview">
+        ${p.duplicateOf ? `<li class="fin-csv-dup-warning"><strong>Looks like a repeat:</strong> ${p.duplicateOf.matched} of these ${p.duplicateOf.total} rows are already in “${escapeHtml(p.duplicateOf.accountId.slice(4))}” (imported). Pick that account above instead of a new one, or they'll be saved twice.</li>` : ""}
         ${p.storeOk ? `<li><strong>${p.fresh.length}</strong> new transaction${p.fresh.length === 1 ? "" : "s"} to save</li>` : `<li>Transactions can't be saved right now (${escapeHtml(p.storeError || "")}) — only month totals will be backfilled.</li>`}
         ${p.sameFile ? `<li>${p.sameFile} already imported (skipped)</li>` : ""}
         ${p.fromBank ? `<li>${p.fromBank} already came from the bank (skipped)</li>` : ""}

@@ -32,6 +32,7 @@ import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeTts } from './native-bridge.js';
+import { saveFile } from './save-file.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
@@ -15784,7 +15785,9 @@ function renderContextSettingsDialog(kind) {
     });
     elements.contextSettingsBody.querySelector('[data-am-action="authorize"]')?.addEventListener("click", async () => {
       try {
-        const reg = await getMusicProviders();
+        // Keep the popup inside the click's user activation (Safari): the status
+        // refresh below already loaded the registry, so don't await it again.
+        const reg = musicProviderRegistry || await getMusicProviders();
         const p = reg.get("applemusic");
         if (!p) { alert("Enable Apple Music first."); return; }
         await p.authorize();
@@ -17941,19 +17944,9 @@ async function exportMyData() {
     });
     const zip = buildExportZip(files, fflate, `live-export-${exportedAt.slice(0, 10)}`);
     const fileName = `live-export-${exportedAt.slice(0, 10)}.zip`;
-    const blob = new Blob([zip], { type: "application/zip" });
-    const file = typeof File === "function" ? new File([blob], fileName, { type: "application/zip" }) : null;
-    // The iOS app's web view can't download a blob; hand the file to the share sheet
-    // (Save to Files) there. Browsers get an ordinary download.
-    if (isNativeApp() && file && navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], title: "Live data export" });
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = fileName;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-    }
+    // Share sheet (Save to Files) in the iOS app, an ordinary download elsewhere.
+    const saved = await saveFile(new Blob([zip], { type: "application/zip" }), fileName, { title: "Live data export" });
+    if (saved === "cancelled") return;
     const csvCount = manifest.files.filter((f) => f.file?.endsWith(".csv") && !f.error).length;
     showMailToast(`Exported ${csvCount} spreadsheets + full backup${notes.length ? " (see README for notes)" : ""}.`);
   } catch (e) {
@@ -18735,7 +18728,11 @@ async function fullRestoreFromBackup() {
   if (!pendingRestore) return;
   if (!window.confirm("This will replace all current data with the selected backup. Any changes since that backup will be lost. Continue?")) return;
   if (!(await tryPreChangeBackup("full restore from backup"))) return;
-  applyStoredState(pendingRestore.state);
+  // An "Export my data" file has its logins/tokens redacted; keep the current ones
+  // rather than blanking them (a backup that carries them still wins).
+  const { keepRedactedSecrets } = await import("./data-export.js");
+  const { value: restoredState } = keepRedactedSecrets(pendingRestore.state, state);
+  applyStoredState(restoredState);
   persist();
   await persistImmediately("backup restore");
   elements.restorePreview.innerHTML = `<div class="restore-preview-card"><strong>Backup restored successfully.</strong></div>`;
@@ -22714,11 +22711,7 @@ async function exportCadenceMusicXml() {
     if (xml == null && w.model) xml = C.serializeToMusicXml(w.model).xml;
     if (xml == null) { alert("This score's file isn't on this device yet — open it once to download it."); return; }
     const safe = (w.work.title || "score").replace(/[^\w.-]+/g, "_").slice(0, 60) || "score";
-    const url = URL.createObjectURL(new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `${safe}.musicxml`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await saveFile(new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" }), `${safe}.musicxml`, { title: w.work.title || "Score" });
   } catch (e) { console.warn("Cadence export failed:", e); alert("Couldn't export this score."); }
 }
 
@@ -31017,6 +31010,7 @@ function initMusicPanel() {
       const openPl = e.target.closest("[data-open-playlist]");
       if (openPl) { enterMusicMode(`pl:${openPl.dataset.openPlaylist}`); return; }
       if (e.target.closest("[data-music-csv-export]")) { exportMusicLibraryCsv(); return; }
+      if (e.target.closest("[data-music-uploads-export]")) { exportUploadedMusic(); return; }
       if (e.target.closest("[data-music-csv-import]")) { panel.querySelector("#musicCsvInput")?.click(); return; }
       const plPlay = e.target.closest("[data-playlist-play]"); if (plPlay) { playPlaylist(plPlay.dataset.playlistPlay, 0, false); return; }
       const plShuf = e.target.closest("[data-playlist-shuffle]"); if (plShuf) { playPlaylist(plShuf.dataset.playlistShuffle, 0, true); return; }
@@ -31851,7 +31845,12 @@ function musicBrowseHomeParts() {
 }
 async function signInAppleMusicFromDiscover() {
   try {
-    const reg = await getMusicProviders();
+    // Safari only lets MusicKit open Apple's sign-in popup while the click's user
+    // activation is still live, so don't wait on anything avoidable first. The
+    // Sign in button only renders after the Apple home loaded, i.e. the registry
+    // and MusicKit instance already exist — use the registry synchronously and
+    // call authorize() straight from the click (its getInstance() is cached).
+    const reg = musicProviderRegistry || await getMusicProviders();
     const p = reg.get("applemusic");
     if (!p) return;
     await p.authorize();
@@ -31995,6 +31994,10 @@ function renderMusicSavedBody() {
         <button class="secondary-btn" type="button" data-music-csv-export>Export CSV</button>
         <button class="secondary-btn" type="button" data-music-csv-import>Import CSV</button>
       </div>
+      <p class="music-empty-sub">Songs you uploaded are stored only on this device (not in the cloud or in “Export my data”). Download them to keep a copy — the files can be uploaded here again later.</p>
+      <div class="music-portable-actions">
+        <button class="secondary-btn" type="button" data-music-uploads-export>Download my uploaded music</button>
+      </div>
       <input type="file" id="musicCsvInput" accept=".csv,text/csv" hidden>
     </div>`;
 
@@ -32045,12 +32048,38 @@ async function exportMusicLibraryCsv() {
   try {
     const mod = await import("./music-portable.js");
     const csv = mod.libraryToCsv(getMusicLibraryState());
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `music-library-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    // saveFile: share sheet in the iOS app (its web view ignores <a download>), else a download.
+    await saveFile(new Blob([csv], { type: "text/csv;charset=utf-8" }), `music-library-${new Date().toISOString().slice(0, 10)}.csv`, { title: "Music library" });
   } catch (e) { console.warn("music CSV export failed", e); alert("Couldn't export your music library."); }
+}
+// Uploaded songs live only in this device's IndexedDB. Zip their ORIGINAL files
+// (stored, not recompressed — audio is already compressed) plus tracks.csv, and
+// hand the zip to saveFile (share sheet in the iOS app, download elsewhere).
+let uploadedMusicExportBusy = false;
+async function exportUploadedMusic() {
+  if (uploadedMusicExportBusy) return;
+  uploadedMusicExportBusy = true;
+  try {
+    const lib = await getMusicLib();
+    const local = (lib.sources || []).find((src) => src.id === "local");
+    const { entries, missing } = local?.exportUploads ? await local.exportUploads() : { entries: [], missing: [] };
+    if (!entries.length) { alert(missing.length ? "Your uploaded songs' files aren't on this device." : "You haven't uploaded any music on this device."); return; }
+    const mb = entries.reduce((n, e) => n + e.bytes.length, 0) / 1048576;
+    if (mb > 200 && !confirm(`That's ${entries.length} songs (${Math.round(mb)} MB). Building the zip can take a while and needs that much free memory. Continue?`)) return;
+    showMailToast(`Preparing ${entries.length} song${entries.length === 1 ? "" : "s"}…`);
+    const [{ zipSync, strToU8 }, { uploadedMusicCsv }] = await Promise.all([import("fflate"), import("./music-library.js")]);
+    const files = { "tracks.csv": strToU8(uploadedMusicCsv(entries)) };
+    for (const e of entries) files[e.name] = [e.bytes, { level: 0 }];
+    const zip = zipSync(files);
+    const name = `uploaded-music-${new Date().toISOString().slice(0, 10)}.zip`;
+    const r = await saveFile(new Blob([zip], { type: "application/zip" }), name, { title: "Uploaded music" });
+    if (r !== "cancelled") showMailToast(`Saved ${entries.length} song${entries.length === 1 ? "" : "s"}${missing.length ? ` (${missing.length} missing on this device)` : ""}.`);
+  } catch (e) {
+    console.warn("uploaded music export failed", e);
+    alert("Couldn't export your uploaded music: " + (e?.message || "unknown error"));
+  } finally {
+    uploadedMusicExportBusy = false;
+  }
 }
 async function importMusicLibraryCsv(file) {
   try {
@@ -36855,15 +36884,21 @@ function applyVoiceActions(actions, transcript) {
 
       const recipe = action.recipeId ? activeRecipes().find((r) => r.id === action.recipeId) : null;
 
+      // The meal layout comes from the household's members, so a day can have no
+      // slot for this meal — say so instead of claiming it was added.
+      let written = 0;
       for (const slot of config.meals) {
         if (!day.meals.includes(slot)) continue;
         const existing = slotEntries(weekState().slots?.[day.id]?.[slot]);
         const entry = recipe ? createPlannedRecipeEntry(recipe, day.id, slot) : (action.recipeName || "");
         setMeal(day.id, slot, compactMealSlotEntries([...existing, entry], slot));
+        written++;
       }
 
       const displayName = recipe?.name || action.recipeName || "item";
-      messages.push(`Added ${displayName} to ${day.name} ${config.label.toLowerCase()}`);
+      messages.push(written
+        ? `Added ${displayName} to ${day.name} ${config.label.toLowerCase()}`
+        : `Couldn't add ${displayName}: ${day.name} has no ${config.label.toLowerCase()} slots in your meal plan layout.`);
 
     } else if (action.action === "addGrocery") {
       const item = String(action.item || "").trim();
@@ -36899,6 +36934,7 @@ function applyVoiceActions(actions, transcript) {
   }
 
   showVoiceToast(messages.join(" · ") || "Done");
+  return messages;
 }
 
 function showVoiceToast(message, duration = 4500) {
@@ -36952,6 +36988,7 @@ function openAiPanel(autoListen = false) {
   const briefingBtn = document.getElementById("aiChatBriefingBtn");
   if (briefingBtn) briefingBtn.hidden = state.aiSettings?.dailyBriefingEnabled === false;
   renderAssistantSuggestions();
+  refreshStaleIcsForAssistant().catch(() => {}); // bounded: ≤ once/hour, only stale feeds
   requestAnimationFrame(() => panel.classList.add("is-open"));
   if (autoListen) {
     setTimeout(() => startChatVoice(), 150);
@@ -37328,6 +37365,29 @@ async function runChatTurn(depth = 0) {
   }
 }
 
+// Subscribed (ICS) calendars only refetch when the Plan page opens in production
+// (the 15-min sweep is local-dev only), so the assistant could answer from a
+// stale copy. Before a calendar lookup, refetch feeds older than 3h — at most
+// once an hour per session, waiting at most 4s (a slow feed keeps its cache).
+// These go through the ICS proxy function, not Supabase.
+let assistantIcsRefreshAt = 0;
+async function refreshStaleIcsForAssistant() {
+  if (Date.now() - assistantIcsRefreshAt < 60 * 60 * 1000) return;
+  const stale = (state.calendarSources || [])
+    .filter((c) => calendarSourceKind(c) === "ics" && c.enabled !== false && c.url)
+    .filter((c) => {
+      const cached = planCalendarCache[c.id];
+      const at = cached ? Date.parse(cached.fetchedAt) : NaN;
+      return !(at > 0) || Date.now() - at > 3 * 60 * 60 * 1000;
+    });
+  if (!stale.length) return;
+  assistantIcsRefreshAt = Date.now();
+  await Promise.race([
+    Promise.all(stale.map((c) => refreshCalendarSource(c))),
+    new Promise((r) => setTimeout(r, 4000)),
+  ]);
+}
+
 // ── Assistant tool calls: gating, confirmation, undo ─────────────────────────
 // Every tool call from the model goes through here (both the streaming and the
 // JSON path): gated tools are refused unless Luke opted in; removals wait for his
@@ -37544,13 +37604,14 @@ async function executeChatTool(name, input) {
       }
 
       case "set_meal": {
-        applyVoiceActions([{
+        // Report what actually happened (applyVoiceActions returns its messages).
+        const [message] = applyVoiceActions([{
           action: "setMeal",
           dayId: input.day_id,
           mealType: input.meal_type,
           recipeName: input.recipe_name
-        }], "");
-        return `Added ${input.recipe_name} to ${input.day_id} ${input.meal_type}.`;
+        }], "") || [];
+        return message ? `${message}.` : `Couldn't add ${input.recipe_name}.`;
       }
 
       case "add_to_watchlist": {
@@ -37947,6 +38008,7 @@ async function executeChatTool(name, input) {
       case "get_calendar_range": {
         const r = normalizeDateRange(input.start_date, input.end_date);
         if (!r.ok) return r.error;
+        await refreshStaleIcsForAssistant();
         return formatCalendarRange(getPlanEventsForRange(r.start, r.end), r.start, r.end);
       }
 

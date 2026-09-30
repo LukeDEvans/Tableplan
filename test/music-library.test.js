@@ -168,3 +168,28 @@ describe("compareTracks — track numbers", () => {
     expect(list.map((t) => t.trackNo)).toEqual([1, 2, 10]);
   });
 });
+
+describe("uploaded music export (files live only on this device)", () => {
+  it("names files Artist - Album - NN Title.ext, safely and uniquely", async () => {
+    const { uploadedMusicFileName } = await import("../music-library.js");
+    const used = new Set();
+    const t = { title: "A/B: c?", artist: "X", album: "Y", trackNo: 3 };
+    expect(uploadedMusicFileName(t, "audio/mpeg", used)).toBe("X - Y - 03 A B c.mp3");
+    expect(uploadedMusicFileName(t, "audio/mpeg", used)).toBe("X - Y - 03 A B c (2).mp3");
+    expect(uploadedMusicFileName({}, "audio/x-m4a", used)).toBe("Untitled.m4a");
+  });
+  it("exportUploads returns each local track's original bytes and flags missing ones", async () => {
+    const { createMemoryMusicStore, createLocalMusicSource, uploadedMusicCsv } = await import("../music-library.js");
+    const store = createMemoryMusicStore();
+    const src = createLocalMusicSource(store);
+    const file = (name, bytes) => ({ name, type: "audio/mpeg", arrayBuffer: async () => new Uint8Array(bytes).buffer });
+    const a = await src.importAudioFile(file("one.mp3", [1, 2, 3]));
+    const b = await src.importAudioFile(file("two.mp3", [4, 5]));
+    await store.delete("audio", b.locator.blobId); // bytes gone from this device
+    const { entries, missing } = await src.exportUploads();
+    expect(entries.map((e) => [e.name, [...e.bytes]])).toEqual([["one.mp3", [1, 2, 3]]]);
+    expect(missing.map((t) => t.id)).toEqual([b.id]);
+    expect(uploadedMusicCsv(entries)).toMatch(/^file,title,artist,album,track_no,duration_sec\r\none\.mp3,one,/);
+    expect(a.id).toBe(entries[0].track.id);
+  });
+});

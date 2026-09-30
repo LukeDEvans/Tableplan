@@ -21,6 +21,7 @@
 // shell calls them at boot from defaultState(), before this module's factory runs.
 
 import { makeSortable } from './sortable.js';
+import { saveFile } from './save-file.js';
 
 // "YYYY-MM-DD" (with year), so the birthday calendar can show an age.
 const CONTACT_DATE_RE = /^(\d{4}-)?(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -731,11 +732,10 @@ function vcardUnescape(s) { return String(s || "").replace(/\\n/gi, "\n").replac
 function exportContactsVcf() {
   const cs = state.contacts || [];
   if (!cs.length) { showMailToast("No contacts to export"); return; }
-  const blob = new Blob([buildContactsVcf(cs)], { type: "text/vcard" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = "contacts.vcf"; a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  showMailToast(`Exported ${cs.length} contact${cs.length !== 1 ? "s" : ""}`);
+  // Share sheet in the iOS app (its web view ignores <a download>), else a download.
+  saveFile(new Blob([buildContactsVcf(cs)], { type: "text/vcard" }), "contacts.vcf", { title: "Contacts" })
+    .then((r) => { if (r !== "cancelled") showMailToast(`Exported ${cs.length} contact${cs.length !== 1 ? "s" : ""}`); })
+    .catch(() => showMailToast("Couldn't export contacts on this device."));
 }
 
 // A parsed contact matches an existing one if names match, or they share an

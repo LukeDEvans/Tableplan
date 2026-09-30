@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCsvRows, parseCsvDate, csvRowsToTxns, dedupeImport, stableHash } from "../finance-csv.js";
+import { parseCsvRows, parseCsvDate, csvRowsToTxns, dedupeImport, stableHash, findDuplicateCsvAccount } from "../finance-csv.js";
 import { financeMerchantTokens } from "../finance-transactions.js";
 
 const CSV = `Date,Description,Amount,Category,Account Name
@@ -95,6 +95,34 @@ describe("dedupeImport", () => {
       financeMerchantTokens,
     );
     expect(r.fresh.map((c) => c.id).sort()).toEqual(["c1", "c2", "c3", "c4"]);
+  });
+});
+
+describe("findDuplicateCsvAccount — same file under a different new-account name", () => {
+  const row = (account_id, posted, amount, description, o = {}) => ({ id: `${account_id}-${posted}-${amount}`, account_id, posted, amount, description, origin: "csv", status: "active", ...o });
+  const earlier = [
+    row("csv:Checking", "2026-09-01T12:00:00.000Z", -5, "Coffee Shop"),
+    row("csv:Checking", "2026-09-02T12:00:00.000Z", -40, "Groceries"),
+    row("csv:Checking", "2026-09-03T12:00:00.000Z", -12.5, "Lunch"),
+    row("csv:Checking", "2026-09-04T12:00:00.000Z", -60, "Gas"),
+    row("csv:Savings", "2026-09-01T12:00:00.000Z", -5, "Coffee Shop"),
+  ];
+  const again = earlier.slice(0, 4).map((r) => ({ ...r, id: `new-${r.id}`, account_id: "csv:Checking copy", description: r.description.toUpperCase() }));
+
+  it("flags an earlier CSV account holding ≥80% of the rows", () => {
+    expect(findDuplicateCsvAccount(again, earlier)).toEqual({ accountId: "csv:Checking", matched: 4, total: 4 });
+  });
+  it("stays quiet below the threshold, for bank rows, deleted rows, and the target account itself", () => {
+    const mostlyNew = [...again.slice(0, 2), row("x", "2026-09-10T12:00:00.000Z", -1, "A"), row("x", "2026-09-11T12:00:00.000Z", -2, "B")];
+    expect(findDuplicateCsvAccount(mostlyNew, earlier)).toBeNull();
+    expect(findDuplicateCsvAccount(again, earlier.map((r) => ({ ...r, origin: "simplefin" })))).toBeNull();
+    expect(findDuplicateCsvAccount(again, earlier.map((r) => ({ ...r, status: "deleted" })))).toBeNull();
+    expect(findDuplicateCsvAccount(again, earlier, { excludeAccountId: "csv:Checking" })).toBeNull();
+    expect(findDuplicateCsvAccount([], earlier)).toBeNull();
+  });
+  it("matches one-to-one, so a single stored charge can't cover two identical new ones", () => {
+    const twice = [again[0], { ...again[0], id: "dup" }];
+    expect(findDuplicateCsvAccount(twice, earlier, { threshold: 1 })).toBeNull();
   });
 });
 
