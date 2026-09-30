@@ -15489,6 +15489,12 @@ function openContextSettingsDialog(kind) {
 // state.mailAiSettings before acting.
 const MAIL_AI_FEATURES = [
   {
+    key: "inboxTriageSuggestions",
+    defaultOn: true,
+    label: "Inbox triage suggestions",
+    desc: "Each new inbox email is read by AI to suggest to-dos and travel bookings (booking details are extracted for review). Suggestions appear in the Mail notification bell and nothing is added until you approve it."
+  },
+  {
     key: "receiptExtract",
     defaultOn: true,
     label: "Receipt extraction for Finance",
@@ -15852,10 +15858,7 @@ function renderContextSettingsDialog(kind) {
               <span class="mail-ai-feature-label">${escapeHtml(f.label)}</span>
               <span class="mail-ai-feature-desc">${escapeHtml(f.desc)}</span>
             </div>
-            <label class="toggle-switch" aria-label="${escapeHtml(f.label)}">
-              <input type="checkbox" data-mail-ai-key="${escapeHtml(f.key)}" ${(f.defaultOn ? state.mailAiSettings[f.key] !== false : Boolean(state.mailAiSettings[f.key])) ? "checked" : ""}>
-              <span class="toggle-slider"></span>
-            </label>
+            <input type="checkbox" class="live-toggle" aria-label="${escapeHtml(f.label)}" data-mail-ai-key="${escapeHtml(f.key)}" ${(f.defaultOn ? state.mailAiSettings[f.key] !== false : Boolean(state.mailAiSettings[f.key])) ? "checked" : ""}>
           </div>
         `).join("")}
       </div>`;
