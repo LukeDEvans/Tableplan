@@ -3116,11 +3116,9 @@ async function runAiRecipeCleanup(mode) {
   const existingTags = recipeTags();
   const ingredientItems = (state.ingredientOptions?.items || []).filter(Boolean);
 
-  const url = (() => {
-    if (canUseLocalBackend()) return "/api/clean-recipe";
-    if (window.location.protocol.startsWith("http")) return "/.netlify/functions/clean-recipe";
-    return "";
-  })();
+  // clean-recipe is a v2 function routed at config.path "/api/clean-recipe" (same as
+  // /api/chat, /api/push-subscribe) — /.netlify/functions/clean-recipe 404s in prod.
+  const url = (canUseLocalBackend() || window.location.protocol.startsWith("http")) ? "/api/clean-recipe" : "";
   if (!url) { setStatus("AI recipe cleanup requires the live app."); return; }
 
   try {
