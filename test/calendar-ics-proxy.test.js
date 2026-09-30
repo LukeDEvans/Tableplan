@@ -53,4 +53,15 @@ describe("ics-proxy uses the shared SSRF-guarded safeFetch (SRV-10 / CAL-5)", ()
       expect((await handler(ev("https://cal.example.com/x.ics"))).statusCode, type).toBe(200);
     }
   });
+
+  it("converts event times into the viewer's zone passed as ?tz= (CAL-1)", async () => {
+    const withTz = (tz) => ({ headers: { authorization: "Bearer tok" }, queryStringParameters: { url: "https://cal.example.com/feed.ics", tz } });
+    // 10:00Z on Jan 1 is 02:00 in Los Angeles (PST, UTC-8).
+    const la = JSON.parse((await handler(withTz("America/Los_Angeles"))).body).events[0];
+    expect(la.date).toBe("2026-01-01");
+    expect(la.startTime).toBe("02:00");
+    // An unusable zone name falls back instead of throwing.
+    const bad = await handler(withTz("Not/AZone"));
+    expect(bad.statusCode).toBe(200);
+  });
 });

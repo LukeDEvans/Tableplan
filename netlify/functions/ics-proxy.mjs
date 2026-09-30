@@ -47,7 +47,10 @@ export const handler = async (event) => {
   try {
     const res = await safeFetch(calUrl, { ...ICS_FETCH_OPTIONS, ...testDeps });
     if (!res.ok) return jsonResponse(res.status >= 400 ? res.status : 502, { error: `Calendar returned ${res.status}.` });
-    return jsonResponse(200, { events: parsePlanIcs(res.body) });
+    // Convert Z/TZID times into the viewer's zone (the function itself runs in UTC).
+    // parsePlanIcs validates the name via Intl and falls back when it's unusable.
+    const tz = String(event.queryStringParameters?.tz || "").slice(0, 64);
+    return jsonResponse(200, { events: parsePlanIcs(res.body, { timeZone: tz }) });
   } catch (error) {
     if (error && (error.isImportFetchError || error.isImportUrlError)) {
       return jsonResponse(statusForImportError(error), { error: error.message || "Calendar fetch refused." });

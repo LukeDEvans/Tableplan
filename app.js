@@ -26672,8 +26672,12 @@ async function addPlanCalendar() {
 function icsProxyUrl(url) {
   const enc = encodeURIComponent(String(url || "").trim());
   if (!enc) return "";
+  // The deployed proxy runs in UTC, so it converts ICS times into the VIEWER's zone.
+  let tz = "";
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { /* no Intl zone */ }
+  const tzParam = tz ? `&tz=${encodeURIComponent(tz)}` : "";
   if (canUseLocalBackend()) return `/api/ics-proxy?url=${enc}`;
-  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/ics-proxy?url=${enc}`;
+  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/ics-proxy?url=${enc}${tzParam}`;
   return "";
 }
 
