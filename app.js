@@ -15806,6 +15806,7 @@ function renderContextSettingsDialog(kind) {
         <div class="fin-set-row"><span>Status</span><span id="appleMusicStatus" class="settings-hint">Checking…</span></div>
         <button class="secondary-btn" type="button" data-am-action="authorize">Sign in to Apple Music</button>
       </div>
+      <p class="settings-hint" id="appleMusicDiag" style="margin-top:8px">${escapeHtml(appleMusicDiagnostic())}</p>
       <details class="settings-details" style="margin-top:12px">
         <summary>Setup checklist</summary>
         <ol class="settings-hint" style="padding-left:1.2em; line-height:1.5">
@@ -31488,6 +31489,18 @@ async function saveJellyfinConfig(cfg) {
 // The provider registry (music-streaming.js + adapters) is lazy-loaded on first
 // Discover use so none of it — nor any provider request — happens for users who
 // only use the local Library.
+// Settings → Apple Music diagnostic line: which path Apple Music will take on this
+// device (native MusicKit plugin vs MusicKit JS) and which web bundle is running,
+// so a TestFlight build can be told apart from an older one.
+function appleMusicDiagnostic() {
+  let plugins = [];
+  try { plugins = (globalThis.Capacitor?.PluginHeaders || []).map((h) => h.name).filter((n) => /^(AppleMusic|LiveTts)$/.test(n)); } catch { /* none */ }
+  const bundle = (document.querySelector('script[type="module"][src*="index-"]')?.getAttribute("src") || "dev").split("/").pop();
+  const native = isNativeApp();
+  const path = !native ? "web (MusicKit JS)" : nativeAppleMusic() ? "native MusicKit" : "native app, but the Apple Music plugin is missing";
+  return `Using: ${path} · plugins: ${plugins.join(", ") || "none"} · bundle: ${bundle}`;
+}
+
 async function getMusicProviders() {
   if (musicProviderRegistry) return musicProviderRegistry;
   const [stream, ia] = await Promise.all([
