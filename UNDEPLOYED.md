@@ -26,4 +26,17 @@ What the website deploy adds:
 1. Web: Settings → Apple Music shows "Using: web (MusicKit JS)", and sign-in still works.
 2. Next TestFlight build from `main` (not the branch): Apple Music still signs in natively.
 
+
+## Podcasts: large feeds no longer fail (PR #26)
+PR: https://github.com/LukeDEvans/Tableplan/pull/26
+
+White Coat Investor (and likely NPR Politics) stopped getting new episodes because their
+feeds grew past the 5 MB fetch cap. The feed fetcher now reads the first 2 MB and keeps the
+newest complete episodes. Subscribe buttons show the real error instead of "Failed", and a
+show whose feed keeps failing gets a "Not updating since…" note.
+
+**After deploying:**
+1. Open White Coat Investor; recent episodes (late Sept) appear after the next refresh.
+2. Re-subscribe to NPR Politics; it should succeed (or show the actual error).
+
 Checks for work that's already live are in [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md).
