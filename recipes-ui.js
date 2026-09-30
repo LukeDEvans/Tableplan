@@ -378,6 +378,9 @@ export function createRecipesModule(deps) {
   let activeCookingRenderKey = "";
   // Key of the folder list last upserted to eat_folders (see saveRecipeRows).
   let lastUpsertedFolderKey = null;
+  // recipeId → nutritionRecipeSignature of the auto-estimate request in flight. Drives the
+  // "Recalculating…" badge and lets a stale response (recipe edited again) be discarded.
+  const nutritionRecalcInFlight = new Map();
   let activeFolder = "";
   let activeRecipeTag = "";
   let currentActiveRecipeViewId = "";
@@ -1764,7 +1767,7 @@ function recipeViewTemplate(recipe, requestedIngredientScale = 1) {
     <section class="recipe-view-section">
       <div class="recipe-view-section-heading">
         <h3>Nutrition Facts</h3>
-        ${recipe.nutritionEstimate?.stale ? `<span class="nutrition-stale-badge">Recalculating…</span>` : ""}
+        ${recipe.nutritionEstimate?.stale ? `<span class="nutrition-stale-badge">${nutritionRecalcInFlight.has(recipe.id) ? "Recalculating…" : "Out of date"}</span>` : ""}
       </div>
       ${nutrition.length ? `<dl class="nutrition-facts-view">${nutrition.map((fact) => `
         <div>
@@ -2170,6 +2173,9 @@ async function autoEstimateNutrition(recipeId) {
   const recipe = activeRecipes().find((r) => r.id === recipeId);
   if (!recipe?.ingredients?.length) return;
   const ingredients = normalizeIngredients(recipe.ingredients);
+  const signature = nutritionRecipeSignature(recipe);
+  nutritionRecalcInFlight.set(recipeId, signature);
+  let applied = false;
   try {
     const response = await fetch(helperUrl, {
       method: "POST",
@@ -2182,17 +2188,29 @@ async function autoEstimateNutrition(recipeId) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) return;
+    // A newer request superseded this one — let that one finish.
+    if (nutritionRecalcInFlight.get(recipeId) !== signature) return;
     const fresh = activeRecipes().find((r) => r.id === recipeId);
-    if (!fresh) return;
+    // Recipe edited since the request went out → this result is for old ingredients.
+    if (!fresh || nutritionRecipeSignature(fresh) !== signature) return;
     fresh.nutritionEstimate = {
       ...payload.estimate,
       matches: normalizeIngredientNutritionMatches(payload.estimate?.matches),
       stale: false
     };
+    applied = true;
+    nutritionRecalcInFlight.delete(recipeId);
     persist();
     saveRecipeRow(fresh);
     render();
-  } catch { /* silently skip — nutrition is best-effort */ }
+  } catch { /* nutrition is best-effort */ } finally {
+    if (!applied && nutritionRecalcInFlight.get(recipeId) === signature) {
+      // Failed (or discarded): drop the "Recalculating…" state so the badge reads
+      // "Out of date" instead of spinning forever.
+      nutritionRecalcInFlight.delete(recipeId);
+      render();
+    }
+  }
 }
 
 function collectRecipeTags() {
