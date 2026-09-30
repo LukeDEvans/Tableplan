@@ -1735,9 +1735,13 @@ function renderReceiptPriceTrends() {
     elements.receiptPriceTrends.innerHTML = `<div class="empty-state">No receipt price history yet.</div>`;
     return;
   }
+  // Trend = same item at the same store: comparing store A's price to store B's
+  // isn't a price change. Unassigned-store entries group by store name.
+  const storeNames = new Map(groceryStores().map((store) => [store.id, store.name]));
   const grouped = new Map();
   history.forEach((entry) => {
-    const key = LiveReceiptDomain.normalizedName(entry.normalizedItemName);
+    const storeKey = entry.storeId || `name:${normalize(entry.storeName || "")}`;
+    const key = `${storeKey}|${LiveReceiptDomain.normalizedName(entry.normalizedItemName)}`;
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(entry);
   });
@@ -1753,9 +1757,10 @@ function renderReceiptPriceTrends() {
         const latest = sorted.at(-1);
         const previous = sorted.at(-2);
         const delta = latest.packagePrice - previous.packagePrice;
+        const storeName = storeNames.get(latest.storeId) || latest.storeName || "";
         return `
           <div class="receipt-trend-item">
-            <strong>${escapeHtml(latest.normalizedItemName)}</strong>
+            <strong>${escapeHtml(latest.normalizedItemName)}${storeName ? ` <small>· ${escapeHtml(storeName)}</small>` : ""}</strong>
             <span>${formatCurrency(latest.packagePrice)}</span>
             <small>${delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${formatCurrency(delta)} since prior receipt`}</small>
           </div>
