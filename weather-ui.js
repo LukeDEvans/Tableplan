@@ -40,7 +40,9 @@ const WEATHER_TTL = { snapshot: 12 * 60 * 1000, search: 10 * 60 * 1000, product:
 const weatherCache = createWeatherCache(); // TTL cache + in-flight de-dup (tested in weather-cache.test.js)
 async function weatherRequest(params, ttl) {
   return weatherCache.request(JSON.stringify(params), ttl, async () => {
-    const res = await fetch(weatherApiUrl(params));
+    // Bounded: a hung upstream shouldn't leave the page on "Loading…" forever.
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15000) : undefined;
+    const res = await fetch(weatherApiUrl(params), { signal });
     if (!res.ok) { const e = new Error(`weather ${res.status}`); e.status = res.status; try { e.body = await res.json(); } catch {} throw e; }
     return res.json();
   });
@@ -89,7 +91,7 @@ function initWeatherPage() {
   let loc = saved.find((l) => l.id === activeId) || null;
   if (!loc && activeId === "current" && weatherCurrentGeoLoc) loc = weatherCurrentGeoLoc;
   if (loc) setWeatherLocation(loc, { persistChoice: false });
-  else if (weatherActiveLocation) loadWeatherSnapshot();
+  else if (weatherActiveLocation) { renderWeatherPage(); loadWeatherSnapshot(); }
   else if (saved.length) setWeatherLocation(saved[0], { persistChoice: false });
   else { weatherStatus = "idle"; renderWeatherPage(); useCurrentWeatherLocation(); }
   startWeatherRefreshLoop();
@@ -106,9 +108,12 @@ function setWeatherLocation(loc, { persistChoice = true } = {}) {
 async function loadWeatherSnapshot() {
   if (!weatherActiveLocation) { renderWeatherPage(); return; }
   const gen = ++weatherGenId;
-  weatherStatus = weatherSnapshot ? "ready" : "loading"; // keep old data visible while refreshing
+  const hadSnapshot = !!weatherSnapshot;
+  weatherStatus = hadSnapshot ? "ready" : "loading"; // keep old data visible while refreshing
   weatherErrorMsg = "";
-  renderWeatherPage();
+  // Only paint the loading state when there's nothing on screen yet; a background
+  // refresh of an existing snapshot re-renders once, after the fetch settles.
+  if (!hadSnapshot) renderWeatherPage();
   try {
     const snap = await getWeatherSnapshot(weatherActiveLocation);
     if (gen !== weatherGenId || getActiveAppArea() !== "weather") return; // superseded / left page
@@ -146,6 +151,11 @@ function startWeatherRefreshLoop() {
   // Foreground-only refresh; paused when the tab is hidden or the user leaves.
   weatherRefreshTimer = setInterval(() => {
     if (getActiveAppArea() !== "weather" || document.hidden || !weatherActiveLocation) return;
+    // Don't re-render out from under the user: a refresh rebuilds the page's
+    // innerHTML, which wipes the location-search box and its focus.
+    if (weatherPickerOpen) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && elements.weatherPageInner?.contains(active)) return;
     loadWeatherSnapshot();
   }, 90 * 1000);
 }
@@ -318,7 +328,9 @@ function wxHero(s, c, cond) {
     : `${escapeHtml(prov.stationName || prov.stationId || "Nearby station")}${prov.stationDistanceMiles != null ? ` · ${prov.stationDistanceMiles} mi` : ""}${prov.observedAt ? ` · ${escapeHtml(wxAgo(prov.observedAt))}` : ""}`;
   const today = s.daily?.[0];
   const condLabel = c.description || today?.description || conditionLabel(cond.key, cond.isDay);
-  const hi = s.daily?.find((d) => d.isDaytime)?.temperatureF;
+  // After dark NWS's first period is "Tonight", so the first daytime period is
+  // tomorrow — omit the high rather than show tomorrow's as today's.
+  const hi = today?.isDaytime ? today.temperatureF : null;
   const lo = s.daily?.find((d) => !d.isDaytime)?.temperatureF;
   const hilo = [hi != null ? `↑ ${Math.round(hi)}°` : "", lo != null ? `↓ ${Math.round(lo)}°` : ""].filter(Boolean).join("  ");
   const summary = today?.detailedForecast || today?.description || "";
