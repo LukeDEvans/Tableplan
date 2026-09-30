@@ -39256,17 +39256,28 @@ function addStopToCalendar(type, item, ownerDateKey) {
 }
 
 // ── Travel-time suggestions (Google Distance Matrix via travel-time fn) ──────
-const travelTimesCache = new Map(); // "origin|destination" → Promise<times|null>
+const travelTimesCache = new Map(); // "origin|destination" → Promise<times> (successes + in-flight only)
+const travelTimesFailedAt = new Map(); // "origin|destination" → ms of last failed lookup
+const TRAVEL_TIMES_RETRY_MS = 10 * 60 * 1000;
 
+// A failed/empty lookup is NOT cached forever (TRV-13) — a transient error or
+// signed-out moment used to pin that pair to "unknown" for the session. It is
+// held off for TRAVEL_TIMES_RETRY_MS so re-renders don't hammer the function.
 function fetchTravelTimes(origin, destination) {
   const key = origin + "|" + destination;
   if (travelTimesCache.has(key)) return travelTimesCache.get(key);
+  const failedAt = travelTimesFailedAt.get(key);
+  if (failedAt && Date.now() - failedAt < TRAVEL_TIMES_RETRY_MS) return Promise.resolve(null);
   const url = (canUseLocalBackend() ? "/api/travel-time" : "/.netlify/functions/travel-time") +
     "?" + new URLSearchParams({ origin, destination });
   const p = fetch(url, { headers: { authorization: "Bearer " + (authSession?.access_token || "") } })
     .then(r => (r.ok ? r.json() : null))
     .then(d => d?.times || null)
-    .catch(() => null);
+    .catch(() => null)
+    .then(times => {
+      if (!times) { travelTimesCache.delete(key); travelTimesFailedAt.set(key, Date.now()); }
+      return times;
+    });
   travelTimesCache.set(key, p);
   return p;
 }
@@ -39746,20 +39757,25 @@ function renderTravelModeOverlay(trip) {
 // Prefetch a symmetric travel-time lookup across a day's located points, then
 // hand back a synchronous distanceFn the pure optimizer can use. Uses the same
 // cached travel-time backend the transitions do; unknown pairs resolve to null.
-async function buildDayDistanceFn(locations) {
-  const uniq = [...new Set(locations.filter(Boolean))];
+// Only the pairs the reorder evaluator can use (movable stops + anchors), run
+// at most 4 at a time — it used to fire every ordered pair of every stop at
+// once (n² concurrent Distance-Matrix calls) — TRV-14.
+async function buildDayDistanceFn(pairs) {
   const map = new Map();
-  await Promise.all(uniq.flatMap(a => uniq.map(async b => {
-    const key = a + "|" + b;
-    if (a === b) { map.set(key, 0); return; }
-    let d = null;
-    try {
-      const times = await fetchTravelTimes(a, b);
-      if (times) d = times.drive?.durationMin ?? times.transit?.durationMin ?? times.walk?.durationMin ?? null;
-    } catch { d = null; }
-    map.set(key, d);
-  })));
-  return (a, b) => (map.has(a + "|" + b) ? map.get(a + "|" + b) : null);
+  const queue = pairs.filter(([a, b]) => a && b && a !== b);
+  const worker = async () => {
+    while (queue.length) {
+      const [a, b] = queue.shift();
+      let d = null;
+      try {
+        const times = await fetchTravelTimes(a, b);
+        if (times) d = times.drive?.durationMin ?? times.transit?.durationMin ?? times.walk?.durationMin ?? null;
+      } catch { d = null; }
+      map.set(a + "|" + b, d);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+  return (a, b) => (a === b ? 0 : map.has(a + "|" + b) ? map.get(a + "|" + b) : null);
 }
 
 // Household calendar events for a day, shaped for the conflict detector.
@@ -39820,8 +39836,7 @@ async function renderDaySuggestions(trip, dateKey, timeline, mountEl, rerender) 
   let distanceFn = () => null;
   // Only pay for routing when a reorder is even possible (2–5 flexible stops).
   if (movableLocated.length >= 2 && movableLocated.length <= 5) {
-    const locs = stops.map(s => s.location).filter(Boolean);
-    distanceFn = await buildDayDistanceFn(locs);
+    distanceFn = await buildDayDistanceFn(TravelOptimize.reorderPairs(timeline));
     if (!mountEl.isConnected) return;
   }
   const events = tripCalendarEventsForDay(dateKey);

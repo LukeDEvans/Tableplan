@@ -20,6 +20,20 @@ export function routeCost(locations, distanceFn) {
   return total;
 }
 
+// Strict variant: null unless EVERY leg is known. A comparison between two
+// orderings is only honest when both are fully costed — skipping unknown legs
+// made an ordering that happened to hit more unknowns look "cheaper" and
+// produced phantom savings (TRV-13).
+export function routeCostStrict(locations, distanceFn) {
+  let total = 0;
+  for (let i = 0; i < locations.length - 1; i++) {
+    const d = distanceFn(locations[i], locations[i + 1]);
+    if (typeof d !== "number" || !Number.isFinite(d)) return null;
+    total += d;
+  }
+  return total;
+}
+
 function permutations(arr) {
   if (arr.length <= 1) return [arr];
   const out = [];
@@ -55,7 +69,7 @@ function greedyOrder(items, anchorStart, distanceFn) {
 // beyond a cap.
 export function bestOrder(items, anchorStart, anchorEnd, distanceFn, { exhaustiveCap = 6 } = {}) {
   if (items.length <= 1) return items.slice();
-  const cost = seq => routeCost([anchorStart, ...seq.map(s => s.location), anchorEnd].filter(v => v != null), distanceFn);
+  const cost = seq => routeCostStrict([anchorStart, ...seq.map(s => s.location), anchorEnd].filter(v => v != null), distanceFn) ?? Infinity;
   if (items.length <= exhaustiveCap) {
     let best = items, bestC = cost(items);
     for (const perm of permutations(items)) {
@@ -71,21 +85,41 @@ export function bestOrder(items, anchorStart, anchorEnd, distanceFn, { exhaustiv
 // Suggest reordering the day's FLEXIBLE (untimed, movable, located) stops to cut
 // travel time. Timed stops are immovable anchors. Returns a suggestion object or
 // null when there's nothing worth proposing.
-export function suggestReorder(timeline, distanceFn, { minSaveMin = 10 } = {}) {
+// The movable (untimed, located) stops plus the fixed anchor locations the
+// reorder is measured between: the last located stop before the movable block
+// and the first located stop after it.
+export function reorderPoints(timeline) {
   const stops = timeline.filter(e => e.kind === "stop");
   const movable = stops.filter(s => s.movable && !s.time && s.location);
-  if (movable.length < 2) return null;
-
-  // Anchor to the last located stop before the movable block and the first
-  // located stop after it, so clustering respects where the day starts/ends.
+  if (!movable.length) return { movable, anchorStart: null, anchorEnd: null };
   const firstMovableIdx = stops.indexOf(movable[0]);
   const lastMovableIdx = stops.indexOf(movable[movable.length - 1]);
   const anchorStart = (() => { for (let i = firstMovableIdx - 1; i >= 0; i--) if (stops[i].location) return stops[i].location; return null; })();
   const anchorEnd = (() => { for (let i = lastMovableIdx + 1; i < stops.length; i++) if (stops[i].location) return stops[i].location; return null; })();
+  return { movable, anchorStart, anchorEnd };
+}
 
-  const currentCost = routeCost([anchorStart, ...movable.map(s => s.location), anchorEnd].filter(v => v != null), distanceFn);
+// The only ordered location pairs suggestReorder can ever ask distanceFn for:
+// anchorStart→movable, movable→movable, movable→anchorEnd. Lets the app
+// prefetch exactly these instead of every pair of every stop (TRV-14).
+export function reorderPairs(timeline) {
+  const { movable, anchorStart, anchorEnd } = reorderPoints(timeline);
+  const locs = [...new Set(movable.map(s => s.location))];
+  const seen = new Set(), out = [];
+  const add = (a, b) => { if (a == null || b == null || a === b) return; const k = a + "|" + b; if (!seen.has(k)) { seen.add(k); out.push([a, b]); } };
+  locs.forEach(a => { add(anchorStart, a); add(a, anchorEnd); locs.forEach(b => add(a, b)); });
+  return out;
+}
+
+export function suggestReorder(timeline, distanceFn, { minSaveMin = 10 } = {}) {
+  const { movable, anchorStart, anchorEnd } = reorderPoints(timeline);
+  if (movable.length < 2) return null;
+
+  const currentCost = routeCostStrict([anchorStart, ...movable.map(s => s.location), anchorEnd].filter(v => v != null), distanceFn);
+  if (currentCost == null) return null; // can't claim a saving over an un-costed route
   const best = bestOrder(movable, anchorStart, anchorEnd, distanceFn);
-  const bestCost = routeCost([anchorStart, ...best.map(s => s.location), anchorEnd].filter(v => v != null), distanceFn);
+  const bestCost = routeCostStrict([anchorStart, ...best.map(s => s.location), anchorEnd].filter(v => v != null), distanceFn);
+  if (bestCost == null) return null;
   const saved = Math.round(currentCost - bestCost);
 
   const sameOrder = best.every((s, i) => s.id === movable[i].id);
