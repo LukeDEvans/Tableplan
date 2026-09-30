@@ -6285,9 +6285,14 @@ async function hydrateStateFromSharedStorage() {
         const localIsNewer = stateForMerge.stateUpdatedAt && (!remoteTs || stateForMerge.stateUpdatedAt >= remoteTs);
         if (localIsNewer) {
           console.info(`Local state (${localTs}) is same-or-newer than ${provider.label} (${remoteTs || "no timestamp"}); merging and pushing.`);
-          await snapshotCloudStateBeforeOverwrite(sharedState);
           const merged = mergeStates(stateForMerge, sharedState);
           guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated); // don't let boot-empty finance overwrite the cloud copy
+          // Snapshot the cloud copy only when this merge will actually change it —
+          // an identical merge overwrites nothing, and posting a full snapshot on
+          // every such load was a steady egress drain (INF-3).
+          if (recoverableStateSignature(merged) !== recoverableStateSignature(sharedState)) {
+            await snapshotCloudStateBeforeOverwrite(sharedState);
+          }
           applyStoredState(merged);
           financeSectionHydrated = true;
           await provider.write();
