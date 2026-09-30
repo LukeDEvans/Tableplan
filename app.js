@@ -22,7 +22,7 @@ import { normalizeContacts, normalizeContactGroups, createContactsModule, buildC
 import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
-import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
+import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
@@ -549,6 +549,11 @@ const PLAN_RANGE_CACHE_MAX = 8;
 // re-scan the whole meal-plan/workout/to-do history each time.
 let planAppDataIndex = null;
 let userGroup = null;
+// True when the signed-in user's group membership could not be READ (network /
+// server error after bounded retries) — distinct from "no group yet" (a new
+// user). While set, hydration and writes stay blocked (see runHydrate…).
+let groupLoadFailed = false;
+let groupLoadInFlight = null;
 let groupMembers = [];
 let adminDisabledPages = [];
 let personalDisabledPages = [];
@@ -2104,7 +2109,18 @@ function initTouchDragPolyfill() {
   });
 }
 
-initializeApp();
+// A boot failure must never leave the gate stuck on "Checking sign-in…": unblock
+// it with a visible message and record the error for __liveDiag. (The handler runs
+// after module evaluation, so it can't hit module-level TDZ.)
+initializeApp().catch((error) => {
+  console.error("App initialization failed:", error);
+  try { diagErrorLog.record(error); } catch { /* diagnostics are best-effort */ }
+  try {
+    authCheckCompleted = true;
+    updateAppLockState();
+    if (!authSession?.access_token) updateAuthUi("Something went wrong starting the app. Reload to try again.");
+  } catch (e) { console.error("Could not show the boot-failure message:", e); }
+});
 
 function bindEvents() {
   elements.previousWeek.addEventListener("click", () => {
@@ -2774,8 +2790,18 @@ function bindEvents() {
       // Waking after a long suspension (phone PWAs sleep for days holding old
       // code in memory): reload so the current bundle runs before any sync.
       // All state is persisted on hide (below), so a reload loses nothing.
+      // The hide-time flush is fire-and-forget and may have been frozen/killed,
+      // so first await a bounded flush of anything still dirty, and skip the
+      // reload if it didn't land — reloading would drop those edits (INF-11).
       if (appHiddenAt && Date.now() - appHiddenAt > 6 * 3600 * 1000) {
-        window.location.reload();
+        appHiddenAt = 0;
+        flushBeforeStaleReload().then((ok) => {
+          if (ok) window.location.reload();
+          else {
+            console.warn("[resume] pending changes didn't save — skipping the stale-code reload this time.");
+            saveStateToSharedStorage(); // re-arm the normal save/retry loop
+          }
+        });
         return;
       }
       appHiddenAt = 0;
@@ -2985,7 +3011,16 @@ async function initializeSupabaseAuth() {
   }
 
   if (!window.supabase?.createClient) {
-    updateAuthUi("Cloud sync needs an internet connection.");
+    // The SDK script failed to load (offline first visit, CDN blocked). Finish
+    // the auth check so the gate shows a real message instead of hanging on
+    // "Checking sign-in…" forever. This branch runs synchronously during module
+    // evaluation (no await precedes it), so yield first — updateSyncStatus
+    // touches module-level lets declared further down (TDZ otherwise).
+    await Promise.resolve();
+    authCheckCompleted = true;
+    updateAppLockState();
+    updateSyncStatus("failed");
+    updateAuthUi("Cloud sync needs an internet connection. Reload to try again.");
     return;
   }
 
@@ -3079,9 +3114,15 @@ async function initializeSupabaseAuth() {
   updateAuthUi();
 }
 
-function updateAuthUi() {
+// `message` (optional) is shown on the sign-in gate's status line — used for
+// boot failures, so a signed-out user sees WHY instead of a generic prompt.
+function updateAuthUi(message) {
   updateGroupSettingsSection();
   if (elements.authButton) elements.authButton.hidden = false;
+  if (message) {
+    const status = document.getElementById("lockStatus");
+    if (status) status.textContent = message;
+  }
 }
 
 // The app is unusable signed-out: a full-screen gate covers everything until
@@ -3601,6 +3642,52 @@ function addScannedArticle(fields, bodyHtml) {
   return article;
 }
 
+const SIGN_OUT_FLUSH_TIMEOUT_MS = 5000;
+
+let signOutInProgress = false;
+
+// Best-effort: remove THIS device's Web Push subscription from the server
+// (DELETE /api/push-subscribe {endpoint} — scoped to the caller's user id) and
+// unsubscribe it locally. Uses getRegistration() (not serviceWorker.ready, which
+// never settles when no worker is registered — native shell / local dev).
+async function removePushSubscriptionForSignOut() {
+  try {
+    if (!("serviceWorker" in navigator) || !authSession?.access_token) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const subscription = await reg?.pushManager?.getSubscription();
+    if (!subscription) return;
+    await fetch("/api/push-subscribe", {
+      method: "DELETE",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession.access_token}` },
+      body: JSON.stringify({ endpoint: subscription.endpoint }),
+    }).catch(() => {});
+    await subscription.unsubscribe().catch(() => {});
+    localStorage.removeItem("live_push_subscribed");
+  } catch (e) {
+    console.warn("[sign-out] push unsubscribe skipped:", e);
+  }
+}
+
+// Resolves true when there is nothing pending or the pending write succeeded
+// within the bound; false on failure/timeout (caller then keeps the page).
+async function flushBeforeStaleReload() {
+  window.clearTimeout(sharedStorageSaveTimer);
+  if (!sharedStorageReady || !activeSharedStorageProvider) {
+    // Not synced yet (or signed out): reloading can't lose cloud-bound edits
+    // that weren't going anywhere anyway; the localStorage mirror is current.
+    return true;
+  }
+  try {
+    return await Promise.race([
+      activeSharedStorageProvider.write().then(() => true),
+      new Promise((resolve) => window.setTimeout(() => resolve(false), SIGN_OUT_FLUSH_TIMEOUT_MS)),
+    ]);
+  } catch (e) {
+    console.warn("[resume] flush before reload failed:", e);
+    return false;
+  }
+}
+
 async function toggleAuth() {
   // Local-dev sign-out: drop the flag and reload back to the real gate. No
   // Supabase client exists in this mode, so this must run before the cloud path.
@@ -3614,6 +3701,22 @@ async function toggleAuth() {
   }
 
   if (authSession?.access_token) {
+    if (signOutInProgress) return; // double-tap during the bounded flush below
+    signOutInProgress = true;
+    // Before tearing anything down (the flush + unsubscribe need this account's
+    // token): push any pending edits (INF-6) and drop this device's push
+    // subscription so the next person on it doesn't get this account's
+    // notifications (INF-7). Both best-effort, bounded together to ~5s so a dead
+    // network can't trap the user in a signed-in state.
+    window.clearTimeout(sharedStorageSaveTimer);
+    window.clearTimeout(sharedStorageRetryTimer);
+    const pendingFlush = (sharedStorageReady && activeSharedStorageProvider)
+      ? activeSharedStorageProvider.write()
+      : Promise.resolve();
+    await Promise.race([
+      Promise.allSettled([pendingFlush, removePushSubscriptionForSignOut()]),
+      new Promise((resolve) => window.setTimeout(resolve, SIGN_OUT_FLUSH_TIMEOUT_MS)),
+    ]);
     authSession = null;
     sharedStorageReady = false;
     activeSharedStorageProvider = null;
@@ -3755,15 +3858,38 @@ function handleInviteUrlParameter() {
   if (stored) pendingInviteToken = stored;
 }
 
-async function loadOrCreateUserGroup() {
-  if (!supabaseClient || !authSession?.access_token) return;
-  try {
-    const res = await fetch(
-      `${supabaseBaseUrl()}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(authSession.user.id)}&select=group_id,role,display_name,personal_disabled_pages,live_groups(id,disabled_pages)`,
-      { headers: supabaseHeaders() }
-    );
-    if (res.ok) {
+// Resolve the signed-in user's group. Only a SUCCESSFUL membership read that
+// returns zero rows means "new user" (→ setup dialog). A failed read is retried
+// a bounded number of times, then surfaced as "can't reach server" with the group
+// left null — which blocks hydrate/write, so nothing lands in the wrong rows and
+// an existing member is never shown the "Welcome, set up your group" dialog
+// (INF-2). Re-entrant calls share the in-flight attempt (no auth request storm).
+const GROUP_LOAD_RETRY_DELAYS_MS = [1000, 3000]; // 3 attempts total
+
+function loadOrCreateUserGroup() {
+  if (!supabaseClient || !authSession?.access_token) return Promise.resolve();
+  if (!groupLoadInFlight) {
+    groupLoadInFlight = runLoadOrCreateUserGroup().finally(() => { groupLoadInFlight = null; });
+  }
+  return groupLoadInFlight;
+}
+
+async function runLoadOrCreateUserGroup() {
+  const userId = authSession.user.id;
+  for (let attempt = 0; attempt <= GROUP_LOAD_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) await new Promise((r) => window.setTimeout(r, GROUP_LOAD_RETRY_DELAYS_MS[attempt - 1]));
+    // Session changed/ended while waiting — this lookup is no longer relevant.
+    if (!authSession?.access_token || authSession.user?.id !== userId) return;
+    try {
+      const res = await fetch(
+        // order= makes the pick deterministic for a user in more than one group
+        // (oldest membership first — what an unordered heap read returned in practice).
+        `${supabaseBaseUrl()}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id,role,display_name,personal_disabled_pages,live_groups(id,disabled_pages)&order=joined_at.asc,group_id.asc`,
+        { headers: supabaseHeaders() }
+      );
+      if (!res.ok) throw new Error(`membership lookup failed with status ${res.status}`);
       const rows = await res.json();
+      groupLoadFailed = false;
       if (rows.length) {
         const member = rows[0];
         const group = member.live_groups;
@@ -3773,11 +3899,15 @@ async function loadOrCreateUserGroup() {
         updateGroupSettingsSection();
         return;
       }
+      openGroupSetupDialog(); // confirmed: signed in, no membership → new user
+      return;
+    } catch (e) {
+      console.warn(`Could not load group (attempt ${attempt + 1}):`, e);
     }
-  } catch (e) {
-    console.warn("Could not load group:", e);
   }
-  openGroupSetupDialog();
+  groupLoadFailed = true;
+  updateSyncStatus("failed");
+  try { showVoiceToast("Can't reach the server — your data will sync when the connection returns."); } catch { /* toast is cosmetic */ }
 }
 
 async function migratePersonalStateIfNeeded() {
@@ -5883,6 +6013,12 @@ function mergeStates(newer, older) {
     "financeAccounts", "financeManualTxns", "financeGoals",
     // Contacts (address book)
     "contacts",
+    // Radio user-added stations: each gets a fresh random `user_…` id and is
+    // never re-added under the same id, so tombstones (deleteRadioUserStation)
+    // are exact. Previously newer-wins — a station added on one device vanished
+    // when another device synced. (radioFavorites / radioFollowedPrograms stay
+    // newer-wins: see MERGE_NEWER_WINS_KEYS in test/architecture-state-merge-coverage.test.js.)
+    "radioUserStations",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
@@ -5966,6 +6102,37 @@ function mergeStates(newer, older) {
     "financeNotifDismissed", "financeTxnConfirmed", "financeTxnReceipts",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
+  }
+
+  // Calendar overlay visibility: sourceId → hidden flag. Toggling stores an
+  // explicit true/false (never deletes a key), so a per-key union is lossless.
+  merged.planHiddenSources = unionByKey(newer.planHiddenSources, older.planHiddenSources);
+
+  // Learned mail filing memory: two flat keyed maps (threadId → label, sender →
+  // label counts). Union per map so learning on one device isn't lost; the caps
+  // in recordMailMove re-trim on the next move.
+  merged.mailMoveMemory = {
+    ...(older.mailMoveMemory || {}),
+    ...(newer.mailMoveMemory || {}),
+    threads: unionByKey(newer.mailMoveMemory?.threads, older.mailMoveMemory?.threads),
+    senders: unionByKey(newer.mailMoveMemory?.senders, older.mailMoveMemory?.senders),
+  };
+
+  // Grocery weekly checklist: per-cycle provisional answers and submissions are
+  // keyed by cycle → union (newer wins per cycle), so a submission made on one
+  // device survives the other's sync. The item `config` list is authoritative
+  // as a whole (it carries deletions and order) → newer wins.
+  if (newer.groceryChecklist || older.groceryChecklist) {
+    const nCl = newer.groceryChecklist || {};
+    const oCl = older.groceryChecklist || {};
+    merged.groceryChecklist = {
+      ...oCl,
+      ...nCl,
+      config: Array.isArray(nCl.config) ? nCl.config : (oCl.config || []),
+      provisional: unionByKey(nCl.provisional, oCl.provisional),
+      submissions: unionByKey(nCl.submissions, oCl.submissions),
+      seeded: Boolean(nCl.seeded || oCl.seeded),
+    };
   }
 
   // ── Shallow object merges: older provides base, newer keys win ────────────
@@ -6216,7 +6383,40 @@ let financeSectionHydrated = false;
 // ./finance-sync.js (extracted, unit-tested). The mutable session flag above
 // stays here; callers pass it + STATE_SECTIONS.finance into the pure guard.
 
-async function hydrateStateFromSharedStorage() {
+// Hydration is re-entered from several places (boot, sign-in, came-online, the
+// retry timer, invite accept). Never run two at once: a call that arrives while
+// one is in flight queues exactly ONE follow-up run (so a caller that needs a
+// fresh load — e.g. a new sign-in — still gets one) and shares its promise.
+let hydrateInFlight = null;
+let hydrateQueued = null;
+let hydrateRetryTimer = null;
+
+function hydrateStateFromSharedStorage() {
+  if (hydrateInFlight) {
+    if (!hydrateQueued) {
+      hydrateQueued = hydrateInFlight.catch(() => {}).then(() => {
+        hydrateQueued = null;
+        return hydrateStateFromSharedStorage();
+      });
+    }
+    return hydrateQueued;
+  }
+  window.clearTimeout(hydrateRetryTimer);
+  hydrateRetryTimer = null;
+  hydrateInFlight = runHydrateStateFromSharedStorage().finally(() => { hydrateInFlight = null; });
+  return hydrateInFlight;
+}
+
+async function runHydrateStateFromSharedStorage() {
+  // Signed in but the group is unknown (membership lookup failed, or a brand-new
+  // user who hasn't finished setup): loading/writing now would target the config
+  // default stateId ("personal") instead of the household rows. Stay not-ready;
+  // group setup / the came-online retry hydrate once the group is known.
+  if (canUseCloudStorage() && authSession?.access_token && !userGroup?.id) {
+    if (groupLoadFailed) updateSyncStatus("failed");
+    else hideHydrationOverlay(); // new user: the setup dialog is the next step
+    return;
+  }
   const providers = sharedStorageProviders();
   if (!providers.length) return;
 
@@ -6245,10 +6445,16 @@ async function hydrateStateFromSharedStorage() {
         const localIsNewer = stateForMerge.stateUpdatedAt && (!remoteTs || stateForMerge.stateUpdatedAt >= remoteTs);
         if (localIsNewer) {
           console.info(`Local state (${localTs}) is same-or-newer than ${provider.label} (${remoteTs || "no timestamp"}); merging and pushing.`);
-          await snapshotCloudStateBeforeOverwrite(sharedState);
           const merged = mergeStates(stateForMerge, sharedState);
           guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated); // don't let boot-empty finance overwrite the cloud copy
+          // Snapshot the cloud copy only when this merge will actually change it —
+          // an identical merge overwrites nothing, and posting a full snapshot on
+          // every such load was a steady egress drain (INF-3).
+          if (recoverableStateSignature(merged) !== recoverableStateSignature(sharedState)) {
+            await snapshotCloudStateBeforeOverwrite(sharedState);
+          }
           applyStoredState(merged);
+          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           await provider.write();
         } else {
@@ -6257,6 +6463,7 @@ async function hydrateStateFromSharedStorage() {
           const merged = mergeStates(sharedState, stateForMerge);
           guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated);
           applyStoredState(merged);
+          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           // Only write back if local actually contributed something new (tombstones, additions).
           // Comparing signatures detects whether the merge changed anything vs the remote state —
@@ -6266,7 +6473,7 @@ async function hydrateStateFromSharedStorage() {
           }
         }
       }
-      else { financeSectionHydrated = true; await provider.write(); }
+      else { lastLoadedSectionJson = null; financeSectionHydrated = true; await provider.write(); }
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
@@ -6288,7 +6495,10 @@ async function hydrateStateFromSharedStorage() {
   const retryDelay = Math.min(30000 * 2 ** hydrateRetryCount, 5 * 60 * 1000);
   hydrateRetryCount++;
   console.warn(`Shared storage unavailable; retrying hydration in ${Math.round(retryDelay / 1000)}s (no blind write).`);
-  window.setTimeout(() => { hydrateStateFromSharedStorage(); }, retryDelay);
+  // One retry timer at a time — repeated failures (or a failure racing a
+  // came-online hydrate) must not stack parallel retry chains.
+  window.clearTimeout(hydrateRetryTimer);
+  hydrateRetryTimer = window.setTimeout(() => { hydrateRetryTimer = null; hydrateStateFromSharedStorage(); }, retryDelay);
 }
 
 function saveStateToSharedStorage() {
@@ -6347,8 +6557,25 @@ function registerServiceWorker() {
   });
 }
 
+// Flaky connections fire "online" repeatedly; each hydrate re-downloads every
+// section. At most one came-online hydrate per minute — in between, a ready
+// session just flushes its pending edits (merge-protected writes).
+const CAME_ONLINE_HYDRATE_MIN_MS = 60 * 1000;
+let lastCameOnlineHydrateAt = 0;
+
 async function handleCameOnline() {
-  if (!canUseCloudStorage() || !authSession?.access_token || !userGroup?.id) return;
+  if (!canUseCloudStorage() || !authSession?.access_token) return;
+  if (Date.now() - lastCameOnlineHydrateAt < CAME_ONLINE_HYDRATE_MIN_MS) {
+    if (sharedStorageReady) saveStateToSharedStorage();
+    return;
+  }
+  lastCameOnlineHydrateAt = Date.now();
+  // A signed-in session whose group lookup failed (offline at boot) retries it
+  // now; hydration stays blocked until the group is known.
+  if (!userGroup?.id) {
+    await loadOrCreateUserGroup();
+    if (!userGroup?.id) return;
+  }
   // Hydrate-and-merge instead of blind-flushing: a device that was offline for
   // a while must fold the cloud's changes in before its own state goes up,
   // or it overwrites everything other devices wrote in the meantime.
@@ -6645,10 +6872,10 @@ async function writeStateToLocalBackend() {
   });
 }
 
-function extractSectionData(keys) {
+function extractSectionData(keys, source = state) {
   const obj = {};
   for (const key of keys) {
-    if (key in state) obj[key] = state[key];
+    if (key in source) obj[key] = source[key];
   }
   // Per-episode show-notes are the single heaviest thing in the whole state
   // (~1 MB per subscribed show) and are re-fetchable from the feed on demand.
@@ -6674,11 +6901,16 @@ function stripEpisodeDescriptions(podcasts) {
     : p);
 }
 
-function updateLastWrittenSections() {
-  lastWrittenSections = {};
-  for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
-    lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
-  }
+// JSON (in extractSectionData's persisted shape) of each section as the server
+// held it at the last successful loadStateFromSupabase(), keyed by section —
+// only for sections whose ACTIVE row actually exists. Consumed once by
+// hydrateStateFromSharedStorage to seed lastWrittenSections, so a load only
+// rewrites the sections the merge really changed instead of every section.
+let lastLoadedSectionJson = null;
+
+function seedLastWrittenFromLoad() {
+  lastWrittenSections = lastLoadedSectionJson ? { ...lastLoadedSectionJson } : null;
+  lastLoadedSectionJson = null;
 }
 
 function assembleSectionRows(rows) {
@@ -6733,6 +6965,16 @@ async function loadStateFromSupabase() {
   persistShadowSections();
 
   const activeRows = activeIds.map((id) => byId.get(id)).filter(Boolean);
+  // Record what the server holds per section (active rows only) so hydrate can
+  // mark unchanged sections as already written. Sections with no active row are
+  // left out, so they stay dirty and get created on the first write.
+  lastLoadedSectionJson = {};
+  for (const section of Object.keys(STATE_SECTIONS)) {
+    const row = byId.get(sectionRowId(stateId, section));
+    if (!row) continue;
+    const { stateUpdatedAt: _ts, schemaVersion: _sv, ...data } = row.state || {};
+    lastLoadedSectionJson[section] = JSON.stringify(extractSectionData(STATE_SECTIONS[section], data));
+  }
   if (activeRows.length > 0) return assembleSectionRows(activeRows);
   if (rows.length > 0) return assembleSectionRows([]); // rows exist but none active (fresh personal scopes)
 
@@ -6750,23 +6992,63 @@ async function writeStateToSupabase() {
   const config = supabaseConfig();
   const stateId = config.stateId;
 
-  const sectionsToWrite = [];
-  for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
-    // Never push the finance section before its cloud copy has loaded — the
-    // boot-empty finance (mirror strips it) would blank budget picks and the
-    // cash/emergency/retirement account selections on the server.
-    if (section === "finance" && !financeSectionHydrated) continue;
-    const currentJson = JSON.stringify(extractSectionData(keys));
-    if (!lastWrittenSections || lastWrittenSections[section] !== currentJson) {
-      sectionsToWrite.push({ section, keys });
-    }
+  // A signed-in session must never write before its group is known: with no
+  // userGroup, stateId falls back to the config default ("personal") and the
+  // household sections would land in the wrong rows (INF-2).
+  if (!localDevMode && authSession?.access_token && !userGroup?.id) {
+    throw new Error("Group not loaded — refusing to write state");
   }
+
+  // Never push the finance section before its cloud copy has loaded — the
+  // boot-empty finance (mirror strips it) would blank budget picks and the
+  // cash/emergency/retirement account selections on the server.
+  const sectionsToWrite = computeDirtySections(
+    STATE_SECTIONS,
+    (keys) => JSON.stringify(extractSectionData(keys)),
+    lastWrittenSections,
+    (section) => section === "finance" && !financeSectionHydrated,
+  );
 
   if (sectionsToWrite.length === 0) return;
 
-  await Promise.all(sectionsToWrite.map(({ section, keys }) => writeSectionWithMerge(stateId, section, keys)));
+  // Each section records ONLY the JSON it actually sent, and only once that
+  // write succeeded. Edits made while these PATCHes are in flight therefore stay
+  // dirty and go out on the next save, and one failing section can't stop the
+  // others being marked (INF-1: the old code re-read live state AFTER the await
+  // and marked every section clean, silently dropping in-flight edits).
+  const { written, error } = await writeDirtySections(
+    sectionsToWrite,
+    ({ section, keys }) => writeSectionWithMerge(stateId, section, keys),
+  );
+  lastWrittenSections = { ...(lastWrittenSections || {}), ...written };
+  if (error) throw error;
+}
 
-  updateLastWrittenSections();
+// Section writes issued while the page is hidden (the flush-on-hide) use
+// fetch keepalive so the browser finishes them even if the page is frozen or
+// discarded right after. Browsers cap keepalive bodies at 64 KiB IN TOTAL across
+// in-flight keepalive requests and REJECT anything over it, so only bodies that
+// fit a shared budget get the flag; larger ones go as ordinary fetches (the
+// stale-resume flush / next save retries them if they're cut off).
+const KEEPALIVE_BUDGET_BYTES = 60 * 1024;
+let keepaliveBytesInFlight = 0;
+
+async function sectionWriteFetch(url, init) {
+  const body = typeof init?.body === "string" ? init.body : "";
+  let reserved = 0;
+  if (typeof document !== "undefined" && document.visibilityState === "hidden"
+      && body.length <= KEEPALIVE_BUDGET_BYTES) {
+    const bytes = new TextEncoder().encode(body).length;
+    if (keepaliveBytesInFlight + bytes <= KEEPALIVE_BUDGET_BYTES) {
+      reserved = bytes;
+      keepaliveBytesInFlight += bytes;
+    }
+  }
+  try {
+    return await fetch(url, reserved ? { ...init, keepalive: true } : init);
+  } finally {
+    if (reserved) keepaliveBytesInFlight -= reserved;
+  }
 }
 
 // Writes one section row with optimistic locking. If another writer (other
@@ -6776,18 +7058,22 @@ async function writeStateToSupabase() {
 async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
   const rowId = sectionRowId(stateId, section); // household or personal row per scope
   const now = new Date().toISOString();
+  // Snapshot the section ONCE: the payload and the JSON reported back to the
+  // caller (which becomes lastWrittenSections[section]) must be the same bytes.
+  const sectionData = extractSectionData(keys);
+  const sentJson = JSON.stringify(sectionData);
   const payload = {
     // schemaVersion lets the server (see the tp_protect_finance_merge trigger)
     // reject finance-key overwrites from clients running older code than the
     // row was last written with — the guard against a stale device silently
     // wiping budget categories or transaction annotations.
-    state: { ...extractSectionData(keys), stateUpdatedAt: state.stateUpdatedAt, schemaVersion: STATE_SCHEMA_VERSION },
+    state: { ...sectionData, stateUpdatedAt: state.stateUpdatedAt, schemaVersion: STATE_SCHEMA_VERSION },
     updated_at: now
   };
   const seen = lastSeenSectionStamp[rowId];
 
   if (seen) {
-    const res = await fetch(
+    const res = await sectionWriteFetch(
       // select=updated_at so the representation echoes ONLY the stamp we read
       // below — not the whole (multi-MB for media) state blob. Cuts write egress
       // dramatically; we never used the returned state here.
@@ -6796,7 +7082,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     );
     if (!res.ok) throw new Error(`Supabase section "${section}" save failed: ${res.status}`);
     const rows = await res.json();
-    if (rows.length) { lastSeenSectionStamp[rowId] = rows[0].updated_at || now; return; }
+    if (rows.length) { lastSeenSectionStamp[rowId] = rows[0].updated_at || now; return sentJson; }
     // 0 rows matched → conflict: the row moved on since we last saw it
   } else {
     // No stamp — check whether the row exists at all before creating it
@@ -6807,7 +7093,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     if (!probe.ok) throw new Error(`Supabase section "${section}" probe failed: ${probe.status}`);
     const probeRows = await probe.json();
     if (!probeRows.length) {
-      const ins = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id&select=updated_at`, {
+      const ins = await sectionWriteFetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id&select=updated_at`, {
         // select=updated_at: same reason as the PATCH above — only the stamp is
         // read back, so don't have the insert echo the whole row.
         method: "POST",
@@ -6817,7 +7103,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
       if (!ins.ok) throw new Error(`Supabase section "${section}" save failed: ${ins.status}`);
       const insRows = await ins.json().catch(() => []);
       lastSeenSectionStamp[rowId] = insRows[0]?.updated_at || now;
-      return;
+      return sentJson;
     }
     // Row exists but we never hydrated it — merge before writing over it
   }
@@ -32632,6 +32918,7 @@ async function deleteRadioUserStation(id) {
   if (radioCurStation && radioCurStation.id === id) stopRadio();
   state.radioUserStations = (state.radioUserStations || []).filter((s) => s.id !== id);
   state.radioFavorites = (state.radioFavorites || []).filter((s) => s.id !== id); // drop any favourite ref
+  recordDeletion("radioUserStations", id); // tombstone: this list union-merges across devices
   persist();
   radioCatalog = null;
   await ensureRadioCatalog();

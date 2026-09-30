@@ -1,17 +1,34 @@
-const CACHE = "live-v35";
+// v36: caching narrowed to same-origin static files (+ versioned CDN libs);
+// navigations keyed to "/" only when ok. Bumping the name also drops every
+// hashed /assets/ file the old worker accumulated across deploys.
+const CACHE = "live-v36";
 const PRECACHE = ["/", "/favicon.svg"];
-// Weather map tiles / radar frames must never be cached here (they'd bloat the
-// cache and serve stale radar) — pass them straight through to the network.
-const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com", "cartocdn.com", "mapservices.weather.noaa.gov", "radar.weather.gov", "gibs.earthdata.nasa.gov", "server.arcgisonline.com", "openstreetmap.org",
-  // On-demand Music streams from these directly; never let the SW cache audio
-  // (large, range-based, and licence-restricted) or their search/art responses.
-  "archive.org",
-  // Apple Music (MusicKit): catalog/personal API (api.music.apple.com — /v1/me
-  // responses must never be served from a URL-keyed cache), DRM playback + HLS
-  // segments (*.itunes.apple.com), sign-in, the SDK, and artwork (mzstatic.com).
-  "apple.com", "mzstatic.com",
-  // Radio: MPR/APMG stream CDN + Radio Browser directory/streams.
-  "publicradio.org", "api.radio-browser.info"];
+
+// Cross-origin hosts whose GET responses may be cached. Only versioned,
+// immutable library URLs (the pinned supabase-js SDK — needed for an offline
+// boot — and Leaflet) are served from here. Every OTHER cross-origin request
+// (Supabase, weather/open-meteo, map tiles, radar, audio streams, Apple Music,
+// fonts, …) passes straight through to the network untouched.
+const CACHEABLE_CROSS_ORIGIN_HOSTS = ["cdn.jsdelivr.net"];
+
+// Same-origin files worth caching: Vite's hashed bundle under /assets/, plus the
+// root-level static files copied into dist (icons, logos, manifest).
+const ROOT_STATIC_FILE = /^\/[^/]+\.(?:png|svg|ico|webp|jpe?g|gif|json|webmanifest|woff2?)$/i;
+
+function isCacheableRequest(url) {
+  if (url.origin === self.location.origin) {
+    return url.pathname.startsWith("/assets/") || ROOT_STATIC_FILE.test(url.pathname);
+  }
+  return CACHEABLE_CROSS_ORIGIN_HOSTS.includes(url.hostname);
+}
+
+function isCacheableResponse(res) {
+  if (!res || !res.ok || res.status !== 200) return false; // no partial (206) / error bodies
+  // Never cache audio streams (live radio, media) — they're large, often
+  // range/chunked, and would buffer indefinitely.
+  const ct = res.headers.get("content-type") || "";
+  return !/^audio\//i.test(ct) && !/(mpegurl|octet-stream)/i.test(ct);
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -34,42 +51,46 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
-  if (SKIP_HOSTS.some((h) => url.hostname.includes(h))) return;
 
-  // API calls must always hit the network — caching them serves stale
-  // responses (e.g. expired OAuth URLs) and masks server errors
-  if (url.pathname.startsWith("/.netlify/functions/") || url.pathname.startsWith("/api/")) return;
-
-  // Navigation: network-first, fall back to cached shell
+  // Navigation: network-first, fall back to the cached shell. The app is a
+  // single page, so the shell is always stored under "/" — never under the
+  // request URL, which can carry one-time tokens (?invite=…) — and only from a
+  // good, same-origin, non-redirected response (never a 404/500 page).
   if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
+    const network = fetch(request);
+    event.waitUntil(
+      network
         .then((res) => {
-          caches.open(CACHE).then((c) => c.put(request, res.clone()));
-          return res;
+          if (res.ok && !res.redirected && res.type === "basic" && url.origin === self.location.origin) {
+            const copy = res.clone();
+            return caches.open(CACHE).then((c) => c.put("/", copy));
+          }
+          return undefined;
         })
-        .catch(() => caches.match("/"))
+        .catch(() => {})
     );
+    event.respondWith(network.catch(() => caches.match("/")));
     return;
   }
 
-  // Static assets: serve cached immediately, update cache in background
+  // Everything else that isn't an allowed static file goes straight to the
+  // network (APIs, functions, cross-origin data, range requests).
+  if (!isCacheableRequest(url) || request.headers.has("range")) return;
+
+  // Static files: stale-while-revalidate. The response copy is taken
+  // synchronously when the network response arrives (before the page can read
+  // the body), and the cache write is tied to event.waitUntil so the worker
+  // isn't killed mid-update.
+  const network = fetch(request).then((res) => ({ res, copy: isCacheableResponse(res) ? res.clone() : null }));
+  network.catch(() => {}); // a failed background refresh is not an error
+  event.waitUntil(
+    network
+      .then(({ copy }) => (copy ? caches.open(CACHE).then((c) => c.put(request, copy)) : undefined))
+      .catch(() => {})
+  );
   event.respondWith(
-    caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(request);
-      const fetchAndCache = fetch(request).then((res) => {
-        // Never cache audio streams (live radio, media) — they're large, often
-        // range/chunked, and would buffer indefinitely.
-        const ct = res.headers.get("content-type") || "";
-        if (res.ok && !/^audio\//i.test(ct) && !/(mpegurl|octet-stream)/i.test(ct)) cache.put(request, res.clone());
-        return res;
-      }).catch(() => null);
-      if (cached) {
-        fetchAndCache; // background update, not awaited
-        return cached;
-      }
-      return fetchAndCache;
-    })
+    caches.match(request, { cacheName: CACHE })
+      .then((cached) => cached || network.then(({ res }) => res))
   );
 });
 
