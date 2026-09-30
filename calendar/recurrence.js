@@ -71,14 +71,28 @@ export function normalizeRecurrence(r) {
 // occurrence expansion stays purely until-based.
 export function planNthOccurrenceDate(baseEvent, count) {
   if (!baseEvent?.recurrence || !(count >= 1)) return null;
-  const endD = new Date(baseEvent.date + "T00:00:00");
-  if (isNaN(endD)) return null;
-  endD.setFullYear(endD.getFullYear() + 20); // generous horizon; loops are capped internally
-  const occ = expandRecurringOccurrences(
-    { ...baseEvent, recurrence: { ...baseEvent.recurrence, until: null, count: null }, exceptions: [] },
-    baseEvent.date, dateKeyFromDate(endD)
-  );
-  return occ[count - 1] || occ[occ.length - 1] || null;
+  const start = new Date(baseEvent.date + "T00:00:00");
+  if (isNaN(start)) return null;
+  const ev = { ...baseEvent, recurrence: { ...baseEvent.recurrence, until: null, count: null }, exceptions: [] };
+  // Expand in one-year windows rather than one 20-year span: each
+  // expandRecurringOccurrences call caps its own loop (~1500 steps), so a single
+  // long window silently truncated large counts (e.g. weekly Mon+Wed × 500 ran
+  // out of day-scan steps after ~4 years and returned a too-early date). The
+  // guard is raised ONLY here; expansion semantics are untouched. Horizon: 100y.
+  let found = 0, last = null;
+  const winStart = new Date(start);
+  for (let w = 0; w < 100; w++) {
+    const winEnd = new Date(winStart);
+    winEnd.setFullYear(winEnd.getFullYear() + 1);
+    winEnd.setDate(winEnd.getDate() - 1);
+    const occ = expandRecurringOccurrences(ev, dateKeyFromDate(winStart), dateKeyFromDate(winEnd));
+    if (found + occ.length >= count) return occ[count - found - 1];
+    found += occ.length;
+    if (occ.length) last = occ[occ.length - 1];
+    winStart.setTime(winEnd.getTime());
+    winStart.setDate(winStart.getDate() + 1);
+  }
+  return last;
 }
 
 // Expand a recurring event into occurrence date-keys within [startKey, endKey].
