@@ -3605,6 +3605,32 @@ function addScannedArticle(fields, bodyHtml) {
   return article;
 }
 
+const SIGN_OUT_FLUSH_TIMEOUT_MS = 5000;
+
+let signOutInProgress = false;
+
+// Best-effort: remove THIS device's Web Push subscription from the server
+// (DELETE /api/push-subscribe {endpoint} — scoped to the caller's user id) and
+// unsubscribe it locally. Uses getRegistration() (not serviceWorker.ready, which
+// never settles when no worker is registered — native shell / local dev).
+async function removePushSubscriptionForSignOut() {
+  try {
+    if (!("serviceWorker" in navigator) || !authSession?.access_token) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const subscription = await reg?.pushManager?.getSubscription();
+    if (!subscription) return;
+    await fetch("/api/push-subscribe", {
+      method: "DELETE",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession.access_token}` },
+      body: JSON.stringify({ endpoint: subscription.endpoint }),
+    }).catch(() => {});
+    await subscription.unsubscribe().catch(() => {});
+    localStorage.removeItem("live_push_subscribed");
+  } catch (e) {
+    console.warn("[sign-out] push unsubscribe skipped:", e);
+  }
+}
+
 async function toggleAuth() {
   // Local-dev sign-out: drop the flag and reload back to the real gate. No
   // Supabase client exists in this mode, so this must run before the cloud path.
@@ -3618,6 +3644,22 @@ async function toggleAuth() {
   }
 
   if (authSession?.access_token) {
+    if (signOutInProgress) return; // double-tap during the bounded flush below
+    signOutInProgress = true;
+    // Before tearing anything down (the flush + unsubscribe need this account's
+    // token): push any pending edits (INF-6) and drop this device's push
+    // subscription so the next person on it doesn't get this account's
+    // notifications (INF-7). Both best-effort, bounded together to ~5s so a dead
+    // network can't trap the user in a signed-in state.
+    window.clearTimeout(sharedStorageSaveTimer);
+    window.clearTimeout(sharedStorageRetryTimer);
+    const pendingFlush = (sharedStorageReady && activeSharedStorageProvider)
+      ? activeSharedStorageProvider.write()
+      : Promise.resolve();
+    await Promise.race([
+      Promise.allSettled([pendingFlush, removePushSubscriptionForSignOut()]),
+      new Promise((resolve) => window.setTimeout(resolve, SIGN_OUT_FLUSH_TIMEOUT_MS)),
+    ]);
     authSession = null;
     sharedStorageReady = false;
     activeSharedStorageProvider = null;
