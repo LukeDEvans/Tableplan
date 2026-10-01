@@ -15827,6 +15827,9 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
     box-shadow: 4px 0 16px rgba(0,0,0,0.12);
   }
   .article-reader-panel { position: absolute; inset: 0; background: var(--paper, #fff); z-index: 10; }
+  /* Explore's trip list opens full-width on a phone: at 240px over a ~310px
+     content area the centered empty-state text peeked out beside it. */
+  #exploreMainPage .article-sidebar.is-expanded { width: 100%; }
 }
 
 /* Desktop: sidebars are an icons-only rail that floats open to the full menu on

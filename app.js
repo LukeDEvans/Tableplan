@@ -26359,6 +26359,13 @@ function syncEventChoresToDoList(event) {
 
   let changed = false;
   const present = new Set(); // "key|dayId|title" already in place and still wanted
+  // Drops from the current week on are real removals (chore deleted, To-Do
+  // toggled off, event moved): tombstone them, or a merge with another device
+  // re-adds them and the next resync drops them again. Past-week linked tasks
+  // also fall out of `desired` (it starts at this week), but whether those
+  // should be kept is the held chore-retention decision (CAL-10), so they are
+  // left untombstoned — behavior there is unchanged.
+  const windowStartKey = dateKeyFromDate(startOfPrepWindow(new Date()));
   if (state.doPlans && typeof state.doPlans === "object") {
     Object.entries(state.doPlans).forEach(([key, week]) => {
       if (!week || typeof week !== "object") return;
@@ -26369,6 +26376,7 @@ function syncEventChoresToDoList(event) {
           const want = desired.get(`${key}|${dayId}`);
           if (want && want.titles.has(t.title)) { present.add(`${key}|${dayId}|${t.title}`); return true; }
           changed = true; // stale linked task → drop
+          if (key >= windowStartKey && t.id != null) recordDeletion("doPlanTasks", t.id);
           return false;
         });
         if (kept.length !== week[dayId].length) week[dayId] = kept;
@@ -43555,6 +43563,12 @@ function showTravelAddExpenseDialog(trip, budgetEl = null) {
 function syncTripToCalendar(trip) {
   if (!trip.startDate || !trip.endDate) return;
   const title = `✈ ${trip.name}`;
+  // Tombstone the event(s) this resync replaces, or a merge with a device still
+  // holding the old copy brings it back next to the new one (duplicate trip bar).
+  // A fresh id per sync (not a stable one) so a resync can re-add the event even
+  // after it was deleted once — tombstones union across devices and never clear.
+  const replaced = (state.planEvents || []).filter(e => e.travelTripId === trip.id);
+  recordDeletions("planEvents", replaced.map(e => e.id));
   state.planEvents = (state.planEvents || []).filter(e => e.travelTripId !== trip.id);
   state.planEvents.push({
     id: createId("plan-evt"),
