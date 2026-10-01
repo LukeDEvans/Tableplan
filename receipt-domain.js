@@ -1,3 +1,5 @@
+  const RECEIPT_SOURCES = ["scan", "email", "extension", "manual"];
+
   function text(value) {
     return String(value || "").trim();
   }
@@ -79,6 +81,15 @@ return {
       imageRefs: normalizeImageRefs(receipt?.imageRefs),
       extraction: normalizeExtraction(receipt?.extraction),
       createdAt: text(receipt?.createdAt) || new Date().toISOString(),
+      // One receipts list serves Shop and Finance (RECEIPTS.md). Where it came
+      // from: "scan" (camera/photo, reviewed in Shop — the default), "email" (mail
+      // sweep), "extension" (browser order page), "manual". Only scan/manual
+      // receipts feed grocery price history.
+      source: RECEIPT_SOURCES.includes(text(receipt?.source)) ? text(receipt.source) : "scan",
+      // The source's own id (Gmail message id for email receipts) — for links.
+      externalId: text(receipt?.externalId),
+      // The Finance transaction this receipt was itemized against, once linked.
+      financeTxnId: text(receipt?.financeTxnId),
       lineItems
     };
   }
@@ -105,7 +116,9 @@ return {
       unitPrice,
       discountAmount: Math.max(0, number(line?.discountAmount || line?.discount)),
       confidenceScore: Math.min(1, Math.max(0, number(line?.confidenceScore, 0.7))),
-      userCorrected: Boolean(line?.userCorrected)
+      userCorrected: Boolean(line?.userCorrected),
+      // Finance budget category key ("cat:<groupId>:<categoryId>") or "".
+      budgetCategory: text(line?.budgetCategory)
     };
   }
 
@@ -200,7 +213,12 @@ return {
     return mappings;
   }
 
+  function feedsPriceHistory(receipt) {
+    return !receipt?.source || receipt.source === "scan" || receipt.source === "manual";
+  }
+
   function priceHistoryFromReceipt(receipt, createId = defaultId) {
+    if (!feedsPriceHistory(receipt)) return [];
     return receipt.lineItems
       .filter((line) => line.normalizedName && line.totalPrice > 0)
       .map((line) => ({
@@ -253,6 +271,72 @@ return {
     });
   }
 
+  // ── Finance view of the one receipts list ────────────────────────────────
+  // Finance matches receipts to bank transactions by total + date and builds a
+  // category split from them. These are the only shapes Finance reads.
+  const round2 = (n) => Math.round(n * 100) / 100;
+
+  // Per-budget-category sums of the line items, plus one unlabeled remainder
+  // (tax, fees, uncategorized lines) so the portions always add up to the total.
+  function receiptFinancePortions(receipt) {
+    const total = round2(number(receipt?.total));
+    const byCat = new Map();
+    let assigned = 0;
+    for (const line of (receipt?.lineItems || [])) {
+      const amount = number(line?.totalPrice);
+      if (!line?.budgetCategory || !amount) continue;
+      byCat.set(line.budgetCategory, round2((byCat.get(line.budgetCategory) || 0) + amount));
+      assigned += amount;
+    }
+    const portions = [...byCat.entries()].map(([label, amount]) => ({ label, amount }));
+    const remainder = round2(total - assigned);
+    if (remainder > 0.02) portions.push({ label: "", amount: remainder });
+    return portions;
+  }
+
+  function receiptForFinance(receipt) {
+    return {
+      id: receipt.id,
+      merchant: receipt.storeName,
+      date: receipt.purchaseDate,
+      total: round2(number(receipt.total)),
+      source: receipt.source || "scan",
+      externalId: receipt.externalId || "",
+      financeTxnId: receipt.financeTxnId || "",
+      hasImage: (receipt.imageRefs || []).length > 0,
+      items: (receipt.lineItems || []).map((line) => ({ name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
+      portions: receiptFinancePortions(receipt)
+    };
+  }
+
+  // An email / extension receipt from the server inbox (finreceipts_ row:
+  // { id, merchant, date, total, items: [{ name, price, category }], source? })
+  // → a receipt in the one list. The id is derived from the inbox id, so
+  // importing the same receipt again is a no-op.
+  function receiptFromFinanceInbox(inbound, createId = defaultId) {
+    const source = inbound?.source === "extension" || inbound?.source === "scan" ? inbound.source : "email";
+    const externalId = text(inbound?.id);
+    const id = `receipt-${source}-${externalId}`;
+    return normalizeReceipt({
+      id,
+      storeName: text(inbound?.merchant) || "Receipt",
+      purchaseDate: text(inbound?.date),
+      total: number(inbound?.total),
+      source,
+      externalId: source === "email" ? externalId : "",
+      createdAt: text(inbound?.at),
+      lineItems: (Array.isArray(inbound?.items) ? inbound.items : []).map((it, i) => ({
+        id: `${id}-line-${i}`,
+        rawText: text(it?.name),
+        normalizedName: text(it?.name),
+        quantity: 1,
+        totalPrice: number(it?.price),
+        confidenceScore: 0.8,
+        budgetCategory: text(it?.category)
+      }))
+    }, createId);
+  }
+
   function defaultId(prefix) {
     return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
@@ -268,5 +352,10 @@ export {
     estimateFromHistory,
     estimateGroceryListFromHistory,
     trendForItem,
-    normalizedName
+    normalizedName,
+    feedsPriceHistory,
+    receiptFinancePortions,
+    receiptForFinance,
+    receiptFromFinanceInbox,
+    RECEIPT_SOURCES
   };

@@ -58,19 +58,16 @@ page now reaches its server function (it was fetching the app's own page).
 PR: https://github.com/LukeDEvans/Tableplan/pull/35
 
 The top-right button is now a receipt scanner (Camera / Photo). A scanned receipt opens Shop's
-review dialog already reading it, and is also read + saved to Finance → Receipts in the background,
-where it matches its charge once it posts. "User" (the profile window, now titled "User") is the
-first Settings menu item; the Settings button always opens the menu. Shop receipt scan also works
-in the iPhone app now.
+review dialog already reading it. (The background Finance save this PR first added was replaced
+by the one receipts list in the receipts-consolidation PR. A saved receipt reaches Finance from
+`state.receipts`.) "User" (the profile window, now titled "User") is the first Settings menu item;
+the Settings button always opens the menu. Shop receipt scan also works in the iPhone app now.
 
 **After deploying:**
-1. Phone: scanner → Camera, photograph a receipt. Shop's review opens with the lines filled in, and
-   a toast says it was saved to Finance.
-2. Finance → Insights → Receipts: the receipt shows (unmatched until the charge posts). After it
-   posts, Itemize builds the split and the transaction shows the receipt photo. If the photo is
-   missing, check the `receipt-attachments` bucket's RLS allows `<uid>/scans/…`.
-3. Settings → User opens the profile window; log out / log in still work.
-4. Next TestFlight build: scanner → Camera, then check that the photo is not in the Photos library.
+1. Phone: scanner → Photo, pick a receipt. Shop's review opens with the lines filled in.
+2. Settings → User opens the profile window; log out / log in still work.
+3. (Receipts in Finance: see the receipts-consolidation entry.)
+
 
 ## iPhone app: header Camera opens Apple's document scanner (PR #36)
 PR: https://github.com/LukeDEvans/Tableplan/pull/36

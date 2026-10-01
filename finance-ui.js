@@ -238,7 +238,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -828,31 +828,45 @@ function navigateFinanceMonth(delta) {
 }
 let financeLinkBusy = false;
 let financeHistory = null;    // { "YYYY-MM-DD": { netWorth, balances } } from daily snapshots
-let financeReceipts = null;   // email receipts extracted by the mail sweep
-
 async function loadFinanceHistory() {
   const data = await callNetlifyFunction("simplefin", { action: "history" });
   financeHistory = (data?.days && typeof data.days === "object") ? data.days : {};
   if (getActiveAppArea() === "finance") renderFinancePage();
 }
 
+// Receipts come from the ONE receipts list (state.receipts, owned by Shop — see
+// RECEIPTS.md), read through the injected receiptsForFinance(). Email and
+// browser-extension receipts still arrive in the server inbox (finreceipts_);
+// loadFinanceReceipts() imports them into that list once per session.
+let financeReceiptsImported = false;
+const RECEIPT_MATCH_DAYS = 4;
+
 async function loadFinanceReceipts() {
+  financeReceiptsImported = true;
   const data = await callNetlifyFunction("simplefin", { action: "receipts" });
-  financeReceipts = Array.isArray(data?.receipts) ? data.receipts : [];
-  if (getActiveAppArea() === "finance") renderFinancePage();
+  const added = Array.isArray(data?.receipts) ? importFinanceInboxReceipts(data.receipts) : 0;
+  if (added && getActiveAppArea() === "finance") renderFinancePage();
 }
 
-// Matches an email receipt to a spend transaction: same total (±2¢), dated
-// within 4 days. Used to prefill the split editor with categorized portions.
-function financeReceiptForTxn(t) {
-  if (!financeReceipts || (t.amount || 0) >= 0) return null;
-  const amt = Math.abs(t.amount);
-  const tDate = new Date(t.posted || 0).getTime();
-  return financeReceipts.find((r) => {
-    if (Math.abs((Number(r.total) || 0) - amt) > 0.02) return false;
-    if (!r.date) return true;
-    return Math.abs(new Date(r.date).getTime() - tDate) <= 4 * 86400000;
-  }) || null;
+function financeReceiptList() {
+  try { return receiptsForFinance() || []; } catch { return []; }
+}
+
+function receiptMatchesTxn(r, t) {
+  if ((t.amount || 0) >= 0 || !(Number(r.total) > 0)) return false;
+  if (Math.abs(Math.abs(t.amount) - Number(r.total)) > 0.02) return false;
+  if (!r.date) return true;
+  return Math.abs(new Date(t.posted || 0).getTime() - new Date(r.date).getTime()) <= RECEIPT_MATCH_DAYS * 86400000;
+}
+
+// The receipt for a spend transaction: the one already linked to it (itemized
+// earlier), else an unlinked receipt with the same total (±2¢) dated within
+// 4 days. Used to prefill the split editor with categorized portions.
+function financeReceiptForTxn(t, list = financeReceiptList()) {
+  if (!t || (t.amount || 0) >= 0) return null;
+  return list.find((r) => r.financeTxnId === t.id)
+    || list.find((r) => !r.financeTxnId && receiptMatchesTxn(r, t))
+    || null;
 }
 
 let financeLinkStatusChecking = false;
@@ -917,7 +931,7 @@ async function refreshFinanceLive(force = false) {
   updateFinanceRecurring();
   setPageNotifCount("finance", financeBellCount());
   if (financeHistory === null) loadFinanceHistory();
-  if (financeReceipts === null) loadFinanceReceipts();
+  if (!financeReceiptsImported) loadFinanceReceipts().catch(() => {});
   if (getActiveAppArea() === "finance") renderFinancePage();
   refreshFinanceSettingsIfOpen();
   if (financeStoreEnabled()) syncFinanceTxnStore(); // explicit trigger: a finance refresh
@@ -2389,52 +2403,6 @@ async function viewReceiptImage(txnId) {
   }
 }
 
-// ── Top-right scanner → Finance ─────────────────────────────────────────────
-// The header scanner sends each receipt here as well as to Shop. The server
-// reads + categorizes it and stores it with the email receipts (finreceipts_),
-// so it shows in Finance → Receipts and matches its transaction by total + date
-// once the charge posts — a receipt scanned at checkout isn't lost while the
-// bank catches up. The first photo is kept in the private receipt bucket and is
-// attached to the transaction when the receipt is itemized.
-async function captureScannedReceipt(files) {
-  const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 4);
-  if (!list.length) return null;
-  trackUsage("claude_receipt_scan");
-  const prepared = await Promise.all(list.map((f) => prepareScanImage(f, undefined, { maxDimension: 1600, quality: 0.82 })));
-  const images = await Promise.all(prepared.map(fileToDataUrl));
-  let imagePath = "";
-  try { imagePath = await uploadScannedReceiptImage(prepared[0]); } catch (e) { console.warn("Receipt image not kept:", e?.message || e); }
-  const data = await callNetlifyFunction("simplefin", { action: "scanReceipt", images, save: true, imagePath });
-  if (!data?.receipt) {
-    // Nothing was saved, so don't leave the image orphaned in the bucket.
-    if (imagePath) getSupabaseClient()?.storage.from(RECEIPT_BUCKET).remove([imagePath]).catch(() => {});
-    throw new Error(data?.error || "Couldn't read a receipt from that photo.");
-  }
-  await loadFinanceReceipts().catch(() => {});
-  return data.receipt;
-}
-
-async function uploadScannedReceiptImage(blob) {
-  const userId = getAuthSession()?.user?.id;
-  if (!getSupabaseClient() || !userId || !blob) return "";
-  const type = blob.type || "image/jpeg";
-  const ext = /png/.test(type) ? "png" : /webp/.test(type) ? "webp" : "jpg";
-  const path = `${userId}/scans/${Date.now()}.${ext}`;
-  const { error } = await getSupabaseClient().storage.from(RECEIPT_BUCKET).upload(path, blob, { upsert: true, contentType: type });
-  if (error) throw error;
-  return path;
-}
-
-// A scanned receipt's kept photo becomes the transaction's receipt image when
-// the receipt is used for it — unless the transaction already has its own.
-function attachScannedReceiptImage(txnId, receipt) {
-  if (!txnId || !receipt?.imagePath) return;
-  if (!state.financeTxnReceipts || typeof state.financeTxnReceipts !== "object") state.financeTxnReceipts = {};
-  if (state.financeTxnReceipts[txnId]?.path) return;
-  state.financeTxnReceipts[txnId] = { path: receipt.imagePath, type: /\.png$/.test(receipt.imagePath) ? "image/png" : "image/jpeg", size: 0, name: "Scanned receipt", uploadedAt: receipt.at || new Date().toISOString() };
-  persist();
-}
-
 // ── Batch receipt scan (scan a pile, auto-match by total + date) ────────────
 // Finds the ONE spend transaction a scanned receipt belongs to: same total
 // (±2¢), dated within 4 days, not already user-labeled/split, and not already
@@ -3499,7 +3467,7 @@ function renderFinancePage() {
     <div class="fin-split-editor fin-split-card">
       <div class="fin-split-head"><span class="fin-split-title">Split ${formatFinMoney(total)}</span><span class="fin-hint">${escapeHtml(t.displayName)}</span></div>
       <div class="fin-split-scan-row">
-        ${receipt ? `<button class="fin-txn-act" type="button" data-fin-action="split-prefill" data-id="${escapeHtml(t.id)}"><span>${receipt.source === "scan" ? "🧾 Use scanned receipt" : "📧 Use email receipt"}${(receipt.items || []).length ? ` · ${receipt.items.length} items` : ""}</span></button>` : ""}
+        ${receipt ? `<button class="fin-txn-act" type="button" data-fin-action="split-prefill" data-id="${escapeHtml(t.id)}"><span>${receipt.source === "email" ? "📧 Use email receipt" : "🧾 Use receipt"}${(receipt.items || []).length ? ` · ${receipt.items.length} items` : ""}</span></button>` : ""}
         <button class="fin-txn-act fin-scan-btn" type="button" data-fin-action="split-scan" ${financeScanBusy ? "disabled" : ""}>${financeScanBusy ? "<span>Reading receipt…</span>" : `${scanReceiptSvg}<span>Scan receipt</span>`}</button>
         <input type="file" accept="image/*" capture="environment" data-fin-edit="split-scan-file" hidden />
       </div>
@@ -3704,9 +3672,11 @@ function renderFinancePage() {
       ${returnLinkHtml(t)}
       ${rc?.id ? `
       <div class="fin-return-box fin-receipt-email">
-        <span class="fin-hint">Order email${rc.merchant ? ` · ${escapeHtml(rc.merchant)}` : ""}${(rc.items || []).length ? ` · ${rc.items.length} item${rc.items.length === 1 ? "" : "s"}` : ""}</span>
+        <span class="fin-hint">${rc.source === "email" ? "Order email" : rc.source === "extension" ? "Online order" : "Receipt"}${rc.merchant ? ` · ${escapeHtml(rc.merchant)}` : ""}${(rc.items || []).length ? ` · ${rc.items.length} item${rc.items.length === 1 ? "" : "s"}` : ""}</span>
         ${!isSplit && (rc.portions || rc.items || []).length > 1 ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="itemize-email" data-id="${escapeHtml(t.id)}">Itemize</button>` : ""}
-        <a class="secondary-btn fin-add-btn" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.id)}" target="_blank" rel="noopener noreferrer">View email</a>
+        ${rc.source === "email" && rc.externalId
+          ? `<a class="secondary-btn fin-add-btn" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.externalId)}" target="_blank" rel="noopener noreferrer">View email</a>`
+          : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(rc.id)}">View receipt</button>`}
       </div>` : ""}
       ${keptReceipt ? `
       <div class="fin-return-box fin-receipt-kept">
@@ -3945,15 +3915,22 @@ function renderFinancePage() {
   const upcoming = financeUpcomingBills();
   const safeToSpend = cashOnHand != null ? cashOnHand - upcoming.total : null;
 
-  // Email receipts: match each harvested order email to a spend transaction (the
-  // reverse of financeReceiptForTxn). Drives the receipts inbox + itemize prompt.
+  // Receipts (scanned, email, online orders — the one list): match each to a
+  // spend transaction (the reverse of financeReceiptForTxn). Drives the receipts
+  // inbox + itemize prompt. Only recent receipts: older ones' charges are out of
+  // the loaded transaction window, and the list holds every receipt ever saved.
   const rSpendTxns = allTxns.filter((t) => (t.amount || 0) < 0);
+  const rCutoff = Date.now() - 45 * 86400000;
+  const rRecent = financeReceiptList()
+    .filter((r) => Number(r.total) > 0 && (!r.date || new Date(r.date).getTime() >= rCutoff))
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   const rMatched = [], rUnmatched = [];
-  for (const r of (financeReceipts || [])) {
-    const amt = Number(r.total) || 0;
-    const rDate = new Date(r.date || 0).getTime();
-    const t = rSpendTxns.find((x) => Math.abs(Math.abs(x.amount || 0) - amt) <= 0.02 && (!r.date || Math.abs(new Date(x.posted || 0).getTime() - rDate) <= 4 * 86400000));
-    if (t) rMatched.push({ r, t }); else rUnmatched.push(r);
+  const rClaimed = new Set(rRecent.map((r) => r.financeTxnId).filter(Boolean));
+  for (const r of rRecent) {
+    const t = r.financeTxnId
+      ? rSpendTxns.find((x) => x.id === r.financeTxnId)
+      : rSpendTxns.find((x) => !rClaimed.has(x.id) && receiptMatchesTxn(r, x));
+    if (t) { rClaimed.add(t.id); rMatched.push({ r, t }); } else rUnmatched.push(r);
   }
   const itemizable = rMatched.filter(({ r, t }) => t.label !== "split" && (r.portions || r.items || []).length > 1);
 
@@ -4199,8 +4176,11 @@ function renderFinancePage() {
       ${largestTxns.length ? `<div class="fin-notable-sub">Largest</div>${largestTxns.map(notableRow).join("")}` : ""}
       ${newMerchants.length ? `<div class="fin-notable-sub">New merchants</div>${newMerchants.slice(0, 5).map(notableRow).join("")}` : ""}
     </div>` : "";
-  // Email receipts inbox — matched (itemizable) + unmatched order emails.
-  const receiptsCard = (financeReceipts || []).length ? `
+  // Receipts inbox — matched (itemizable) + not-yet-matched receipts.
+  const receiptSourceChip = (r) => r.source === "email" && r.externalId
+    ? `<a class="fin-quick-chip" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(r.externalId)}" target="_blank" rel="noopener noreferrer">Email</a>`
+    : `<button class="fin-quick-chip" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(r.id)}">View</button>`;
+  const receiptsCard = rRecent.length ? `
     <div class="fin-card fin-insights-card">
       <div class="fin-subhead fin-accounts-title">Receipts</div>
       ${itemizable.length ? `<div class="fin-hint fin-receipts-prompt">${itemizable.length} transaction${itemizable.length === 1 ? "" : "s"} can be itemized from a matching receipt — one tap builds the split.</div>` : ""}
@@ -4209,14 +4189,14 @@ function renderFinancePage() {
           <span class="fin-receipt-tag${t.label === "split" ? " is-done" : ""}">${t.label === "split" ? "✓ split" : "matched"}</span>
           <span class="fin-receipt-name">${escapeHtml(r.merchant || t.displayName)}${(r.items || []).length ? ` · ${r.items.length} items` : ""}</span>
           <span class="fin-receipt-amt">${formatFinMoney(-Math.abs(r.total || 0))}</span>
-          ${t.label !== "split" && (r.portions || r.items || []).length > 1 ? `<button class="fin-quick-chip fin-receipt-itemize" type="button" data-fin-action="itemize-email" data-id="${escapeHtml(t.id)}">Itemize</button>` : ""}
+          ${t.label !== "split" && (r.portions || r.items || []).length > 1 ? `<button class="fin-quick-chip fin-receipt-itemize" type="button" data-fin-action="itemize-email" data-id="${escapeHtml(t.id)}">Itemize</button>` : receiptSourceChip(r)}
         </div>`).join("") : ""}
       ${rUnmatched.length ? `<div class="fin-notable-sub">Unmatched — no transaction found yet</div>${rUnmatched.slice(0, 8).map((r) => `
         <div class="fin-receipt-row">
           <span class="fin-receipt-tag is-muted">${r.date ? escapeHtml(new Date(r.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
           <span class="fin-receipt-name">${escapeHtml(r.merchant || "Receipt")}</span>
           <span class="fin-receipt-amt">${formatFinMoney(-Math.abs(r.total || 0))}</span>
-          ${r.id && !r.source ? `<a class="fin-quick-chip" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(r.id)}" target="_blank" rel="noopener noreferrer">Email</a>` : r.source === "scan" ? `<span class="fin-receipt-tag is-muted">scanned</span>` : ""}
+          ${receiptSourceChip(r)}
         </div>`).join("")}` : ""}
     </div>` : "";
   const insightsView = `${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
@@ -4482,11 +4462,12 @@ function onFinanceGridClick(e) {
     persist(); renderFinancePage(); return;
   }
   if (action === "start-split") { startSplitTxn(btn.dataset.id); return; }
+  if (action === "open-receipt") { openReceiptDetail(btn.dataset.id); return; }
   if (action === "itemize-email") {
     const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
     const receipt = t && financeReceiptForTxn(t);
     startSplitTxn(btn.dataset.id);
-    attachScannedReceiptImage(btn.dataset.id, receipt);
+    if (receipt) linkReceiptToFinanceTxn(receipt.id, btn.dataset.id);
     if (receipt && financeSplitDraft) {
       const src = (receipt.portions || []).length ? receipt.portions : null;
       if (src) financeSplitDraft.portions = src.map((p) => ({ label: p.label || "", amount: p.amount }));
@@ -4665,7 +4646,7 @@ function onFinanceGridClick(e) {
     const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
     const receipt = t && financeReceiptForTxn(t);
     if (receipt && financeSplitDraft) {
-      attachScannedReceiptImage(btn.dataset.id, receipt);
+      linkReceiptToFinanceTxn(receipt.id, btn.dataset.id);
       financeSplitDraft.portions = (receipt.portions || []).map((p) => ({ label: p.label || "", amount: p.amount }));
       if (!financeSplitDraft.portions.length) financeSplitDraft.portions = [{ label: "", amount: "" }];
       renderFinancePage();
@@ -5072,5 +5053,5 @@ function refreshFinanceSettingsIfOpen() {
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus, captureScannedReceipt };
+  return { financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

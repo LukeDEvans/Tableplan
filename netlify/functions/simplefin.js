@@ -12,6 +12,7 @@
 //   nothing else. Revocable any time at beta-bridge.simplefin.org.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const { ingestFeed, remapAccount } = require("./_finance-ingest.js");
+const { loadFinanceCategories } = require("./_finance-categories.js");
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return cors(json(200, {}));
@@ -115,16 +116,6 @@ exports.handler = async (event) => {
       });
       if (!ai.ok) return cors(json(502, { error: `Scan failed (${ai.status}).` }));
       const receipt = receiptFromModel(await modelText(ai), categories);
-      // The top-right scanner saves the receipt with the email/extension ones,
-      // so it waits in Finance → Receipts until its transaction posts and is
-      // matched there (by total + date), even when scanned at checkout.
-      if (receipt && body.save) {
-        receipt.id = scannedReceiptId(receipt);
-        receipt.source = "scan";
-        const imagePath = String(body.imagePath || "");
-        if (/^[0-9a-f-]{36}\/scans\/[A-Za-z0-9_.-]+$/i.test(imagePath)) receipt.imagePath = imagePath;
-        await saveImportedReceipt(serviceKey, groupId, receipt);
-      }
       return cors(json(200, { receipt }));
     }
 
@@ -272,15 +263,6 @@ function numOrNull(v) {
 }
 
 // ── Receipt extraction helpers (shared by scanReceipt / importReceipt) ──────
-async function loadFinanceCategories(serviceKey, groupId) {
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`,
-    { headers: svc(serviceKey), cache: "no-store" }
-  );
-  const rows = res.ok ? await res.json() : [];
-  const groups = rows[0]?.state?.financeBudgetGroups || [];
-  return groups.flatMap((g) => (g.categories || []).map((c) => ({ key: `cat:${g.id}:${c.id}`, name: `${g.label} · ${c.name}` })));
-}
 
 function receiptPrompt(sourceKind, categories) {
   return [
@@ -333,15 +315,14 @@ function receiptFromModel(text, categories) {
   };
 }
 
-// Stable id from merchant+date+total, so re-scanning or re-importing the same
-// receipt replaces it instead of adding a duplicate.
+// Stable id from merchant+date+total, so re-importing the same receipt
+// replaces it instead of adding a duplicate.
 function receiptFingerprint(receipt) {
   let h = 0;
   const fp = `${receipt.merchant}|${receipt.date}|${receipt.total}`;
   for (let i = 0; i < fp.length; i++) h = (h * 31 + fp.charCodeAt(i)) | 0;
   return Math.abs(h).toString(36);
 }
-function scannedReceiptId(receipt) { return `scan_${receiptFingerprint(receipt)}`; }
 
 async function saveImportedReceipt(serviceKey, groupId, receipt) {
   const { updateRawRow } = require("./_state-sections.js");
