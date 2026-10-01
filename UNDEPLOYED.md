@@ -71,3 +71,16 @@ in the iPhone app now.
    missing, check the `receipt-attachments` bucket's RLS allows `<uid>/scans/…`.
 3. Settings → User opens the profile window; log out / log in still work.
 4. Next TestFlight build: scanner → Camera, then check that the photo is not in the Photos library.
+
+## iPhone app: header Camera opens Apple's document scanner (PR #36)
+PR: https://github.com/LukeDEvans/Tableplan/pull/36
+
+Ships through TestFlight. The website is unchanged. In the app, scanner → Camera opens Apple's
+document camera, which finds the receipt's edges, straightens and crops it, and can take several
+pages. Nothing is saved to Photos. It also adds the camera permission (`NSCameraUsageDescription`),
+which was missing, so any camera use in the app would have crashed it.
+
+**After the next TestFlight build:**
+1. Scanner → Camera: the first time, iOS asks for camera permission. Scan a receipt (try a long
+   one with 2 pages). Shop's review should open already reading it.
+2. Check the Photos app: the scan is not there.
