@@ -284,8 +284,31 @@ async function getRadarCapabilities() {
 }
 
 // ── Location search (Open-Meteo geocoding, U.S. only) ────────────────────────
+// Open-Meteo matches the place NAME only — "Portland, OR" or "Austin Texas"
+// returns nothing. So search on the part before the comma and use the rest
+// (a state name or postal code) to narrow the results.
+const US_STATES = { AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "District of Columbia", FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming", PR: "Puerto Rico" };
+function splitPlaceQuery(query) {
+  const raw = String(query || "").trim().replace(/\s+/g, " ").replace(/,?\s*(usa|us|united states)$/i, "");
+  const comma = raw.indexOf(",");
+  if (comma >= 0) return { name: raw.slice(0, comma).trim(), state: stateName(raw.slice(comma + 1)) };
+  // "Austin TX" / "Saint Paul Minnesota" — a trailing state with no comma.
+  const words = raw.split(" ");
+  for (let n = Math.min(3, words.length - 1); n >= 1; n--) {
+    const st = stateName(words.slice(-n).join(" "));
+    if (st) return { name: words.slice(0, -n).join(" "), state: st };
+  }
+  return { name: raw, state: null };
+}
+function stateName(text) {
+  const t = String(text || "").trim().replace(/\./g, "");
+  if (!t) return null;
+  if (US_STATES[t.toUpperCase()]) return US_STATES[t.toUpperCase()];
+  return Object.values(US_STATES).find((v) => v.toLowerCase() === t.toLowerCase()) || null;
+}
+
 async function searchLocations(query) {
-  const name = String(query || "").trim();
+  const { name, state } = splitPlaceQuery(query);
   if (name.length < 3) return [];
   const url = `${GEOCODE_BASE}?name=${encodeURIComponent(name)}&count=10&language=en&format=json&countryCode=US`;
   const controller = new AbortController();
@@ -297,8 +320,9 @@ async function searchLocations(query) {
     if (!res.ok) throw httpError(res.status, "Location search failed.");
     data = await res.json();
   } finally { clearTimeout(timer); }
-  return (data?.results || [])
-    .filter((r) => r.country_code === "US" && isFinite(r.latitude) && isFinite(r.longitude))
+  const us = (data?.results || []).filter((r) => r.country_code === "US" && isFinite(r.latitude) && isFinite(r.longitude));
+  const inState = state ? us.filter((r) => String(r.admin1 || "").toLowerCase() === state.toLowerCase()) : us;
+  return (inState.length ? inState : us)
     .map((r) => ({
       id: String(r.id ?? `${r.latitude},${r.longitude}`),
       label: [r.name, r.admin1, r.country_code === "US" ? "USA" : r.country].filter(Boolean).join(", "),
@@ -507,4 +531,4 @@ function shortPath(url) { try { return new URL(url).pathname; } catch { return u
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 // Exported for unit tests (Vitest or node) — pure, no network.
-module.exports._test = { conv, normalizeCurrent, currentFromForecast, normalizeHourly, normalizeDaily, normalizeAlerts, cardinal, cardinalToDegrees, parseWindMph, cToF, haversineMiles, sunTimes, zoneId, nwsFetch, getProduct, searchLocations, getRadarCapabilities, enrichUvAqi };
+module.exports._test = { conv, normalizeCurrent, currentFromForecast, normalizeHourly, normalizeDaily, normalizeAlerts, cardinal, cardinalToDegrees, parseWindMph, cToF, haversineMiles, sunTimes, zoneId, nwsFetch, getProduct, searchLocations, splitPlaceQuery, getRadarCapabilities, enrichUvAqi };

@@ -28,12 +28,15 @@ import { conditionFor, conditionLabel, weatherEmphasis } from './weather-conditi
 import { heroArtSvg, iconSvg } from './weather-art.js';
 
 export function createWeatherModule(deps) {
-  const { state, elements, persist, escapeHtml, canUseLocalBackend, getActiveAppArea, ensureLeaflet } = deps;
+  const { state, elements, persist, escapeHtml, canUseLocalBackend, isNativeApp, getActiveAppArea, ensureLeaflet } = deps;
 
 function weatherApiUrl(params) {
   const qs = new URLSearchParams(params).toString();
   if (canUseLocalBackend()) return `/api/weather?${qs}`;
-  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/weather?${qs}`;
+  // The iOS app is served from capacitor://localhost (not http), so it needs the
+  // relative path too — app.js's native fetch shim rewrites it to the deployed
+  // site. Returning "" there made every search/forecast fetch the app's own HTML.
+  if (window.location.protocol.startsWith("http") || isNativeApp?.()) return `/.netlify/functions/weather?${qs}`;
   return "";
 }
 const WEATHER_TTL = { snapshot: 12 * 60 * 1000, search: 10 * 60 * 1000, product: 12 * 60 * 1000 };
@@ -80,6 +83,7 @@ let weatherPickerOpen = false;
 let weatherSearchResults = [];
 let weatherSearchTimer = null;
 let weatherSearchBusy = false;
+let weatherSearchNote = "";        // "No matches" / failure line under the search box
 let weatherSearchGen = 0;           // separate from weatherGenId so a search never cancels a snapshot load
 const weatherExpanded = new Set();  // expanded disclosure section ids
 const weatherProductText = new Map(); // `${office}:${type}` -> product | "loading" | "none"
@@ -254,7 +258,7 @@ function wxPicker() {
         <input type="search" class="wx-search-input" id="wxSearchInput" placeholder="Search a U.S. city…" autocomplete="off" value="" />
         ${weatherSearchBusy ? `<span class="wx-search-busy">…</span>` : ""}
       </div>
-      ${results ? `<div class="wx-search-results">${results}</div>` : ""}
+      ${results ? `<div class="wx-search-results">${results}</div>` : weatherSearchNote ? `<div class="wx-picker-empty">${escapeHtml(weatherSearchNote)}</div>` : ""}
       <div class="wx-picker-label">Saved</div>
       ${savedHtml}
       ${canSave ? `<button class="secondary-btn wx-save-current" type="button" data-wx-action="save-current">+ Save “${escapeHtml(weatherActiveLocation.label)}”</button>` : ""}
@@ -560,7 +564,7 @@ function wireWeatherPage() {
     if (action === "toggle-picker") { weatherPickerOpen = !weatherPickerOpen; renderWeatherPage(); }
     else if (action === "use-current") { weatherPickerOpen = false; useCurrentWeatherLocation(); }
     else if (action === "select-saved") { const l = (state.weatherLocations || []).find((x) => x.id === btn.dataset.id); if (l) setWeatherLocation(l); }
-    else if (action === "select-result") { const r = weatherSearchResults.find((x) => x.id === btn.dataset.id); if (r) { weatherSearchResults = []; setWeatherLocation(r); } }
+    else if (action === "select-result") { const r = weatherSearchResults.find((x) => x.id === btn.dataset.id); if (r) { weatherSearchResults = []; weatherSearchNote = ""; setWeatherLocation(r); } }
     else if (action === "remove-saved") { state.weatherLocations = (state.weatherLocations || []).filter((x) => x.id !== btn.dataset.id); persist(); renderWeatherPage(); }
     else if (action === "save-current") { const l = weatherActiveLocation; if (l) { state.weatherLocations = [...(state.weatherLocations || []), { id: l.id, label: l.label, latitude: l.latitude, longitude: l.longitude, timezone: l.timezone }]; state.weatherActiveLocationId = l.id; persist(); renderWeatherPage(); } }
     else if (action === "toggle") { const id = btn.dataset.id; weatherExpanded.has(id) ? weatherExpanded.delete(id) : weatherExpanded.add(id); renderWeatherPage(); }
@@ -571,7 +575,7 @@ function wireWeatherPage() {
     if (!e.target.closest("#wxSearchInput")) return;
     const q = e.target.value;
     clearTimeout(weatherSearchTimer);
-    if (q.trim().length < 3) { weatherSearchResults = []; weatherSearchBusy = false; return; }
+    if (q.trim().length < 3) { weatherSearchResults = []; weatherSearchBusy = false; weatherSearchNote = ""; return; }
     weatherSearchTimer = setTimeout(() => runWeatherSearch(q), 350);
   });
 }
@@ -583,7 +587,12 @@ async function runWeatherSearch(q) {
     const results = await searchWeatherLocations(q);
     if (mine !== weatherSearchGen || getActiveAppArea() !== "weather") return;
     weatherSearchResults = results;
-  } catch { weatherSearchResults = []; }
+    weatherSearchNote = results.length ? "" : "No U.S. places match that — try just the city name.";
+  } catch {
+    if (mine !== weatherSearchGen) return;
+    weatherSearchResults = [];
+    weatherSearchNote = "Couldn't reach location search — check your connection and try again.";
+  }
   weatherSearchBusy = false;
   // Re-render but keep focus/value in the search box.
   const val = document.getElementById("wxSearchInput")?.value || "";

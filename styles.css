@@ -6051,11 +6051,17 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   white-space: nowrap;
 }
 
-.grocery-range-btn:hover,
+/* Accent only while pressed / the menu is open — and on hover only for real
+   pointers. Touch WebKit leaves :hover stuck on the last-tapped button, which
+   left the date patina-coloured after the finger lifted. */
+.grocery-range-btn:active,
 .grocery-range-btn[aria-expanded="true"] {
   background: transparent;
   color: var(--accent);
   outline: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .grocery-range-btn:hover { color: var(--accent); }
 }
 
 .grocery-range-menu {
@@ -6128,10 +6134,14 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   white-space: nowrap;
 }
 
-.grocery-range-option:hover,
+.grocery-range-option:active,
 .grocery-range-option:focus-visible {
   color: var(--accent);
   outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .grocery-range-option:hover { color: var(--accent); outline: none; }
 }
 
 .grocery-range-option.is-selected {
