@@ -117,3 +117,17 @@ resumes the last thing, else the next queue item, else the new Media → Queue s
 4. Media → Queue settings: set "When the queue ends, play" to a playlist; let the last queue item
    finish (phone unlocked, then locked — see ISSUES.md for the locked/native-queue gap).
 5. Swipe the mini-player up → the Now-Playing window opens.
+
+## Contacts moves inside Mail (PR #39)
+PR: https://github.com/LukeDEvans/Tableplan/pull/39
+
+Contacts is gone from the home grid and the page menu. It's a "Contacts" item under the mail
+folders (and "Open contacts" on the Connect Gmail screen); the contacts list replaces the message
+list, with a ‹ back-to-Mail button. Calendar birthdays, the assistant and #contacts open it there.
+
+**After deploying:**
+1. Mail (Gmail connected): Contacts sits at the bottom of the folder list (and in the collapsed
+   rail on desktop). Tap it → contacts list; tap Inbox or ‹ → back to mail.
+2. Phone: one row of contact controls, nothing clipped; the mail drawer still opens from Mail.
+3. Tap a birthday on the calendar → that contact opens inside Mail.
+4. Settings menu (while in Contacts): Import / Export contacts still work.
