@@ -1678,7 +1678,7 @@ const {
 // getCurrentConditions is consumed cross-domain by Travel Mode; ensureLeaflet is the
 // shared Leaflet loader (kept in app.js, also used by renderTravelMap).
 const _weather = createWeatherModule({
-  state, elements, persist, escapeHtml, canUseLocalBackend,
+  state, elements, persist, escapeHtml, canUseLocalBackend, isNativeApp,
   getActiveAppArea: () => activeAppArea,
   ensureLeaflet,
 });
@@ -28893,7 +28893,7 @@ function toggleEpisodeInQueue(episodeId) {
     const btn = document.querySelector(`[data-episode-queue="${CSS.escape(episodeId)}"]`);
     if (btn) {
       const isQueued = state.podcastQueue.includes(episodeId);
-      btn.title = isQueued ? "Remove from playlist" : "Add to playlist";
+      btn.title = isQueued ? "Remove from queue" : "Add to queue";
       btn.classList.toggle("is-active", isQueued);
       const circle = btn.querySelector("circle");
       const poly = btn.querySelector("polyline");
@@ -28921,9 +28921,9 @@ function showPodcastPriorityModal() {
   overlay.id = "podcastPriorityOverlay";
   overlay.className = "priority-overlay";
   overlay.innerHTML = `
-    <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Playlist">
+    <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Queue">
       <div class="priority-modal-header">
-        <h2 class="priority-modal-title">Playlist</h2>
+        <h2 class="priority-modal-title">Queue</h2>
         <button class="icon-btn" type="button" id="closePodcastPriorityBtn" aria-label="Close">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -29190,7 +29190,7 @@ function showPodcastPriorityModal() {
     persist();
     ev.currentTarget.hidden = true;
     renderActiveMediaView();
-    showMailToast("Playlist order reset");
+    showMailToast("Queue order reset");
   });
 
   overlay.querySelector("#savePodcastPriorityBtn").addEventListener("click", () => {
@@ -29591,7 +29591,7 @@ function renderMediaAllList() {
           <button class="article-row-action-btn${saved ? " is-active" : ""}" type="button" title="${saved ? "Saved" : "Save"}" aria-label="Save" data-all-save="${escapeHtml(e.id)}">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
           </button>
-          <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-all-remove="${escapeHtml(e.id)}">
+          <button class="article-row-action-btn" type="button" title="Remove from queue" aria-label="Remove from queue" data-all-remove="${escapeHtml(e.id)}">
             ${ldeIcon("close", { size: 16 })}
           </button>`}
       </div>
@@ -30216,7 +30216,7 @@ function renderPodcastQueueEpisodes() {
   const queue = state.podcastQueue || [];
 
   if (!queue.length) {
-    listEl.innerHTML = `<div class="article-empty"><p>Your playlist is empty.</p><p>Tap the <strong>clock</strong> icon on any episode to add it here.</p></div>`;
+    listEl.innerHTML = `<div class="article-empty"><p>Your queue is empty.</p><p>Tap the <strong>clock</strong> icon on any episode to add it here.</p></div>`;
     return;
   }
 
@@ -30250,7 +30250,7 @@ function renderPodcastQueueEpisodes() {
             ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`
             : `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>`}
         </button>
-        <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-episode-queue-remove="${escapeHtml(e.id)}">
+        <button class="article-row-action-btn" type="button" title="Remove from queue" aria-label="Remove from queue" data-episode-queue-remove="${escapeHtml(e.id)}">
           <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -30328,7 +30328,7 @@ function renderAutoPlaylist(listEl, items) {
             ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
           </div>
         </div>
-        ${episodeArchiveDeleteActions(e.id, `data-episode-skip="${escapeHtml(e.id)}"`, "Remove from playlist")}
+        ${episodeArchiveDeleteActions(e.id, `data-episode-skip="${escapeHtml(e.id)}"`, "Remove from queue")}
       </div>`;
     }
   });
@@ -30448,7 +30448,7 @@ function openEpisodeDetailSheet(episodeId) {
         <button class="primary-btn" type="button" data-ep-detail-play>
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg> Play
         </button>
-        <button class="secondary-btn compact-btn" type="button" data-ep-detail-queue>${isQueued() ? "In playlist ✓" : "Add to playlist"}</button>
+        <button class="secondary-btn compact-btn" type="button" data-ep-detail-queue>${isQueued() ? "In queue ✓" : "Add to queue"}</button>
         <button class="secondary-btn compact-btn" type="button" data-ep-detail-played>${isPlayed() ? "Played ✓" : "Mark played"}</button>
       </div>
       <div class="episode-notes-body">${willFetch ? `<p style="color:var(--ink-faint);margin:0">Loading show notes…</p>` : episodeNotesBodyHtml(desc)}</div>
@@ -30464,7 +30464,7 @@ function openEpisodeDetailSheet(episodeId) {
   });
   overlay.querySelector("[data-ep-detail-queue]").addEventListener("click", (e) => {
     toggleEpisodeInQueue(episodeId);
-    e.currentTarget.textContent = isQueued() ? "In playlist ✓" : "Add to playlist";
+    e.currentTarget.textContent = isQueued() ? "In queue ✓" : "Add to queue";
   });
   overlay.querySelector("[data-ep-detail-played]").addEventListener("click", (e) => {
     const nowPlayed = !isPlayed();
@@ -30489,7 +30489,7 @@ function episodeArchiveDeleteActions(episodeId, deleteAttrs, deleteTitle = "Remo
   // show's episodes — so you can queue an episode without the long-press menu).
   const isQueued = (state.podcastQueue || []).includes(episodeId);
   const queueBtn = queue ? `
-        <button class="article-row-action-btn${isQueued ? " is-active" : ""}" type="button" title="${isQueued ? "Remove from playlist" : "Add to playlist"}" aria-label="${isQueued ? "Remove from playlist" : "Add to playlist"}" data-episode-queue="${escapeHtml(episodeId)}">
+        <button class="article-row-action-btn${isQueued ? " is-active" : ""}" type="button" title="${isQueued ? "Remove from queue" : "Add to queue"}" aria-label="${isQueued ? "Remove from queue" : "Add to queue"}" data-episode-queue="${escapeHtml(episodeId)}">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="15" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="11" y2="18"/><line x1="18" y1="9" x2="18" y2="15"/><line x1="15" y1="12" x2="21" y2="12"/></svg>
         </button>` : "";
   return `
@@ -30523,7 +30523,7 @@ function showEpisodeContextMenu(episodeId, x, y) {
     <button class="fin-txn-menu-option" type="button" data-ep-menu="notes">Show notes</button>
     ${show ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="show">Go to show</button>` : ""}
     <button class="fin-txn-menu-option" type="button" data-ep-menu="save">${isSaved ? "Remove from saved" : "Save"}</button>
-    <button class="fin-txn-menu-option" type="button" data-ep-menu="add-playlist">${isQueued ? "Remove from playlist" : "Add to playlist"}</button>
+    <button class="fin-txn-menu-option" type="button" data-ep-menu="add-playlist">${isQueued ? "Remove from queue" : "Add to queue"}</button>
     ${(state.podcastSavedCategories || []).length ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="saved-tag">Assign to saved tab…</button>` : ""}
     ${link ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="copy">Copy link</button>` : ""}`;
   document.body.appendChild(menu);
@@ -30839,7 +30839,7 @@ function renderPodcastShowEpisodes(showId) {
         <input type="checkbox" class="live-toggle" id="podcastBundleToggle" ${bundleOn ? "checked" : ""}>
         <span>Bundle multi-part series</span>
       </label>
-      <p class="podcast-bundle-hint">Hold each numbered series out of your playlist until every part is out — or no new part appears for a week.</p>
+      <p class="podcast-bundle-hint">Hold each numbered series out of your queue until every part is out — or no new part appears for a week.</p>
     </div>`;
 
   const waitingHtml = waiting.length ? `
@@ -30848,7 +30848,7 @@ function renderPodcastShowEpisodes(showId) {
         <div class="podcast-bundle-card" data-series-id="${escapeHtml(g.seriesId)}">
           <div class="podcast-bundle-card-main">
             <div class="podcast-bundle-card-title">${escapeHtml(g.name)}</div>
-            <div class="podcast-bundle-card-meta">${g.eps.length} part${g.eps.length === 1 ? "" : "s"} so far${g.total ? ` of ${g.total}` : ""} · held from playlist</div>
+            <div class="podcast-bundle-card-meta">${g.eps.length} part${g.eps.length === 1 ? "" : "s"} so far${g.total ? ` of ${g.total}` : ""} · held from queue</div>
           </div>
           <button class="secondary-btn podcast-bundle-release" type="button" data-release-series="${escapeHtml(g.seriesId)}">Release now</button>
         </div>`).join("")}
@@ -30888,7 +30888,7 @@ function renderPodcastShowEpisodes(showId) {
       if (!state.podcastReleasedSeries || typeof state.podcastReleasedSeries !== "object") state.podcastReleasedSeries = {};
       state.podcastReleasedSeries[btn.dataset.releaseSeries] = true;
       persist();
-      showMailToast("Series released to your playlist");
+      showMailToast("Series released to your queue");
       renderPodcastShowEpisodes(showId);
     });
   });
