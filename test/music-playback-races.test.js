@@ -38,7 +38,7 @@ function makeSandbox(env = {}) {
       setMediaSessionPlaybackState, musicArtUrlFor, nativeAppleMusic, resumePositionFor, setMediaPosition,
       clearMediaPosition, pruneMediaProgress, updateDiscoverResults, playStreamingTrack, musicItemCache,
       getAllListenList, mediaItemPlayable, playMediaAllItem, renderMediaAllList, startRecordingResolved,
-      nativeMusicEnabled, startNativeMusicTrack } = env;
+      nativeMusicEnabled, startNativeMusicTrack, scheduleQueueFallback } = env;
     const activeAppArea = "other", activeMediaTab = "other", mediaPlaybackSpeed = 1;
     const window = { clearInterval() {}, setInterval() { return 1; } };
     const URL = { revokeObjectURL: env.revoke || (() => {}) };
@@ -67,6 +67,7 @@ function baseEnv(over = {}) {
     pruneMediaProgress: (m) => m, updateDiscoverResults() {}, playStreamingTrack() {}, musicItemCache: new Map(),
     musicStreamMod: { isPlaybackOwner: (p) => !!p.owns },
     getAllListenList: () => [], mediaItemPlayable: () => true, playMediaAllItem: vi.fn(), renderMediaAllList() {},
+    scheduleQueueFallback: vi.fn(),
     startRecordingResolved: async () => false,
     nativeMusicEnabled: () => false, startNativeMusicTrack: async () => false,
     ...over,
@@ -221,15 +222,24 @@ describe("MED-8 openMusicItem race", () => {
 
 describe("MED-13 advanceMediaAllQueue", () => {
   it("returns false when nothing was started", () => {
-    const sb = makeSandbox(baseEnv({ mediaAllQueueId: "x", mediaAllQueueRest: ["gone"] }));
+    const env = baseEnv({ mediaAllQueueId: "x", mediaAllQueueRest: ["gone"] });
+    const sb = makeSandbox(env);
     expect(sb.advanceMediaAllQueue("x")).toBe(false);
     expect(sb.get().mediaAllQueueId).toBe(null);
+    expect(env.scheduleQueueFallback).toHaveBeenCalledTimes(1); // the queue ended → "when the queue ends" pick
   });
   it("returns true when it started the next item", () => {
     const env = baseEnv({ mediaAllQueueId: "x", mediaAllQueueRest: ["y"], getAllListenList: () => [{ id: "y" }] });
     const sb = makeSandbox(env);
     expect(sb.advanceMediaAllQueue("x")).toBe(true);
     expect(env.playMediaAllItem).toHaveBeenCalled();
+    expect(env.scheduleQueueFallback).not.toHaveBeenCalled();
+  });
+  it("an item that wasn't the queue's current one doesn't trigger the queue-ends pick", () => {
+    const env = baseEnv({ mediaAllQueueId: "x", mediaAllQueueRest: [] });
+    const sb = makeSandbox(env);
+    expect(sb.advanceMediaAllQueue("other")).toBe(false);
+    expect(env.scheduleQueueFallback).not.toHaveBeenCalled();
   });
 });
 

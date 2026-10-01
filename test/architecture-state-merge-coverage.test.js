@@ -37,6 +37,7 @@ const MERGE_NEWER_WINS_KEYS = {
   podcastTierCount: "scalar preference",
   podcastPrioritySort: "scalar preference",
   podcastPlaylistWindow: "scalar preference",
+  mediaQueueFallback: "scalar preference (what plays when the queue ends)",
   podcastRecentWindow: "scalar preference",
   podcastPlaylistIncludeArticles: "scalar preference",
   podcastSkipAds: "scalar preference",

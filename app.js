@@ -285,7 +285,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -1084,8 +1084,6 @@ const elements = {
   homeContactsBtn: document.querySelector("#homeContactsBtn"),
   titleContactsBtn: document.querySelector("#titleContactsBtn"),
   contactsMainPage: document.querySelector("#contactsMainPage"),
-  homeWeatherBtn: document.querySelector("#homeWeatherBtn"),
-  titleWeatherBtn: document.querySelector("#titleWeatherBtn"),
   weatherMainPage: document.querySelector("#weatherMainPage"),
   articleScanDialog: document.querySelector("#articleScanDialog"),
   articleScanImages: document.querySelector("#articleScanImages"),
@@ -1685,8 +1683,10 @@ const _weather = createWeatherModule({
   state, elements, persist, escapeHtml, canUseLocalBackend, isNativeApp,
   getActiveAppArea: () => activeAppArea,
   ensureLeaflet,
+  // The bottom dock's weather ticker follows the weather page's chosen place.
+  onLocationChosen: () => renderWeatherTicker(document.getElementById("weatherTicker")),
 });
-const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport } = _weather;
+const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker } = _weather;
 
 // ── Inventory domain (extracted to inventory-ui.js) ────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
@@ -2342,7 +2342,6 @@ function bindEvents() {
   elements.titlePlanBtn.addEventListener("click", showPlanApp);
   elements.homeContactsBtn?.addEventListener("click", showContactsApp);
   elements.titleContactsBtn?.addEventListener("click", showContactsApp);
-  elements.homeWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.closeArticleScanBtn?.addEventListener("click", () => elements.articleScanDialog?.close());
   document.getElementById("articleScanBtn")?.addEventListener("click", () => openArticleScanDialog());
   elements.articleScanImages?.addEventListener("change", replaceArticleScanFiles);
@@ -2353,7 +2352,6 @@ function bindEvents() {
   elements.scanArticleCloudBtn?.addEventListener("click", () => scanArticleCloud());
   elements.scanArticleLocalBtn?.addEventListener("click", () => scanArticleLocal());
   elements.saveArticleScanBtn?.addEventListener("click", () => saveArticleScan());
-  elements.titleWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.contactsAddBtn?.addEventListener("click", () => openContactDialog(null));
   elements.contactsSearchInput?.addEventListener("input", () => renderContactsPage());
   document.getElementById("contactsSidebarToggle")?.addEventListener("click", () => {
@@ -4557,6 +4555,7 @@ function defaultState() {
     podcastTierCount: 3,
     podcastPrioritySort: "oldest",
     podcastPlaylistWindow: "month",
+    mediaQueueFallback: "auto",
     podcastRecentWindow: "week",
     libraryKey: "hclib",
     podcastPlaylistIncludeArticles: false,
@@ -28974,6 +28973,7 @@ function showPodcastPriorityModal() {
     tierCount: state.podcastTierCount ?? 3,
     sortOrder: state.podcastPrioritySort ?? "oldest",
     playlistWindow: state.podcastPlaylistWindow ?? "month",
+    queueFallback: state.mediaQueueFallback || "auto",
     showTiers: { ...(state.podcastShowTiers || {}) },
     publicationTiers: { ...(state.publicationTiers || {}) },
   };
@@ -29000,6 +29000,12 @@ function showPodcastPriorityModal() {
         <span class="priority-sort-label">Pull episodes from</span>
         <select class="recent-window-select" id="priorityWindowSelect">
           ${RECENT_WINDOW_OPTIONS.map(o => `<option value="${o.value}"${o.value === ms.playlistWindow ? " selected" : ""}>${o.label}</option>`).join("")}
+        </select>
+      </div>
+      <div class="priority-sort-row">
+        <span class="priority-sort-label">When the queue ends, play</span>
+        <select class="recent-window-select" id="queueFallbackSelect">
+          ${queueFallbackOptions().map(o => `<option value="${escapeHtml(o.value)}"${o.value === ms.queueFallback ? " selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}
         </select>
       </div>
       <div class="priority-tiers-body" id="priorityTiersBody"></div>
@@ -29238,6 +29244,9 @@ function showPodcastPriorityModal() {
   overlay.querySelector("#priorityWindowSelect").addEventListener("change", (e) => {
     ms.playlistWindow = e.target.value;
   });
+  overlay.querySelector("#queueFallbackSelect").addEventListener("change", (e) => {
+    ms.queueFallback = e.target.value;
+  });
 
   overlay.querySelector("#closePodcastPriorityBtn").addEventListener("click", () => overlay.remove());
   overlay.querySelector("#cancelPodcastPriorityBtn").addEventListener("click", () => overlay.remove());
@@ -29260,6 +29269,7 @@ function showPodcastPriorityModal() {
     state.podcastTierCount = ms.tierCount;
     state.podcastPrioritySort = ms.sortOrder;
     state.podcastPlaylistWindow = ms.playlistWindow;
+    state.mediaQueueFallback = ms.queueFallback;
     state.publicationTiers = { ...ms.publicationTiers };
     // A changed hierarchy should re-sort the Playlist, but a pinned manual
     // order would mask it — so applying the hierarchy clears the manual order.
@@ -30098,6 +30108,7 @@ function advanceMediaAllQueue(finishedId) {
   }
   mediaAllQueueId = null;
   if (activeMediaTab === "queue") renderMediaAllList();
+  scheduleQueueFallback(); // the queue just played its last item → the "when the queue ends" pick
   return false; // nothing started — let the caller run its own end-of-queue path
 }
 
@@ -33752,10 +33763,12 @@ function showMiniPlayer(episode, show) {
 // should reflect what's playing, never what was playing when it first appeared.
 function refreshMiniPlayerFromNowPlaying() {
   const el = document.getElementById("miniPlayer");
-  if (!el || el.hidden) return;
+  if (!el) return;
   const k = nowPlayingKind();
-  const info = k && MEDIA_KINDS[k]?.info ? MEDIA_KINDS[k].info() : null;
+  if (!k) { renderMiniPlayerIdle(); return; }
+  const info = MEDIA_KINDS[k]?.info ? MEDIA_KINDS[k].info() : null;
   if (!info) return;
+  el.classList.remove("is-idle");
   const t = document.getElementById("miniPlayerTitle");
   const s = document.getElementById("miniPlayerShow");
   const a = document.getElementById("miniPlayerArt");
@@ -33779,19 +33792,144 @@ function setMiniPlayer(title, subtitle, art) {
   if (t) t.textContent = title;
   if (s) s.textContent = subtitle || "";
   if (a) { a.dataset.art = art || ""; a.src = art || ""; a.hidden = !art; }
-  el.hidden = false;
-  document.body.classList.add("has-mini-player");
+  el.classList.remove("is-idle");
   updateMiniPlayerPlayBtn();
   updateMiniPlayerProgress();
   setupMiniPlayerMarquee();
 }
 
+// The mini-player is permanent (a slide of the bottom dock): when playback
+// stops it goes idle instead of hiding — it shows what the play button will
+// start (resume / next in the queue / the "when the queue ends" pick).
 function hideMiniPlayer() {
-  const el = document.getElementById("miniPlayer");
-  if (el) el.hidden = true;
-  document.body.classList.remove("has-mini-player");
   const fill = document.getElementById("miniPlayerProgressFill");
   if (fill) fill.style.width = "0%";
+  renderMiniPlayerIdle();
+}
+
+function renderMiniPlayerIdle() {
+  const el = document.getElementById("miniPlayer");
+  if (!el || nowPlayingKind()) return;
+  const plan = idlePlaybackPlan();
+  el.classList.add("is-idle");
+  const t = document.getElementById("miniPlayerTitle");
+  const s = document.getElementById("miniPlayerShow");
+  const a = document.getElementById("miniPlayerArt");
+  const time = document.getElementById("miniPlayerTime");
+  if (time) time.textContent = "";
+  if (t) t.textContent = plan ? plan.title : "Nothing playing";
+  if (s) s.textContent = plan ? plan.sub : "Tap to browse Media";
+  if (a) { const art = plan?.art || ""; a.dataset.art = art; a.src = art; a.hidden = !art; }
+  updateMiniPlayerPlayBtn();
+  setupMiniPlayerMarquee();
+}
+
+// ── Idle play: what the mini-player's play button starts when nothing is loaded ──
+// 1. Resume what played most recently, if it isn't finished (radio always
+//    resumes; a podcast until it's marked played; a song with a saved position).
+// 2. Else the next playable item in the queue.
+// 3. Else the "when the queue ends" pick (state.mediaQueueFallback).
+function idlePlaybackPlan() {
+  const queue = (() => { try { return getAllListenList().filter(mediaItemPlayable); } catch { return []; } })();
+  // Pure read (not getRecentMedia): this runs at boot, before cloud state loads,
+  // and must not trip the one-time legacy-history migration early.
+  const last = recentMediaHistory(state.mediaHistory || [], { limit: 1 })[0];
+  if (last) {
+    if (last.kind === "radio" && last.ref && (last.ref.streams || []).length) {
+      return { title: last.title, sub: "Radio · resume", art: last.artworkUrl, start: () => playRadioStation(last.ref) };
+    }
+    if (last.kind === "podcast" && !(state.podcastProgress || {})[last.id]?.played) {
+      const inQueue = queue.some((i) => i.id === last.id);
+      if (inQueue || findPodcastEpisode(last.id).episode) {
+        return { title: last.title, sub: `${last.subtitle ? `${last.subtitle} · ` : ""}resume`, art: last.artworkUrl,
+          start: () => (inQueue ? playAllQueueFrom(last.id) : openPodcastEpisode(last.id, { autoplay: true })) };
+      }
+    }
+    if (last.kind === "music" && last.ref?.recording && resumePositionFor(state.mediaProgress, last.id) > 0) {
+      return { title: last.title, sub: `${last.subtitle ? `${last.subtitle} · ` : ""}resume`, art: last.artworkUrl,
+        start: () => playMusicQueueItem({ kind: "recording", recording: last.ref.recording }, [], { interactive: true }) };
+    }
+  }
+  if (queue[0]) {
+    const item = queue[0];
+    return { title: item.title || "Up next", sub: "Up next in your queue", art: item.art || item.showArt || "", start: () => playAllQueueFrom(item.id) };
+  }
+  return queueFallbackPlan();
+}
+
+// "When the queue ends, play…" (Media → Queue settings). state.mediaQueueFallback:
+// "auto" (default) = the last radio station played, else favourite songs
+// shuffled · "radio:<stationId>" · "playlist:<playlistId>" (shuffled) ·
+// "favorites" (favourite songs shuffled) · "off".
+function shuffledCopy(items) {
+  const a = items.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+function playRecordingsShuffled(recordings) {
+  const recs = shuffledCopy(recordings);
+  if (!recs.length) return;
+  playMusicQueueItem({ kind: "recording", recording: recs[0] }, recs.slice(1).map((r) => ({ kind: "recording", recording: r })), { interactive: true });
+}
+function favoriteRecordings() {
+  return ((state.musicLibrary || {}).favorites || []).filter((f) => f.type === "recording" && f.entity).map((f) => f.entity);
+}
+function recentRadioRefs() { return recentMediaHistory(state.mediaHistory || [], { kind: "radio" }).map((e) => e.ref).filter(Boolean); }
+function knownRadioStation(id) {
+  return (state.radioFavorites || []).find((st) => st.id === id)
+    || recentRadioRefs().find((st) => st.id === id) || null;
+}
+function queueFallbackPlan(pref = String(state.mediaQueueFallback || "auto")) {
+  if (pref === "off") return null;
+  const playlists = (state.musicLibrary || {}).playlists || [];
+  if (pref.startsWith("radio:")) {
+    const st = knownRadioStation(pref.slice(6));
+    if (st) return { title: st.name || "Radio", sub: "Radio", art: st.logoUrl || "", start: () => playRadioStation(st) };
+  } else if (pref.startsWith("playlist:")) {
+    const pl = playlists.find((p) => p.id === pref.slice(9));
+    if (pl && (pl.items || []).length) return { title: pl.name || "Playlist", sub: "Playlist · shuffle", art: "", start: () => playRecordingsShuffled(pl.items) };
+  } else if (pref === "favorites") {
+    const favs = favoriteRecordings();
+    if (favs.length) return { title: "Favorite songs", sub: "Shuffle", art: "", start: () => playRecordingsShuffled(favs) };
+  }
+  // "auto", or the chosen station/playlist is gone: last radio station, else favourites.
+  const lastRadio = recentRadioRefs()[0];
+  if (lastRadio && (lastRadio.streams || []).length) return { title: lastRadio.name || "Radio", sub: "Radio", art: lastRadio.logoUrl || "", start: () => playRadioStation(lastRadio) };
+  const favs = favoriteRecordings();
+  if (favs.length) return { title: "Favorite songs", sub: "Shuffle", art: "", start: () => playRecordingsShuffled(favs) };
+  return null;
+}
+function queueFallbackOptions() {
+  const opts = [{ value: "auto", label: "Last radio station (else favorite songs)" }];
+  const stations = [...(state.radioFavorites || []), ...recentRadioRefs()]
+    .filter((st, i, all) => st && st.id && all.findIndex((x) => x && x.id === st.id) === i).slice(0, 20);
+  stations.forEach((st) => opts.push({ value: `radio:${st.id}`, label: `Radio · ${st.name || st.id}` }));
+  ((state.musicLibrary || {}).playlists || []).filter((p) => (p.items || []).length)
+    .forEach((p) => opts.push({ value: `playlist:${p.id}`, label: `Playlist (shuffle) · ${p.name}` }));
+  if (favoriteRecordings().length) opts.push({ value: "favorites", label: "Favorite songs (shuffle)" });
+  opts.push({ value: "off", label: "Nothing — stop" });
+  const cur = state.mediaQueueFallback;
+  if (cur && !opts.some((o) => o.value === cur)) opts.splice(1, 0, { value: cur, label: "Your earlier pick (no longer available)" });
+  return opts;
+}
+// Called when the queue plays its last item. Waits a beat so the caller's own
+// end-of-queue path runs first, then starts the pick only if nothing else began.
+let queueFallbackTimer = null;
+function scheduleQueueFallback() {
+  clearTimeout(queueFallbackTimer);
+  queueFallbackTimer = setTimeout(() => {
+    queueFallbackTimer = null;
+    if (nowPlayingIsPlaying()) return;
+    const plan = queueFallbackPlan();
+    if (!plan) { renderMiniPlayerIdle(); return; }
+    showVoiceToast(`Queue finished — playing ${plan.title}`);
+    plan.start();
+  }, 1200);
+}
+function playFromIdle() {
+  const plan = idlePlaybackPlan();
+  if (plan) plan.start();
+  else { showMediaApp(); showVoiceToast("Nothing queued — pick something to play"); }
 }
 
 function updateMiniPlayerPlayBtn() {
@@ -33843,14 +33981,101 @@ function setupMiniPlayerMarquee() {
 }
 
 function wireMiniPlayer() {
-  document.getElementById("miniPlayerPlayPause")?.addEventListener("click", nowPlayingToggle);
+  // Play with nothing loaded → resume / next in queue / the queue-ends pick.
+  document.getElementById("miniPlayerPlayPause")?.addEventListener("click", () => (nowPlayingKind() ? nowPlayingToggle() : playFromIdle()));
   document.getElementById("miniPlayerSkipBack")?.addEventListener("click", () => nowPlayingSkip(-10));
-  // Tapping anywhere on the bar except the rewind / play-pause controls opens
-  // the full Now-Playing window.
-  document.getElementById("miniPlayer")?.addEventListener("click", (e) => {
-    if (e.target.closest(".mini-player-controls")) return;
-    openNowPlayingModal();
+  document.getElementById("miniPlayerExpand")?.addEventListener("click", (e) => { e.stopPropagation(); if (nowPlayingKind()) openNowPlayingModal(); });
+  const bar = document.getElementById("miniPlayer");
+  // Tap the bar (not its controls) → the full Media page, on what's playing.
+  bar?.addEventListener("click", (e) => {
+    if (e.target.closest(".mini-player-controls, .mini-player-expand-btn")) return;
+    if (dockSuppressClick) return;
+    const k = nowPlayingKind();
+    if (k && MEDIA_KINDS[k]?.open) MEDIA_KINDS[k].open(); else showMediaApp();
   });
+  // Swipe the bar up → the Now-Playing window (seek, speed, next/previous).
+  let sy = 0, sx = 0, tracking = false;
+  bar?.addEventListener("touchstart", (e) => { const t = e.touches[0]; sy = t.clientY; sx = t.clientX; tracking = true; }, { passive: true });
+  bar?.addEventListener("touchend", (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dy = t.clientY - sy, dx = t.clientX - sx;
+    if (dy < -36 && Math.abs(dy) > Math.abs(dx) * 1.4 && nowPlayingKind()) {
+      dockSuppressClick = true; setTimeout(() => { dockSuppressClick = false; }, 400);
+      openNowPlayingModal();
+    }
+  }, { passive: true });
+  initBottomDock();
+  renderMiniPlayerIdle();
+}
+
+// ── Bottom dock: a permanent, swipeable ticker (mini-player, weather, …) ────────
+// Each slide is a .dock-slide in #dockTrack; a slide is shown when its `available`
+// check passes. The track is a horizontal scroll-snap strip (native swipe on
+// touch, trackpad/shift-scroll on a laptop); the dots above it switch slides and
+// only appear when more than one slide is available. Add a future ticker by
+// adding a .dock-slide element and an entry here.
+let dockSuppressClick = false;
+const DOCK_SLIDES = [
+  { id: "player", available: () => true },
+  { id: "weather", available: () => isPageEnabled("weather"), refresh: () => renderWeatherTicker(document.getElementById("weatherTicker")) },
+];
+const DOCK_PREF_KEY = "live-dock-slide-v1";
+function dockSlides() { return DOCK_SLIDES.filter((d) => d.available()); }
+function dockSlideEl(id) { return document.querySelector(`#dockTrack [data-dock-slide="${id}"]`); }
+function dockActiveIndex() {
+  const track = document.getElementById("dockTrack");
+  if (!track || !track.clientWidth) return 0;
+  return Math.round(track.scrollLeft / track.clientWidth);
+}
+function renderDockDots() {
+  const dots = document.getElementById("dockDots");
+  if (!dots) return;
+  const slides = dockSlides();
+  dots.hidden = slides.length < 2;
+  const active = dockActiveIndex();
+  dots.innerHTML = slides.map((d, i) => `<button class="dock-dot${i === active ? " is-active" : ""}" type="button" role="tab" aria-selected="${i === active}" aria-label="${d.id === "player" ? "Now playing" : d.id === "weather" ? "Weather" : d.id}" data-dock-goto="${i}"></button>`).join("");
+}
+function dockGoTo(index, { smooth = true } = {}) {
+  const track = document.getElementById("dockTrack");
+  if (!track) return;
+  track.scrollTo({ left: index * track.clientWidth, behavior: smooth ? "smooth" : "auto" });
+}
+function refreshBottomDock() {
+  DOCK_SLIDES.forEach((d) => { const el = dockSlideEl(d.id); if (el) el.hidden = !d.available(); });
+  renderMiniPlayerIdle(); // the idle plan depends on synced state (history, queue, picks)
+  renderDockDots();
+  dockSlides().forEach((d) => d.refresh?.());
+}
+function initBottomDock() {
+  const dock = document.getElementById("bottomDock");
+  const track = document.getElementById("dockTrack");
+  if (!dock || !track) return;
+  dock.hidden = false;
+  document.body.classList.add("has-mini-player", "has-bottom-dock");
+  refreshBottomDock();
+  let saved = 0;
+  try { saved = Number(localStorage.getItem(DOCK_PREF_KEY)) || 0; } catch { /* storage blocked */ }
+  requestAnimationFrame(() => dockGoTo(Math.min(saved, dockSlides().length - 1), { smooth: false }));
+  let scrollTimer = null;
+  track.addEventListener("scroll", () => {
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => {
+      renderDockDots();
+      try { localStorage.setItem(DOCK_PREF_KEY, String(dockActiveIndex())); } catch { /* storage blocked */ }
+    }, 120);
+  }, { passive: true });
+  document.getElementById("dockDots")?.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-dock-goto]");
+    if (b) dockGoTo(Number(b.dataset.dockGoto));
+  });
+  document.getElementById("weatherTicker")?.addEventListener("click", () => { if (!dockSuppressClick) showWeatherApp(); });
+  window.addEventListener("resize", () => dockGoTo(dockActiveIndex(), { smooth: false }));
+  // Weather refresh: on return to the app and every 15 minutes in the foreground.
+  // The weather service caches snapshots (TTL), so this rarely hits the network.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshBottomDock(); });
+  setInterval(() => { if (!document.hidden) DOCK_SLIDES.find((d) => d.id === "weather")?.refresh?.(); }, 15 * 60 * 1000);
 }
 
 // ── Now-Playing modal: full info about the current audio, over any page ───────
