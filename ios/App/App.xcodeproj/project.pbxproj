@@ -20,6 +20,7 @@
 		7A1C0E5E2E90000100C0FFEE /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E5F2E90000100C0FFEE /* MainViewController.swift */; };
 		7A1C0E602E90000100C0FFEE /* ArticleReaderPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E612E90000100C0FFEE /* ArticleReaderPlugin.swift */; };
 		7A1C0E622E90000100C0FFEE /* DocumentScannerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E632E90000100C0FFEE /* DocumentScannerPlugin.swift */; };
+		7A1C0E642E90000100C0FFEE /* WebAuthPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E652E90000100C0FFEE /* WebAuthPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +41,7 @@
 		7A1C0E5F2E90000100C0FFEE /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 		7A1C0E612E90000100C0FFEE /* ArticleReaderPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArticleReaderPlugin.swift; sourceTree = "<group>"; };
 		7A1C0E632E90000100C0FFEE /* DocumentScannerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentScannerPlugin.swift; sourceTree = "<group>"; };
+		7A1C0E652E90000100C0FFEE /* WebAuthPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAuthPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,6 +92,7 @@
 				7A1C0E5F2E90000100C0FFEE /* MainViewController.swift */,
 				7A1C0E612E90000100C0FFEE /* ArticleReaderPlugin.swift */,
 				7A1C0E632E90000100C0FFEE /* DocumentScannerPlugin.swift */,
+				7A1C0E652E90000100C0FFEE /* WebAuthPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -230,6 +233,7 @@
 				7A1C0E5E2E90000100C0FFEE /* MainViewController.swift in Sources */,
 				7A1C0E602E90000100C0FFEE /* ArticleReaderPlugin.swift in Sources */,
 				7A1C0E622E90000100C0FFEE /* DocumentScannerPlugin.swift in Sources */,
+				7A1C0E642E90000100C0FFEE /* WebAuthPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

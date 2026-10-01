@@ -22,7 +22,10 @@ exports.handler = async (event) => {
 
   // Signed, expiring state (SRV-1): the callback trusts userId only after
   // verifying the HMAC, so it can't be forged to hijack another user's link.
-  const state = createOAuthState(userId, serviceKey);
+  // ?client=ios: started from the iPhone app's sign-in sheet — the callback
+  // returns to the app (NATIVE_RETURN in gmail-callback) instead of the site.
+  const native = (event.queryStringParameters || {}).client === "ios";
+  const state = createOAuthState(userId, serviceKey, { native });
 
   const params = new URLSearchParams({
     client_id: clientId,

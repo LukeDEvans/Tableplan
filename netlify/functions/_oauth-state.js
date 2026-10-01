@@ -5,7 +5,10 @@
 // refresh token is written to. An unsigned state lets anyone forge another
 // user's id and overwrite / take over their mailbox link. So the state is:
 //
-//   base64url(JSON{ userId, nonce, exp }) + "." + base64url(HMAC-SHA256(payload))
+//   base64url(JSON{ userId, nonce, exp[, native] }) + "." + base64url(HMAC-SHA256(payload))
+//
+// `native: true` marks a flow started from the iPhone app (Apple's sign-in
+// sheet), so the callback hands control back to the app instead of the website.
 //
 // The HMAC key is derived from the existing SUPABASE_SERVICE_ROLE_KEY (no new
 // env var): HMAC(serviceKey, "<purpose>").
@@ -24,18 +27,19 @@ function sign(payloadB64, key) {
   return crypto.createHmac("sha256", key).update(payloadB64).digest("base64url");
 }
 
-function createOAuthState(userId, secret, { purpose = DEFAULT_PURPOSE, ttlMs = DEFAULT_TTL_MS, now = Date.now() } = {}) {
+function createOAuthState(userId, secret, { purpose = DEFAULT_PURPOSE, ttlMs = DEFAULT_TTL_MS, now = Date.now(), native = false } = {}) {
   if (!userId) throw new Error("oauth-state: missing userId");
   const key = deriveKey(secret, purpose);
   const payload = Buffer.from(JSON.stringify({
     userId: String(userId),
     nonce: crypto.randomBytes(16).toString("base64url"),
-    exp: now + ttlMs
+    exp: now + ttlMs,
+    ...(native ? { native: true } : {})
   })).toString("base64url");
   return `${payload}.${sign(payload, key)}`;
 }
 
-// Returns { userId } when the signature and expiry check out, else null.
+// Returns { userId, native } when the signature and expiry check out, else null.
 function verifyOAuthState(state, secret, { purpose = DEFAULT_PURPOSE, now = Date.now() } = {}) {
   try {
     if (typeof state !== "string" || state.length > 2048) return null;
@@ -49,7 +53,7 @@ function verifyOAuthState(state, secret, { purpose = DEFAULT_PURPOSE, now = Date
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     if (!parsed || typeof parsed.userId !== "string" || !parsed.userId) return null;
     if (!Number.isFinite(parsed.exp) || parsed.exp < now) return null;
-    return { userId: parsed.userId };
+    return { userId: parsed.userId, native: parsed.native === true };
   } catch {
     return null;
   }

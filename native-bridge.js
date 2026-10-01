@@ -119,3 +119,32 @@ export function scannedPagesToFiles(pages, stamp = Date.now()) {
     return new File([bytes], `receipt-${stamp}-${i + 1}.jpg`, { type: "image/jpeg" });
   });
 }
+
+// In-app sign-in sheet (WebAuth plugin — Apple's ASWebAuthenticationSession) for
+// third-party accounts Google-style providers refuse inside an embedded web view
+// (Gmail connect). null in a browser/PWA or an app build without the plugin.
+let _webAuth;
+export function nativeWebAuth() {
+  if (_webAuth !== undefined) return _webAuth;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _webAuth = null;
+      return _webAuth;
+    }
+    const p = registerPlugin("WebAuth");
+    _webAuth = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("WebAuth")) ? p : null;
+  } catch { _webAuth = null; }
+  return _webAuth;
+}
+
+// The app's URL scheme the Gmail callback returns to (gmail-callback NATIVE_RETURN).
+export const APP_CALLBACK_SCHEME = "com.mrlukedevans.live";
+
+// Reads the status the server put on the app-scheme return URL.
+export function parseAppCallback(url) {
+  try {
+    const u = new URL(String(url || ""));
+    if (u.protocol !== `${APP_CALLBACK_SCHEME}:`) return { status: "unknown" };
+    return { status: u.searchParams.get("status") || "unknown", reason: u.searchParams.get("reason") || "" };
+  } catch { return { status: "unknown" }; }
+}

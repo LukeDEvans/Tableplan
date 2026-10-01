@@ -2,29 +2,39 @@ const { verifyOAuthState } = require("./_oauth-state");
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
+// Where a flow started in the iPhone app returns: the app's own URL scheme. The
+// app's sign-in sheet (ASWebAuthenticationSession, WebAuthPlugin.swift) is
+// waiting for this scheme and closes itself when it sees it. Only a status goes
+// back — the Gmail tokens never leave the server.
+const NATIVE_RETURN = "com.mrlukedevans.live://gmail";
+
 exports.handler = async (event) => {
   const { code, error, state: stateParam } = event.queryStringParameters || {};
   const appBase = (process.env.APP_URL || process.env.URL || "").replace(/\/$/, "");
+  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
-  if (error || !code || !stateParam) return redirect(`${appBase}/#mail?gm_error=denied`);
+  // Verify the signed, expiring state (SRV-1) before trusting its userId. Done
+  // first so even an error result goes back to the right place (app vs site).
+  const verified = stateParam && serviceKey ? verifyOAuthState(stateParam, serviceKey) : null;
+  const finish = (result) => verified?.native
+    ? redirect(`${NATIVE_RETURN}?${result === "connected" ? "status=connected" : `status=error&reason=${encodeURIComponent(result)}`}`)
+    : redirect(result === "connected" ? `${appBase}/#mail?gm_connected=1` : `${appBase}/#mail?gm_error=${encodeURIComponent(result)}`);
+
+  if (error || !code || !stateParam) return finish("denied");
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.URL}/.netlify/functions/gmail-callback`;
-  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
-  if (!clientId || !clientSecret || !serviceKey) return redirect(`${appBase}/#mail?gm_error=config`);
-
-  // Verify the signed, expiring state (SRV-1) before trusting its userId.
-  const verified = verifyOAuthState(stateParam, serviceKey);
-  if (!verified) return redirect(`${appBase}/#mail?gm_error=state`);
+  if (!clientId || !clientSecret || !serviceKey) return finish("config");
+  if (!verified) return finish("state");
   const userId = verified.userId;
 
   // Verify userId is a real Supabase user
   const userCheck = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
     headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }
   });
-  if (!userCheck.ok) return redirect(`${appBase}/#mail?gm_error=user`);
+  if (!userCheck.ok) return finish("user");
 
   // Exchange code for tokens
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -34,7 +44,7 @@ exports.handler = async (event) => {
   });
 
   const tokens = await tokenRes.json().catch(() => ({}));
-  if (!tokenRes.ok || !tokens.refresh_token) return redirect(`${appBase}/#mail?gm_error=token`);
+  if (!tokenRes.ok || !tokens.refresh_token) return finish("token");
 
   let email = "";
   try {
@@ -52,7 +62,7 @@ exports.handler = async (event) => {
     email
   });
 
-  return redirect(`${appBase}/#mail?gm_connected=1`);
+  return finish("connected");
 };
 
 async function saveUserGmailTokens(serviceKey, userId, tokens) {
