@@ -909,7 +909,11 @@ const elements = {
   weekJumpMenu: document.querySelector("#weekJumpMenu"),
   previousWeek: document.querySelector("#previousWeek"),
   nextWeek: document.querySelector("#nextWeek"),
-  authButton: document.querySelector("#authButton"),
+  menuUserBtn: document.querySelector("#menuUserBtn"),
+  receiptScannerBtn: document.querySelector("#receiptScannerBtn"),
+  receiptScannerMenu: document.querySelector("#receiptScannerMenu"),
+  receiptScannerCameraInput: document.querySelector("#receiptScannerCameraInput"),
+  receiptScannerPhotoInput: document.querySelector("#receiptScannerPhotoInput"),
   profileDialog: document.querySelector("#profileDialog"),
   adminUsersDialog: document.querySelector("#adminUsersDialog"),
   adminHouseholdsDialog: document.querySelector("#adminHouseholdsDialog"),
@@ -1727,7 +1731,7 @@ const {
   invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick,
   refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu,
   renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth,
-  getFinanceLinkStatus,
+  getFinanceLinkStatus, captureScannedReceipt,
 } = _finance;
 
 // ── Groceries domain (extracted to groceries-ui.js) ─────────────────────────
@@ -1755,7 +1759,7 @@ const _groceries = createGroceriesModule({
   recordDeletion, renderDailyDozen, renderIngredientSuggestions: (...a) => renderIngredientSuggestions(...a), renderScanImagePreviews, retainScanImageEdits,
   scaleIngredientAmount: (...a) => scaleIngredientAmount(...a), scaledIngredientToText: (...a) => scaledIngredientToText(...a), sectionScope, setWeekToolsMode, showInventoryApp, showMailToast,
   showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState,
-  inventoryItemList, renderInventoryPage,
+  inventoryItemList, renderInventoryPage, isNativeApp,
 });
 const {
   acquireGroceryStoreSearchLocation,
@@ -1816,6 +1820,7 @@ const {
   openGroceryStoresDialog,
   openPublishedGroceryReview,
   openReceiptScanDialog,
+  openReceiptScanWithFiles,
   openShopReceiptsDialog,
   receiptItemMappings,
   receiptPriceHistory,
@@ -2257,7 +2262,18 @@ function bindEvents() {
       : event.key === "Home" ? opts[0] : opts[opts.length - 1];
     target?.focus({ preventScroll: false });
   });
-  elements.authButton.addEventListener("click", openProfileDialog);
+  // "User" (the profile dialog) lives at the top of the Settings menu; the
+  // header's top-right button is the receipt scanner.
+  elements.menuUserBtn.addEventListener("click", () => openSettingsMenuDialog(openProfileDialog));
+  elements.receiptScannerBtn.addEventListener("click", toggleReceiptScannerMenu);
+  elements.receiptScannerMenu.addEventListener("click", (event) => event.stopPropagation());
+  document.querySelector("#receiptScannerCameraBtn").addEventListener("click", () => { closeReceiptScannerMenu(); elements.receiptScannerCameraInput.click(); });
+  document.querySelector("#receiptScannerPhotoBtn").addEventListener("click", () => { closeReceiptScannerMenu(); elements.receiptScannerPhotoInput.click(); });
+  [elements.receiptScannerCameraInput, elements.receiptScannerPhotoInput].forEach((input) => input.addEventListener("change", () => {
+    const files = [...(input.files || [])];
+    input.value = ""; // same photo can be picked again
+    scanReceiptFromHeader(files);
+  }));
   document.querySelector("#closeProfileBtn").addEventListener("click", () => elements.profileDialog.close());
   document.querySelector("#saveProfileBtn").addEventListener("click", saveProfile);
   document.querySelector("#profileLogOutBtn").addEventListener("click", () => { elements.profileDialog.close(); toggleAuth(); });
@@ -3208,7 +3224,6 @@ async function initializeSupabaseAuth() {
 // boot failures, so a signed-out user sees WHY instead of a generic prompt.
 function updateAuthUi(message) {
   updateGroupSettingsSection();
-  if (elements.authButton) elements.authButton.hidden = false;
   if (message) {
     const status = document.getElementById("lockStatus");
     if (status) status.textContent = message;
@@ -15876,13 +15891,38 @@ function updateTopLeftNavigation() {
   updateSettingsMenuOptions();
 }
 
+// Always the menu: "User" sits at its top on every page, so pages with no
+// page-specific settings show just User + Settings.
 function handleAppMenuButtonClick(event) {
-  if (!hasPageSpecificSettings()) {
-    event?.stopPropagation();
-    openContextSettingsDialog("general");
-    return;
-  }
   toggleAppMenu(event);
+}
+
+// ── Header receipt scanner ──────────────────────────────────────────────────
+// Top-right button → Camera / Photo. A picked receipt goes to BOTH places:
+// Shop's scan dialog opens already reading it (review + save → Shop receipts and
+// price history), and Finance reads + stores it in the background so it waits in
+// Finance → Receipts until its transaction posts (finance-ui captureScannedReceipt).
+function toggleReceiptScannerMenu(event) {
+  event?.stopPropagation();
+  const willOpen = elements.receiptScannerMenu.hidden;
+  closeFloatingMenus();
+  elements.receiptScannerMenu.hidden = !willOpen;
+  elements.receiptScannerBtn.setAttribute("aria-expanded", String(willOpen));
+}
+
+function closeReceiptScannerMenu() {
+  if (!elements.receiptScannerMenu) return;
+  elements.receiptScannerMenu.hidden = true;
+  elements.receiptScannerBtn?.setAttribute("aria-expanded", "false");
+}
+
+function scanReceiptFromHeader(files) {
+  const images = files.filter((f) => /^image\//.test(f.type || ""));
+  if (!images.length) return;
+  openReceiptScanWithFiles(images);
+  captureScannedReceipt(images)
+    .then((r) => showMailToast(`Receipt${r?.merchant ? ` from ${r.merchant}` : ""} saved to Finance — it'll match the charge when it posts`))
+    .catch((e) => showMailToast(`Couldn't save the receipt to Finance: ${e?.message || "unknown error"}`));
 }
 
 function toggleAppMenu(event) {
@@ -15904,6 +15944,7 @@ function closeAppMenu() {
 }
 
 function updateSettingsMenuOptions() {
+  elements.menuUserBtn.hidden = false;
   elements.generalSettingsMenuBtn.hidden = false;
   const isEat = activeAppArea === "eat";
   const isShop = activeAppArea === "shop";
@@ -15942,10 +15983,6 @@ function updateSettingsMenuOptions() {
   const expBtn = document.getElementById("menuContactsExportBtn");
   if (impBtn) impBtn.hidden = !isContacts;
   if (expBtn) expBtn.hidden = !isContacts;
-}
-
-function hasPageSpecificSettings() {
-  return ["eat", "play", "do", "watch", "shop", "inventory", "recreate", "plan", "read", "listen", "media", "finance", "contacts"].includes(activeAppArea);
 }
 
 function openSettingsMenuDialog(openDialog) {
@@ -17647,6 +17684,7 @@ function closeSettingsMenu() {
 }
 
 function closeFloatingMenus() {
+  closeReceiptScannerMenu();
   closeFolderMenu();
   closeSettingsMenu();
   closeAppMenu();
