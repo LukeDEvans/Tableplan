@@ -64,6 +64,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     private let synth = AVSpeechSynthesizer()
     private var voiceId: String?
     private var rate: Float = 1.0
+    // Extra multiplier for speech only (Settings → Voice "Speaking speed"); the
+    // shared `rate` is the player speed, which also drives podcast audio.
+    private var speechSpeed: Float = 1.0
     private var current: Item?
     private var upcoming: [Item] = []
     private var userPaused = false
@@ -171,6 +174,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         }
         voiceId = call.getString("voiceId")
         rate = Float(call.getDouble("rate") ?? 1.0)
+        if let sp = call.getDouble("speechSpeed") { speechSpeed = Float(sp) }
         let item = Item(
             id: call.getString("id") ?? "", kind: .speech, text: text, url: nil,
             title: call.getString("title") ?? "Article",
@@ -192,6 +196,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         }
         if let v = call.getString("voiceId") { voiceId = v }
         if let r = call.getDouble("rate") { rate = Float(r) }
+        if let sp = call.getDouble("speechSpeed") { speechSpeed = Float(sp) }
         DispatchQueue.main.async {
             self.upcoming = []
             self.start(item)
@@ -462,10 +467,20 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         } else {
             utterance.voice = LiveTtsPlugin.bestVoice()
         }
-        // Map our "1.0 = normal" onto AVSpeech's rate scale (its default is normal).
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * max(0.5, min(2.0, rate))
+        utterance.rate = LiveTtsPlugin.avSpeechRate(rate * speechSpeed)
         currentUtterance = utterance
         synth.speak(utterance)
+    }
+
+    // Map our "1.0× = normal" multiplier onto AVSpeech's 0…1 rate scale. That
+    // scale is NOT linear: 0.5 (the default) is normal speech and 1.0 is several
+    // times faster, so the old linear `default * m` turned 1.5× into ~0.75 —
+    // far too fast to follow. A gentle power curve keeps 1.0× at the default
+    // and makes 2.0× noticeably (not absurdly) faster.
+    static func avSpeechRate(_ multiplier: Float) -> Float {
+        let m = max(0.5, min(2.0, multiplier))
+        let r = AVSpeechUtteranceDefaultSpeechRate * powf(m, 0.35)
+        return max(AVSpeechUtteranceMinimumSpeechRate, min(AVSpeechUtteranceMaximumSpeechRate, r))
     }
 
     private func startAudio(_ item: Item, at position: Double, url overrideUrl: URL? = nil) {
