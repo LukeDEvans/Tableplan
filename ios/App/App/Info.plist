@@ -24,6 +24,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Live uses the camera to scan receipts.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Live plays songs from your Apple Music subscription and shows your Apple Music library.</string>
 	<key>NSAppTransportSecurity</key>
