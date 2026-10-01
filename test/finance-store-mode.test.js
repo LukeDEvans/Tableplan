@@ -7,8 +7,16 @@
 //   • old unlabeled history doesn't flood the bell (60-day deck window);
 //   • a label made on a pending pre-auth follows it to the posted charge;
 //   • an unreachable store falls back to the feed.
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createFinanceModule } from "../finance-ui.js";
+
+// Pin "now" to mid-month: the fixtures put transactions 1-3 days back and
+// expect them in the current month's actuals, which is false on the 1st-3rd
+// (this suite went red on 2026-10-01). Only Date is faked, so setTimeout-based
+// settle() keeps working. Set before the fixtures below are built.
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
+afterAll(() => { vi.useRealTimers(); });
 
 beforeAll(() => { globalThis.location = { hostname: "app.example" }; });
 
@@ -23,7 +31,9 @@ const feedTxns = [
   { id: "new-unlabeled", posted: iso(3), amount: -9, description: "NEW PLACE", pending: false },
 ];
 const oldRows = [];
-for (let d = 60; d < 3 * 365; d += 7) {
+// Starts at day 61 so it sits clearly outside the 60-day review window (day 60
+// is exactly on the boundary and only passed while the clock drifted).
+for (let d = 61; d < 3 * 365; d += 7) {
   oldRows.push({ id: `old${d}`, account_id: "A1", origin: "simplefin", status: "active", posted: iso(d), amount: -20, description: `SHOP${d % 5} STORE`, pending: false, updated_at: "2026-01-01T00:00:00Z" });
 }
 
