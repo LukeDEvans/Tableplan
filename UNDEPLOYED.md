@@ -39,3 +39,17 @@ papers then load in full on the phone. A cut-off article shows "Sign in" / "Relo
    Sign in / Reload buttons.
 
 Checks for work that's already live are in [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md).
+
+## Media "Playlist" → "Queue"; Shop date-button tap colour; weather search (PR #34)
+PR: https://github.com/LukeDEvans/Tableplan/pull/34
+
+The main media list is now called "Queue" (sidebar tab, settings menu and modal, add/remove
+buttons, toasts). Named podcast/music playlists still say "playlist". The Shop date buttons no
+longer stay patina after a tap on a phone. Weather search accepts "City, ST" and shows a
+message when nothing matches or the search can't be reached. In the iPhone app, the weather
+page now reaches its server function (it was fetching the app's own page).
+
+**After deploying:**
+1. Phone: tap a Shop date button, pick a date. The date goes back to dark once your finger lifts.
+2. Weather → Search a place: "Portland, OR" and "Austin TX" each list the right city.
+3. Next TestFlight build: the Weather page loads a forecast and search returns cities.
