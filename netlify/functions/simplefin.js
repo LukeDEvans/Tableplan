@@ -87,9 +87,12 @@ exports.handler = async (event) => {
       // email-receipt extractor, so the split editor consumes both.
       const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
       if (!anthropicKey) return cors(json(503, { error: "Scanning is not configured." }));
-      const m = String(body.image || "").match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
-      if (!m) return cors(json(400, { error: "image must be a base64 data URL." }));
-      if (m[2].length > 6000000) return cors(json(413, { error: "Image too large." }));
+      // One receipt may span several photos (a long receipt) — `images` carries
+      // them in order; `image` is the single-photo form the split editor uses.
+      const rawImages = Array.isArray(body.images) ? body.images.slice(0, 4) : [body.image];
+      const parts = rawImages.map((img) => String(img || "").match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/));
+      if (!parts.length || parts.some((m) => !m)) return cors(json(400, { error: "image must be a base64 data URL." }));
+      if (parts.reduce((n, m) => n + m[2].length, 0) > 6000000) return cors(json(413, { error: "Image too large." }));
 
       const categories = await loadFinanceCategories(serviceKey, groupId);
       if (!categories.length) return cors(json(409, { error: "No budget categories to assign." }));
@@ -105,13 +108,23 @@ exports.handler = async (event) => {
             role: "user",
             content: [
               { type: "text", text: receiptPrompt("photos", categories) },
-              { type: "image", source: { type: "base64", media_type: m[1], data: m[2] } }
+              ...parts.map((m) => ({ type: "image", source: { type: "base64", media_type: m[1], data: m[2] } }))
             ]
           }]
         })
       });
       if (!ai.ok) return cors(json(502, { error: `Scan failed (${ai.status}).` }));
       const receipt = receiptFromModel(await modelText(ai), categories);
+      // The top-right scanner saves the receipt with the email/extension ones,
+      // so it waits in Finance → Receipts until its transaction posts and is
+      // matched there (by total + date), even when scanned at checkout.
+      if (receipt && body.save) {
+        receipt.id = scannedReceiptId(receipt);
+        receipt.source = "scan";
+        const imagePath = String(body.imagePath || "");
+        if (/^[0-9a-f-]{36}\/scans\/[A-Za-z0-9_.-]+$/i.test(imagePath)) receipt.imagePath = imagePath;
+        await saveImportedReceipt(serviceKey, groupId, receipt);
+      }
       return cors(json(200, { receipt }));
     }
 
@@ -141,10 +154,7 @@ exports.handler = async (event) => {
       if (!receipt) return cors(json(200, { receipt: null }));
       // Stable id from merchant+date+total so re-importing the same page
       // doesn't duplicate the receipt.
-      let h = 0;
-      const fp = `${receipt.merchant}|${receipt.date}|${receipt.total}`;
-      for (let i = 0; i < fp.length; i++) h = (h * 31 + fp.charCodeAt(i)) | 0;
-      receipt.id = `imp_${Math.abs(h).toString(36)}`;
+      receipt.id = `imp_${receiptFingerprint(receipt)}`;
       receipt.source = "extension";
       await saveImportedReceipt(serviceKey, groupId, receipt);
       return cors(json(200, { ok: true, receipt: { merchant: receipt.merchant, date: receipt.date, total: receipt.total, items: receipt.items.length } }));
@@ -322,6 +332,16 @@ function receiptFromModel(text, categories) {
     at: new Date().toISOString()
   };
 }
+
+// Stable id from merchant+date+total, so re-scanning or re-importing the same
+// receipt replaces it instead of adding a duplicate.
+function receiptFingerprint(receipt) {
+  let h = 0;
+  const fp = `${receipt.merchant}|${receipt.date}|${receipt.total}`;
+  for (let i = 0; i < fp.length; i++) h = (h * 31 + fp.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(36);
+}
+function scannedReceiptId(receipt) { return `scan_${receiptFingerprint(receipt)}`; }
 
 async function saveImportedReceipt(serviceKey, groupId, receipt) {
   const { updateRawRow } = require("./_state-sections.js");

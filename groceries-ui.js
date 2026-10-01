@@ -447,7 +447,7 @@ export function baseGroceryItemKey(item) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createGroceriesModule(deps) {
   const {
-    state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage,
+    state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp,
   } = deps;
   _appState = state; // wire the module-scope live-state ref used by pure exports
 
@@ -1432,6 +1432,18 @@ function openReceiptScanDialog() {
   elements.receiptScanDialog.showModal();
 }
 
+// The header scanner's entry: open the scan dialog with the photos already
+// chosen and start reading right away — one tap from anywhere in the app.
+function openReceiptScanWithFiles(files) {
+  const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 6);
+  if (!list.length) return;
+  openReceiptScanDialog();
+  receiptScanFiles = list;
+  receiptImageEdits = retainScanImageEdits(receiptScanFiles, receiptImageEdits);
+  updateReceiptScanSelectionStatus();
+  scanReceiptImages();
+}
+
 function replaceReceiptScanFiles() {
   receiptScanFiles = [...(elements.receiptImages.files || [])].slice(0, 6);
   receiptImageEdits = retainScanImageEdits(receiptScanFiles, receiptImageEdits);
@@ -1541,7 +1553,9 @@ async function scanReceiptImages() {
 
 function receiptScanHelperUrl() {
   if (canUseLocalBackend()) return "/api/scan-receipt";
-  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/scan-receipt";
+  // The iOS app runs from capacitor://localhost; app.js's native fetch shim
+  // sends the relative path to the deployed site.
+  if (window.location.protocol.startsWith("http") || isNativeApp?.()) return "/.netlify/functions/scan-receipt";
   return "";
 }
 
@@ -5114,6 +5128,7 @@ function renderShopReceipts() {
     openGroceryStoresDialog,
     openPublishedGroceryReview,
     openReceiptScanDialog,
+    openReceiptScanWithFiles,
     openShopReceiptsDialog,
     receiptItemMappings,
     receiptPriceHistory,
