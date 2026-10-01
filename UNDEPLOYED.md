@@ -12,8 +12,6 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-01 (PRs #21, #22, #25, #26, #27, #31)._
 
-_(nothing undeployed)_
-
 ## iPhone app: native player for podcasts + radio; Apple voice per device (PR #28)
 PR: https://github.com/LukeDEvans/Tableplan/pull/28
 
