@@ -38,6 +38,8 @@ _(none)_
 
 
 ## P2
+- [ ] **[P2] Chrome extension can't fill in a body for an article that's already saved** (media · netlify/functions/save-article.js dedupe · 2026-10-01)
+  `save-article` dedupes on the canonical URL and returns `already_saved` without writing, even when the existing row has `text: null` (e.g. a news-email card accepted by swipe, whose server fetch hit the paywall). → Clicking the extension on the logged-in page does nothing for that article. Suggest: when the existing row has no text (or a much shorter one) and the request carries text, update the row's text/author/date. The iPhone app now reads these on the phone (ArticleReader plugin), so this only matters on desktop. Verdict: CONFIRMED by reading.
 - [x] **[P2] Trip→calendar sync re-creates events without tombstones** (travel · app.js syncTripToCalendar · 2026-09-30)
       `syncTripToCalendar` removes and re-adds the trip's planEvents without `recordDeletion("planEvents", id)`, so a merge with a device holding the old copies brings them back as duplicates. Suggested: tombstone removed ids (or keep stable ids per trip item). Verdict: LIKELY (read, found during the full-app audit; not reproduced across devices).
       **FIXED 2026-10-01:** `syncTripToCalendar` now tombstones the event(s) it replaces before re-adding (fresh id per sync kept on purpose: a stable id, once deleted, could never be re-added because tombstones union and never clear). Not reproduced across two devices; verified by reading + suite/boot check.

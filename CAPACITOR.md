@@ -149,6 +149,23 @@ Save. Without it the Apple Music API calls fail with an authorization error.
 → Sign in (Apple's prompt appears) → play a Discover song; lock the phone and let it
 run into the next song; use the lock-screen play/pause and next buttons.
 
+## Full subscriber articles (NYT, Economist, Star Tribune)
+
+The server fetch reads article pages anonymously from a cloud IP, so paywalled
+papers give it a teaser. In the app, `ArticleReaderPlugin.swift` reads them on the
+phone instead: Media → menu → Sync Settings → **Full articles on this iPhone** →
+Sign in opens the paper's site in an in-app browser; the login cookies stay in the
+app's website data (never sent to our server). Opening an article from one of the
+three papers then loads it in an invisible web view with that login and runs the
+extractor from `article-native-reader.js` in the rendered page. If the result still
+looks cut off, the server is tried too and the longer body wins; the reader shows
+"Sign in" / "Reload full article" under a cut-off body. Google sign-in doesn't work
+in an in-app browser, so sign in with email + password. The browser/PWA is unchanged.
+
+**Check on the phone after a TestFlight build:** sign in to The Economist there, then
+open an Economist article saved from a news email; it should load in full. Repeat for
+NYT and Star Tribune.
+
 ## Coming next (not now)
 - **Stage 1:** CORS + Supabase auth + Gmail native OAuth + confirm asset serving.
 - **Stage 2:** native background-audio queue + on-device TTS behind `native-bridge.js`.

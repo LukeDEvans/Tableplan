@@ -268,8 +268,12 @@ The page turned out to be the only entry point for **article scanning**. Luke de
   An NYT Cooking email keeps its recipe behavior and filing, and is never converted by
   the generic newsletter path.
 - **Accepted articles open in the Media reader,** not straight to the URL. The reader
-  already fetches the body on open (using the subscriber-cookie sync when configured) and
-  falls back to "Open in browser".
+  fetches the body on open and falls back to "Open in browser". *Correction
+  (2026-10-01):* the server fetch (`fetch-article`) never used the subscriber cookies, so
+  paywalled papers returned a teaser or nothing. In the iPhone app the body is now read on
+  the phone, signed in as Luke (`ArticleReaderPlugin.swift` + `article-native-reader.js`;
+  see CAPACITOR.md "Full subscriber articles"). The browser/PWA still gets the server
+  fetch only.
 - **Shared redirect cache.** `_recipe-digest.followRedirects` delegates to
   `_news-links.followRedirects`, which caches resolved click-tracker hops per function
   instance, so NYT tracker links are resolved once per email instead of twice.

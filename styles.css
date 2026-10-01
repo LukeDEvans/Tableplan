@@ -23009,3 +23009,9 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
     background: var(--window-bg);
   }
 }
+
+/* Subscriber-paper sign-in / reload buttons (iPhone app article reader) */
+.article-paper-login-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.article-paper-login-row { padding: 12px 0 24px; }
+.article-fetch-prompt .article-paper-login-actions { margin-top: 12px; }
+.sync-context-field-header .article-paper-login-actions { flex-wrap: nowrap; flex-shrink: 0; gap: 6px; }

@@ -75,3 +75,19 @@ export function nativeAppleMusic() {
   } catch { _appleMusic = null; }
   return _appleMusic;
 }
+// Native subscriber-article reader (ArticleReader plugin): login / extract /
+// logout, used by article-native-reader.js's flow in app.js. null in a
+// browser/PWA → the server fetch (fetch-article) as before.
+let _articleReader;
+export function nativeArticleReader() {
+  if (_articleReader !== undefined) return _articleReader;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _articleReader = null;
+      return _articleReader;
+    }
+    const p = registerPlugin("ArticleReader");
+    _articleReader = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("ArticleReader")) ? p : null;
+  } catch { _articleReader = null; }
+  return _articleReader;
+}
