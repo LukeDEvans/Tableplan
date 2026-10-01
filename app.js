@@ -32,7 +32,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeTts, nativeAppleMusic, nativeArticleReader } from './native-bridge.js';
+import { isNativeApp, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles } from './native-bridge.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { saveFile } from './save-file.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
@@ -2267,7 +2267,7 @@ function bindEvents() {
   elements.menuUserBtn.addEventListener("click", () => openSettingsMenuDialog(openProfileDialog));
   elements.receiptScannerBtn.addEventListener("click", toggleReceiptScannerMenu);
   elements.receiptScannerMenu.addEventListener("click", (event) => event.stopPropagation());
-  document.querySelector("#receiptScannerCameraBtn").addEventListener("click", () => { closeReceiptScannerMenu(); elements.receiptScannerCameraInput.click(); });
+  document.querySelector("#receiptScannerCameraBtn").addEventListener("click", () => { closeReceiptScannerMenu(); openReceiptCamera(); });
   document.querySelector("#receiptScannerPhotoBtn").addEventListener("click", () => { closeReceiptScannerMenu(); elements.receiptScannerPhotoInput.click(); });
   [elements.receiptScannerCameraInput, elements.receiptScannerPhotoInput].forEach((input) => input.addEventListener("change", () => {
     const files = [...(input.files || [])];
@@ -15914,6 +15914,22 @@ function closeReceiptScannerMenu() {
   if (!elements.receiptScannerMenu) return;
   elements.receiptScannerMenu.hidden = true;
   elements.receiptScannerBtn?.setAttribute("aria-expanded", "false");
+}
+
+// In the iPhone app the Camera option opens Apple's document camera (edge
+// detection, crop, multi-page, nothing saved to Photos). Elsewhere (browser, PWA,
+// or an app build without the plugin) it uses the browser camera input.
+async function openReceiptCamera() {
+  const scanner = nativeDocumentScanner();
+  if (!scanner) { elements.receiptScannerCameraInput.click(); return; }
+  try {
+    const result = await scanner.scan({ maxPages: 4, maxDimension: 1600, quality: 0.82 });
+    if (result?.cancelled) return;
+    scanReceiptFromHeader(scannedPagesToFiles(result?.pages));
+  } catch (e) {
+    // No fallback click here: iOS only opens a file picker from a direct tap.
+    showMailToast(`Couldn't open the camera: ${e?.message || "unknown error"} — try Photo instead`);
+  }
 }
 
 function scanReceiptFromHeader(files) {

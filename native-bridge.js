@@ -91,3 +91,31 @@ export function nativeArticleReader() {
   } catch { _articleReader = null; }
   return _articleReader;
 }
+// Native receipt camera (DocumentScanner plugin — Apple's VisionKit document
+// camera): finds the receipt's edges, straightens + crops, multi-page, nothing
+// saved to Photos. null in a browser/PWA (or an older app build without the
+// plugin) → the header scanner's <input capture> camera as before.
+let _documentScanner;
+export function nativeDocumentScanner() {
+  if (_documentScanner !== undefined) return _documentScanner;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _documentScanner = null;
+      return _documentScanner;
+    }
+    const p = registerPlugin("DocumentScanner");
+    _documentScanner = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("DocumentScanner")) ? p : null;
+  } catch { _documentScanner = null; }
+  return _documentScanner;
+}
+
+// Base64 JPEG pages from the native scanner → File objects the scan pipeline
+// takes. Decoded by hand: fetch(data:) can be intercepted by CapacitorHttp.
+export function scannedPagesToFiles(pages, stamp = Date.now()) {
+  return (Array.isArray(pages) ? pages : []).filter((b) => typeof b === "string" && b).map((b64, i) => {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+    return new File([bytes], `receipt-${stamp}-${i + 1}.jpg`, { type: "image/jpeg" });
+  });
+}
