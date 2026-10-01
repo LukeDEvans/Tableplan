@@ -32,7 +32,8 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeTts, nativeAppleMusic } from './native-bridge.js';
+import { isNativeApp, nativeTts, nativeAppleMusic, nativeArticleReader } from './native-bridge.js';
+import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { saveFile } from './save-file.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
@@ -16885,6 +16886,7 @@ function renderContextSettingsDialog(kind) {
           <p class="sync-context-hint" style="margin:6px 0 0">Automatically skips sponsor segments in podcast episodes when chapter data is available.</p>
         </div>
         <div class="sync-context-divider"></div>
+        ${articlePaperLoginsSettingsHtml()}
         <p class="sync-context-hint">Connect your accounts to sync saved articles automatically. The easiest way is to use the <strong>Live Chrome Extension</strong> — open it while signed in to the publication and click the connect button.</p>
         <div class="sync-context-field">
           <div class="sync-context-field-header">
@@ -17362,6 +17364,14 @@ function handleContextSettingsAction(event) {
     "ai-notes": () => renderContextSettingsDialog("ai-notes"),
     "import-ai": () => closeAndRun(openImportAiDialog),
     "api-usage": () => renderContextSettingsDialog("api-usage"),
+    "paper-signin": () => signInToArticlePaper(SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper)),
+    "paper-signout": async () => {
+      const paper = SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper);
+      const reader = nativeArticleReader();
+      if (!paper || !reader) return;
+      try { await reader.logout({ domain: paper.cookieDomain }); showMailToast(`Signed out of ${paper.name} on this phone.`); }
+      catch (err) { showMailToast(err?.message || "Couldn't sign out."); }
+    },
     "save-nyt-cookie": () => {
       const input = document.getElementById("ctxNytCookieInput");
       const val = input?.value?.trim();
@@ -34712,7 +34722,9 @@ async function renderArticleBody(textEl, article, id) {
     textEl.innerHTML = sanitizeUntrustedHtml(html);
     wrapArticleWords(textEl);
     if (listenArticle && listenArticle.id === id) highlightCurrentWord();
+    showArticleTeaserActions(textEl, article, html);
   };
+  document.getElementById("articlePaperLoginRow")?.remove();
   if (article.text) { paint(article.text); stashArticleBody(article); return; }
 
   let body = null;
@@ -34728,9 +34740,25 @@ async function renderArticleBody(textEl, article, id) {
     textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
     fetchArticleText(id);
   } else {
-    textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
+    textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button>${articlePaperLoginActionsHtml(article, { teaser: false })}</div>`;
     textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => { articleAutoFetchTried.delete(id); fetchArticleText(id); });
+    bindArticlePaperLoginActions(textEl, article);
   }
+}
+
+// Under a body that looks like a paywall teaser from a subscriber paper (iPhone
+// app only): sign-in + reload buttons, outside the word-wrapped text.
+function showArticleTeaserActions(textEl, article, html) {
+  document.getElementById("articlePaperLoginRow")?.remove();
+  if (!looksLikeTeaser(html)) return;
+  const actions = articlePaperLoginActionsHtml(article, { teaser: true });
+  if (!actions) return;
+  const row = document.createElement("div");
+  row.id = "articlePaperLoginRow";
+  row.className = "article-fetch-prompt article-paper-login-row";
+  row.innerHTML = actions;
+  bindArticlePaperLoginActions(row, article);
+  textEl.insertAdjacentElement("afterend", row);
 }
 
 function openArticle(id, fromListId) {
@@ -34997,17 +35025,115 @@ async function ensureArticleText(id) {
       if (body) { article.text = body; persist(); return { ok: true }; }
     }
   } catch { /* fall through to a live fetch */ }
-  const res = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication });
+  const res = await fetchArticleBodyLive(article);
   if (res?.text) {
-    article.text = res.text;
-    if (res.title && res.title !== article.url) article.title = res.title;
-    if (res.author) article.author = res.author;
-    if (res.date) article.date = res.date;
-    persist();
-    stashArticleBody(article); // mirror the fetched body into the content store
+    applyFetchedArticleBody(article, res);
     return { ok: true };
   }
   return { ok: false, error: res?.error || "Could not extract article text." };
+}
+
+function applyFetchedArticleBody(article, res) {
+  article.text = res.text;
+  if (res.title && res.title !== article.url) article.title = res.title;
+  if (res.author) article.author = res.author;
+  if (res.date) article.date = res.date;
+  persist();
+  stashArticleBody(article); // mirror the fetched body into the content store
+}
+
+// Live fetch of an article body. In the iPhone app, NYT / Economist / Star
+// Tribune articles are read on the phone through the ArticleReader plugin, signed
+// in as Luke (article-native-reader.js); the server fetch is anonymous and gets a
+// teaser. The server is still tried when the phone result looks cut off, and the
+// longer of the two wins. In-flight calls are shared per article so the reader's
+// auto-fetch and a Listen don't load the page twice.
+const articleLiveFetches = new Map();
+function fetchArticleBodyLive(article) {
+  if (articleLiveFetches.has(article.id)) return articleLiveFetches.get(article.id);
+  const p = (async () => {
+    const paper = subscriberPaperFor(article);
+    const reader = paper ? nativeArticleReader() : null;
+    let nativeRes = null;
+    let nativeError = "";
+    if (reader) {
+      try {
+        nativeRes = parseNativeExtractResult(await reader.extract({
+          url: article.url, script: ARTICLE_DOM_EXTRACTOR_SOURCE, minChars: TEASER_MAX_CHARS, timeoutMs: 25000
+        }));
+      } catch (e) { nativeError = e?.message || ""; }
+      if (nativeRes && !looksLikeTeaser(nativeRes.text)) return nativeRes;
+    }
+    let serverRes = null;
+    try { serverRes = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication }); } catch { serverRes = null; }
+    const best = chooseLongerResult(nativeRes, serverRes?.text ? serverRes : null);
+    if (best) return best;
+    return { error: serverRes?.error || nativeError || "Could not extract article text." };
+  })();
+  articleLiveFetches.set(article.id, p);
+  p.finally(() => articleLiveFetches.delete(article.id));
+  return p;
+}
+
+// Re-read an article that came back cut off (a paywall teaser), after Luke has
+// signed in to the paper in the iPhone app. Replaces the stored body only when
+// the new one is longer.
+async function refetchArticleWithLogin(id) {
+  const article = (state.savedArticles || []).find((a) => a.id === id);
+  if (!article) return;
+  const textEl = document.getElementById("articleReaderText");
+  if (textEl && openArticleId === id) textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
+  const res = await fetchArticleBodyLive(article);
+  if (res?.text && bodyTextLength(res.text) > bodyTextLength(article.text || "")) {
+    article.bodyRef = null; // the stored body is the teaser; store the new one
+    applyFetchedArticleBody(article, res);
+  } else if (!article.text) {
+    showMailToast(res?.error || "Still couldn't load the full article.");
+  } else {
+    showMailToast("Still only the opening — check you're signed in.");
+  }
+  if (openArticleId === id) openArticle(id, "articleList");
+}
+
+async function signInToArticlePaper(paper) {
+  const reader = nativeArticleReader();
+  if (!reader || !paper) return;
+  try { await reader.login({ url: paper.loginUrl, title: paper.name }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); }
+}
+
+// Sign-in / reload buttons for an article from a subscriber paper (iPhone app
+// only). Returns "" elsewhere.
+function articlePaperLoginActionsHtml(article, { teaser }) {
+  const paper = subscriberPaperFor(article);
+  if (!paper || !nativeArticleReader()) return "";
+  const lead = teaser ? `<p class="article-fetch-hint">Looks cut off? Sign in to ${escapeHtml(paper.name)} once in the app, then reload.</p>` : "";
+  return `${lead}<div class="article-paper-login-actions"><button class="secondary-btn" type="button" data-article-paper-login="${escapeHtml(paper.key)}">Sign in to ${escapeHtml(paper.name)}</button><button class="primary-btn" type="button" data-article-paper-reload="${escapeHtml(article.id)}">Reload full article</button></div>`;
+}
+
+// Media → Sync Settings, iPhone app only: per-paper Sign in / Sign out for the
+// on-phone article reader. "" elsewhere.
+function articlePaperLoginsSettingsHtml() {
+  if (!nativeArticleReader()) return "";
+  const rows = SUBSCRIBER_PAPERS.map((p) => `
+        <div class="sync-context-field">
+          <div class="sync-context-field-header">
+            <span class="sync-context-label">${escapeHtml(p.name)}</span>
+            <span class="article-paper-login-actions">
+              <button type="button" class="secondary-btn compact-btn" data-context-settings-action="paper-signout" data-paper="${escapeHtml(p.key)}">Sign out</button>
+              <button type="button" class="primary-btn compact-btn" data-context-settings-action="paper-signin" data-paper="${escapeHtml(p.key)}">Sign in</button>
+            </span>
+          </div>
+        </div>`).join("");
+  return `
+        <p class="sync-context-label">Full articles on this iPhone</p>
+        <p class="sync-context-hint">Sign in to each paper once. Its articles then load in full, read on this phone with your subscription. Use email and password: Google sign-in doesn't work inside apps.</p>${rows}
+        <div class="sync-context-divider"></div>`;
+}
+
+function bindArticlePaperLoginActions(root, article) {
+  const paper = subscriberPaperFor(article);
+  root.querySelector("[data-article-paper-login]")?.addEventListener("click", () => signInToArticlePaper(paper));
+  root.querySelector("[data-article-paper-reload]")?.addEventListener("click", () => refetchArticleWithLogin(article.id));
 }
 
 async function fetchArticleText(id) {
@@ -35020,7 +35146,8 @@ async function fetchArticleText(id) {
     if (result.ok) {
       openArticle(id, "articleList");
     } else if (textEl) {
-      textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(result.error)}</p><a href="${escapeHtml(safeUrl(article.url, "#"))}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
+      textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(result.error)}</p><a href="${escapeHtml(safeUrl(article.url, "#"))}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a>${articlePaperLoginActionsHtml(article, { teaser: false })}</div>`;
+      bindArticlePaperLoginActions(textEl, article);
     }
   } catch (e) {
     if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">Fetch failed. Check your connection and try again.</p><a href="${escapeHtml(safeUrl(article.url, "#"))}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
@@ -35387,6 +35514,7 @@ function openSyncSettingsDialog(source) {
   dialog.dataset.source = source;
   dialog.showModal();
 }
+
 
 function closeSyncSettingsDialog() {
   document.getElementById("articleSyncSettingsDialog")?.close();
