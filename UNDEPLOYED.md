@@ -81,3 +81,20 @@ which was missing, so any camera use in the app would have crashed it.
 1. Scanner → Camera: the first time, iOS asks for camera permission. Scan a receipt (try a long
    one with 2 pages). Shop's review should open already reading it.
 2. Check the Photos app: the scan is not there.
+
+## Receipts: one list for Shop and Finance (PR #37)
+PR: https://github.com/LukeDEvans/Tableplan/pull/37
+
+Shop's receipts are now the one receipts list (see RECEIPTS.md). One scan reads the grocery lines
+and gives each line a Finance budget category, which you can correct in the review. Finance →
+Insights → Receipts shows these receipts and matches each to its charge (same total ±2¢, within
+4 days). Itemize builds the split, and View opens the receipt in Shop. Email and online-order
+receipts are copied into the same list, tagged in Shop, and never touch grocery price history.
+
+**After deploying:**
+1. Scan a real receipt: in the review, each line should show a sensible budget category. Save it.
+2. Once the charge posts (and the bank refreshes): Finance → Insights → Receipts shows it as
+   matched. Itemize gives a split by those categories, and View opens it in Shop.
+3. Shop → Receipts: email/online-order receipts appear tagged, and the price-history trends don't
+   include Amazon-style items.
+4. Delete an imported email receipt in Shop, reload the next day: it doesn't come back.
