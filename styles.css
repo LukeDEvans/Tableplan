@@ -22501,7 +22501,8 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
   --wx-night1:#2b3f63; --wx-night2:#436089; --wx-night-ink:#eaf1fb;
   --wx-storm1:#5c6a76; --wx-storm2:#7f8d98; --wx-storm-ink:#f3f6f9; }
 .weather-page-inner > * { max-width: 1080px; margin-inline: auto; width: 100%; }
-:root[data-theme="dark"] .weather-page-inner, :root:not([data-theme="light"]) .weather-page-inner {
+:root[data-theme="dark"] .weather-page-inner, :root:not([data-theme="light"]) .weather-page-inner,
+:root[data-theme="dark"] .weather-ticker, :root:not([data-theme="light"]) .weather-ticker {
   --wx-sky1:#294a63; --wx-sky2:#16283a; --wx-sky-ink:#eaf1fb;
   --wx-cloud1:#31404c; --wx-cloud2:#3f5261; --wx-cloud-ink:#eaf1fb;
   --wx-night1:#0f1a2e; --wx-night2:#243a56; --wx-night-ink:#eaf1fb;
@@ -23067,3 +23068,152 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
   font-weight: 750;
 }
 .shop-receipt-meta .shop-receipt-source::after { content: ""; margin-left: 0; }
+
+
+/* ══ Bottom dock: permanent, swipeable ticker (mini-player, weather, …) ═══════ */
+.weather-ticker {
+  --wx-sky1:#8ec5e8; --wx-sky2:#d3e6f3; --wx-sky-ink:#0e2233;
+  --wx-cloud1:#9fb2c2; --wx-cloud2:#c3d2de; --wx-cloud-ink:#1a2833;
+  --wx-night1:#2b3f63; --wx-night2:#436089; --wx-night-ink:#eaf1fb;
+  --wx-storm1:#5c6a76; --wx-storm2:#7f8d98; --wx-storm-ink:#f3f6f9;
+}
+.bottom-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 900;
+  background: var(--paper, #fffdf8);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+}
+body:not(.app-authed) .bottom-dock { display: none; }
+.dock-track {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+}
+.dock-track::-webkit-scrollbar { display: none; }
+.dock-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+.dock-slide[hidden] { display: none; }
+/* The mini-player is a dock slide now: in flow, no bar chrome of its own. */
+.bottom-dock .mini-player {
+  position: relative;
+  border-top: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* Slide dots: a small frosted pill floating just above the dock. The active
+   slide's dot stretches into a dash. Shown only when there's > 1 slide. */
+.dock-dots {
+  position: absolute;
+  left: 50%;
+  top: -9px;
+  transform: translate(-50%, -100%);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper, #fffdf8) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 1;
+}
+.dock-dots[hidden] { display: none; }
+.dock-dot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  cursor: pointer;
+  transition: width 0.2s ease, background 0.2s ease;
+}
+.dock-dot.is-active { width: 16px; background: var(--accent, #2a9d8f); }
+/* Bigger hit area without growing the pill. */
+.dock-dot { position: relative; }
+.dock-dot::after { content: ""; position: absolute; inset: -8px -3px; }
+
+/* Idle mini-player: nothing loaded — shows what play would start. */
+.mini-player.is-idle .mini-player-skip-btn,
+.mini-player.is-idle .mini-player-expand-btn,
+.mini-player.is-idle .mini-player-progress-fill { visibility: hidden; }
+.mini-player.is-idle .mini-player-title-inner { font-weight: 550; }
+/* Mouse/trackpad stand-in for "swipe up" (touch devices swipe instead). */
+.mini-player-expand-btn {
+  align-self: flex-start;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin: 6px 6px 0 -6px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .mini-player-expand-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+}
+@media (hover: none), (pointer: coarse) {
+  .mini-player-expand-btn { display: none; }
+}
+
+/* Weather ticker — the weather page's hero, condensed to the bar's height. */
+.weather-ticker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 93px;
+  padding: 0 16px 0 6px;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--wx-sky-ink);
+  background: linear-gradient(160deg, var(--wx-sky1), var(--wx-sky2));
+  overflow: hidden;
+}
+.weather-ticker.mood-cloud { color: var(--wx-cloud-ink); background: linear-gradient(160deg, var(--wx-cloud1), var(--wx-cloud2)); }
+.weather-ticker.mood-night { color: var(--wx-night-ink); background: linear-gradient(165deg, var(--wx-night2), var(--wx-night1)); }
+.weather-ticker.mood-storm { color: var(--wx-storm-ink); background: linear-gradient(165deg, var(--wx-storm1), var(--wx-storm2)); }
+.weather-ticker.is-empty { padding-left: 6px; }
+.wxt-art { flex: 0 0 auto; width: 78px; height: 78px; display: flex; }
+.wxt-art .wx-art { width: 100%; height: 100%; }
+.wxt-temp { flex: 0 0 auto; font-size: 2.6rem; font-weight: 250; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.wxt-temp sup { font-size: 1.1rem; font-weight: 400; opacity: 0.75; vertical-align: super; }
+.wxt-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wxt-cond { font-size: 1rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wxt-sub { font-size: 0.8rem; font-weight: 600; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wxt-alert { font-size: 0.74rem; font-weight: 700; color: var(--tomato, #c0392b); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) {
+  .weather-ticker { height: 87px; }
+  .wxt-art { width: 70px; height: 70px; }
+  .wxt-temp { font-size: 2.3rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dock-dot { transition: none; }
+}
+
+/* The dock is always there, so things that sat at the screen's bottom edge
+   ride just above it instead of covering it. */
+body.has-bottom-dock .voice-mic-btn,
+body.has-bottom-dock .voice-toast,
+body.has-bottom-dock .mail-toast,
+body.has-bottom-dock .sync-status { bottom: calc(var(--mini-player-h) + 26px); }

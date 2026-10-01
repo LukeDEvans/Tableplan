@@ -200,9 +200,10 @@ async function main() {
   await page.waitForTimeout(NAV_SETTLE_MS);
 
   // Smoke: visit a couple of extracted domains and confirm no console errors. We're on Home
-  // after local-dev entry; Weather is a home-grid button, Contacts via the page-title menu
-  // (reachable from any page) — exercising two different nav paths into extracted modules.
-  await visitDomain(page, "Weather", "weatherMainPage", () => page.click("#homeWeatherBtn"));
+  // after local-dev entry; Weather opens from the bottom dock's weather ticker, Contacts via
+  // the page-title menu (reachable from any page) — two different nav paths into extracted
+  // modules. The ticker may be scrolled off-slide, so it's clicked in-page.
+  await visitDomain(page, "Weather", "weatherMainPage", () => page.evaluate(() => document.getElementById("weatherTicker").click()));
   await visitDomain(page, "Contacts", "contactsMainPage", async () => {
     await page.click("#pageTitleBtn");
     await page.waitForTimeout(300);

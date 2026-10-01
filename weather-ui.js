@@ -28,7 +28,7 @@ import { conditionFor, conditionLabel, weatherEmphasis } from './weather-conditi
 import { heroArtSvg, iconSvg } from './weather-art.js';
 
 export function createWeatherModule(deps) {
-  const { state, elements, persist, escapeHtml, canUseLocalBackend, isNativeApp, getActiveAppArea, ensureLeaflet } = deps;
+  const { state, elements, persist, escapeHtml, canUseLocalBackend, isNativeApp, getActiveAppArea, ensureLeaflet, onLocationChosen } = deps;
 
 function weatherApiUrl(params) {
   const qs = new URLSearchParams(params).toString();
@@ -103,7 +103,7 @@ function initWeatherPage() {
 
 function setWeatherLocation(loc, { persistChoice = true } = {}) {
   weatherActiveLocation = loc;
-  if (persistChoice) { state.weatherActiveLocationId = loc.id; persist(); }
+  if (persistChoice) { state.weatherActiveLocationId = loc.id; persist(); onLocationChosen?.(); }
   weatherSnapshot = null;
   weatherPickerOpen = false;
   loadWeatherSnapshot();
@@ -137,7 +137,7 @@ function useCurrentWeatherLocation() {
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       weatherCurrentGeoLoc = { id: "current", label: "Current location", latitude: pos.coords.latitude, longitude: pos.coords.longitude, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, isCurrentLocation: true };
-      state.weatherActiveLocationId = "current"; persist();
+      state.weatherActiveLocationId = "current"; persist(); onLocationChosen?.();
       setWeatherLocation(weatherCurrentGeoLoc, { persistChoice: false });
     },
     (err) => {
@@ -766,6 +766,85 @@ async function getAssistantWeatherReport() {
   };
 }
 
-  return { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport };
+// ── Bottom-dock weather ticker ──────────────────────────────────────────────
+// A one-line summary in the weather page's style (condition art, sky colours,
+// temperature, condition, high/low) for the app's bottom dock. Location: the
+// weather page's chosen place, else the first saved one, else the device's
+// location — but only if that permission was already granted (the ticker never
+// pops a permission prompt; tapping it opens the weather page, which can).
+// Uses the same TTL-cached snapshot as the page, so re-rendering is cheap.
+let tickerGen = 0;
+function tickerQuietGeolocation() {
+  if (weatherCurrentGeoLoc) return Promise.resolve(weatherCurrentGeoLoc);
+  if (!navigator.geolocation || !navigator.permissions?.query) return Promise.resolve(null);
+  return navigator.permissions.query({ name: "geolocation" })
+    .then((p) => p?.state !== "granted" ? null : new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          weatherCurrentGeoLoc = { id: "current", label: "Current location", latitude: pos.coords.latitude, longitude: pos.coords.longitude, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, isCurrentLocation: true };
+          resolve(weatherCurrentGeoLoc);
+        },
+        () => resolve(null),
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 30 * 60 * 1000 }
+      );
+    }))
+    .catch(() => null);
+}
+async function tickerLocation() {
+  const saved = state.weatherLocations || [];
+  const id = state.weatherActiveLocationId;
+  if (id === "current") return (await tickerQuietGeolocation()) || saved[0] || null;
+  return saved.find((l) => l.id === id) || saved[0] || weatherActiveLocation || (await tickerQuietGeolocation());
+}
+async function renderWeatherTicker(el) {
+  if (!el) return;
+  const gen = ++tickerGen;
+  const loc = await tickerLocation();
+  if (gen !== tickerGen) return;
+  if (!loc) {
+    el.className = "dock-slide weather-ticker is-empty";
+    el.innerHTML = `<span class="wxt-art">${heroArtSvg("partly-cloudy", true)}</span>
+      <span class="wxt-main"><span class="wxt-cond">Weather</span><span class="wxt-sub">Tap to choose your location</span></span>`;
+    return;
+  }
+  if (!el.dataset.loaded) {
+    el.className = "dock-slide weather-ticker";
+    el.innerHTML = `<span class="wxt-main"><span class="wxt-sub">Loading weather…</span></span>`;
+  }
+  let snap;
+  try { snap = await getWeatherSnapshot(loc); }
+  catch {
+    if (gen !== tickerGen || el.dataset.loaded) return; // keep the last good summary on a failed refresh
+    el.innerHTML = `<span class="wxt-main"><span class="wxt-cond">Weather</span><span class="wxt-sub">Unavailable right now · tap for details</span></span>`;
+    return;
+  }
+  if (gen !== tickerGen) return;
+  const c = snap.current || {};
+  const nowHour = (snap.hourly || [])[0] || {};
+  const hasObs = !!c.description && !c.provenance?.isForecastDerived;
+  const cond = conditionFor(hasObs
+    ? { description: c.description, sunrise: c.sunrise, sunset: c.sunset, at: c.provenance?.observedAt || snap.fetchedAt }
+    : { icon: nowHour.icon, shortForecast: nowHour.description, isDaytime: nowHour.isDaytime, sunrise: c.sunrise, sunset: c.sunset, at: snap.fetchedAt });
+  const today = snap.daily?.[0];
+  const hi = today?.isDaytime ? today.temperatureF : null;
+  const lo = snap.daily?.find((d) => !d.isDaytime)?.temperatureF;
+  const hilo = [hi != null ? `↑ ${Math.round(hi)}°` : "", lo != null ? `↓ ${Math.round(lo)}°` : ""].filter(Boolean).join("  ");
+  const condLabel = c.description || today?.description || conditionLabel(cond.key, cond.isDay);
+  const place = wxShortLoc(snap.location?.label || loc.label || "");
+  const alert = (snap.alerts || [])[0];
+  el.dataset.loaded = "1";
+  el.className = `dock-slide weather-ticker ${wxHeroMood(cond)}`;
+  el.setAttribute("aria-label", `Weather in ${place}: ${c.temperatureF != null ? Math.round(c.temperatureF) + "°, " : ""}${condLabel}. Open the weather page.`);
+  el.innerHTML = `
+    <span class="wxt-art">${heroArtSvg(cond.key, cond.isDay)}</span>
+    <span class="wxt-temp">${c.temperatureF != null ? Math.round(c.temperatureF) : "—"}<sup>°</sup></span>
+    <span class="wxt-main">
+      <span class="wxt-cond">${escapeHtml(condLabel)}</span>
+      <span class="wxt-sub">${escapeHtml(place)}${hilo ? `  ·  ${escapeHtml(hilo)}` : ""}</span>
+      ${alert ? `<span class="wxt-alert">⚠ ${escapeHtml(alert.event || alert.headline || "Weather alert")}</span>` : ""}
+    </span>`;
+}
+
+  return { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker };
 }
 
