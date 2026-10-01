@@ -23217,3 +23217,22 @@ body.has-bottom-dock .voice-mic-btn,
 body.has-bottom-dock .voice-toast,
 body.has-bottom-dock .mail-toast,
 body.has-bottom-dock .sync-status { bottom: calc(var(--mini-player-h) + 26px); }
+
+/* ══ Contacts inside Mail ═══════════════════════════════════════════════════
+   Contacts is a section of the Mail page: its sidebar entry sits under the
+   folders, and in contacts mode the contacts list replaces the message list
+   (the mail search + notifications step aside; Contacts has its own search). */
+.mail-contacts-panel { flex: 1; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.mail-contacts-panel[hidden] { display: none; }
+.mail-contacts-panel .contacts-page-inner { flex: 1; }
+.mail-page.is-contacts-mode .mail-list-panel,
+.mail-page.is-contacts-mode .mail-thread-panel,
+.mail-page.is-contacts-mode .mail-topbar { display: none !important; }
+/* Contacts' own toolbar leads with a back-to-Mail chevron (the mail toolbar is
+   hidden in contacts mode, so there's one row and one set of controls). */
+.contacts-back-to-mail { display: none; flex-shrink: 0; }
+.mail-page.is-contacts-mode .contacts-back-to-mail { display: inline-flex; }
+.contacts-back-to-mail svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mail-contacts-divider { margin-top: 8px; }
+.mail-contacts-link { flex-shrink: 0; margin-bottom: 8px; }
+.mail-connect-prompt #mailConnectContactsBtn { margin-top: 10px; }

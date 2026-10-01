@@ -200,14 +200,20 @@ async function main() {
   await page.waitForTimeout(NAV_SETTLE_MS);
 
   // Smoke: visit a couple of extracted domains and confirm no console errors. We're on Home
-  // after local-dev entry; Weather opens from the bottom dock's weather ticker, Contacts via
-  // the page-title menu (reachable from any page) — two different nav paths into extracted
+  // after local-dev entry; Weather opens from the bottom dock's weather ticker, Contacts from
+  // inside Mail (page-title menu → Mail → Contacts; Gmail isn't connected in local dev, so the
+  // connect screen's "Open contacts" button) — two different nav paths into extracted
   // modules. The ticker may be scrolled off-slide, so it's clicked in-page.
   await visitDomain(page, "Weather", "weatherMainPage", () => page.evaluate(() => document.getElementById("weatherTicker").click()));
   await visitDomain(page, "Contacts", "contactsMainPage", async () => {
     await page.click("#pageTitleBtn");
     await page.waitForTimeout(300);
-    await page.click("#titleContactsBtn");
+    await page.click("#titleMailBtn");
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      const inSidebar = document.getElementById("mailContactsBtn");
+      (inSidebar && inSidebar.offsetParent ? inSidebar : document.getElementById("mailConnectContactsBtn")).click();
+    });
   });
 
   // Any errors accumulated across the whole run?

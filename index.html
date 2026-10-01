@@ -130,7 +130,6 @@
                 <button type="button" id="titleMailBtn">Mail</button>
                 <button type="button" id="titleExploreBtn">Explore</button>
                 <button type="button" id="titleFinanceBtn">Finance</button>
-                <button type="button" id="titleContactsBtn">Contacts</button>
               </div>
             </div>
           </div>
@@ -248,7 +247,6 @@
                 <button type="button" id="homeShopBtn">Shop</button>
                 <button type="button" id="homeDoBtn">Tasks</button>
                 <button type="button" id="homeWatchBtn">Watch</button>
-                <button type="button" id="homeContactsBtn">Contacts</button>
               </nav>
             </div>
             <div class="home-briefing" id="homeBriefing" hidden>
@@ -742,31 +740,6 @@
             </div>
           </div>
         </section>
-        <section class="planner-column do-column contacts-page" id="contactsMainPage" aria-label="Contacts" hidden>
-          <div class="contacts-page-inner">
-            <div class="contacts-toolbar">
-              <button class="icon-btn mail-sidebar-toggle contacts-sidebar-toggle" type="button" id="contactsSidebarToggle" title="Toggle groups" aria-label="Toggle groups">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-              </button>
-              <div class="contacts-search-wrap">
-                <input type="search" id="contactsSearchInput" class="contacts-search-input" placeholder="Search contacts…" aria-label="Search contacts" autocomplete="off" />
-              </div>
-              <input type="file" id="contactsImportInput" accept=".vcf,text/vcard,text/x-vcard" hidden />
-              <button class="icon-btn std-add-btn" type="button" id="contactsAddBtn" aria-label="Add contact" title="Add contact">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-              </button>
-            </div>
-            <div class="contacts-layout">
-              <aside class="contacts-sidebar" id="contactsSidebar" aria-label="Contact groups">
-                <nav class="contacts-group-nav" id="contactsGroupNav" role="tablist"></nav>
-              </aside>
-              <div class="contacts-body">
-                <div class="contacts-grid" id="contactsGrid"></div>
-                <div class="contacts-rail" id="contactsRail" hidden aria-label="Jump to letter"></div>
-              </div>
-            </div>
-          </div>
-        </section>
         <section class="planner-column do-column weather-page" id="weatherMainPage" aria-label="Weather" hidden>
           <div class="weather-page-inner" id="weatherPageInner"></div>
         </section>
@@ -779,6 +752,7 @@
                 <h2>Connect Gmail</h2>
                 <p>Link your Gmail account to read, search, and reply to emails — with AI-drafted replies you review before sending.</p>
                 <button class="primary-btn" type="button" id="mailConnectBtn">Connect Gmail</button>
+                <button class="secondary-btn" type="button" id="mailConnectContactsBtn">Open contacts</button>
               </div>
             </div>
             <!-- Connected -->
@@ -811,6 +785,11 @@
                       <span>Inbox</span>
                     </button>
                   </nav>
+                  <div class="mail-label-divider mail-contacts-divider" aria-hidden="true"></div>
+                  <button class="mail-label-item mail-contacts-link" type="button" id="mailContactsBtn">
+                    <svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>Contacts</span>
+                  </button>
                 </div>
                 <div class="mail-content">
                   <div class="mail-list-panel">
@@ -863,6 +842,37 @@
                     <div class="mail-list" id="mailList"></div>
                   </div>
                   <div class="mail-thread-panel" id="mailThread" hidden></div>
+                  <!-- Contacts lives inside Mail (a sidebar entry under the folders).
+                       Shown in place of the message list while the Mail page is in
+                       contacts mode (.mail-page.is-contacts-mode). -->
+                  <div class="mail-contacts-panel contacts-page" id="contactsMainPage" aria-label="Contacts" hidden>
+                    <div class="contacts-page-inner">
+            <div class="contacts-toolbar">
+              <button class="icon-btn contacts-back-to-mail" type="button" id="contactsBackToMailBtn" title="Back to Mail" aria-label="Back to Mail">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+              <button class="icon-btn mail-sidebar-toggle contacts-sidebar-toggle" type="button" id="contactsSidebarToggle" title="Toggle groups" aria-label="Toggle groups">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              </button>
+              <div class="contacts-search-wrap">
+                <input type="search" id="contactsSearchInput" class="contacts-search-input" placeholder="Search contacts…" aria-label="Search contacts" autocomplete="off" />
+              </div>
+              <input type="file" id="contactsImportInput" accept=".vcf,text/vcard,text/x-vcard" hidden />
+              <button class="icon-btn std-add-btn" type="button" id="contactsAddBtn" aria-label="Add contact" title="Add contact">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
+            <div class="contacts-layout">
+              <aside class="contacts-sidebar" id="contactsSidebar" aria-label="Contact groups">
+                <nav class="contacts-group-nav" id="contactsGroupNav" role="tablist"></nav>
+              </aside>
+              <div class="contacts-body">
+                <div class="contacts-grid" id="contactsGrid"></div>
+                <div class="contacts-rail" id="contactsRail" hidden aria-label="Jump to letter"></div>
+              </div>
+            </div>
+          </div>
+                  </div>
                 </div>
               </div>
             </div>

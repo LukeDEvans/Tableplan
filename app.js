@@ -1081,8 +1081,6 @@ const elements = {
   titleFinanceBtn: document.querySelector("#titleFinanceBtn"),
   homePlanBtn: document.querySelector("#homePlanBtn"),
   titlePlanBtn: document.querySelector("#titlePlanBtn"),
-  homeContactsBtn: document.querySelector("#homeContactsBtn"),
-  titleContactsBtn: document.querySelector("#titleContactsBtn"),
   contactsMainPage: document.querySelector("#contactsMainPage"),
   weatherMainPage: document.querySelector("#weatherMainPage"),
   articleScanDialog: document.querySelector("#articleScanDialog"),
@@ -2340,8 +2338,14 @@ function bindEvents() {
   elements.titleRecreateBtn.addEventListener("click", showRecreateApp);
   elements.homePlanBtn.addEventListener("click", showPlanApp);
   elements.titlePlanBtn.addEventListener("click", showPlanApp);
-  elements.homeContactsBtn?.addEventListener("click", showContactsApp);
-  elements.titleContactsBtn?.addEventListener("click", showContactsApp);
+  // Contacts lives inside Mail: a sidebar entry under the folders (and a button on
+  // the not-connected screen). Choosing a mail folder leaves contacts mode.
+  document.getElementById("mailContactsBtn")?.addEventListener("click", showContactsApp);
+  document.getElementById("mailConnectContactsBtn")?.addEventListener("click", showContactsApp);
+  document.getElementById("contactsBackToMailBtn")?.addEventListener("click", showMailApp);
+  document.getElementById("mailTabs")?.addEventListener("click", (e) => {
+    if (e.target.closest("[data-mailbox]") && elements.mailMainPage?.classList.contains("is-contacts-mode")) leaveMailContactsMode();
+  }, true);
   elements.closeArticleScanBtn?.addEventListener("click", () => elements.articleScanDialog?.close());
   document.getElementById("articleScanBtn")?.addEventListener("click", () => openArticleScanDialog());
   elements.articleScanImages?.addEventListener("change", replaceArticleScanFiles);
@@ -7802,19 +7806,44 @@ function ensureLeaflet() {
   return weatherLeafletPromise;
 }
 
+// Contacts lives inside the Mail page: the mail sidebar stays, and the contacts
+// list takes the place of the message list (.mail-page.is-contacts-mode). Still its
+// own area ("contacts") so page settings (import/export) and #contacts links work —
+// calendar birthdays and the assistant open it here too.
 function showContactsApp(event) {
   event?.stopPropagation();
   if (!isPageEnabled("contacts")) { showHomeApp(); return; }
   activeAppArea = "contacts";
   hideAllPages();
+  elements.mailMainPage.hidden = false;
+  elements.mailMainPage.classList.add("is-contacts-mode");
+  // Contacts doesn't need Gmail: show the mail shell (sidebar) even when not connected.
+  const connectView = document.getElementById("mailConnectView");
+  const mainView = document.getElementById("mailMainView");
+  if (connectView) connectView.hidden = true;
+  if (mainView) mainView.hidden = false;
+  document.querySelectorAll("#mailTabs .mail-label-item").forEach((b) => { b.classList.remove("is-active"); b.setAttribute("aria-selected", "false"); });
+  document.getElementById("mailContactsBtn")?.classList.add("is-active");
+  document.getElementById("mailSidebar")?.classList.remove("is-expanded"); // close the mobile drawer
   elements.contactsMainPage.hidden = false;
   elements.weekLabel.closest(".week-tools").hidden = true; // no date bar on Contacts
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Contacts");
+  setPageTitle("Mail");
   setPageHash("contacts");
   renderContactsPage();
   closePageTitleMenu();
   closeAppMenu();
+}
+
+// Back from contacts to the mailbox the user picks (the folder click proceeds).
+function leaveMailContactsMode() {
+  elements.mailMainPage?.classList.remove("is-contacts-mode");
+  if (elements.contactsMainPage) elements.contactsMainPage.hidden = true;
+  document.getElementById("mailContactsBtn")?.classList.remove("is-active");
+  activeAppArea = "mail";
+  setPageHash("mail");
+  renderMailConnectState();
+  if (!mailPageInitialized) initMailPage(); // arrived at Contacts directly (e.g. #contacts)
 }
 
 function showSettingsApp(event) {
@@ -7908,6 +7937,9 @@ function showMailApp(event, hashParams) {
   activeAppArea = "mail";
   hideAllPages();
   elements.mailMainPage.hidden = false;
+  elements.mailMainPage.classList.remove("is-contacts-mode");
+  if (elements.contactsMainPage) elements.contactsMainPage.hidden = true;
+  document.getElementById("mailContactsBtn")?.classList.remove("is-active");
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   // Always arrive with the folder drawer closed — never a stale open one from a
@@ -8342,7 +8374,9 @@ function ensureMailListObserver() {
   mailListObserver.observe(elements.mailList, { childList: true });
 }
 
+let mailPageInitialized = false; // initMailPage has run (Contacts can be reached without it)
 async function initMailPage(hashParams) {
+  mailPageInitialized = true;
   ensureMailListObserver();
   if (hashParams?.get("gm_error")) {
     alert("Gmail connection failed. Please try again.");
@@ -8528,8 +8562,10 @@ function renderMailConnectState() {
   const mainView = document.getElementById("mailMainView");
   const badge = document.getElementById("mailAccountBadge");
   if (!connectView || !mainView) return;
-  connectView.hidden = mailGmailConnected;
-  mainView.hidden = !mailGmailConnected;
+  // In contacts mode the mail shell stays up whether or not Gmail is connected.
+  const contactsMode = elements.mailMainPage?.classList.contains("is-contacts-mode");
+  connectView.hidden = contactsMode || mailGmailConnected;
+  mainView.hidden = !contactsMode && !mailGmailConnected;
 }
 
 async function connectGmail() {
@@ -15857,7 +15893,6 @@ function updatePageTitleMenu() {
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
   if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
-  if (elements.titleContactsBtn) elements.titleContactsBtn.hidden = activeAppArea === "contacts" || !isPagePersonallyEnabled("contacts");
   elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
   if (elements.titleExploreBtn) elements.titleExploreBtn.hidden = activeAppArea === "explore" || !isPagePersonallyEnabled("explore");
   const menu = elements.pageTitleMenu;
@@ -15876,7 +15911,8 @@ function updatePageVisibility() {
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
   if (elements.homeFinanceBtn) elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");
   elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
-  if (elements.homeContactsBtn) elements.homeContactsBtn.hidden = !isPagePersonallyEnabled("contacts");
+  const mailContactsBtn = document.getElementById("mailContactsBtn");
+  if (mailContactsBtn) mailContactsBtn.hidden = !isPagePersonallyEnabled("contacts");
   elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
   const exploreBtn = document.getElementById("homeExploreBtn");
   if (exploreBtn) exploreBtn.hidden = !isPagePersonallyEnabled("explore");
