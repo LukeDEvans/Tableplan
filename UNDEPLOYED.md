@@ -53,3 +53,21 @@ page now reaches its server function (it was fetching the app's own page).
 1. Phone: tap a Shop date button, pick a date. The date goes back to dark once your finger lifts.
 2. Weather → Search a place: "Portland, OR" and "Austin TX" each list the right city.
 3. Next TestFlight build: the Weather page loads a forecast and search returns cities.
+
+## Header receipt scanner (Camera / Photo → Shop + Finance); User moves into Settings (PR #35)
+PR: https://github.com/LukeDEvans/Tableplan/pull/35
+
+The top-right button is now a receipt scanner (Camera / Photo). A scanned receipt opens Shop's
+review dialog already reading it, and is also read + saved to Finance → Receipts in the background,
+where it matches its charge once it posts. "User" (the profile window, now titled "User") is the
+first Settings menu item; the Settings button always opens the menu. Shop receipt scan also works
+in the iPhone app now.
+
+**After deploying:**
+1. Phone: scanner → Camera, photograph a receipt. Shop's review opens with the lines filled in, and
+   a toast says it was saved to Finance.
+2. Finance → Insights → Receipts: the receipt shows (unmatched until the charge posts). After it
+   posts, Itemize builds the split and the transaction shows the receipt photo. If the photo is
+   missing, check the `receipt-attachments` bucket's RLS allows `<uid>/scans/…`.
+3. Settings → User opens the profile window; log out / log in still work.
+4. Next TestFlight build: scanner → Camera, then check that the photo is not in the Photos library.
