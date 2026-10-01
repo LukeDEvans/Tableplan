@@ -8,7 +8,7 @@ const KEY = "service-role-key-for-tests";
 describe("signed Gmail OAuth state (SRV-1)", () => {
   it("round-trips a valid state", () => {
     const s = createOAuthState("user-123", KEY);
-    expect(verifyOAuthState(s, KEY)).toEqual({ userId: "user-123" });
+    expect(verifyOAuthState(s, KEY)).toEqual({ userId: "user-123", native: false });
   });
 
   it("rejects the legacy unsigned base64 JSON form", () => {
@@ -37,7 +37,18 @@ describe("signed Gmail OAuth state (SRV-1)", () => {
     const s = createOAuthState("user-1", KEY, { now: now - 16 * 60 * 1000 });
     expect(verifyOAuthState(s, KEY, { now })).toBeNull();
     const fresh = createOAuthState("user-1", KEY, { now: now - 14 * 60 * 1000 });
-    expect(verifyOAuthState(fresh, KEY, { now })).toEqual({ userId: "user-1" });
+    expect(verifyOAuthState(fresh, KEY, { now })).toEqual({ userId: "user-1", native: false });
+  });
+
+  it("carries the signed iPhone-app marker", () => {
+    expect(verifyOAuthState(createOAuthState("user-1", KEY, { native: true }), KEY)).toEqual({ userId: "user-1", native: true });
+  });
+
+  it("the app marker can't be added to a web state without breaking the signature", () => {
+    const [payload, sig] = createOAuthState("user-1", KEY).split(".");
+    const obj = JSON.parse(Buffer.from(payload, "base64url").toString());
+    obj.native = true;
+    expect(verifyOAuthState(Buffer.from(JSON.stringify(obj)).toString("base64url") + "." + sig, KEY)).toBeNull();
   });
 
   it("rejects garbage input", () => {

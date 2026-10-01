@@ -32,7 +32,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles } from './native-bridge.js';
+import { isNativeApp, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, APP_CALLBACK_SCHEME, parseAppCallback } from './native-bridge.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { saveFile } from './save-file.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
@@ -8568,6 +8568,31 @@ function renderMailConnectState() {
   mainView.hidden = !contactsMode && !mailGmailConnected;
 }
 
+async function connectGmailInApp(token, btn) {
+  const reset = () => { if (btn) { btn.disabled = false; btn.textContent = "Connect Gmail"; } };
+  try {
+    const res = await fetch("/.netlify/functions/gmail-auth?client=ios", { headers: { authorization: `Bearer ${token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.url) { alert(`Could not start Gmail connection: ${data.error || res.status}`); reset(); return; }
+    const result = await nativeWebAuth().start({ url: data.url, callbackScheme: APP_CALLBACK_SCHEME });
+    const { status, reason } = result?.url ? parseAppCallback(result.url) : { status: result?.cancelled ? "cancelled" : "unknown" };
+    if (status === "error") {
+      alert(reason === "denied" ? "Gmail wasn't connected — access was declined." : `Gmail connection failed (${reason || "unknown error"}). Please try again.`);
+      reset();
+      return;
+    }
+    // Connected — or the sheet was closed: re-check with the server either way
+    // (a sign-in can finish just before the sheet is dismissed).
+    mailStatusPromise = null;
+    reset();
+    await initMailPage();
+    if (mailGmailConnected) showMailToast(`Gmail connected${mailAccountEmail ? ` — ${mailAccountEmail}` : ""}`);
+  } catch (e) {
+    alert(`Connection error: ${e?.message || e}`);
+    reset();
+  }
+}
+
 async function connectGmail() {
   const btn = elements.mailConnectBtn;
   if (btn) { btn.disabled = true; btn.textContent = "Connecting…"; }
@@ -8578,10 +8603,17 @@ async function connectGmail() {
     if (btn) { btn.disabled = false; btn.textContent = "Connect Gmail"; }
     return;
   }
-  // Google blocks its OAuth sign-in inside an embedded webview, so the in-app
-  // connect flow can't work yet (a native browser flow is coming). Gmail tokens
-  // are stored server-side per account, so connecting once in a real browser
-  // syncs straight through to this app.
+  // Google blocks its OAuth sign-in inside an embedded webview, so in the
+  // iPhone app the consent page opens in Apple's sign-in sheet (WebAuth plugin,
+  // ASWebAuthenticationSession). Google returns to the same server callback as
+  // on the web, which stores the tokens server-side and — because the flow was
+  // started with client=ios — sends the sheet back to the app's URL scheme.
+  if (isNativeApp() && nativeWebAuth()) {
+    await connectGmailInApp(token, btn);
+    return;
+  }
+  // An older app build without the plugin: connect from a browser instead
+  // (tokens are per account, so it syncs straight through to the app).
   if (isNativeApp()) {
     alert("To connect Gmail, open Live in a web browser (e.g. Safari) and connect it there — it then syncs to this app automatically. In-app Gmail sign-in is coming in an update.");
     if (btn) { btn.disabled = false; btn.textContent = "Connect Gmail"; }
