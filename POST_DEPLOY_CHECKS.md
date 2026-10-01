@@ -35,6 +35,9 @@ Web deploy plus a TestFlight build from `main`.
 - [ ] Change a trip's dates on the web, then open Calendar on the phone: one trip bar, not two.
 - [ ] Explore on the phone: open and close the trip list; nothing peeks out beside it.
 
+**Tasks title readable on phones (PR #29, merged before this deploy):**
+- [ ] On the phone, open Tasks: the title reads "Tasks" in full, and the week label may shorten with "…".
+
 ## 2026-09-30 deploy (commit 51efeca, PRs #8–#24)
 Luke confirmed these 2026-09-30 (native Apple Music working on TestFlight build 20260930.0247).
 Still open: the Instacart key + first send, and the drop-publications migration (Luke's call).

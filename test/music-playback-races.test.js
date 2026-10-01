@@ -37,7 +37,8 @@ function makeSandbox(env = {}) {
       setMusicMediaSession, pushMusicHistory, renderMusicPanel, updateMiniPlayerPlayBtn, updateMiniPlayerProgress,
       setMediaSessionPlaybackState, musicArtUrlFor, nativeAppleMusic, resumePositionFor, setMediaPosition,
       clearMediaPosition, pruneMediaProgress, updateDiscoverResults, playStreamingTrack, musicItemCache,
-      getAllListenList, mediaItemPlayable, playMediaAllItem, renderMediaAllList, startRecordingResolved } = env;
+      getAllListenList, mediaItemPlayable, playMediaAllItem, renderMediaAllList, startRecordingResolved,
+      nativeMusicEnabled, startNativeMusicTrack } = env;
     const activeAppArea = "other", activeMediaTab = "other", mediaPlaybackSpeed = 1;
     const window = { clearInterval() {}, setInterval() { return 1; } };
     const URL = { revokeObjectURL: env.revoke || (() => {}) };
@@ -67,6 +68,7 @@ function baseEnv(over = {}) {
     musicStreamMod: { isPlaybackOwner: (p) => !!p.owns },
     getAllListenList: () => [], mediaItemPlayable: () => true, playMediaAllItem: vi.fn(), renderMediaAllList() {},
     startRecordingResolved: async () => false,
+    nativeMusicEnabled: () => false, startNativeMusicTrack: async () => false,
     ...over,
   };
   env.el = el;
@@ -228,5 +230,41 @@ describe("MED-13 advanceMediaAllQueue", () => {
     const sb = makeSandbox(env);
     expect(sb.advanceMediaAllQueue("x")).toBe(true);
     expect(env.playMediaAllItem).toHaveBeenCalled();
+  });
+});
+
+describe("iPhone app: songs on the native player", () => {
+  const providers = { get: () => ({ getPlayable: async () => ({ url: "song.mp3" }) }) };
+
+  it("plays a stream natively and never loads the web element", async () => {
+    const startNativeMusicTrack = vi.fn(async () => true);
+    const env = baseEnv({ getMusicProviders: async () => providers, nativeMusicEnabled: () => true, startNativeMusicTrack });
+    const sb = makeSandbox(env);
+    await sb.playMusicQueueItem({ kind: "stream", track: { id: "A", provider: "ia", title: "A" } }, []);
+    expect(startNativeMusicTrack).toHaveBeenCalledTimes(1);
+    expect(startNativeMusicTrack.mock.calls[0][1]).toBe("song.mp3");
+    expect(env.mediaEngine.load).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the web player when the native player can't take the song", async () => {
+    const env = baseEnv({ getMusicProviders: async () => providers, nativeMusicEnabled: () => true, startNativeMusicTrack: async () => false });
+    const sb = makeSandbox(env);
+    await sb.playMusicQueueItem({ kind: "stream", track: { id: "A", provider: "ia", title: "A" } }, []);
+    expect(env.mediaEngine.load).toHaveBeenCalledTimes(1);
+    expect(sb.get().musicCurTrack.id).toBe("A");
+  });
+
+  it("a superseded native start doesn't fall back to the web player", async () => {
+    const gate = deferred();
+    let sbRef;
+    const startNativeMusicTrack = vi.fn(async () => { await gate.promise; return false; });
+    const env = baseEnv({ getMusicProviders: async () => providers, nativeMusicEnabled: () => true, startNativeMusicTrack });
+    const sb = makeSandbox(env); sbRef = sb;
+    const first = sb.playMusicQueueItem({ kind: "stream", track: { id: "A", provider: "ia", title: "A" } }, []);
+    await tick();
+    sbRef.stopMusicPlayback();           // a stop supersedes the pending start
+    gate.resolve();
+    await first; await tick();
+    expect(env.mediaEngine.load).not.toHaveBeenCalled();
   });
 });

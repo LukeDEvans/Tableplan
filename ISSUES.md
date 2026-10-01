@@ -139,6 +139,9 @@ _(none)_
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+- [x] **[P3] Radio still plays in the web view in the iPhone app** (media · app.js radio · 2026-09-30)
+      Podcasts and Apple-voice articles now play on the native player in the app (lock screen / AirPods pause-resume). Live radio still used the web player, so resuming it from the lock screen after a pause likely failed the same way podcasts did.
+      **RESOLVED 2026-09-30 (Luke asked):** LiveTtsPlugin has a `live` item kind (AVPlayer, no seek, lock screen shows LIVE). Pause stops the stream and resume reconnects at the live edge. A dropped or failed stream retries twice, then tries the station's other stream URLs, all natively. In the app, `playRadioStation` → `startNativeRadio`; the web version is unchanged. Not device-tested.
 - [ ] **[P3] An unsynced shadow-scope copy can be replaced by the server copy on refresh** (sync · app.js refreshChangedSectionsOnResume / loadStateFromSupabase · 2026-09-30)
       "Copy to household/personal" writes the other scope's shadow and, if that write fails offline, keeps it locally "to sync later". Both the boot load and (now) the resume refresh overwrite `shadowSections[section]` with the server row, so that pending copy can be lost. Pre-existing at boot; the resume refresh adds more occasions. Rare (needs a failed copy write, then a server change to that same shadow row). Suggested: merge rather than replace when the local shadow has unsynced changes. Verdict: INFERRED from code.
 - [x] **[P3] Explore on a phone: the empty "Where to next?" text shows beside the trip list** (travel · styles/explore sidebar · 2026-09-30)

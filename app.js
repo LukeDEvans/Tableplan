@@ -57,6 +57,7 @@ import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHisto
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
 import { createVoiceService } from './voice-service.js';
+import { resolveVoicePrefs, withDeviceArticleVoice, readableNativeVoices } from './voice-prefs.js';
 import { createGoogleProvider, createKokoroProvider, KOKORO_MODEL } from './tts-provider.js';
 import { chunkText as kokoroChunkText, sanitizeKey as kokoroSanitizeKey } from './kokoro-core.mjs';
 import { ttsCacheKey } from './tts-cache-identity.js';
@@ -16087,7 +16088,7 @@ const VOICE_SPIN_SVG = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
 // resolver reads (voice-prefs.js). Base on the currently-resolved values so a
 // partial patch ({voiceId} or {speed}) never drops the other field.
 function setVoiceDefaultPref(patch) {
-  const c = getVoiceService().voiceForDomain("article");
+  const c = resolveVoicePrefs(state.aiSettings || {}, "article"); // synced values, not this device's override
   if (!state.aiSettings || typeof state.aiSettings !== "object") state.aiSettings = {};
   const voice = (state.aiSettings.voice && typeof state.aiSettings.voice === "object") ? state.aiSettings.voice : {};
   state.aiSettings.voice = { ...voice, default: { voiceId: c.voiceId, speed: c.speed, ...patch } };
@@ -16383,11 +16384,25 @@ function renderContextSettingsDialog(kind) {
         <span class="vpick-mini" role="button" tabindex="0" data-native-preview-id="${escapeHtml(v.id)}" aria-label="Preview ${escapeHtml(v.name)}">${VOICE_PLAY_SVG}</span>
         <svg class="vpick-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
       </button>`;
+    // "Automatic" = the best voice installed on this iPhone (picked by the plugin),
+    // so there's nothing to set up; downloading a better voice upgrades it by itself.
+    const autoVoice = (nativeVoicesCache || []).find((v) => v.id === nativeDefaultVoiceId) || (nativeVoicesCache || [])[0] || null;
+    const autoSelected = curVoice?.id === "device" && !curNativeId;
+    const autoRow = `
+      <button class="vpick-voice" type="button" data-native-voice-id="" aria-selected="${autoSelected ? "true" : "false"}">
+        <span class="vpick-dot">★</span>
+        <span class="vpick-nm">
+          <span class="n">Automatic${autoVoice ? ` · ${escapeHtml(autoVoice.name)}` : ""}${autoVoice?.quality === "premium" ? ' <span class="vpick-badge">Premium</span>' : autoVoice?.quality === "enhanced" ? ' <span class="vpick-badge">Enhanced</span>' : ""}</span>
+          <span class="s">The best voice on this iPhone</span>
+        </span>
+        <span class="vpick-mini" role="button" tabindex="0" data-native-preview-id="" aria-label="Preview automatic voice">${VOICE_PLAY_SVG}</span>
+        <svg class="vpick-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      </button>`;
+    const hasGoodVoice = (nativeVoicesCache || []).some((v) => v.quality === "premium" || v.quality === "enhanced");
+    const voiceTip = `<p class="vpick-note">${hasGoodVoice ? "For more voices" : "For a much more natural voice"}, open iPhone Settings → Accessibility → Spoken Content (Read &amp; Speak on newer iPhones) → Voices → English, and download one marked Enhanced or Premium, such as Ava or Zoe. Automatic switches to it on its own.</p>`;
     const nativeGroupHtml = nativeVoicesCache === null
-      ? `<div class="vpick-group">On-device · your iPhone voices</div><p class="vpick-note">Loading device voices…</p>`
-      : (nativeVoicesCache.length
-          ? `<div class="vpick-group">On-device · your iPhone voices</div>${nativeVoicesCache.map(nativeVoiceRow).join("")}`
-          : `<div class="vpick-group">On-device</div><p class="vpick-note">No English voices installed. Add higher-quality voices in Settings → Accessibility → Spoken Content → Voices.</p>`);
+      ? `<div class="vpick-group">Apple voices · keep playing when locked</div><p class="vpick-note">Loading device voices…</p>`
+      : `<div class="vpick-group">Apple voices · keep playing when locked</div>${autoRow}${nativeVoicesCache.map(nativeVoiceRow).join("")}${voiceTip}`;
     const SPEEDS = [
       { v: 0.75, label: "0.75×" }, { v: 0.9, label: "0.9×" }, { v: 1.0, label: "1.0×" },
       { v: 1.1, label: "1.1×" }, { v: 1.25, label: "1.25×" }, { v: 1.5, label: "1.5×" }, { v: 2.0, label: "2.0×" },
@@ -16425,7 +16440,7 @@ function renderContextSettingsDialog(kind) {
       : (device.length ? " An on-device voice (your iPhone's own voices) starts instantly and stays on your device, but pauses when you leave the app or lock the screen." : "");
 
     elements.contextSettingsBody.innerHTML = `
-      <p class="settings-hint">One voice for reading your articles aloud. Voices marked <span class="vpick-badge">Private</span> are spoken on your own server — the text never goes to a third party.</p>
+      <p class="settings-hint">${nativeMode ? "Your voice choice here applies to this iPhone only. " : ""}One voice for reading your articles aloud. Voices marked <span class="vpick-badge">Private</span> are spoken on your own server — the text never goes to a third party.</p>
       <div class="vpick-card">
         <div class="vpick-head">Voice</div>
         <div class="vpick-current">
@@ -16443,8 +16458,9 @@ function renderContextSettingsDialog(kind) {
       </div>
       <div class="vpick-card">
         <div class="vpick-head">Choose a voice <span class="vpick-hint">tap ▶ to preview</span></div>
-        ${priv.length ? `<div class="vpick-group">Your voices · private</div>${priv.map(voiceRow).join("")}` : ""}
-        ${nativeMode ? nativeGroupHtml : (device.length ? `<div class="vpick-group">On-device · foreground only</div>${device.map(voiceRow).join("")}` : "")}
+        ${nativeMode ? nativeGroupHtml : ""}
+        ${priv.length ? `<div class="vpick-group">Your voices · private${nativeMode ? " · stop when locked" : ""}</div>${priv.map(voiceRow).join("")}` : ""}
+        ${!nativeMode && device.length ? `<div class="vpick-group">On-device · foreground only</div>${device.map(voiceRow).join("")}` : ""}
         ${cloud.length ? `<div class="vpick-group">Cloud</div>${cloud.map(voiceRow).join("")}` : ""}
       </div>
       <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.${onDeviceNote}</p>`;
@@ -16452,9 +16468,16 @@ function renderContextSettingsDialog(kind) {
     // Select a voice (writes the global default, preserving any other voice prefs).
     elements.contextSettingsBody.querySelectorAll(".vpick-voice").forEach((row) => {
       row.addEventListener("click", (e) => {
-        if (row.dataset.nativeVoiceId) return;               // native rows handled below
+        if (row.dataset.nativeVoiceId !== undefined) return;  // native rows handled below
         if (e.target.closest("[data-preview-id]")) return;   // preview handled separately
-        setVoiceDefaultPref({ voiceId: row.dataset.voiceId });
+        if (nativeMode) {
+          // In the app the article voice is this device's own choice (see effectiveAiSettings).
+          deviceVoiceSet(DEVICE_ARTICLE_VOICE_KEY, row.dataset.voiceId);
+          clearArticleTtsCaches();
+          warmKokoroVoiceIfKokoro();
+        } else {
+          setVoiceDefaultPref({ voiceId: row.dataset.voiceId });
+        }
         stopVoicePreview();
         renderContextSettingsDialog("voice");
       });
@@ -16464,10 +16487,9 @@ function renderContextSettingsDialog(kind) {
     elements.contextSettingsBody.querySelectorAll("[data-native-voice-id]").forEach((row) => {
       row.addEventListener("click", (e) => {
         if (e.target.closest("[data-native-preview-id]")) return;
-        if (!state.aiSettings || typeof state.aiSettings !== "object") state.aiSettings = {};
-        state.aiSettings.nativeVoiceId = row.dataset.nativeVoiceId;
-        setVoiceDefaultPref({ voiceId: "device" });
-        persist();
+        deviceVoiceSet(DEVICE_ARTICLE_VOICE_KEY, "");                      // Apple voice (this device's default)
+        deviceVoiceSet(DEVICE_NATIVE_VOICE_KEY, row.dataset.nativeVoiceId); // "" = Automatic
+        clearArticleTtsCaches();
         renderContextSettingsDialog("voice");
       });
     });
@@ -16482,7 +16504,11 @@ function renderContextSettingsDialog(kind) {
       });
     });
     elements.contextSettingsBody.querySelectorAll("[data-preview-id]").forEach((btn) => {
-      btn.addEventListener("click", (e) => { e.stopPropagation(); previewVoice(btn.dataset.previewId, btn); });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (nativeMode && btn.dataset.previewId === "device") { previewNativeVoice(curNativeId, btn); return; }
+        previewVoice(btn.dataset.previewId, btn);
+      });
     });
     return;
   }
@@ -28150,6 +28176,10 @@ let radioCurStation = null;    // station object currently tuned
 let radioStreamCandidates = [];// ordered stream URLs for fallback
 let radioStreamIdx = 0;
 let radioReconnectTries = 0;   // guards live-stream reconnect loops
+// iPhone app: the station plays on the native player (LiveTtsPlugin, kind
+// "live"), which handles lock-screen / AirPods controls and reconnects itself.
+// { stationId, playing, subs } while active, else null. radioAudio stays null.
+let radioNative = null;
 let radioMod = null, radioRegistry = null, radioCatalog = null, radioPrograms = null;
 let radioPanelWired = false;
 let radioSearchQuery = "";
@@ -29933,7 +29963,7 @@ registerMediaProvider({
   id: "podcast",
   canPlay: () => true,
   play: (item, { autoplay = true, advance = false } = {}) => {
-    // All queue + Apple voice in the native app → the plugin plays it (see
+    // All queue in the native app → the plugin plays it (see
     // nativeQueueHandlesPodcasts); falls back to the web player if it can't.
     if (autoplay && mediaAllQueueId === item.id && nativeQueueHandlesPodcasts()) {
       startNativePodcast(item.id).then((ok) => { if (!ok) openPodcastEpisode(item.id, { autoplay, advance }); });
@@ -31003,7 +31033,7 @@ const MEDIA_KINDS = {
   },
   radio: {
     live: true,
-    active: () => !!radioAudio,
+    active: () => !!radioAudio || !!radioNative,
     el: () => radioAudio,
     onTimeupdate: () => updateMiniPlayerProgress(),
     onPlay: () => { radioReconnectTries = 0; setMediaSessionPlaybackState("playing"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel(); },
@@ -31102,7 +31132,16 @@ function onPodcastEnded() {
   advanceMediaAllQueue(podcastCurEpisode.id); // seamless hand-off when playing the All queue
 }
 
-function startPodcastPlayback(episode, show, { autoplay = true, advance = false } = {}) {
+function startPodcastPlayback(episode, show, { autoplay = true, advance = false, forceWeb = false } = {}) {
+  // iPhone app: play on the native player (see nativeQueueHandlesPodcasts). A
+  // paused load (autoplay:false) stays on the web element until play is tapped,
+  // which hands it over (togglePodcastPlayPause).
+  if (autoplay && !forceWeb && nativeQueueHandlesPodcasts() && episode && episode.audioUrl) {
+    startNativePodcastEpisode(episode, show).then((ok) => {
+      if (!ok) startPodcastPlayback(episode, show, { autoplay, advance, forceWeb: true });
+    });
+    return;
+  }
   if (advance) {
     // Queue auto-advance: NEVER pause the engine first. A pause deactivates the
     // iOS audio session while backgrounded, and the follow-up play() on the new
@@ -31230,6 +31269,16 @@ function updatePodcastMarkBtn() {
 
 function togglePodcastPlayPause() {
   if (!podcastAudio) { if (nativePodcastSession()) toggleListenPlayPause(); return; }
+  if (podcastAudio.paused && nativeQueueHandlesPodcasts() && podcastCurEpisode?.audioUrl) {
+    // Loaded paused on the web element (autoplay:false) → start it natively from
+    // wherever the user left it.
+    const ep = podcastCurEpisode, sh = podcastCurShow;
+    const pos = Number(podcastAudio.currentTime) || 0;
+    if (pos > 10) saveNativePodcastProgress(ep.id, pos, Number(podcastAudio.duration) || 0, true);
+    stopPodcastAudio();
+    startNativePodcastEpisode(ep, sh).then((ok) => { if (!ok) startPodcastPlayback(ep, sh, { autoplay: true, forceWeb: true }); });
+    return;
+  }
   if (podcastAudio.paused) { podcastAudio.play().catch(() => {}); }
   else { podcastAudio.pause(); }
 }
@@ -31364,6 +31413,214 @@ function playMusicDescriptor(desc, url, { isBlob = false } = {}) {
   if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
 }
 
+// ── Native song player (iPhone app) ──────────────────────────────────────────
+// In the app, songs that aren't Apple Music (Internet Archive, Jamendo, your
+// uploaded music) play on the native player (LiveTtsPlugin's AVPlayer), so the
+// lock screen and AirPods can pause AND resume them and the queue keeps going
+// with the phone locked. It sits in the same "owns its playback" slot Apple
+// Music uses (musicPlaybackProvider + musicOwnedNP), so the mini-player, the
+// music panel, play/pause, seek and the now-playing bar all work unchanged.
+// Uploaded files live in the web view's storage, which AVPlayer can't read, so
+// each is handed to the phone once (stageFile) and reused after that.
+const NATIVE_MUSIC_LOOKAHEAD = 10; // songs queued natively = how far music runs with the phone locked
+const NATIVE_UNPLAYABLE_URL = /\.(ogg|oga|opus|webm|weba)(\?|#|$)/i; // AVPlayer can't decode these
+const NATIVE_AUDIO_EXT_BY_MIME = {
+  "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/m4a": "m4a",
+  "audio/aac": "aac", "audio/x-aac": "aac", "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
+  "audio/flac": "flac", "audio/x-flac": "flac", "audio/aiff": "aiff", "audio/x-aiff": "aiff",
+};
+function nativeMusicEnabled() { return !!nativeTts(); }
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => { const s = String(r.result || ""); resolve(s.slice(s.indexOf(",") + 1)); };
+    r.onerror = () => reject(r.error || new Error("read failed"));
+    r.readAsDataURL(blob);
+  });
+}
+
+// A URL the native player can open for this song, or null (→ web player).
+async function nativeMusicUrlFor(id, url, isBlob) {
+  const tts = nativeTts();
+  if (!tts || !url) return null;
+  if (!isBlob) return NATIVE_UNPLAYABLE_URL.test(url) ? null : url;
+  const blob = await (await fetch(url)).blob();
+  const ext = NATIVE_AUDIO_EXT_BY_MIME[String(blob.type || "").toLowerCase()];
+  if (!ext) return null;
+  const name = `lib-${String(id).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120)}.${ext}`;
+  const hit = await tts.stagedFile({ name });
+  if (hit && hit.url) return hit.url;
+  const r = await tts.stageFile({ name, data: await blobToBase64(blob) });
+  return (r && r.url) || null;
+}
+
+// What the native queue can play after the current song: the following queue
+// items up to the first one it can't (Apple Music, a recording, an unplayable
+// file), resolved to native URLs. → [{ key, item, desc, native }]
+async function nativeMusicUpcoming(rest, n) {
+  const out = [];
+  let reg = null;
+  for (const it of rest) {
+    if (out.length >= n) break;
+    let desc = null, url = null, isBlob = false;
+    try {
+      if (it.kind === "library") {
+        const t = (musicLibrary || []).find((x) => x.id === it.id);
+        if (!t) break;
+        url = await (await getMusicLib()).resolvePlayable(t);
+        isBlob = true;
+        desc = { id: t.id, title: t.title, artist: t.artist, album: t.album, artworkUrl: musicArtUrlFor(t), kind: "library" };
+      } else if (it.kind === "stream") {
+        const c = it.track;
+        reg = reg || await getMusicProviders();
+        const prov = reg.get(c.provider);
+        if (prov && musicStreamMod && musicStreamMod.isPlaybackOwner(prov)) break; // Apple Music: its own player
+        let src = c.playable;
+        if (prov && prov.getPlayable) src = await prov.getPlayable(c);
+        url = src && src.url;
+        const artist = c.artists?.[0]?.name || c.composer?.name || c.album || "";
+        desc = { id: c.id, title: c.title, artist, album: c.album, artworkUrl: c.artworkUrl || "", kind: "stream", canonical: c };
+      } else break;
+      const nativeUrl = await nativeMusicUrlFor(desc.id, url, isBlob);
+      if (isBlob) { try { URL.revokeObjectURL(url); } catch { /* noop */ } }
+      if (!nativeUrl) break;
+      out.push({ key: desc.id, item: it, desc, native: nativeUrl });
+    } catch { break; }
+  }
+  return out;
+}
+
+function nativeMusicItem(desc, url, startPosition = 0) {
+  return { id: desc.id, kind: "audio", mediaType: "music", url, title: desc.title || "Untitled", subtitle: desc.artist || desc.album || "", startPosition: startPosition > 5 ? startPosition : 0 };
+}
+
+// Start `desc` on the native player. Returns false when it can't (the caller then
+// uses the web player); true once playing, or when superseded by a newer start.
+async function startNativeMusicTrack(desc, url, { isBlob = false, gen = musicStartGen } = {}) {
+  const tts = nativeTts();
+  if (!tts) return false;
+  let nativeUrl = null;
+  try { nativeUrl = await nativeMusicUrlFor(desc.id, url, isBlob); } catch { nativeUrl = null; }
+  if (gen !== musicStartGen) return true; // superseded — the newer start owns playback
+  if (!nativeUrl) return false;
+
+  stopPodcastAudio(); stopListen(); stopRadio();
+  if (mediaEngine && musicAudio) mediaEngine.stop();
+  musicAudio = null;
+  window.clearInterval(musicPositionSaveTimer);
+  teardownOwnedMusic();
+  if (musicCurUrl && musicCurUrl !== url) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } }
+  musicCurUrl = isBlob ? url : null; // kept for a web-player fallback if the native load fails
+
+  const np = { track: { id: desc.id }, isPlaying: true, positionMs: 0, durationMs: 0, state: "playing" };
+  const subs = [];
+  let upcoming = [];      // what the plugin has queued after the current song
+  let upcomingToken = 0;
+  let savedAt = 0;
+  let everPlayed = false;
+  const prov = {
+    id: "native-audio",
+    pause: () => tts.pause(),
+    resume: () => tts.resume(),
+    seek: (ms) => tts.seekTo({ position: Math.max(0, ms) / 1000 }),
+    getNowPlaying: () => ({ ...np, track: { ...np.track } }),
+    onChange: () => () => {},
+    dispose: () => { subs.forEach((h) => { try { h && h.remove && h.remove(); } catch { /* noop */ } }); subs.length = 0; tts.stop().catch(() => {}); },
+  };
+  const live = () => musicPlaybackProvider === prov;
+  const refresh = () => {
+    musicOwnedNP = prov.getNowPlaying();
+    updateMiniPlayerPlayBtn();
+    updateMiniPlayerProgress();
+    if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+  };
+  const refillUpcoming = async () => {
+    const token = ++upcomingToken;
+    const next = await nativeMusicUpcoming(musicQueueRest, NATIVE_MUSIC_LOOKAHEAD);
+    if (!live() || token !== upcomingToken) return;
+    upcoming = next;
+    try { await tts.setUpcoming({ items: next.map((u) => nativeMusicItem(u.desc, u.native)) }); } catch { /* best-effort */ }
+  };
+
+  musicPlaybackProvider = prov;
+  musicCurTrack = desc;
+  musicOwnedNP = prov.getNowPlaying();
+  clearWebMediaSession();
+  setMiniPlayer(desc.title || "Untitled", desc.artist || desc.album || "", desc.artworkUrl || "");
+  pushMusicHistory(desc);
+  updateMiniPlayerPlayBtn();
+  if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+
+  try {
+    subs.push(await tts.addListener("ttsState", (e) => {
+      if (!live()) return;
+      np.isPlaying = !!(e && e.playing); np.state = np.isPlaying ? "playing" : "paused";
+      if (!np.isPlaying && musicCurTrack?.id && np.positionMs > 5000) {
+        state.mediaProgress = pruneMediaProgress(setMediaPosition(state.mediaProgress, musicCurTrack.id, { position: Math.floor(np.positionMs / 1000), duration: np.durationMs / 1000 }));
+        persist();
+      }
+      refresh();
+    }));
+    subs.push(await tts.addListener("ttsPosition", (e) => {
+      if (!live() || !e || e.id !== np.track.id) return;
+      everPlayed = true;
+      np.positionMs = (Number(e.position) || 0) * 1000;
+      np.durationMs = (Number(e.duration) || 0) * 1000;
+      if (Date.now() - savedAt > 10000 && np.positionMs > 5000 && musicCurTrack?.id) {
+        savedAt = Date.now();
+        state.mediaProgress = pruneMediaProgress(setMediaPosition(state.mediaProgress, musicCurTrack.id, { position: Math.floor(np.positionMs / 1000), duration: np.durationMs / 1000 }));
+        persist();
+      }
+      refresh();
+    }));
+    // The plugin moved on by itself (song ended, or lock-screen next): catch the
+    // queue, mini-player and history up, then top the lookahead back up.
+    subs.push(await tts.addListener("ttsItemStart", (e) => {
+      if (!live() || !e || !e.id) return;
+      const idx = upcoming.findIndex((u) => u.key === e.id);
+      if (idx < 0) return;
+      const u = upcoming[idx];
+      if (musicCurTrack?.id) state.mediaProgress = clearMediaPosition(state.mediaProgress, musicCurTrack.id);
+      const qi = musicQueueRest.indexOf(u.item);
+      if (qi >= 0) musicQueueRest.splice(0, qi + 1);
+      upcoming = upcoming.slice(idx + 1);
+      musicCurTrack = u.desc;
+      np.track = { id: u.key }; np.positionMs = 0; np.durationMs = 0; np.isPlaying = true; np.state = "playing";
+      everPlayed = false;
+      persist();
+      setMiniPlayer(u.desc.title || "Untitled", u.desc.artist || u.desc.album || "", u.desc.artworkUrl || "");
+      pushMusicHistory(u.desc);
+      refresh();
+      refillUpcoming();
+    }));
+    subs.push(await tts.addListener("ttsFinish", (e) => {
+      if (!live() || !e || e.hasNext) return; // with a next item the plugin carries on (ttsItemStart)
+      if (e.failed && !everPlayed && e.id === desc.id && np.track.id === desc.id) {
+        // The very first song wouldn't load natively → play it in the web view instead.
+        const rest = musicQueueRest.slice();
+        teardownOwnedMusic();
+        musicQueueRest = rest;
+        playMusicDescriptor(desc, url, { isBlob });
+        return;
+      }
+      np.isPlaying = false; np.state = "ended";
+      onMusicEnded(); // queue beyond the lookahead (or empty): the JS advance takes over
+    }));
+    subs.push(await tts.addListener("ttsNext", () => { if (live()) onMusicEnded(); }));
+    if (!live()) return true;
+    const resumeAt = resumePositionFor(state.mediaProgress, desc.id);
+    await tts.play({ item: nativeMusicItem(desc, nativeUrl, resumeAt), rate: mediaPlaybackSpeed || 1 });
+  } catch (e) {
+    if (!live()) return true;
+    console.warn("native music play failed", e);
+    teardownOwnedMusic();
+    return false;
+  }
+  if (live()) refillUpcoming();
+  return true;
+}
+
 async function startLibraryTrack(track, gen = musicStartGen) {
   let url;
   try { url = await (await getMusicLib()).resolvePlayable(track); }
@@ -31372,7 +31629,10 @@ async function startLibraryTrack(track, gen = musicStartGen) {
     console.warn("music resolve failed", e); showVoiceToast("Couldn't play this track — the audio isn't on this device"); return false;
   }
   if (gen !== musicStartGen) { try { URL.revokeObjectURL(url); } catch { /* noop */ } return false; } // a newer start won
-  playMusicDescriptor({ id: track.id, title: track.title, artist: track.artist, album: track.album, artworkUrl: musicArtUrlFor(track), kind: "library" }, url, { isBlob: true });
+  const desc = { id: track.id, title: track.title, artist: track.artist, album: track.album, artworkUrl: musicArtUrlFor(track), kind: "library" };
+  if (nativeMusicEnabled() && await startNativeMusicTrack(desc, url, { isBlob: true, gen })) return true; // iPhone app
+  if (gen !== musicStartGen) return false;
+  playMusicDescriptor(desc, url, { isBlob: true });
   return true;
 }
 
@@ -31386,7 +31646,12 @@ function ownedMusicCall(fn) {
 // Tear down any active owns-playback session (unsubscribe + pause the provider).
 function teardownOwnedMusic() {
   if (musicOwnedUnsub) { try { musicOwnedUnsub(); } catch { /* noop */ } musicOwnedUnsub = null; }
-  if (musicPlaybackProvider) { const prov = musicPlaybackProvider; ownedMusicCall(() => prov.pause()); }
+  if (musicPlaybackProvider) {
+    const prov = musicPlaybackProvider;
+    // The native song player (iPhone app) is torn down completely; Apple Music just pauses.
+    if (typeof prov.dispose === "function") { try { prov.dispose(); } catch { /* noop */ } }
+    else ownedMusicCall(() => prov.pause());
+  }
   musicPlaybackProvider = null;
   musicOwnedNP = null;
 }
@@ -31491,7 +31756,10 @@ async function startStreamingTrack(canonical, gen = musicStartGen) {
   if (gen !== musicStartGen) return false; // superseded while resolving
   if (!src || !src.url) { showVoiceToast("This track isn't streamable right now"); return false; }
   const artist = canonical.artists?.[0]?.name || canonical.composer?.name || canonical.album || "";
-  playMusicDescriptor({ id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "stream", canonical }, src.url, { isBlob: false });
+  const desc = { id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "stream", canonical };
+  if (nativeMusicEnabled() && await startNativeMusicTrack(desc, src.url, { isBlob: false, gen })) return true; // iPhone app
+  if (gen !== musicStartGen) return false;
+  playMusicDescriptor(desc, src.url, { isBlob: false });
   return true;
 }
 
@@ -32952,12 +33220,54 @@ const radioStationSubtitle = (st) => st && (st.category || st.programGroup || "L
 function playRadioStation(station) {
   if (!station) return;
   stopPodcastAudio(); stopListen(); stopMusicPlayback(); // never overlap
+  teardownNativeRadio(false); // switching stations natively: the new play() replaces the old stream
   radioCurStation = station;
   radioStreamCandidates = (radioMod ? radioMod.streamCandidates(station) : (station.streams || [])).map((s) => s.url).filter(Boolean);
   radioStreamIdx = 0; radioReconnectTries = 0;
   if (!radioStreamCandidates.length) { showVoiceToast("This station has no playable stream."); return; }
-  radioLoadCurrentStream();
+  if (nativeTts()) startNativeRadio(station);
+  else radioLoadCurrentStream();
   pushRadioHistory(station);
+}
+
+// iPhone app: hand the station (all its stream URLs, as fallbacks) to the native
+// player. Falls back to the web player if the plugin won't start it.
+async function startNativeRadio(station) {
+  const tts = nativeTts();
+  const rn = { stationId: station.id, playing: true, subs: [] };
+  radioNative = rn;
+  clearWebMediaSession();
+  setMiniPlayer(station.name, radioStationSubtitle(station), station.logoUrl || "");
+  updateMiniPlayerPlayBtn();
+  if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
+  const live = () => radioNative === rn;
+  const refresh = () => { updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel(); };
+  try {
+    rn.subs.push(await tts.addListener("ttsState", (e) => { if (!live()) return; rn.playing = !!(e && e.playing); refresh(); }));
+    rn.subs.push(await tts.addListener("ttsFinish", (e) => {
+      if (!live() || !e || e.kind !== "live") return;
+      // The plugin already reconnected and tried every stream.
+      showVoiceToast(`${radioCurStation ? radioCurStation.name : "Station"} is unavailable right now.`);
+      stopRadio();
+    }));
+    if (!live()) return;
+    await tts.play({ item: { id: station.id, kind: "live", url: radioStreamCandidates[0], urls: radioStreamCandidates, title: station.name, subtitle: radioStationSubtitle(station) } });
+  } catch {
+    if (!live()) return;
+    teardownNativeRadio(false);
+    radioLoadCurrentStream(); // web player
+  }
+}
+function teardownNativeRadio(stopPlugin = true) {
+  const rn = radioNative;
+  if (!rn) return;
+  radioNative = null;
+  (rn.subs || []).forEach((h) => { try { h && h.remove && h.remove(); } catch { /* noop */ } });
+  if (stopPlugin) { const tts = nativeTts(); if (tts) { try { tts.stop(); } catch { /* noop */ } } }
+}
+function radioIsPlaying() {
+  if (radioNative) return !!radioNative.playing;
+  return !!(radioAudio && !radioAudio.paused && !radioAudio.ended);
 }
 function radioLoadCurrentStream() {
   const url = radioStreamCandidates[radioStreamIdx];
@@ -32976,12 +33286,24 @@ function onRadioEnded() { // a live stream "ending" = a dropped connection → r
 function onRadioError() { if (!radioTryNextStream()) { showVoiceToast(`${radioCurStation ? radioCurStation.name : "Station"} is unavailable right now.`); stopRadio(); } }
 
 function stopRadio() {
+  teardownNativeRadio();
   if (mediaEngine && radioAudio) mediaEngine.stop();
   radioAudio = null; radioCurStation = null; radioStreamCandidates = []; radioStreamIdx = 0;
   setMediaSessionPlaybackState("none"); hideMiniPlayer();
   if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
 }
-function toggleRadioPlayPause() { if (!radioAudio) return; if (radioAudio.paused) radioAudio.play().catch(() => {}); else radioAudio.pause(); }
+function toggleRadioPlayPause() {
+  if (radioNative) {
+    const tts = nativeTts(); if (!tts) return;
+    const rn = radioNative;
+    rn.playing = !rn.playing; // optimistic; ttsState confirms
+    (rn.playing ? tts.resume() : tts.pause()).catch(() => {});
+    updateMiniPlayerPlayBtn();
+    if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
+    return;
+  }
+  if (!radioAudio) return; if (radioAudio.paused) radioAudio.play().catch(() => {}); else radioAudio.pause();
+}
 
 function setRadioMediaSession(station) {
   if (!("mediaSession" in navigator)) return;
@@ -33068,7 +33390,7 @@ function radioStationRow(st) {
   if (!st || !st.id) return "";
   radioViewIndex.set(st.id, st);
   const active = radioCurStation && radioCurStation.id === st.id;
-  const playing = active && radioAudio && !radioAudio.paused && !radioAudio.ended;
+  const playing = active && radioIsPlaying();
   const fav = isRadioFav(st.id);
   return `<div class="music-row${active ? " is-active" : ""}" data-radio-play="${escapeHtml(st.id)}" role="button" tabindex="0" aria-label="${escapeHtml(st.name)}">
       <span class="music-row-icon" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : radioStationThumb(st)}</span>
@@ -33094,7 +33416,7 @@ function radioProgramRow(prog) {
 
 function radioNowCard() {
   if (radioCurStation) {
-    const playing = radioAudio && !radioAudio.paused && !radioAudio.ended;
+    const playing = radioIsPlaying();
     return `<div class="radio-now" data-radio-open="${escapeHtml(radioCurStation.id)}">
         ${radioStationThumb(radioCurStation)}
         <span class="radio-now-meta"><span class="radio-now-label"><span class="radio-live-dot"></span>Live now</span><span class="radio-now-title">${escapeHtml(radioCurStation.name)}</span><span class="radio-now-sub">${escapeHtml(radioStationSubtitle(radioCurStation))}</span></span>
@@ -33202,7 +33524,7 @@ function initRadioPanel() {
       const prog = e.target.closest("[data-radio-program]");
       if (prog) { openRadioProgram(radioViewIndex.get(prog.dataset.radioProgram)); return; }
       const play = e.target.closest("[data-radio-play]");
-      if (play) { const st = radioViewIndex.get(play.dataset.radioPlay); if (st) { if (radioCurStation && radioCurStation.id === st.id && radioAudio) toggleRadioPlayPause(); else playRadioStation(st); } return; }
+      if (play) { const st = radioViewIndex.get(play.dataset.radioPlay); if (st) { if (radioCurStation && radioCurStation.id === st.id && (radioAudio || radioNative)) toggleRadioPlayPause(); else playRadioStation(st); } return; }
       const open = e.target.closest("[data-radio-open]");
       if (open) { /* now-card body tap: toggle */ toggleRadioPlayPause(); return; }
     });
@@ -33279,6 +33601,7 @@ function nowPlayingEngineState() {
 }
 function nowPlayingIsPlaying() {
   if (musicPlaybackProvider) return !!(musicOwnedNP && musicOwnedNP.isPlaying); // Apple Music owns its transport
+  if (radioNative) return !!radioNative.playing; // native live radio
   if (listenSpeechSynth) { // on-device voice (native plugin or Web Speech)
     if (listenSpeechSynth.native) return !listenSpeechSynth.paused;
     try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; }
@@ -33291,6 +33614,7 @@ function nowPlayingIsPlaying() {
 }
 function nowPlayingElapsed() {
   if (musicPlaybackProvider) return musicOwnedNP ? (musicOwnedNP.positionMs || 0) / 1000 : 0;
+  if (radioNative) return 0; // live
   const s = nowPlayingEngineState();
   if (s) return s.position || 0;
   const el = nowPlayingEl(); return el ? (el.currentTime || 0) : listenElapsed();
@@ -33298,6 +33622,7 @@ function nowPlayingElapsed() {
 // Live radio has no finite duration → 0 (the bar shows no progress for it).
 function nowPlayingTotal() {
   if (musicPlaybackProvider) return (musicOwnedNP && musicOwnedNP.durationMs) ? musicOwnedNP.durationMs / 1000 : 0;
+  if (radioNative) return 0; // live
   const s = nowPlayingEngineState();
   if (s) return Number.isFinite(s.duration) ? s.duration : 0;
   const el = nowPlayingEl(); if (el) return Number.isFinite(el.duration) ? el.duration : 0; return listenTotalDuration || 0;
@@ -35417,9 +35742,26 @@ function getVoiceService() {
       google: createGoogleProvider({ callFn: callNetlifyFunction }),
       kokoro: createKokoroProvider({ synthViaProxy: kokoroSynthViaProxy }), // Phase 1A: session-gated kokoro-tts proxy
     },
-    getAiSettings: () => state.aiSettings || {},
+    getAiSettings: () => effectiveAiSettings(),
   });
   return voiceServiceSingleton;
+}
+
+// ── Per-device voice (iPhone app) ────────────────────────────────────────────
+// The voice settings sync across the household, but the iPhone app reads
+// articles with an Apple voice so they keep playing (with lock-screen and AirPods
+// controls) while the phone is locked. So in the app the article voice is a
+// per-device choice, defaulting to the Apple voice, and choosing a voice there
+// never changes the web app's voice for anyone.
+const DEVICE_ARTICLE_VOICE_KEY = "live.device.articleVoiceId";
+const DEVICE_NATIVE_VOICE_KEY = "live.device.nativeVoiceId";
+function deviceVoiceGet(key) { try { return localStorage.getItem(key) || ""; } catch { return ""; } }
+function deviceVoiceSet(key, value) {
+  try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch { /* storage unavailable */ }
+}
+function effectiveAiSettings() {
+  const ai = state.aiSettings || {};
+  return nativeTts() ? withDeviceArticleVoice(ai, deviceVoiceGet(DEVICE_ARTICLE_VOICE_KEY)) : ai;
 }
 
 // Keep-warm: when a Listen is plausibly imminent (an article opened, the media
@@ -35786,27 +36128,25 @@ function systemVoiceElapsedSec() {
 // The user's chosen native (AVSpeechSynthesizer) voice identifier, or "" to let
 // the plugin pick a good en-US default.
 function nativeVoiceIdPref() {
-  try { return (state.aiSettings && state.aiSettings.nativeVoiceId) || ""; } catch { return ""; }
+  return deviceVoiceGet(DEVICE_NATIVE_VOICE_KEY); // "" = Automatic (the plugin's best installed voice)
 }
 
 // The device's installed voices (via the native plugin), loaded once and cached.
 // English only, best quality first (Premium/Enhanced are the near-Siri voices).
 let nativeVoicesCache = null;
+let nativeDefaultVoiceId = ""; // the plugin's automatic pick (best installed voice)
 async function loadNativeVoices() {
   const tts = nativeTts();
   if (!tts) { nativeVoicesCache = []; return []; }
   try {
     const r = await tts.getVoices();
-    let vs = Array.isArray(r && r.voices) ? r.voices : [];
-    vs = vs.filter((v) => /^en/i.test(v.lang || ""));
-    const rank = { premium: 0, enhanced: 1, default: 2 };
-    vs.sort((a, b) => ((rank[a.quality] ?? 3) - (rank[b.quality] ?? 3)) || String(a.name).localeCompare(String(b.name)));
-    nativeVoicesCache = vs;
+    nativeDefaultVoiceId = (r && r.defaultId) || "";
+    nativeVoicesCache = readableNativeVoices(r && r.voices, nativeDefaultVoiceId);
   } catch { nativeVoicesCache = []; }
   return nativeVoicesCache;
 }
 function nativeVoiceName(id) {
-  const v = (nativeVoicesCache || []).find((x) => x.id === id);
+  const v = (nativeVoicesCache || []).find((x) => x.id === (id || nativeDefaultVoiceId));
   return v ? v.name : null;
 }
 async function previewNativeVoice(voiceId, btn) {
@@ -35961,16 +36301,24 @@ async function startListenNativeTts(article) {
 // on the plugin — podcasts included — so every hand-off (article→podcast,
 // podcast→article, podcast→podcast) happens natively and survives a locked
 // screen. Podcasts played from the Podcasts tab keep the web player.
+// In the iPhone app every podcast plays on the native player (LiveTtsPlugin's
+// AVPlayer), like Apple Music: it keeps playing, pausing and resuming with the
+// phone locked and from AirPods, which the web view's player can't do once iOS
+// suspends the page. The web app keeps the web player.
 function nativeQueueHandlesPodcasts() {
-  return !!nativeTts() && isSystemArticleVoice();
+  return !!nativeTts();
 }
 
-// Start an All-queue podcast episode on the native player. Returns false when it
-// can't (no audio URL / no plugin) so the caller uses the web player instead.
+// Start a podcast episode on the native player. Returns false when it can't (no
+// audio URL / no plugin) so the caller uses the web player instead.
 async function startNativePodcast(episodeId) {
-  const tts = nativeTts();
   const { episode, show } = findPodcastEpisode(episodeId);
+  return startNativePodcastEpisode(episode, show);
+}
+async function startNativePodcastEpisode(episode, show) {
+  const tts = nativeTts();
   if (!tts || !episode || !episode.audioUrl) return false;
+  const episodeId = episode.id;
   // Same rule as startPodcastPlayback: nothing else plays at the same time.
   stopPodcastAudio(); stopListen(); stopMusicPlayback(); stopRadio();
   const genId = ++listenGenId;
@@ -35993,7 +36341,8 @@ async function startNativePodcast(episodeId) {
   } catch {
     if (session.genId !== listenGenId) return true;
     teardownSystemVoice();
-    openPodcastEpisode(episodeId); // fall back to the web player
+    showPodcastEpisodePanel(episodeId);
+    startPodcastPlayback(episode, show, { autoplay: true, forceWeb: true }); // fall back to the web player
   }
   return true;
 }
@@ -36024,6 +36373,7 @@ function nativeUpcomingItems(anchorId, listTab, n) {
       const item = byId.get(id);
       if (!item || !mediaItemPlayable(item)) continue; // advanceMediaAllQueue skips these too
       if (item.type === "article") {
+        if (!isSystemArticleVoice()) break; // a non-Apple voice reads it in the web player (JS advance)
         const a = byArticleId.get(id);
         if (!a) break;
         out.push({ type: "article", article: a });
