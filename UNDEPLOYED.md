@@ -98,3 +98,22 @@ receipts are copied into the same list, tagged in Shop, and never touch grocery 
 3. Shop → Receipts: email/online-order receipts appear tagged, and the price-history trends don't
    include Amazon-style items.
 4. Delete an imported email receipt in Shop, reload the next day: it doesn't come back.
+
+## Bottom dock: permanent mini-player + weather ticker; idle play + "when the queue ends" pick (PR #38)
+PR: https://github.com/LukeDEvans/Tableplan/pull/38
+
+A permanent, swipeable dock along the bottom of every page: the mini-player and a weather summary,
+with a small dots pill above it to switch. Tap the mini-player → Media; swipe it up → Now Playing;
+tap the weather → Weather (no longer on the home grid or the page menu). Play with nothing loaded
+resumes the last thing, else the next queue item, else the new Media → Queue settings pick
+("When the queue ends, play"), which also starts by itself when the queue finishes.
+
+**After deploying:**
+1. Phone: the dock shows on every page; swipe between player and weather; the dots follow. Nothing
+   on any page is hidden behind it (check Mail, Shop's bottom buttons, toasts, the voice button).
+2. Weather slide shows your place's temperature/condition/high-low; tap → Weather page.
+3. Stop everything, tap play on the idle bar: it resumes the last radio station / podcast, or the next
+   queue item.
+4. Media → Queue settings: set "When the queue ends, play" to a playlist; let the last queue item
+   finish (phone unlocked, then locked — see ISSUES.md for the locked/native-queue gap).
+5. Swipe the mini-player up → the Now-Playing window opens.
