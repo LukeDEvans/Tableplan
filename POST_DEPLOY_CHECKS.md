@@ -5,6 +5,140 @@ shipped yet is listed in [UNDEPLOYED.md](UNDEPLOYED.md).) When deploying, move e
 UNDEPLOYED.md entry's "After deploying" steps here under a heading for that deploy.
 Tick items off as they're done; delete a deploy's section once it's all ticked.
 
+## 2026-10-01 deploy #2 (PRs #28, #33, #34–#40)
+Web deploy plus a TestFlight build from `main`. Service worker cache bumped to v37 — hard-refresh once.
+
+**iPhone app: native player for podcasts + radio; Apple voice per device (PR #28)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/28
+
+The iPhone side ships through TestFlight. In the app, podcasts, radio and non-Apple music
+(Internet Archive, Jamendo, uploaded songs) play on the native player (lock-screen and AirPods
+pause/resume), and articles default to the best installed
+Apple voice. The voice choice is per device, so choosing one on the phone no longer changes
+the web app's voice. The website itself is unchanged.
+
+**After deploying:**
+- [ ] Web: Settings → Voice still shows the household voice (not "device").
+- [ ] Next TestFlight build from `main`: podcast/radio lock-screen pause and resume still work.
+
+**iPhone app: full NYT / Economist / Star Tribune articles with your login (PR #33)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/33
+
+Ships through TestFlight. The website is unchanged. In the app, Media → menu → Sync Settings →
+"Full articles on this iPhone" signs in to each paper in an in-app browser. Articles from those
+papers then load in full on the phone. A cut-off article shows "Sign in" / "Reload full article".
+
+**After the next TestFlight build:**
+- [ ] Sign in to The Economist (email + password), then open an Economist article from a news-email
+   card. It should load in full. Repeat for NYT and Star Tribune.
+- [ ] Sign out of one paper, reopen a new article from it: it should come back cut off with the
+   Sign in / Reload buttons.
+
+Checks for work that's already live are in [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md).
+
+**Media "Playlist" → "Queue"; Shop date-button tap colour; weather search (PR #34)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/34
+
+The main media list is now called "Queue" (sidebar tab, settings menu and modal, add/remove
+buttons, toasts). Named podcast/music playlists still say "playlist". The Shop date buttons no
+longer stay patina after a tap on a phone. Weather search accepts "City, ST" and shows a
+message when nothing matches or the search can't be reached. In the iPhone app, the weather
+page now reaches its server function (it was fetching the app's own page).
+
+**After deploying:**
+- [ ] Phone: tap a Shop date button, pick a date. The date goes back to dark once your finger lifts.
+- [ ] Weather → Search a place: "Portland, OR" and "Austin TX" each list the right city.
+- [ ] Next TestFlight build: the Weather page loads a forecast and search returns cities.
+
+**Header receipt scanner (Camera / Photo → Shop + Finance); User moves into Settings (PR #35)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/35
+
+The top-right button is now a receipt scanner (Camera / Photo). A scanned receipt opens Shop's
+review dialog already reading it. (The background Finance save this PR first added was replaced
+by the one receipts list in the receipts-consolidation PR. A saved receipt reaches Finance from
+`state.receipts`.) "User" (the profile window, now titled "User") is the first Settings menu item;
+the Settings button always opens the menu. Shop receipt scan also works in the iPhone app now.
+
+**After deploying:**
+- [ ] Phone: scanner → Photo, pick a receipt. Shop's review opens with the lines filled in.
+- [ ] Settings → User opens the profile window; log out / log in still work.
+- [ ] (Receipts in Finance: see the receipts-consolidation entry.)
+
+**iPhone app: header Camera opens Apple's document scanner (PR #36)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/36
+
+Ships through TestFlight. The website is unchanged. In the app, scanner → Camera opens Apple's
+document camera, which finds the receipt's edges, straightens and crops it, and can take several
+pages. Nothing is saved to Photos. It also adds the camera permission (`NSCameraUsageDescription`),
+which was missing, so any camera use in the app would have crashed it.
+
+**After the next TestFlight build:**
+- [ ] Scanner → Camera: the first time, iOS asks for camera permission. Scan a receipt (try a long
+   one with 2 pages). Shop's review should open already reading it.
+- [ ] Check the Photos app: the scan is not there.
+
+**Receipts: one list for Shop and Finance (PR #37)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/37
+
+Shop's receipts are now the one receipts list (see RECEIPTS.md). One scan reads the grocery lines
+and gives each line a Finance budget category, which you can correct in the review. Finance →
+Insights → Receipts shows these receipts and matches each to its charge (same total ±2¢, within
+4 days). Itemize builds the split, and View opens the receipt in Shop. Email and online-order
+receipts are copied into the same list, tagged in Shop, and never touch grocery price history.
+
+**After deploying:**
+- [ ] Scan a real receipt: in the review, each line should show a sensible budget category. Save it.
+- [ ] Once the charge posts (and the bank refreshes): Finance → Insights → Receipts shows it as
+   matched. Itemize gives a split by those categories, and View opens it in Shop.
+- [ ] Shop → Receipts: email/online-order receipts appear tagged, and the price-history trends don't
+   include Amazon-style items.
+- [ ] Delete an imported email receipt in Shop, reload the next day: it doesn't come back.
+
+**Bottom dock: permanent mini-player + weather ticker; idle play + "when the queue ends" pick (PR #38)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/38
+
+A permanent, swipeable dock along the bottom of every page: the mini-player and a weather summary,
+with a small dots pill above it to switch. Tap the mini-player → Media; swipe it up → Now Playing;
+tap the weather → Weather (no longer on the home grid or the page menu). Play with nothing loaded
+resumes the last thing, else the next queue item, else the new Media → Queue settings pick
+("When the queue ends, play"), which also starts by itself when the queue finishes.
+
+**After deploying:**
+- [ ] Phone: the dock shows on every page; swipe between player and weather; the dots follow. Nothing
+   on any page is hidden behind it (check Mail, Shop's bottom buttons, toasts, the voice button).
+- [ ] Weather slide shows your place's temperature/condition/high-low; tap → Weather page.
+- [ ] Stop everything, tap play on the idle bar: it resumes the last radio station / podcast, or the next
+   queue item.
+- [ ] Media → Queue settings: set "When the queue ends, play" to a playlist; let the last queue item
+   finish (phone unlocked, then locked — see ISSUES.md for the locked/native-queue gap).
+- [ ] Swipe the mini-player up → the Now-Playing window opens.
+
+**Contacts moves inside Mail (PR #39)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/39
+
+Contacts is gone from the home grid and the page menu. It's a "Contacts" item under the mail
+folders (and "Open contacts" on the Connect Gmail screen); the contacts list replaces the message
+list, with a ‹ back-to-Mail button. Calendar birthdays, the assistant and #contacts open it there.
+
+**After deploying:**
+- [ ] Mail (Gmail connected): Contacts sits at the bottom of the folder list (and in the collapsed
+   rail on desktop). Tap it → contacts list; tap Inbox or ‹ → back to mail.
+- [ ] Phone: one row of contact controls, nothing clipped; the mail drawer still opens from Mail.
+- [ ] Tap a birthday on the calendar → that contact opens inside Mail.
+- [ ] Settings menu (while in Contacts): Import / Export contacts still work.
+
+**iPhone app: connect Gmail in-app (PR #40)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/40
+
+In the app, Mail → Connect Gmail opens Apple's sign-in sheet (Google allows it there), signs in,
+closes itself and returns to Mail connected. Server: gmail-auth/gmail-callback carry a signed
+"started in the app" marker and send the sheet back to com.mrlukedevans.live://gmail.
+
+**After deploying + the next TestFlight build:**
+- [ ] App: Mail → Connect Gmail (disconnect first if already connected) → Google sign-in sheet →
+   allow → the sheet closes and the inbox loads with "Gmail connected — <address>".
+- [ ] Web: Connect Gmail in a browser still works and lands on Mail (#mail?gm_connected=1).
+
 ## 2026-10-01 deploy (PRs #21, #22, #25, #26, #27, #31)
 Web deploy plus a TestFlight build from `main`.
 
