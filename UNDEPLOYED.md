@@ -83,8 +83,8 @@ sweep saved, or edits from another device, show up without restarting. At most o
 1. Leave the iPhone app in the background, edit something on the web, reopen the app after
    2+ minutes: the edit is there without a restart.
 
-## Pre-deploy fixes: deleted trip/chore items no longer come back, Explore on phones (PR #PRNUM)
-PR: https://github.com/LukeDEvans/Tableplan/pull/PRNUM
+## Pre-deploy fixes: deleted trip/chore items no longer come back, Explore on phones (PR #31)
+PR: https://github.com/LukeDEvans/Tableplan/pull/31
 
 - Changing a trip's dates no longer risks a duplicate trip bar on the calendar after another
   device syncs: the replaced calendar event is now recorded as deleted.
