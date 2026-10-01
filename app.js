@@ -15639,6 +15639,7 @@ async function previewVoice(voiceId, btn) {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(sample);
       const v = pickSystemVoice(); if (v) u.voice = v;
+      u.rate = Math.max(0.5, Math.min(2, articleVoiceSpeed()));
       u.onend = () => { if (token === voicePreviewToken) { voicePreviewBtn = null; resetVoicePreviewBtn(btn); } };
       window.speechSynthesis.speak(u);
     } catch { voicePreviewBtn = null; resetVoicePreviewBtn(btn); }
@@ -35067,11 +35068,18 @@ function nativeVoiceName(id) {
   const v = (nativeVoicesCache || []).find((x) => x.id === id);
   return v ? v.name : null;
 }
+// Settings → Voice "Speaking speed" (the article voice's own speed pref). Cloud
+// voices bake it into the synthesized audio; on-device voices have to apply it
+// at speak time, on top of the player speed.
+function articleVoiceSpeed() {
+  const sp = Number(getVoiceService().voiceForDomain("article")?.speed);
+  return sp > 0 ? sp : 1;
+}
 async function previewNativeVoice(voiceId, btn) {
   const tts = nativeTts();
   if (!tts) return;
   if (btn) { btn.classList.add("playing"); setTimeout(() => btn.classList.remove("playing"), 2500); }
-  try { await tts.stop(); await tts.speak({ text: "Hi, this is how I sound reading your articles aloud.", voiceId, rate: mediaPlaybackSpeed || 1, title: "Voice preview" }); }
+  try { await tts.stop(); await tts.speak({ text: "Hi, this is how I sound reading your articles aloud.", voiceId, rate: 1, speechSpeed: articleVoiceSpeed(), title: "Voice preview" }); }
   catch { /* best-effort */ }
 }
 
@@ -35208,7 +35216,7 @@ async function startListenNativeTts(article) {
   updateListenPlayBtn();
   await wireNativeSession(tts, session);
   try {
-    await tts.speak({ id: article.id, text: prepared.text, voiceId: nativeVoiceIdPref(), rate, title: article.title || "Article", subtitle: article.author || article.publication || "" });
+    await tts.speak({ id: article.id, text: prepared.text, voiceId: nativeVoiceIdPref(), rate, speechSpeed: articleVoiceSpeed(), title: article.title || "Article", subtitle: article.author || article.publication || "" });
     queueNativeUpcoming(session);
   } catch (e) {
     if (session.genId === listenGenId) { listenSpeaking = false; teardownSystemVoice(); updateListenPlayBtn(); alert("Couldn't start on-device voice: " + (e && e.message || e)); }
@@ -35245,7 +35253,7 @@ async function startNativePodcast(episodeId) {
   recordMediaHistory({ kind: "podcast", id: episode.id, title: episode.title || "", subtitle: (show && show.title) || "", artworkUrl: episode.art || (show && show.art) || "", ref: { episodeId: episode.id, showId: show && show.id } });
   await wireNativeSession(tts, session);
   try {
-    await tts.play({ item, voiceId: nativeVoiceIdPref(), rate: session.rate });
+    await tts.play({ item, voiceId: nativeVoiceIdPref(), rate: session.rate, speechSpeed: articleVoiceSpeed() });
     updatePodcastPlayBtn(); updateMiniPlayerPlayBtn();
     queueNativeUpcoming(session);
   } catch {
@@ -35486,7 +35494,7 @@ function speakSystemChunk() {
   const u = new SpeechSynthesisUtterance(s.chunks[s.idx]);
   const v = pickSystemVoice();
   if (v) u.voice = v;
-  u.rate = Math.max(0.5, Math.min(2, s.rate || 1));
+  u.rate = Math.max(0.5, Math.min(2, (s.rate || 1) * articleVoiceSpeed()));
   u.onboundary = (e) => { if (s.genId === listenGenId && typeof e.charIndex === "number") { s.charIndex = e.charIndex; updateMiniPlayerProgress(); } };
   u.onend = () => {
     if (s.genId !== listenGenId) return;
