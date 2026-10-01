@@ -1724,6 +1724,12 @@ const _finance = createFinanceModule({
   canUseFinanceStore: () => !localDevMode && canUseCloudStorage() && !!authSession?.access_token,
   fetchSupabaseJson: (...a) => fetchSupabaseJson(...a),
   writeSupabaseJson: (...a) => writeSupabaseJson(...a),
+  // The one receipts list (state.receipts) is Shop-owned; Finance reads and
+  // links through this interface (RECEIPTS.md). Thunks: groceries is created below.
+  receiptsForFinance: (...a) => receiptsForFinance(...a),
+  importFinanceInboxReceipts: (...a) => importFinanceInboxReceipts(...a),
+  linkReceiptToFinanceTxn: (...a) => linkReceiptToFinanceTxn(...a),
+  openReceiptDetail: (...a) => openReceiptDetail(...a),
 });
 const {
   financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions,
@@ -1731,7 +1737,7 @@ const {
   invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick,
   refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu,
   renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth,
-  getFinanceLinkStatus, captureScannedReceipt,
+  getFinanceLinkStatus,
 } = _finance;
 
 // ── Groceries domain (extracted to groceries-ui.js) ─────────────────────────
@@ -1822,6 +1828,10 @@ const {
   openReceiptScanDialog,
   openReceiptScanWithFiles,
   openShopReceiptsDialog,
+  receiptsForFinance,
+  importFinanceInboxReceipts,
+  linkReceiptToFinanceTxn,
+  openReceiptDetail,
   receiptItemMappings,
   receiptPriceHistory,
   refreshReceiptValidation,
@@ -15898,10 +15908,10 @@ function handleAppMenuButtonClick(event) {
 }
 
 // ── Header receipt scanner ──────────────────────────────────────────────────
-// Top-right button → Camera / Photo. A picked receipt goes to BOTH places:
-// Shop's scan dialog opens already reading it (review + save → Shop receipts and
-// price history), and Finance reads + stores it in the background so it waits in
-// Finance → Receipts until its transaction posts (finance-ui captureScannedReceipt).
+// Top-right button → Camera / Photo. Shop's scan dialog opens already reading the
+// receipt; one read fills in grocery items AND budget categories. Saved, it joins
+// the one receipts list (state.receipts — RECEIPTS.md): Shop's receipts + price
+// history, and Finance → Receipts, where it matches its charge once it posts.
 function toggleReceiptScannerMenu(event) {
   event?.stopPropagation();
   const willOpen = elements.receiptScannerMenu.hidden;
@@ -15936,9 +15946,6 @@ function scanReceiptFromHeader(files) {
   const images = files.filter((f) => /^image\//.test(f.type || ""));
   if (!images.length) return;
   openReceiptScanWithFiles(images);
-  captureScannedReceipt(images)
-    .then((r) => showMailToast(`Receipt${r?.merchant ? ` from ${r.merchant}` : ""} saved to Finance — it'll match the charge when it posts`))
-    .catch((e) => showMailToast(`Couldn't save the receipt to Finance: ${e?.message || "unknown error"}`));
 }
 
 function toggleAppMenu(event) {

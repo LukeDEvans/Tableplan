@@ -11,11 +11,12 @@ async function getReceiptDomain() {
 }
 
 async function scanReceiptFromImages(images, options = {}) {
+  const { categories = [], ...scanOptions } = options;
   const { rawText, model } = await scanDocument({
     items: images,
-    prompt: receiptScanPrompt(),
+    prompt: receiptScanPrompt(categories),
     options: {
-      ...options,
+      ...scanOptions,
       maxItems: 6,
       noun: "receipt image",
       label: "Receipt scan",
@@ -26,12 +27,20 @@ async function scanReceiptFromImages(images, options = {}) {
   const { normalizeReceipt } = await getReceiptDomain();
   // Preserve the model's RAW output + which model produced it (extraction kept
   // independent of the interpretation — re-parse later without a rescan).
-  return { receipt: normalizeReceipt(parseReceiptJson(rawText)), rawText, model };
+  const receipt = normalizeReceipt(parseReceiptJson(rawText));
+  // Keep only budget categories that exist (the model can invent keys).
+  const validKeys = new Set(categories.map((c) => c.key));
+  receipt.lineItems = receipt.lineItems.map((line) => ({ ...line, budgetCategory: validKeys.has(line.budgetCategory) ? line.budgetCategory : "" }));
+  return { receipt, rawText, model };
 }
 
-function receiptScanPrompt() {
+function receiptScanPrompt(categories = []) {
+  const budget = Array.isArray(categories) && categories.length ? [
+    "Also give each line item a budgetCategory: the best-fitting key from this household budget list, or \"\" when unsure.",
+    categories.map((c) => `${c.key} = ${c.name}`).join("\n"),
+  ] : [];
   return [
-    "Extract this grocery receipt accurately.",
+    "Extract this purchase receipt accurately (usually groceries, but any store).",
     "Return only valid JSON without markdown.",
     "Do not invent illegible values. Use empty strings or zero and lower confidence.",
     "Exclude payment lines and loyalty balances from grocery line items.",
@@ -56,9 +65,11 @@ function receiptScanPrompt() {
         totalPrice: 0,
         unitPrice: 0,
         discountAmount: 0,
-        confidenceScore: 0.8
+        confidenceScore: 0.8,
+        ...(budget.length ? { budgetCategory: "" } : {})
       }]
-    })
+    }),
+    ...budget
   ].join("\n");
 }
 

@@ -1,4 +1,5 @@
 const { scanReceiptFromImages } = require("../../receipt-scan");
+const { getGroupIdForUser, loadFinanceCategories } = require("./_finance-categories.js");
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
@@ -11,7 +12,8 @@ exports.handler = async (event) => {
   const authHeader = event.headers.authorization || event.headers.Authorization || "";
   const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!accessToken) return jsonResponse(401, { error: "Not authenticated." });
-  if (!await verifySession(accessToken, serviceKey)) return jsonResponse(401, { error: "Invalid session." });
+  const userId = await verifySession(accessToken, serviceKey);
+  if (!userId) return jsonResponse(401, { error: "Invalid session." });
 
   let payload;
   try {
@@ -20,7 +22,10 @@ exports.handler = async (event) => {
     return jsonResponse(400, { error: "Invalid JSON body." });
   }
   try {
-    const result = await scanReceiptFromImages(payload.images || []);
+    // Budget categories let the same read serve Finance (one receipts list):
+    // each line gets a budget category. No categories → the scan works as before.
+    const categories = await loadFinanceCategories(serviceKey, await getGroupIdForUser(serviceKey, userId));
+    const result = await scanReceiptFromImages(payload.images || [], { categories });
     return jsonResponse(200, { receipt: result.receipt, rawText: result.rawText, model: result.model });
   } catch (error) {
     return jsonResponse(500, { error: error.message || "Receipt scan failed." });
@@ -40,6 +45,8 @@ async function verifySession(accessToken, serviceKey) {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
-    return res.ok;
-  } catch { return false; }
+    if (!res.ok) return null;
+    const user = await res.json();
+    return user?.id || null;
+  } catch { return null; }
 }

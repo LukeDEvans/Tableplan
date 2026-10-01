@@ -1297,6 +1297,24 @@ function receiptUnitOptionsHtml(selectedUnit) {
   )).join("");
 }
 
+// Finance budget categories for a receipt line (the one receipts list serves
+// Finance too — RECEIPTS.md). Empty when Finance has no budget yet; the select
+// is then left out. An unknown saved key is kept as an extra option.
+function budgetCategoryChoices() {
+  return (state.financeBudgetGroups || []).flatMap((g) => (g.categories || []).map((c) => ({ key: `cat:${g.id}:${c.id}`, name: `${g.label} · ${c.name}` })));
+}
+
+function receiptBudgetSelectHtml(selected) {
+  const choices = budgetCategoryChoices();
+  if (!choices.length && !selected) return "";
+  const known = choices.some((c) => c.key === selected);
+  return `<select class="receipt-line-budget" data-receipt-budget aria-label="Budget category">
+      <option value="">No budget category</option>
+      ${choices.map((c) => `<option value="${escapeHtml(c.key)}" ${c.key === selected ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+      ${selected && !known ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}</option>` : ""}
+    </select>`;
+}
+
 function addEditReceiptLine(line = {}) {
   const id = line.id || createId("rl");
   const row = document.createElement("div");
@@ -1318,6 +1336,7 @@ function addEditReceiptLine(line = {}) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /></svg>
     </button>
     <input type="hidden" data-receipt-confidence value="${escapeHtml(String(line.confidenceScore ?? 0.9))}" />
+    ${receiptBudgetSelectHtml(line.budgetCategory || "")}
   `;
   row.querySelector("[data-remove-receipt-line]").addEventListener("click", () => row.remove());
   elements.editReceiptLineList.append(row);
@@ -1343,7 +1362,8 @@ function editedReceiptFromForm() {
       unitPrice: quantity ? totalPrice / quantity : 0,
       discountAmount: Math.max(0, Number(row.querySelector("[data-receipt-discount]").value) || 0),
       confidenceScore: Number(row.querySelector("[data-receipt-confidence]").value) || 0.9,
-      userCorrected: true
+      userCorrected: true,
+      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || ""
     };
   });
   return LiveReceiptDomain.normalizeReceipt({
@@ -1368,25 +1388,29 @@ function saveReceiptEdit(event) {
     ((state.receipts || []).find((r) => r.id === editingReceiptId)?.lineItems || []).map((li) => li.id)
   );
   state.receipts = normalizeReceipts((state.receipts || []).map((r) => r.id === editingReceiptId ? receipt : r));
-  state.receiptItemMappings = LiveReceiptDomain.correctedMappingsFromReceipt(receipt, receiptItemMappings());
-  // Rebuild this receipt's history rows, reusing each line's existing history id
-  // (keyed by sourceReceiptLineItemId) so an edit doesn't mint a fresh id that
-  // unions alongside the stale one on sync; tombstone rows that no longer exist.
-  const previousHistory = receiptPriceHistory().filter((ph) => oldLineItemIds.has(ph.sourceReceiptLineItemId));
-  const previousIdByLine = new Map(previousHistory.map((ph) => [ph.sourceReceiptLineItemId, ph.id]));
-  const rebuiltHistory = LiveReceiptDomain.priceHistoryFromReceipt(receipt, createId).map((entry) => (
-    previousIdByLine.has(entry.sourceReceiptLineItemId) ? { ...entry, id: previousIdByLine.get(entry.sourceReceiptLineItemId) } : entry
-  ));
-  const rebuiltIds = new Set(rebuiltHistory.map((entry) => entry.id));
-  previousHistory.filter((ph) => !rebuiltIds.has(ph.id)).forEach((ph) => recordDeletion("priceHistory", ph.id));
-  state.priceHistory = normalizePriceHistory([
-    ...receiptPriceHistory().filter((ph) => !oldLineItemIds.has(ph.sourceReceiptLineItemId)),
-    ...rebuiltHistory
-  ], groceryStores());
-  state.groceryBaseItems = normalizeGroceryBaseItems([
-    ...groceryBaseItems(),
-    ...receipt.lineItems.map((li) => li.normalizedName)
-  ]);
+  // Email / browser-extension receipts (Amazon orders etc.) live in the same list
+  // for Finance but don't teach the grocery catalog or price history.
+  if (LiveReceiptDomain.feedsPriceHistory(receipt)) {
+    state.receiptItemMappings = LiveReceiptDomain.correctedMappingsFromReceipt(receipt, receiptItemMappings());
+    // Rebuild this receipt's history rows, reusing each line's existing history id
+    // (keyed by sourceReceiptLineItemId) so an edit doesn't mint a fresh id that
+    // unions alongside the stale one on sync; tombstone rows that no longer exist.
+    const previousHistory = receiptPriceHistory().filter((ph) => oldLineItemIds.has(ph.sourceReceiptLineItemId));
+    const previousIdByLine = new Map(previousHistory.map((ph) => [ph.sourceReceiptLineItemId, ph.id]));
+    const rebuiltHistory = LiveReceiptDomain.priceHistoryFromReceipt(receipt, createId).map((entry) => (
+      previousIdByLine.has(entry.sourceReceiptLineItemId) ? { ...entry, id: previousIdByLine.get(entry.sourceReceiptLineItemId) } : entry
+    ));
+    const rebuiltIds = new Set(rebuiltHistory.map((entry) => entry.id));
+    previousHistory.filter((ph) => !rebuiltIds.has(ph.id)).forEach((ph) => recordDeletion("priceHistory", ph.id));
+    state.priceHistory = normalizePriceHistory([
+      ...receiptPriceHistory().filter((ph) => !oldLineItemIds.has(ph.sourceReceiptLineItemId)),
+      ...rebuiltHistory
+    ], groceryStores());
+    state.groceryBaseItems = normalizeGroceryBaseItems([
+      ...groceryBaseItems(),
+      ...receipt.lineItems.map((li) => li.normalizedName)
+    ]);
+  }
   persist();
   maybeWriteCloudSnapshot({ force: true }).catch(() => {});
   renderShopReceipts();
@@ -1697,6 +1721,7 @@ function addReceiptReviewLine(line = {}) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /></svg>
     </button>
     <input type="hidden" data-receipt-confidence value="${escapeHtml(normalized.confidenceScore)}" />
+    ${receiptBudgetSelectHtml(normalized.budgetCategory)}
   `;
   row.querySelector("[data-remove-receipt-line]").addEventListener("click", () => row.remove());
   elements.receiptLineList.append(row);
@@ -1722,7 +1747,8 @@ function reviewedReceiptFromForm() {
       unitPrice: totalPrice / quantity,
       discountAmount: Math.max(0, Number(row.querySelector("[data-receipt-discount]").value) || 0),
       confidenceScore: Number(row.querySelector("[data-receipt-confidence]").value) || 0.7,
-      userCorrected: normalizedName !== row.dataset.originalName || category !== row.dataset.originalCategory
+      userCorrected: normalizedName !== row.dataset.originalName || category !== row.dataset.originalCategory,
+      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || ""
     };
   });
   return LiveReceiptDomain.normalizeReceipt({
@@ -1759,6 +1785,7 @@ function saveReviewedReceipt(event) {
   renderShopReceipts();
   elements.receiptScanDialog.close();
   openGroceryPricingDialog();
+  if (receipt.total > 0) showMailToast("Receipt saved — Finance will match it to the charge when it posts");
 }
 
 function setReceiptScanStatus(message) {
@@ -5039,10 +5066,13 @@ function renderShopReceipts() {
       : "";
     const total = r.total != null ? Number(r.total).toLocaleString("en-US", { style: "currency", currency: "USD" }) : "";
     const itemCount = Array.isArray(r.lineItems) ? r.lineItems.length : 0;
+    const sourceTag = r.source === "email" ? "Email" : r.source === "extension" ? "Online order" : "";
     return `
       <button class="shop-receipt-card" type="button" data-receipt-id="${escapeHtml(r.id)}">
         <div class="shop-receipt-store">${escapeHtml(r.storeName || "Unknown store")}</div>
         <div class="shop-receipt-meta">
+          ${sourceTag ? `<span class="shop-receipt-source">${sourceTag}</span>` : ""}
+          ${r.financeTxnId ? `<span class="shop-receipt-source">In Finance</span>` : ""}
           ${date ? `<span>${escapeHtml(date)}</span>` : ""}
           ${itemCount ? `<span>${itemCount} item${itemCount !== 1 ? "s" : ""}</span>` : ""}
           ${total ? `<span>${escapeHtml(total)}</span>` : ""}
@@ -5054,6 +5084,36 @@ function renderShopReceipts() {
     card.addEventListener("click", () => openReceiptEditView(card.dataset.receiptId));
   });
 }
+
+  // ── Receipts → Finance interface (one list, RECEIPTS.md) ──────────────────
+  // Finance reads receipts only through these; state.receipts stays Shop-owned.
+  function receiptsForFinance() {
+    return normalizeReceipts(state.receipts).map(LiveReceiptDomain.receiptForFinance);
+  }
+  // Email / extension receipts from the server inbox (finreceipts_) join the
+  // list once; a receipt deleted here stays deleted (tombstone check).
+  function importFinanceInboxReceipts(inbound) {
+    const have = new Set((state.receipts || []).map((r) => r.id));
+    const deleted = new Set((state.tombstones?.receipts || []).map(String));
+    const fresh = (Array.isArray(inbound) ? inbound : [])
+      .filter((r) => r && r.id && Number(r.total))
+      .map((r) => LiveReceiptDomain.receiptFromFinanceInbox(r, createId))
+      .filter((r) => !have.has(r.id) && !deleted.has(r.id));
+    if (!fresh.length) return 0;
+    state.receipts = normalizeReceipts([...(state.receipts || []), ...fresh]);
+    persist();
+    return fresh.length;
+  }
+  function linkReceiptToFinanceTxn(receiptId, txnId) {
+    const receipt = (state.receipts || []).find((r) => r.id === receiptId);
+    if (!receipt || receipt.financeTxnId === txnId) return;
+    state.receipts = normalizeReceipts((state.receipts || []).map((r) => r.id === receiptId ? { ...r, financeTxnId: txnId } : r));
+    persist();
+  }
+  function openReceiptDetail(receiptId) {
+    openShopReceiptsDialog();
+    openReceiptEditView(receiptId);
+  }
 
   // ── seam accessors (state shared with app.js nav / settings / bindEvents) ──
   function getShopSpace() { return shopSpace; }
@@ -5129,6 +5189,10 @@ function renderShopReceipts() {
     openPublishedGroceryReview,
     openReceiptScanDialog,
     openReceiptScanWithFiles,
+    receiptsForFinance,
+    importFinanceInboxReceipts,
+    linkReceiptToFinanceTxn,
+    openReceiptDetail,
     openShopReceiptsDialog,
     receiptItemMappings,
     receiptPriceHistory,

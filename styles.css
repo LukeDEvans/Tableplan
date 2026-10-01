@@ -23049,3 +23049,21 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .article-paper-login-row { padding: 12px 0 24px; }
 .article-fetch-prompt .article-paper-login-actions { margin-top: 12px; }
 .sync-context-field-header .article-paper-login-actions { flex-wrap: nowrap; flex-shrink: 0; gap: 6px; }
+
+/* One receipts list (RECEIPTS.md): each receipt line's Finance budget category
+   sits on its own full-width row under the line's fields. */
+.receipt-line-row .receipt-line-budget {
+  grid-column: 1 / -1;
+  min-height: 32px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.shop-receipt-source {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-dark);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+.shop-receipt-meta .shop-receipt-source::after { content: ""; margin-left: 0; }
