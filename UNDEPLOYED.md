@@ -25,4 +25,17 @@ the web app's voice. The website itself is unchanged.
 1. Web: Settings → Voice still shows the household voice (not "device").
 2. Next TestFlight build from `main`: podcast/radio lock-screen pause and resume still work.
 
+## iPhone app: full NYT / Economist / Star Tribune articles with your login (PR #33)
+PR: https://github.com/LukeDEvans/Tableplan/pull/33
+
+Ships through TestFlight. The website is unchanged. In the app, Media → menu → Sync Settings →
+"Full articles on this iPhone" signs in to each paper in an in-app browser. Articles from those
+papers then load in full on the phone. A cut-off article shows "Sign in" / "Reload full article".
+
+**After the next TestFlight build:**
+1. Sign in to The Economist (email + password), then open an Economist article from a news-email
+   card. It should load in full. Repeat for NYT and Star Tribune.
+2. Sign out of one paper, reopen a new article from it: it should come back cut off with the
+   Sign in / Reload buttons.
+
 Checks for work that's already live are in [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md).
