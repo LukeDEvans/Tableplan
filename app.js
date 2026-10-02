@@ -3050,6 +3050,11 @@ function closeDialogOnBackdropClick(event) {
 }
 
 async function initializeApp() {
+  // The bottom dock is a permanent fixture, so it goes up first — before sign-in
+  // and the cloud load — rather than at the end of boot. initializeApp starts
+  // during module evaluation, so defer one microtask: the dock's module-level
+  // consts (declared far below) must exist before it runs (TDZ).
+  queueMicrotask(() => wireMiniPlayer());
   loadPlanIcsCache(); // hydrate subscribed-calendar events so they render instantly
   initDoPlannerDelegation();
   initTasksPageDelegation();
@@ -3085,7 +3090,7 @@ async function initializeApp() {
   refreshAllCalendarSources({ kinds: ["linked"] }); // boot: refresh the linked pipeline (ics refreshes on Plan-open)
   initAiChatPanel();
   initRecipeTimer();
-  wireMiniPlayer();
+  refreshBottomDock(); // state has loaded: idle "play" pick, weather availability + ticker
   scheduleArticleBodyBackfill(); // offload any still-inline saved-article bodies (background)
 }
 
@@ -34076,71 +34081,174 @@ function wireMiniPlayer() {
     }
   }, { passive: true });
   initBottomDock();
-  renderMiniPlayerIdle();
 }
 
 // ── Bottom dock: a permanent, swipeable ticker (mini-player, weather, …) ────────
-// Each slide is a .dock-slide in #dockTrack; a slide is shown when its `available`
-// check passes. The track is a horizontal scroll-snap strip (native swipe on
-// touch, trackpad/shift-scroll on a laptop); the dots above it switch slides and
-// only appear when more than one slide is available. Add a future ticker by
-// adding a .dock-slide element and an entry here.
+// Each slide is a .dock-slide in #dockTrack; a slide is in the rotation when its
+// `available` check passes. The slides are stacked in one grid cell and only the
+// active one shows. Swiping left/right drags the neighbour in from that side and
+// the rotation wraps around (player → weather → player → …), so either direction
+// always moves. A trackpad's sideways scroll does the same on a laptop. There are
+// no dots: the strip is circular, so there's no position to show. Add a future
+// ticker by adding a .dock-slide element and an entry here.
 let dockSuppressClick = false;
 const DOCK_SLIDES = [
   { id: "player", available: () => true },
   { id: "weather", available: () => isPageEnabled("weather"), refresh: () => renderWeatherTicker(document.getElementById("weatherTicker")) },
 ];
-const DOCK_PREF_KEY = "live-dock-slide-v1";
+const DOCK_PREF_KEY = "live-dock-slide-v2"; // the active slide's id (per device)
+let dockActiveId = "player";
+let dockInitialized = false;
+let dockSettle = null; // finishes an in-flight slide animation early
 function dockSlides() { return DOCK_SLIDES.filter((d) => d.available()); }
 function dockSlideEl(id) { return document.querySelector(`#dockTrack [data-dock-slide="${id}"]`); }
-function dockActiveIndex() {
-  const track = document.getElementById("dockTrack");
-  if (!track || !track.clientWidth) return 0;
-  return Math.round(track.scrollLeft / track.clientWidth);
+// The slide `step` places away from the active one, wrapping around the ends.
+function dockNeighborId(step) {
+  const ids = dockSlides().map((d) => d.id);
+  if (!ids.length) return null;
+  const i = Math.max(0, ids.indexOf(dockActiveId));
+  return ids[(((i + step) % ids.length) + ids.length) % ids.length];
 }
-function renderDockDots() {
-  const dots = document.getElementById("dockDots");
-  if (!dots) return;
-  const slides = dockSlides();
-  dots.hidden = slides.length < 2;
-  const active = dockActiveIndex();
-  dots.innerHTML = slides.map((d, i) => `<button class="dock-dot${i === active ? " is-active" : ""}" type="button" role="tab" aria-selected="${i === active}" aria-label="${d.id === "player" ? "Now playing" : d.id === "weather" ? "Weather" : d.id}" data-dock-goto="${i}"></button>`).join("");
+// Show only the active slide; the rest stay laid out (for the dock's height) but
+// invisible and out of the tab order.
+function dockShowActive() {
+  if (!dockSlides().some((d) => d.id === dockActiveId)) dockActiveId = dockSlides()[0]?.id || "player";
+  DOCK_SLIDES.forEach((d) => {
+    const el = dockSlideEl(d.id);
+    if (!el) return;
+    const on = d.id === dockActiveId;
+    el.style.transition = "";
+    el.style.transform = "";
+    el.toggleAttribute("data-dock-active", on);
+    el.toggleAttribute("inert", !on);
+    el.setAttribute("aria-hidden", String(!on));
+  });
 }
-function dockGoTo(index, { smooth = true } = {}) {
+function dockSetActive(id) {
+  dockActiveId = id;
+  dockShowActive();
+  try { localStorage.setItem(DOCK_PREF_KEY, id); } catch { /* storage blocked */ }
+}
+// Slide to the neighbour in direction dir (+1 = next, from the right; -1 = previous).
+// `fromDx` continues a drag from where the finger let go.
+function dockStep(dir, fromDx = 0) {
+  dockSettle?.();
   const track = document.getElementById("dockTrack");
-  if (!track) return;
-  track.scrollTo({ left: index * track.clientWidth, behavior: smooth ? "smooth" : "auto" });
+  const targetId = dockNeighborId(dir);
+  if (!track || !targetId || targetId === dockActiveId) return;
+  const w = track.clientWidth || window.innerWidth;
+  const cur = dockSlideEl(dockActiveId), next = dockSlideEl(targetId);
+  if (!cur || !next) { dockSetActive(targetId); return; }
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) { dockSetActive(targetId); return; }
+  next.setAttribute("data-dock-active", "");
+  [cur, next].forEach((el) => { el.style.transition = "none"; });
+  cur.style.transform = `translateX(${fromDx}px)`;
+  next.style.transform = `translateX(${fromDx + dir * w}px)`;
+  void track.offsetWidth; // commit the start positions before animating
+  const ease = "transform 0.24s cubic-bezier(0.2, 0.7, 0.3, 1)";
+  [cur, next].forEach((el) => { el.style.transition = ease; });
+  cur.style.transform = `translateX(${-dir * w}px)`;
+  next.style.transform = "translateX(0)";
+  let done = false;
+  const finish = () => { if (done) return; done = true; dockSettle = null; dockSetActive(targetId); };
+  dockSettle = finish;
+  next.addEventListener("transitionend", finish, { once: true });
+  setTimeout(finish, 320); // in case transitionend never fires
 }
 function refreshBottomDock() {
   DOCK_SLIDES.forEach((d) => { const el = dockSlideEl(d.id); if (el) el.hidden = !d.available(); });
+  dockShowActive();
   renderMiniPlayerIdle(); // the idle plan depends on synced state (history, queue, picks)
-  renderDockDots();
   dockSlides().forEach((d) => d.refresh?.());
 }
+// Finger-tracking swipe: the active slide follows the finger and the neighbour on
+// the side being revealed comes with it. Past a quarter of the width (or a quick
+// flick) it moves on; otherwise it springs back. Vertical swipes are left alone
+// (the mini-player's swipe-up opens the Now-Playing window).
+function wireDockSwipe(track) {
+  let sx = 0, sy = 0, st = 0, dx = 0, mode = null, peekId = null;
+  const reset = () => { mode = null; peekId = null; dx = 0; };
+  track.addEventListener("touchstart", (e) => {
+    dockSettle?.(); // a new swipe starts from the settled slide
+    if (e.touches.length !== 1) { reset(); return; }
+    const t = e.touches[0];
+    sx = t.clientX; sy = t.clientY; st = Date.now(); dx = 0; mode = "pending"; peekId = null;
+  }, { passive: true });
+  track.addEventListener("touchmove", (e) => {
+    if (!mode || mode === "vertical") return;
+    const t = e.touches[0];
+    const mx = t.clientX - sx, my = t.clientY - sy;
+    if (mode === "pending") {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      if (Math.abs(my) > Math.abs(mx) || dockSlides().length < 2) { mode = "vertical"; return; }
+      mode = "horizontal";
+    }
+    e.preventDefault();
+    dx = mx;
+    const w = track.clientWidth || window.innerWidth;
+    const want = dockNeighborId(dx < 0 ? 1 : -1);
+    if (want !== peekId) {
+      if (peekId && peekId !== want) { const old = dockSlideEl(peekId); if (old) { old.removeAttribute("data-dock-active"); old.style.transform = ""; } }
+      peekId = want;
+    }
+    const cur = dockSlideEl(dockActiveId), peek = peekId ? dockSlideEl(peekId) : null;
+    if (cur) { cur.style.transition = "none"; cur.style.transform = `translateX(${dx}px)`; }
+    if (peek && peekId !== dockActiveId) {
+      peek.setAttribute("data-dock-active", "");
+      peek.style.transition = "none";
+      peek.style.transform = `translateX(${dx + (dx < 0 ? w : -w)}px)`;
+    }
+  }, { passive: false });
+  const end = () => {
+    if (mode !== "horizontal") { reset(); return; }
+    dockSuppressClick = true; setTimeout(() => { dockSuppressClick = false; }, 400);
+    const w = track.clientWidth || window.innerWidth;
+    const fast = Math.abs(dx) > 30 && Math.abs(dx) / Math.max(1, Date.now() - st) > 0.5;
+    if (Math.abs(dx) > w * 0.25 || fast) {
+      dockStep(dx < 0 ? 1 : -1, dx);
+    } else {
+      // Spring back.
+      const cur = dockSlideEl(dockActiveId), peek = peekId ? dockSlideEl(peekId) : null;
+      const ease = "transform 0.2s ease";
+      if (cur) { cur.style.transition = ease; cur.style.transform = "translateX(0)"; }
+      if (peek && peekId !== dockActiveId) { peek.style.transition = ease; peek.style.transform = `translateX(${dx < 0 ? w : -w}px)`; }
+      const tm = setTimeout(() => dockSettle?.(), 220);
+      dockSettle = () => { clearTimeout(tm); dockSettle = null; dockShowActive(); };
+    }
+    reset();
+  };
+  track.addEventListener("touchend", end, { passive: true });
+  track.addEventListener("touchcancel", end, { passive: true });
+  // Trackpad / shift-wheel: one step per sideways gesture.
+  let wheelAcc = 0, wheelLock = 0;
+  track.addEventListener("wheel", (e) => {
+    if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    if (Date.now() < wheelLock) return;
+    wheelAcc += e.deltaX;
+    if (Math.abs(wheelAcc) > 40) {
+      dockStep(wheelAcc > 0 ? 1 : -1);
+      wheelAcc = 0;
+      wheelLock = Date.now() + 450;
+    }
+  }, { passive: false });
+}
+// Runs at the very start of boot (initializeApp), before sign-in and the cloud
+// load, so the dock is on screen the moment the app is. It's refreshed again
+// once state has loaded (refreshBottomDock).
 function initBottomDock() {
+  if (dockInitialized) return;
   const dock = document.getElementById("bottomDock");
   const track = document.getElementById("dockTrack");
   if (!dock || !track) return;
+  dockInitialized = true;
   dock.hidden = false;
   document.body.classList.add("has-mini-player", "has-bottom-dock");
+  try { dockActiveId = localStorage.getItem(DOCK_PREF_KEY) || "player"; } catch { /* storage blocked */ }
   refreshBottomDock();
-  let saved = 0;
-  try { saved = Number(localStorage.getItem(DOCK_PREF_KEY)) || 0; } catch { /* storage blocked */ }
-  requestAnimationFrame(() => dockGoTo(Math.min(saved, dockSlides().length - 1), { smooth: false }));
-  let scrollTimer = null;
-  track.addEventListener("scroll", () => {
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(() => {
-      renderDockDots();
-      try { localStorage.setItem(DOCK_PREF_KEY, String(dockActiveIndex())); } catch { /* storage blocked */ }
-    }, 120);
-  }, { passive: true });
-  document.getElementById("dockDots")?.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-dock-goto]");
-    if (b) dockGoTo(Number(b.dataset.dockGoto));
-  });
+  wireDockSwipe(track);
   document.getElementById("weatherTicker")?.addEventListener("click", () => { if (!dockSuppressClick) showWeatherApp(); });
-  window.addEventListener("resize", () => dockGoTo(dockActiveIndex(), { smooth: false }));
   // Weather refresh: on return to the app and every 15 minutes in the foreground.
   // The weather service caches snapshots (TTL), so this rarely hits the network.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshBottomDock(); });

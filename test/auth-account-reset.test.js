@@ -28,7 +28,7 @@ function makeStorage(initial = {}) {
 const DEVICE_NEUTRAL_KEYS = new Set([
   "cadence-view-mode", "cadence-zoom", "live-dev-sw", "live_local_dev",
   "live_push_subscribed", "live-playback-speed-v1", "live_signed_out_explicitly",
-  "live_migrated_personal", "live-dock-slide-v1",
+  "live_migrated_personal", "live-dock-slide-v2",
 ]);
 
 describe("clearLocalAccountState — account-transition boundary", () => {
