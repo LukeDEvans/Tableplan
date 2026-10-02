@@ -23087,22 +23087,20 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
   border-top: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
 }
 body:not(.app-authed) .bottom-dock { display: none; }
+/* Slides stack in one grid cell (the dock is as tall as its tallest slide);
+   only the active one shows. A swipe drags the active slide and its neighbour
+   sideways with inline transforms (app.js wireDockSwipe), wrapping around. */
 .dock-track {
-  display: flex;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-snap-type: x mandatory;
-  scrollbar-width: none;
-  overscroll-behavior-x: contain;
-  touch-action: pan-x;
+  display: grid;
+  overflow: hidden;
+  touch-action: none; /* the dock's swipes are all handled in JS */
 }
-.dock-track::-webkit-scrollbar { display: none; }
 .dock-slide {
-  flex: 0 0 100%;
+  grid-area: 1 / 1;
   min-width: 0;
-  scroll-snap-align: start;
-  scroll-snap-stop: always;
+  visibility: hidden;
 }
+.dock-slide[data-dock-active] { visibility: visible; }
 .dock-slide[hidden] { display: none; }
 /* The mini-player is a dock slide now: in flow, no bar chrome of its own. */
 .bottom-dock .mini-player {
@@ -23112,39 +23110,6 @@ body:not(.app-authed) .bottom-dock { display: none; }
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-/* Slide dots: a small frosted pill floating just above the dock. The active
-   slide's dot stretches into a dash. Shown only when there's > 1 slide. */
-.dock-dots {
-  position: absolute;
-  left: 50%;
-  top: -9px;
-  transform: translate(-50%, -100%);
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--paper, #fffdf8) 82%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  z-index: 1;
-}
-.dock-dots[hidden] { display: none; }
-.dock-dot {
-  width: 6px;
-  height: 6px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--ink) 28%, transparent);
-  cursor: pointer;
-  transition: width 0.2s ease, background 0.2s ease;
-}
-.dock-dot.is-active { width: 16px; background: var(--accent, #2a9d8f); }
-/* Bigger hit area without growing the pill. */
-.dock-dot { position: relative; }
-.dock-dot::after { content: ""; position: absolute; inset: -8px -3px; }
 
 /* Idle mini-player: nothing loaded — shows what play would start. */
 .mini-player.is-idle .mini-player-skip-btn,
@@ -23206,9 +23171,6 @@ body:not(.app-authed) .bottom-dock { display: none; }
   .weather-ticker { height: 87px; }
   .wxt-art { width: 70px; height: 70px; }
   .wxt-temp { font-size: 2.3rem; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dock-dot { transition: none; }
 }
 
 /* The dock is always there, so things that sat at the screen's bottom edge

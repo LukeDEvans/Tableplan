@@ -18,7 +18,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css?v=daily-dozen-17" />
   </head>
-  <body>
+  <body class="has-mini-player has-bottom-dock">
     <script>
       // Optimistic unlock: a stored Supabase session means a returning user, so
       // skip the "Checking sign-in…" cover. The real session check still runs and
@@ -3604,12 +3604,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2"></script>
     <!-- Bottom dock: a permanent, swipeable ticker along the bottom of the app.
          Slides: the mini-player (always) and a weather summary; more can be added
-         as further .dock-slide elements (see DOCK in app.js). The dots above the
-         track show when more than one slide is available. -->
-    <div class="bottom-dock" id="bottomDock" hidden>
-      <div class="dock-dots" id="dockDots" role="tablist" aria-label="Bottom ticker" hidden></div>
+         as further .dock-slide elements (see DOCK_SLIDES in app.js). Swiping left or
+         right cycles through them circularly. It's in the page from the first paint
+         (the sign-in gate covers it until the app unlocks). -->
+    <div class="bottom-dock" id="bottomDock">
       <div class="dock-track" id="dockTrack">
-    <div class="dock-slide mini-player" id="miniPlayer" data-dock-slide="player" aria-label="Now playing" role="region">
+    <div class="dock-slide mini-player is-idle" id="miniPlayer" data-dock-slide="player" data-dock-active aria-label="Now playing" role="region">
       <!-- Thin non-interactive progress line across the very top -->
       <div class="mini-player-progress" aria-hidden="true">
         <div class="mini-player-progress-fill" id="miniPlayerProgressFill"></div>
