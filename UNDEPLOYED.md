@@ -10,7 +10,6 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Last deploy: 2026-10-03 (PRs #41–#47)._
+_Last deploy: 2026-10-03 #2 (PR #49)._
 
 _Nothing undeployed._
-- **Weather + store search work in the iPhone app** · PR #49 · Root cause of "couldn't reach location search" in the app: the `weather`, `google-places` and `instacart-list` functions answer only an origin allowlist, and the iPhone app's requests (replayed natively by CapacitorHttp, with no Origin) got no `Access-Control-Allow-Origin`, so iOS discarded every reply. Requests with no Origin now get `*`, and `capacitor://localhost` is on the list; other websites' pages stay blocked. Server-only: no TestFlight build needed. Post-deploy: in the iPhone app, the dock's weather slide shows local weather; Weather → search "Minneapolis" returns results; Shop → store search still finds stores; Shop → "Send to Instacart" shows as available.
