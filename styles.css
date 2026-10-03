@@ -5430,6 +5430,13 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   flex: 0 0 150px;
   scroll-snap-align: start;
 }
+/* Long-press opens the card's Edit / Delete menu — keep iOS from showing its
+   own callout / text selection under the finger. */
+.recreate-row .workout-pool-card {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
 .recreate-row > .empty-state { flex: 1 0 auto; margin: 0; }
 .recreate-add-card .workout-pool-icon {
   font-size: 2.4rem;
