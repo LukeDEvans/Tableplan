@@ -137,6 +137,23 @@ export function nativeWebAuth() {
   return _webAuth;
 }
 
+// Native device location (LiveLocation plugin, CLLocationManager): checkPermission,
+// requestPermission, getCurrentPosition. null in a browser/PWA, or in an app build
+// from before the plugin existed → callers use navigator.geolocation.
+let _location;
+export function nativeLocation() {
+  if (_location !== undefined) return _location;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _location = null;
+      return _location;
+    }
+    const p = registerPlugin("LiveLocation");
+    _location = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("LiveLocation")) ? p : null;
+  } catch { _location = null; }
+  return _location;
+}
+
 // The app's URL scheme the Gmail callback returns to (gmail-callback NATIVE_RETURN).
 export const APP_CALLBACK_SCHEME = "com.mrlukedevans.live";
 

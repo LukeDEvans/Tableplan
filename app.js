@@ -1689,7 +1689,7 @@ const _weather = createWeatherModule({
   // The bottom dock's weather ticker follows the weather page's chosen place.
   onLocationChosen: () => renderWeatherTicker(document.getElementById("weatherTicker")),
 });
-const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker } = _weather;
+const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent } = _weather;
 
 // ── Inventory domain (extracted to inventory-ui.js) ────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
@@ -3090,6 +3090,9 @@ async function initializeApp() {
   initAiChatPanel();
   initRecipeTimer();
   refreshBottomDock(); // state has loaded: idle "play" pick, weather availability + ticker
+  // Location is on by default for local weather: ask once (the system prompt is
+  // the user's agreement) if it hasn't been answered on this device.
+  if (isPageEnabled("weather") && authSession?.access_token) ensureLocationConsent();
   scheduleArticleBodyBackfill(); // offload any still-inline saved-article bodies (background)
 }
 
