@@ -5,6 +5,57 @@ shipped yet is listed in [UNDEPLOYED.md](UNDEPLOYED.md).) When deploying, move e
 UNDEPLOYED.md entry's "After deploying" steps here under a heading for that deploy.
 Tick items off as they're done; delete a deploy's section once it's all ticked.
 
+## 2026-10-03 deploy (PRs #41–#47)
+Web deploy plus a TestFlight build from `main`. Service worker cache bumped to v38 — hard-refresh once. The Swift changes (#41 voice speed, #47 location) reach the phone only through the TestFlight build.
+
+**On-device voices read far too fast (PR #41)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/41
+
+On-device voice previews and read-aloud now follow Settings → Voice "Speaking speed"; the iOS plugin maps speed onto Apple's speech-rate scale with a gentle curve instead of the old linear one.
+
+**After deploying:**
+- [ ] **install this deploy's TestFlight build** (the Swift plugin change only ships with a native build), then preview an iPhone voice at 1.0× and 1.5× in Settings → Voice. If the speed is still off, tune the `0.35` exponent in `avSpeechRate()` (`ios/App/App/LiveTtsPlugin.swift`).
+
+**Bottom dock: there from launch; no dots; circular swipe (PR #42)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/42
+
+The dock is in the page from first paint instead of appearing after sign-in + the cloud load; the dots pill above it is gone; swiping left/right wraps around the slides (player → weather → player …).
+
+**After deploying:**
+- [ ] on the iPhone, cold-launch the app and confirm the dock is there immediately; swipe both ways several times (it should keep cycling, short drags spring back, a swipe never opens Media/Weather); tap the bar → Media, tap the weather slide → Weather, swipe the player up → Now-Playing.
+
+**Bottom dock auto-advances (PR #43)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/43
+
+Every 8 s the next dock slide slides in from the right (player → weather → …); touching/swiping/hovering the dock holds it for 30 s; paused in the background and while Now-Playing is open.
+
+**After deploying:**
+- [ ] on the iPhone, leave the app idle on any page and watch the dock rotate; tap play and confirm the bar doesn't slide away for ~30 s.
+
+**Media removed from the landing page + page menu (PR #44)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/44
+
+Media is reached from the bottom dock's mini-player (tap the bar); its news-article notification dot moved onto the mini-player's art corner. `#media` still routes.
+
+**After deploying:**
+- [ ] confirm the home links and the page-title menu no longer list Media, tapping the mini-player opens Media, and a pending news suggestion shows the red dot on the mini-player art.
+
+**Recreate hub: Explore / Exercise / Leisure rows; Exercise + Explore leave the nav (PR #45)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/45
+
+Recreate now has three subsections, each a sideways-scrolling row of cards: Explore (a Travel card with new art → the Explore page), Exercise (every workout card + an "Add exercise" card), Leisure (Sailing, Piano). Exercise and Explore are gone from the landing page and page menu (`#sweat` / `#explore` still route); Recreate shows when any of the three is on, and Explore's notification dot moved to Recreate + the Travel card.
+
+**After deploying:**
+- [ ] on the iPhone, open Recreate, swipe each row sideways, tap a workout (records), tap Travel (opens trips); in the row, long-press a workout card for Edit / Delete (swipe-to-edit is off in the row so sideways swipes scroll — PR #46).
+
+**Weather: location on by default (iPhone app fix) (PR #47)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/47
+
+Root cause: the iOS app's Info.plist had no `NSLocationWhenInUseUsageDescription`, so iOS silently refused location to the app's web view (browsers on the laptop don't need it). Adds the usage string + a native `LiveLocation` plugin (CLLocationManager — one iOS prompt, no second "localhost" prompt), `device-location.js` (native plugin in the app, `navigator.geolocation` elsewhere), and makes current location the default: with no saved place picked, the app asks once per device at launch (the iOS prompt is the agreement), then the weather page and dock ticker follow the device. A "no" isn't asked again; a picked saved place still wins.
+
+**After deploying:**
+- [ ] **install this deploy's TestFlight build** (Info.plist + Swift plugin only ship with a native build). Then cold-launch: the iOS "Allow Live to use your location?" prompt appears once → Allow → the dock's weather slide shows local weather; open Weather → "Current location" loads. If you'd already denied it: Settings → Privacy & Security → Location Services → Live → While Using.
+
 ## 2026-10-01 deploy #2 (PRs #28, #33, #34–#40)
 Web deploy plus a TestFlight build from `main`. Service worker cache bumped to v37 — hard-refresh once.
 
