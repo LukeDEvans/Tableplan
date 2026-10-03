@@ -137,6 +137,24 @@ export function nativeWebAuth() {
   return _webAuth;
 }
 
+// The iPhone app runs at capacitor://localhost, so app.js's canUseLocalBackend()
+// (a hostname check) is TRUE there and URL helpers pick their local-dev-server
+// paths (/api/<name>, served by server.js on a laptop). The live site only routes
+// a few of those, so the rest 404'd in the app (weather "outside NWS coverage",
+// location/store search, scans, imports…). app.js's native fetch shim sends every
+// /api/<name> through this: it becomes the deployed function's real path.
+// Kept as /api/: v2 functions whose config.path IS /api/<name>.
+const NATIVE_API_KEEP = new Set(["chat", "clean-recipe", "push-subscribe"]);
+// Local route name → deployed function name, where they differ.
+const NATIVE_API_ALIASES = { calendars: "google-calendar" };
+export function nativeApiPath(path) {
+  const m = /^\/api\/([a-z0-9-]+)(.*)$/i.exec(String(path || ""));
+  if (!m) return path;
+  const [, name, rest] = m;
+  if (NATIVE_API_KEEP.has(name)) return path;
+  return `/.netlify/functions/${NATIVE_API_ALIASES[name] || name}${rest}`;
+}
+
 // Native device location (LiveLocation plugin, CLLocationManager): checkPermission,
 // requestPermission, getCurrentPosition. null in a browser/PWA, or in an app build
 // from before the plugin existed → callers use navigator.geolocation.
