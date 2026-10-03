@@ -1162,8 +1162,7 @@ const elements = {
   watchArchiveDialog: document.querySelector("#watchArchiveDialog"),
   watchArchiveBody: document.querySelector("#watchArchiveBody"),
   closeWatchArchiveBtn: document.querySelector("#closeWatchArchiveBtn"),
-  homeReadBtn: document.querySelector("#homeReadBtn"),
-  titleReadBtn: document.querySelector("#titleReadBtn"),
+  miniPlayerInfoBtn: document.querySelector("#miniPlayerInfoBtn"),
   mediaMainPage: document.querySelector("#mediaMainPage"),
   readingPlannerGrid: document.querySelector("#readingPlannerGrid"),
   readingSearchDialog: document.querySelector("#readingSearchDialog"),
@@ -1615,7 +1614,7 @@ const PAGE_NOTIF_BUTTONS = {
   do: ["planTasksBtn"], // Tasks notif dot now lives on the Calendar page's bell
   eat: ["homeEatBtn", "titleMealPlanBtn"],
   explore: ["homeExploreBtn", "titleExploreBtn"],
-  media: ["homeReadBtn", "titleReadBtn"],
+  media: ["miniPlayerInfoBtn"], // Media opens from the bottom dock's mini-player (no home / menu entry)
 };
 
 // ── Media news notifications (news-notif-ui.js) ─────────────────────────────
@@ -2935,8 +2934,6 @@ function bindEvents() {
       writeLocalBackup().catch(() => {});
     }
   });
-  elements.homeReadBtn.addEventListener("click", showMediaApp);
-  elements.titleReadBtn.addEventListener("click", showMediaApp);
   elements.homeShopBtn.addEventListener("click", showShopApp);
   elements.titleShopBtn.addEventListener("click", showShopApp);
   elements.openShopReceiptsBtn.addEventListener("click", openShopReceiptsDialog);
@@ -15925,7 +15922,6 @@ function updatePageTitleMenu() {
   elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPagePersonallyEnabled("play");
   elements.titleToDoListBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no top-level nav button
   elements.titleWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no top-level nav button
-  elements.titleReadBtn.hidden = activeAppArea === "media" || !isPagePersonallyEnabled("read");
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
   if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
@@ -15943,7 +15939,6 @@ function updatePageVisibility() {
   elements.homePlayBtn.hidden = !isPagePersonallyEnabled("play");
   elements.homeDoBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no home-screen button
   elements.homeWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no home-screen button
-  elements.homeReadBtn.hidden = !isPagePersonallyEnabled("read");
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
   if (elements.homeFinanceBtn) elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");

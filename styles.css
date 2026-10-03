@@ -17150,6 +17150,15 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   /* No safe-area padding: the bar body runs flush to the bottom edge of the
      screen (the home indicator overlays it, like Apple's own media bars). */
 }
+/* Media's notification dot (news articles to review) sits on the mini-player's
+   art corner — the dock is how Media is reached now (no home / menu entry). */
+.mini-player-art-btn { position: relative; }
+.mini-player-art-btn.has-notif-dot::after {
+  content: ""; position: absolute; top: 6px; right: 6px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--tomato, #e5484d);
+  box-shadow: 0 0 0 2px var(--paper, #fffdf8);
+}
 /* Thin non-interactive episode-progress line pinned to the top edge. */
 .mini-player-progress {
   height: 3px;
