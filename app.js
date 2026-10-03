@@ -34088,7 +34088,7 @@ function wireMiniPlayer() {
 // `available` check passes. The slides are stacked in one grid cell and only the
 // active one shows. Swiping left/right drags the neighbour in from that side and
 // the rotation wraps around (player → weather → player → …), so either direction
-// always moves. A trackpad's sideways scroll does the same on a laptop. There are
+// always moves. It also advances by itself every few seconds (see DOCK_AUTO_MS). A trackpad's sideways scroll does the same on a laptop. There are
 // no dots: the strip is circular, so there's no position to show. Add a future
 // ticker by adding a .dock-slide element and an entry here.
 let dockSuppressClick = false;
@@ -34100,6 +34100,30 @@ const DOCK_PREF_KEY = "live-dock-slide-v2"; // the active slide's id (per device
 let dockActiveId = "player";
 let dockInitialized = false;
 let dockSettle = null; // finishes an in-flight slide animation early
+// Auto-advance: every DOCK_AUTO_MS the next slide slides in from the right
+// (right → left, the same as a left swipe). Touching, scrolling, hovering or
+// focusing the dock holds it for DOCK_AUTO_HOLD_MS so it never moves out from
+// under a finger; it also waits while the app is in the background or the
+// Now-Playing window is open. One setTimeout chain, no network.
+const DOCK_AUTO_MS = 8000;
+const DOCK_AUTO_HOLD_MS = 30000;
+let dockAutoTimer = null;
+let dockAutoHoldUntil = 0;
+let dockHovered = false;
+function holdDockAuto() { dockAutoHoldUntil = Date.now() + DOCK_AUTO_HOLD_MS; }
+function scheduleDockAuto(delay = DOCK_AUTO_MS) {
+  clearTimeout(dockAutoTimer);
+  dockAutoTimer = setTimeout(dockAutoTick, delay);
+}
+function dockAutoTick() {
+  const wait = dockAutoHoldUntil - Date.now();
+  if (wait > 0) { scheduleDockAuto(wait); return; }
+  const busy = document.hidden || dockHovered || dockSlides().length < 2
+    || document.getElementById("nowPlayingOverlay")
+    || (document.activeElement?.closest?.("#bottomDock") && document.activeElement.matches(":focus-visible")); // keyboard focus
+  if (!busy) dockStep(1);
+  scheduleDockAuto();
+}
 function dockSlides() { return DOCK_SLIDES.filter((d) => d.available()); }
 function dockSlideEl(id) { return document.querySelector(`#dockTrack [data-dock-slide="${id}"]`); }
 // The slide `step` places away from the active one, wrapping around the ends.
@@ -34171,6 +34195,7 @@ function wireDockSwipe(track) {
   const reset = () => { mode = null; peekId = null; dx = 0; };
   track.addEventListener("touchstart", (e) => {
     dockSettle?.(); // a new swipe starts from the settled slide
+    holdDockAuto();
     if (e.touches.length !== 1) { reset(); return; }
     const t = e.touches[0];
     sx = t.clientX; sy = t.clientY; st = Date.now(); dx = 0; mode = "pending"; peekId = null;
@@ -34225,6 +34250,7 @@ function wireDockSwipe(track) {
   track.addEventListener("wheel", (e) => {
     if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
     e.preventDefault();
+    holdDockAuto();
     if (Date.now() < wheelLock) return;
     wheelAcc += e.deltaX;
     if (Math.abs(wheelAcc) > 40) {
@@ -34253,6 +34279,11 @@ function initBottomDock() {
   // The weather service caches snapshots (TTL), so this rarely hits the network.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshBottomDock(); });
   setInterval(() => { if (!document.hidden) DOCK_SLIDES.find((d) => d.id === "weather")?.refresh?.(); }, 15 * 60 * 1000);
+  dock.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") dockHovered = true; });
+  dock.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") { dockHovered = false; holdDockAuto(); } });
+  dock.addEventListener("pointerdown", holdDockAuto);
+  dock.addEventListener("focusin", holdDockAuto);
+  scheduleDockAuto();
 }
 
 // ── Now-Playing modal: full info about the current audio, over any page ───────
