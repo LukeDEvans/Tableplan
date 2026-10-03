@@ -14202,6 +14202,33 @@ function moveDoTask(sourceDay, targetDay, taskId) {
   renderTasksPage();
 }
 
+// Touch long-press (~500 ms, finger held still) on a workout card → the
+// Edit / Delete menu at the finger. Moving more than a few px first (a row
+// scroll) cancels it; the click that follows the release is swallowed so the
+// card doesn't also open the recording dialog (or close the menu).
+function wireWorkoutCardLongPress(btn) {
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  btn.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    delete btn.dataset.lpFired;
+    sx = e.clientX; sy = e.clientY;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      btn.dataset.lpFired = "1";
+      setTimeout(() => { delete btn.dataset.lpFired; }, 800);
+      suppressNextDoTaskClick();
+      navigator.vibrate?.(10);
+      openWorkoutPoolContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: sx, clientY: sy }, btn.dataset.recordWorkout);
+    }, 500);
+  });
+  btn.addEventListener("pointermove", (e) => {
+    if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) cancel();
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => btn.addEventListener(ev, cancel));
+}
+
 // Workouts, most recently logged first (never-logged ones after, A→Z).
 function workoutsByRecency() {
   return normalizeWorkouts(state.workouts).sort((a, b) => {
@@ -14238,15 +14265,20 @@ function renderPlayPlanner() {
 
 // Wire workout cards (workoutPoolCardTemplate) inside `root`: tap → record,
 // right-click → Edit/Delete menu. `swipe` adds swipe-left-to-reveal Edit/Delete
-// (the Exercise grid only — in Recreate's horizontal row a sideways swipe scrolls).
-function wireWorkoutPoolCards(root, { swipe = false } = {}) {
+// (the Exercise grid only — in Recreate's horizontal row a sideways swipe scrolls,
+// so the row uses `longPress` instead: hold a card to get the same menu).
+function wireWorkoutPoolCards(root, { swipe = false, longPress = false } = {}) {
   root.querySelectorAll("[data-record-workout]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const wrap = btn.closest(".workout-pool-card-wrap");
       if (wrap?.classList.contains("is-swiped")) { wrap.classList.remove("is-swiped"); return; }
       openWorkoutRecordingDialog(btn.dataset.recordWorkout);
     });
-    btn.addEventListener("contextmenu", (event) => openWorkoutPoolContextMenu(event, btn.dataset.recordWorkout));
+    btn.addEventListener("contextmenu", (event) => {
+      if (btn.dataset.lpFired) { event.preventDefault(); return; } // the long-press already opened it
+      openWorkoutPoolContextMenu(event, btn.dataset.recordWorkout);
+    });
+    if (longPress) wireWorkoutCardLongPress(btn);
     const wrap = btn.closest(".workout-pool-card-wrap");
     if (wrap && swipe) {
       wrap.addEventListener("pointerdown", handleWorkoutPoolPointerDown);
@@ -22839,7 +22871,7 @@ function renderRecreatePage() {
     });
     grid.querySelector("[data-recreate-travel]")?.addEventListener("click", showExploreApp);
     grid.querySelector("[data-recreate-new-workout]")?.addEventListener("click", openNewWorkoutDialog);
-    wireWorkoutPoolCards(grid.querySelector('[data-recreate-section="exercise"]') || grid);
+    wireWorkoutPoolCards(grid.querySelector('[data-recreate-section="exercise"]') || grid, { longPress: true });
     return;
   }
 
