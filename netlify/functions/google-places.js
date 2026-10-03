@@ -5,6 +5,7 @@ const DEFAULT_SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 const ALLOWED_ORIGINS = new Set([
   "https://effervescent-malabi-e0af55.netlify.app",
+  "capacitor://localhost", // the iPhone app's web view
   "http://localhost:4174",
   "http://127.0.0.1:4174"
 ]);
@@ -69,8 +70,14 @@ exports.handler = async (event) => {
   }
 };
 
+// The allowlist only keeps OTHER websites' pages from using this from a browser
+// (a browser always sends their Origin). A request with no Origin gets "*":
+// that's the iPhone app, whose requests iOS replays natively (CapacitorHttp)
+// without an Origin and then still checks this header, and non-browser callers,
+// which CORS never restricted anyway.
 function corsHeaders(origin) {
-  const allowedOrigin = ALLOWED_ORIGINS.has(String(origin || "")) ? String(origin) : "";
+  const o = String(origin || "");
+  const allowedOrigin = !o ? "*" : ALLOWED_ORIGINS.has(o) ? o : "";
   return {
     ...(allowedOrigin ? { "access-control-allow-origin": allowedOrigin } : {}),
     "access-control-allow-methods": "GET, OPTIONS",

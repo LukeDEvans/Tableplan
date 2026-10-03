@@ -21,6 +21,7 @@ const USER_AGENT = String(process.env.WEATHER_USER_AGENT || "").trim()
 
 const ALLOWED_ORIGINS = new Set([
   "https://effervescent-malabi-e0af55.netlify.app",
+  "capacitor://localhost", // the iPhone app's web view
   "http://localhost:4174",
   "http://127.0.0.1:4174",
   "http://localhost:5173",
@@ -514,8 +515,14 @@ function sunTimes(lat, lon, date) {
   return { sunrise: jToIso(J - H / 360), sunset: jToIso(J + H / 360) };
 }
 
+// The allowlist only keeps OTHER websites' pages from using this from a browser
+// (a browser always sends their Origin). A request with no Origin gets "*":
+// that's the iPhone app, whose requests iOS replays natively (CapacitorHttp)
+// without an Origin and then still checks this header, and non-browser callers,
+// which CORS never restricted anyway.
 function corsHeaders(origin) {
-  const allowed = ALLOWED_ORIGINS.has(String(origin || "")) ? String(origin) : "";
+  const o = String(origin || "");
+  const allowed = !o ? "*" : ALLOWED_ORIGINS.has(o) ? o : "";
   return {
     ...(allowed ? { "access-control-allow-origin": allowed } : {}),
     "access-control-allow-methods": "GET, OPTIONS",
