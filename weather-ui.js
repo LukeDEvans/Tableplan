@@ -26,6 +26,7 @@
 import { createWeatherCache } from './weather-cache.js';
 import { conditionFor, conditionLabel, weatherEmphasis } from './weather-condition.js';
 import { heroArtSvg, iconSvg } from './weather-art.js';
+import { locationPermission, getDevicePosition } from './device-location.js';
 
 export function createWeatherModule(deps) {
   const { state, elements, persist, escapeHtml, canUseLocalBackend, isNativeApp, getActiveAppArea, ensureLeaflet, onLocationChosen } = deps;
@@ -89,16 +90,27 @@ const weatherExpanded = new Set();  // expanded disclosure section ids
 const weatherProductText = new Map(); // `${office}:${type}` -> product | "loading" | "none"
 let weatherWired = false;
 
+// Current location is the default: with no place chosen (or "current" chosen)
+// the page uses the device's location, asking permission if it hasn't been
+// answered yet. A saved place the user picked wins.
+function weatherWantsCurrentLocation() {
+  const id = state.weatherActiveLocationId;
+  return !id || id === "current" || !(state.weatherLocations || []).some((l) => l.id === id);
+}
+
 function initWeatherPage() {
   const saved = state.weatherLocations || [];
   const activeId = state.weatherActiveLocationId;
-  let loc = saved.find((l) => l.id === activeId) || null;
-  if (!loc && activeId === "current" && weatherCurrentGeoLoc) loc = weatherCurrentGeoLoc;
+  const loc = saved.find((l) => l.id === activeId) || null;
   if (loc) setWeatherLocation(loc, { persistChoice: false });
+  else if (weatherCurrentGeoLoc) setWeatherLocation(weatherCurrentGeoLoc, { persistChoice: false });
   else if (weatherActiveLocation) { renderWeatherPage(); loadWeatherSnapshot(); }
-  else if (saved.length) setWeatherLocation(saved[0], { persistChoice: false });
-  else { weatherStatus = "idle"; renderWeatherPage(); useCurrentWeatherLocation(); }
+  else { weatherStatus = "idle"; renderWeatherPage(); useCurrentWeatherLocation({ fallbackToSaved: true }); }
   startWeatherRefreshLoop();
+}
+
+function currentGeoLoc(pos) {
+  return { id: "current", label: "Current location", latitude: pos.latitude, longitude: pos.longitude, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, isCurrentLocation: true };
 }
 
 function setWeatherLocation(loc, { persistChoice = true } = {}) {
@@ -131,23 +143,52 @@ async function loadWeatherSnapshot() {
   renderWeatherPage();
 }
 
-function useCurrentWeatherLocation() {
-  if (!navigator.geolocation) { weatherStatus = "error"; weatherErrorMsg = "Location isn't available on this device — search for a place instead."; renderWeatherPage(); return; }
+// Use the device's location (native plugin in the iPhone app, the browser's
+// geolocation elsewhere — see device-location.js). `fallbackToSaved`: when it
+// can't be had (denied / no fix), show the first saved place instead of an empty page.
+function useCurrentWeatherLocation({ fallbackToSaved = false } = {}) {
   weatherStatus = "geolocating"; weatherErrorMsg = ""; renderWeatherPage();
-  navigator.geolocation.getCurrentPosition(
+  getDevicePosition().then(
     (pos) => {
-      weatherCurrentGeoLoc = { id: "current", label: "Current location", latitude: pos.coords.latitude, longitude: pos.coords.longitude, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, isCurrentLocation: true };
-      state.weatherActiveLocationId = "current"; persist(); onLocationChosen?.();
+      weatherCurrentGeoLoc = currentGeoLoc(pos);
+      if (state.weatherActiveLocationId !== "current") { state.weatherActiveLocationId = "current"; persist(); }
+      onLocationChosen?.();
       setWeatherLocation(weatherCurrentGeoLoc, { persistChoice: false });
     },
     (err) => {
+      const saved = state.weatherLocations || [];
+      weatherErrorMsg = err?.denied
+        ? (isNativeApp?.()
+          ? "Location is off for Live — turn it on in Settings → Privacy & Security → Location Services → Live, or search for a place."
+          : "Location permission denied — allow it in your browser's site settings, or search for a place.")
+        : "Couldn't get your location — search for a place instead.";
+      if (fallbackToSaved && !weatherSnapshot && saved.length) {
+        setWeatherLocation(saved[0], { persistChoice: false });
+        return;
+      }
       weatherStatus = weatherSnapshot ? "ready" : "idle";
-      weatherErrorMsg = err.code === err.PERMISSION_DENIED ? "Location permission denied — search for a place or pick a saved one." : "Couldn't get your location — search instead.";
       weatherPickerOpen = !weatherSnapshot; // open the picker so they can act
       renderWeatherPage();
     },
-    { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60 * 1000 }
   );
+}
+
+// "Location on by default, with the user's agreement": once per device, if the
+// location permission hasn't been answered and the weather is meant to follow
+// the device (no saved place picked), ask now — the system prompt is the
+// agreement. A "no" is respected (never asked again here); the weather page's
+// "Use current location" can still ask. Refreshes the dock's ticker on "yes".
+const LOCATION_CONSENT_KEY = "live-location-consent-asked-v1";
+async function ensureLocationConsent() {
+  if (!weatherWantsCurrentLocation()) return;
+  try { if (localStorage.getItem(LOCATION_CONSENT_KEY)) return; } catch { return; }
+  const perm = await locationPermission();
+  if (perm !== "prompt") return; // already granted (the ticker uses it) or refused
+  try { localStorage.setItem(LOCATION_CONSENT_KEY, new Date().toISOString()); } catch { /* storage blocked */ }
+  try {
+    weatherCurrentGeoLoc = currentGeoLoc(await getDevicePosition());
+    onLocationChosen?.();
+  } catch { /* declined or no fix — the ticker keeps its "choose a location" state */ }
 }
 
 function startWeatherRefreshLoop() {
@@ -774,27 +815,18 @@ async function getAssistantWeatherReport() {
 // pops a permission prompt; tapping it opens the weather page, which can).
 // Uses the same TTL-cached snapshot as the page, so re-rendering is cheap.
 let tickerGen = 0;
-function tickerQuietGeolocation() {
-  if (weatherCurrentGeoLoc) return Promise.resolve(weatherCurrentGeoLoc);
-  if (!navigator.geolocation || !navigator.permissions?.query) return Promise.resolve(null);
-  return navigator.permissions.query({ name: "geolocation" })
-    .then((p) => p?.state !== "granted" ? null : new Promise((resolve) => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          weatherCurrentGeoLoc = { id: "current", label: "Current location", latitude: pos.coords.latitude, longitude: pos.coords.longitude, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, isCurrentLocation: true };
-          resolve(weatherCurrentGeoLoc);
-        },
-        () => resolve(null),
-        { enableHighAccuracy: false, timeout: 10000, maximumAge: 30 * 60 * 1000 }
-      );
-    }))
-    .catch(() => null);
+async function tickerQuietGeolocation() {
+  if (weatherCurrentGeoLoc) return weatherCurrentGeoLoc;
+  if ((await locationPermission()) !== "granted") return null;
+  try {
+    weatherCurrentGeoLoc = currentGeoLoc(await getDevicePosition({ maximumAgeMs: 30 * 60 * 1000 }));
+    return weatherCurrentGeoLoc;
+  } catch { return null; }
 }
 async function tickerLocation() {
   const saved = state.weatherLocations || [];
-  const id = state.weatherActiveLocationId;
-  if (id === "current") return (await tickerQuietGeolocation()) || saved[0] || null;
-  return saved.find((l) => l.id === id) || saved[0] || weatherActiveLocation || (await tickerQuietGeolocation());
+  if (weatherWantsCurrentLocation()) return (await tickerQuietGeolocation()) || saved[0] || null;
+  return saved.find((l) => l.id === state.weatherActiveLocationId) || saved[0] || null;
 }
 async function renderWeatherTicker(el) {
   if (!el) return;
@@ -845,6 +877,6 @@ async function renderWeatherTicker(el) {
     </span>`;
 }
 
-  return { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker };
+  return { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent };
 }
 

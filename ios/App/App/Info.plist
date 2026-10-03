@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Live uses the camera to scan receipts.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Live uses your location to show the weather where you are.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Live plays songs from your Apple Music subscription and shows your Apple Music library.</string>
 	<key>NSAppTransportSecurity</key>
