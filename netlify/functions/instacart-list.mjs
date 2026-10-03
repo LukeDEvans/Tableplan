@@ -26,6 +26,7 @@ const MAX_BODY_BYTES = 200 * 1024;
 
 const ALLOWED_ORIGINS = new Set([
   "https://effervescent-malabi-e0af55.netlify.app",
+  "capacitor://localhost", // the iPhone app's web view
   "http://localhost:4174",
   "http://127.0.0.1:4174"
 ]);
@@ -107,8 +108,12 @@ function vendorErrorMessage(body) {
   return text.slice(0, 300);
 }
 
+// No Origin → "*": the iPhone app's GETs are replayed natively (CapacitorHttp)
+// without one and iOS still checks this header; another website's page always
+// sends its Origin and stays refused. (Same as weather.js / google-places.js.)
 function corsHeaders(origin) {
-  const allowedOrigin = ALLOWED_ORIGINS.has(String(origin || "")) ? String(origin) : "";
+  const o = String(origin || "");
+  const allowedOrigin = !o ? "*" : ALLOWED_ORIGINS.has(o) ? o : "";
   return {
     ...(allowedOrigin ? { "access-control-allow-origin": allowedOrigin } : {}),
     "access-control-allow-methods": "GET, POST, OPTIONS",
