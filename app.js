@@ -3109,6 +3109,7 @@ function handleHashNavigation() {
     shop: showShopApp,
     watch: showWatchApp,
     recreate: showRecreateApp,
+    explore: showExploreApp, // no nav link (it's Recreate's Travel card); the hash still opens it
     finance: showFinanceApp,
     schedule: showPlanApp,
     contacts: showContactsApp,
