@@ -5402,8 +5402,53 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   padding: 16px 16px 8px;
 }
 
-/* Recreate landing reuses the Exercise card grid; detail views get a
-   back-button header. */
+/* Recreate hub: Explore / Exercise / Leisure subsections, each a heading over
+   a horizontally scrolling row of the Exercise-style cards. */
+.recreate-hub { display: flex; flex-direction: column; gap: 6px; padding: 8px 0 16px; min-width: 0; }
+.recreate-section { min-width: 0; }
+.recreate-section-title {
+  margin: 0;
+  padding: 10px 16px 0;
+  font-size: 1.05rem;
+  font-weight: 900;
+  color: var(--ink);
+}
+.recreate-row {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 10px 16px 14px; /* room for the cards' hover lift + shadow */
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 16px;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.recreate-row::-webkit-scrollbar { display: none; }
+.recreate-row > .workout-pool-card-wrap {
+  flex: 0 0 150px;
+  scroll-snap-align: start;
+}
+.recreate-row > .empty-state { flex: 1 0 auto; margin: 0; }
+.recreate-add-card .workout-pool-icon {
+  font-size: 2.4rem;
+  font-weight: 300;
+  color: var(--accent-dark);
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Explore's notification dot (e.g. trip suggestions) on the Travel card. */
+.workout-pool-card.has-notif-dot { position: relative; }
+.workout-pool-card.has-notif-dot::after {
+  content: ""; position: absolute; top: 10px; right: 10px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #b3261e;
+}
+
+/* Recreate detail views get a back-button header. */
 .recreate-detail-head {
   display: flex;
   align-items: center;

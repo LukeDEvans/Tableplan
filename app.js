@@ -942,7 +942,6 @@ const elements = {
   pageTitleBtn: document.querySelector("#pageTitleBtn"),
   pageTitleMenu: document.querySelector("#pageTitleMenu"),
   titleMealPlanBtn: document.querySelector("#titleMealPlanBtn"),
-  titleExercisePlanBtn: document.querySelector("#titleExercisePlanBtn"),
   titleToDoListBtn: document.querySelector("#titleToDoListBtn"),
   titleWatchBtn: document.querySelector("#titleWatchBtn"),
   generalSettingsMenuBtn: document.querySelector("#generalSettingsMenuBtn"),
@@ -996,7 +995,6 @@ const elements = {
   doneContextSettingsBtn: document.querySelector("#doneContextSettingsBtn"),
   homeMainPage: document.querySelector("#homeMainPage"),
   homeEatBtn: document.querySelector("#homeEatBtn"),
-  homePlayBtn: document.querySelector("#homePlayBtn"),
   homeDoBtn: document.querySelector("#homeDoBtn"),
   homeWatchBtn: document.querySelector("#homeWatchBtn"),
   appMenuBtn: document.querySelector("#appMenuBtn"),
@@ -1137,7 +1135,6 @@ const elements = {
   mailMainPage: document.querySelector("#mailMainPage"),
   homeMailBtn: document.querySelector("#homeMailBtn"),
   titleMailBtn: document.querySelector("#titleMailBtn"),
-  titleExploreBtn: document.querySelector("#titleExploreBtn"),
   mailConnectBtn: document.querySelector("#mailConnectBtn"),
   mailComposeBtn: document.querySelector("#mailComposeBtn"),
   mailRefreshBtn: document.querySelector("#mailRefreshBtn"),
@@ -1613,7 +1610,7 @@ const PAGE_NOTIF_BUTTONS = {
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
   do: ["planTasksBtn"], // Tasks notif dot now lives on the Calendar page's bell
   eat: ["homeEatBtn", "titleMealPlanBtn"],
-  explore: ["homeExploreBtn", "titleExploreBtn"],
+  // explore: shown on Recreate's links + its Travel card (see setPageNotifCount)
   media: ["miniPlayerInfoBtn"], // Media opens from the bottom dock's mini-player (no home / menu entry)
 };
 
@@ -1639,7 +1636,16 @@ function addAcceptedNewsArticle(article) {
   if (activeAppArea === "media" && isArticlePubTab(activeMediaTab)) renderArticleList("articleList", activeMediaTab);
 }
 
+const pageNotifCounts = {};
 function setPageNotifCount(page, count) {
+  pageNotifCounts[page] = count;
+  // Explore lives inside Recreate (Travel card): its dot shows on Recreate's
+  // links unless Recreate has its own count.
+  const recreateOn = (pageNotifCounts.recreate || 0) > 0 || (pageNotifCounts.explore || 0) > 0;
+  if (page === "explore" || page === "recreate") {
+    ["homeRecreateBtn", "titleRecreateBtn"].forEach((key) => elements[key]?.classList.toggle("has-notif-dot", recreateOn));
+    document.querySelector("[data-recreate-travel]")?.classList.toggle("has-notif-dot", (pageNotifCounts.explore || 0) > 0);
+  }
   (PAGE_NOTIF_BUTTONS[page] || []).forEach((key) => {
     elements[key]?.classList.toggle("has-notif-dot", count > 0);
   });
@@ -2314,7 +2320,6 @@ function bindEvents() {
   elements.pageTitleBtn.addEventListener("click", togglePageTitleMenu);
   elements.pageTitleMenu.addEventListener("click", (event) => event.stopPropagation());
   elements.titleMealPlanBtn.addEventListener("click", showEatApp);
-  elements.titleExercisePlanBtn.addEventListener("click", showPlayApp);
   elements.titleToDoListBtn.addEventListener("click", showDoApp);
   elements.titleWatchBtn.addEventListener("click", showWatchApp);
   elements.titleRecreateBtn.addEventListener("click", showRecreateApp);
@@ -2330,7 +2335,6 @@ function bindEvents() {
     renderHomeBriefingPanels();
   });
   elements.homeEatBtn.addEventListener("click", showEatApp);
-  elements.homePlayBtn.addEventListener("click", showPlayApp);
   elements.homeDoBtn.addEventListener("click", showDoApp);
   elements.homeWatchBtn.addEventListener("click", showWatchApp);
   elements.homeRecreateBtn.addEventListener("click", showRecreateApp);
@@ -2374,8 +2378,6 @@ function bindEvents() {
   document.getElementById("menuContactsImportBtn")?.addEventListener("click", () => { closeAppMenu(); document.getElementById("contactsImportInput")?.click(); });
   document.getElementById("menuContactsExportBtn")?.addEventListener("click", () => { closeAppMenu(); exportContactsVcf(); });
   document.getElementById("contactsImportInput")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; if (f) f.text().then(importContactsVcf); e.target.value = ""; });
-  document.getElementById("homeExploreBtn")?.addEventListener("click", showExploreApp);
-  elements.titleExploreBtn?.addEventListener("click", showExploreApp);
   elements.homeFinanceBtn?.addEventListener("click", showFinanceApp);
   elements.titleFinanceBtn?.addEventListener("click", showFinanceApp);
   elements.homeMailBtn?.addEventListener("click", showMailApp);
@@ -7711,9 +7713,15 @@ function showWatchApp(event) {
   setPageHash("watch");
 }
 
+// Recreate is the hub for Explore (travel), Exercise and Leisure (hobbies): it's
+// reachable when any of the three is on, and shows a row for each that is.
+function recreateHubEnabled(check = isPageEnabled) {
+  return check("recreate") || check("play") || check("explore");
+}
+
 function showRecreateApp(event) {
   event?.stopPropagation();
-  if (!isPageEnabled("recreate")) { showHomeApp(); return; }
+  if (!recreateHubEnabled()) { showHomeApp(); return; }
   activeAppArea = "recreate";
   hideAllPages();
   elements.recreateMainPage.hidden = false;
@@ -14194,9 +14202,9 @@ function moveDoTask(sourceDay, targetDay, taskId) {
   renderTasksPage();
 }
 
-function renderPlayPlanner() {
-  if (!elements.playPlannerGrid) return;
-  const workouts = normalizeWorkouts(state.workouts).sort((a, b) => {
+// Workouts, most recently logged first (never-logged ones after, A→Z).
+function workoutsByRecency() {
+  return normalizeWorkouts(state.workouts).sort((a, b) => {
     const aLog = lastWorkoutLog(a.id);
     const bLog = lastWorkoutLog(b.id);
     if (aLog && bLog) return String(bLog.date || bLog.createdAt).localeCompare(String(aLog.date || aLog.createdAt));
@@ -14204,6 +14212,11 @@ function renderPlayPlanner() {
     if (bLog) return 1;
     return a.title.localeCompare(b.title);
   });
+}
+
+function renderPlayPlanner() {
+  if (!elements.playPlannerGrid) return;
+  const workouts = workoutsByRecency();
   elements.playPlannerGrid.innerHTML = `
     <div class="workout-pool">
       ${workouts.length
@@ -14216,7 +14229,18 @@ function renderPlayPlanner() {
       </button>
     </div>
   `;
-  elements.playPlannerGrid.querySelectorAll("[data-record-workout]").forEach((btn) => {
+  wireWorkoutPoolCards(elements.playPlannerGrid, { swipe: true });
+  elements.playPlannerGrid.querySelector("#openNewWorkoutBtn")?.addEventListener("click", openNewWorkoutDialog);
+  // The same cards are a row on the Recreate page; keep it current after a
+  // workout is added / edited / logged / deleted.
+  if (activeAppArea === "recreate" && !activeRecreateHobby) renderRecreatePage();
+}
+
+// Wire workout cards (workoutPoolCardTemplate) inside `root`: tap → record,
+// right-click → Edit/Delete menu. `swipe` adds swipe-left-to-reveal Edit/Delete
+// (the Exercise grid only — in Recreate's horizontal row a sideways swipe scrolls).
+function wireWorkoutPoolCards(root, { swipe = false } = {}) {
+  root.querySelectorAll("[data-record-workout]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const wrap = btn.closest(".workout-pool-card-wrap");
       if (wrap?.classList.contains("is-swiped")) { wrap.classList.remove("is-swiped"); return; }
@@ -14224,23 +14248,22 @@ function renderPlayPlanner() {
     });
     btn.addEventListener("contextmenu", (event) => openWorkoutPoolContextMenu(event, btn.dataset.recordWorkout));
     const wrap = btn.closest(".workout-pool-card-wrap");
-    if (wrap) {
+    if (wrap && swipe) {
       wrap.addEventListener("pointerdown", handleWorkoutPoolPointerDown);
       wrap.addEventListener("pointermove", handleWorkoutPoolPointerMove);
       wrap.addEventListener("pointerup", handleWorkoutPoolPointerEnd);
       wrap.addEventListener("pointercancel", handleWorkoutPoolPointerEnd);
     }
   });
-  elements.playPlannerGrid.querySelectorAll("[data-swipe-edit-workout]").forEach((btn) => {
+  root.querySelectorAll("[data-swipe-edit-workout]").forEach((btn) => {
     btn.addEventListener("click", () => openWorkoutDetail({ workoutId: btn.dataset.swipeEditWorkout }));
   });
-  elements.playPlannerGrid.querySelectorAll("[data-swipe-delete-workout]").forEach((btn) => {
+  root.querySelectorAll("[data-swipe-delete-workout]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const workout = normalizeWorkouts(state.workouts).find((w) => w.id === btn.dataset.swipeDeleteWorkout);
       if (workout && window.confirm(`Delete "${workout.title}"? All logs will be removed.`)) deleteWorkout(btn.dataset.swipeDeleteWorkout);
     });
   });
-  elements.playPlannerGrid.querySelector("#openNewWorkoutBtn")?.addEventListener("click", openNewWorkoutDialog);
 }
 
 function openWorkoutPoolContextMenu(event, workoutId) {
@@ -15919,15 +15942,13 @@ function setPageTitle(title) {
 
 function updatePageTitleMenu() {
   elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPagePersonallyEnabled("eat");
-  elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPagePersonallyEnabled("play");
   elements.titleToDoListBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no top-level nav button
   elements.titleWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no top-level nav button
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
-  elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
+  elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !recreateHubEnabled(isPagePersonallyEnabled);
   if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
   elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
-  if (elements.titleExploreBtn) elements.titleExploreBtn.hidden = activeAppArea === "explore" || !isPagePersonallyEnabled("explore");
   const menu = elements.pageTitleMenu;
   const btns = [...menu.querySelectorAll("button")];
   btns.sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()));
@@ -15936,18 +15957,15 @@ function updatePageTitleMenu() {
 
 function updatePageVisibility() {
   elements.homeEatBtn.hidden = !isPagePersonallyEnabled("eat");
-  elements.homePlayBtn.hidden = !isPagePersonallyEnabled("play");
   elements.homeDoBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no home-screen button
   elements.homeWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no home-screen button
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
-  elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
+  elements.homeRecreateBtn.hidden = !recreateHubEnabled(isPagePersonallyEnabled);
   if (elements.homeFinanceBtn) elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");
   elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
   const mailContactsBtn = document.getElementById("mailContactsBtn");
   if (mailContactsBtn) mailContactsBtn.hidden = !isPagePersonallyEnabled("contacts");
   elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
-  const exploreBtn = document.getElementById("homeExploreBtn");
-  if (exploreBtn) exploreBtn.hidden = !isPagePersonallyEnabled("explore");
   updatePageVisibilityControls();
 }
 
@@ -22746,6 +22764,26 @@ const RECREATE_HOBBY_ICONS = {
   sailing: `<img class="workout-pool-img" src="./activity-sailing.png" alt="Sailing" width="52" height="52" draggable="false" />`,
   piano: `<img class="workout-pool-img" src="./activity-piano.png" alt="Piano" width="52" height="52" draggable="false" />`,
 };
+const RECREATE_TRAVEL_ICON = `<img class="workout-pool-img" src="./activity-travel.png" alt="Travel" width="52" height="52" draggable="false" />`;
+
+// Explore → Travel card subtitle: upcoming trips (planning / booked / traveling).
+function recreateTravelSummary() {
+  const trips = (state.trips || []).filter((t) => t && !t.deletedAt);
+  let upcoming = 0;
+  try { upcoming = trips.filter((t) => { const s = TravelModel.deriveStatus(t); return s !== "idea" && s !== "completed"; }).length; }
+  catch { upcoming = 0; }
+  if (upcoming) return `${upcoming} upcoming ${upcoming === 1 ? "trip" : "trips"}`;
+  return trips.length ? `${trips.length} ${trips.length === 1 ? "trip" : "trips"}` : "Plan a trip";
+}
+
+// One Recreate subsection: a heading over a horizontally scrolling row of cards.
+function recreateSectionTemplate(key, title, cardsHtml) {
+  return `
+    <section class="recreate-section" data-recreate-section="${key}" aria-label="${escapeHtml(title)}">
+      <h2 class="recreate-section-title">${escapeHtml(title)}</h2>
+      <div class="recreate-row">${cardsHtml}</div>
+    </section>`;
+}
 
 function renderRecreatePage() {
   if (!elements.recreatePlannerGrid) return;
@@ -22754,27 +22792,54 @@ function renderRecreatePage() {
     activeRecreateHobby = null;
   }
 
-  // Landing: activity cards
+  // Landing: three subsections — Explore, Exercise, Leisure — each a
+  // horizontally scrolling row of cards. Exercise and Explore used to be their
+  // own pages; they're reached from here now (#sweat / #explore still route).
   if (!activeRecreateHobby) {
-    elements.recreatePlannerGrid.innerHTML = `
-      <div class="workout-pool recreate-pool">
-        ${visible.length ? visible.map((h) => `
-          <div class="workout-pool-card-wrap">
-            <button class="workout-pool-card" type="button" data-open-hobby="${escapeHtml(h.key)}">
-              <span class="workout-pool-icon" aria-hidden="true">${RECREATE_HOBBY_ICONS[h.key] || "🎯"}</span>
-              <span class="workout-pool-title">${escapeHtml(h.label)}</span>
-              <span class="workout-pool-last">${escapeHtml(recreateHobbySummary(h.key))}</span>
-            </button>
-          </div>
-        `).join("") : `<div class="empty-state">Turn on hobbies in Settings → Recreate → Hobbies.</div>`}
+    const sections = [];
+    if (isPagePersonallyEnabled("explore")) {
+      const dot = (pageNotifCounts.explore || 0) > 0 ? " has-notif-dot" : "";
+      sections.push(recreateSectionTemplate("explore", "Explore", `
+        <div class="workout-pool-card-wrap">
+          <button class="workout-pool-card${dot}" type="button" data-recreate-travel>
+            <span class="workout-pool-icon" aria-hidden="true">${RECREATE_TRAVEL_ICON}</span>
+            <span class="workout-pool-title">Travel</span>
+            <span class="workout-pool-last">${escapeHtml(recreateTravelSummary())}</span>
+          </button>
+        </div>`));
+    }
+    if (isPagePersonallyEnabled("play")) {
+      const workouts = workoutsByRecency();
+      sections.push(recreateSectionTemplate("exercise", "Exercise", `
+        ${workouts.map(workoutPoolCardTemplate).join("")}
+        <div class="workout-pool-card-wrap">
+          <button class="workout-pool-card recreate-add-card" type="button" data-recreate-new-workout aria-label="Add exercise">
+            <span class="workout-pool-icon" aria-hidden="true">+</span>
+            <span class="workout-pool-title">Add exercise</span>
+            <span class="workout-pool-last">${workouts.length ? "" : "No exercises yet"}</span>
+          </button>
+        </div>`));
+    }
+    if (isPagePersonallyEnabled("recreate")) sections.push(recreateSectionTemplate("leisure", "Leisure", visible.length ? visible.map((h) => `
+      <div class="workout-pool-card-wrap">
+        <button class="workout-pool-card" type="button" data-open-hobby="${escapeHtml(h.key)}">
+          <span class="workout-pool-icon" aria-hidden="true">${RECREATE_HOBBY_ICONS[h.key] || "🎯"}</span>
+          <span class="workout-pool-title">${escapeHtml(h.label)}</span>
+          <span class="workout-pool-last">${escapeHtml(recreateHobbySummary(h.key))}</span>
+        </button>
       </div>
-    `;
-    elements.recreatePlannerGrid.querySelectorAll("[data-open-hobby]").forEach((btn) => {
+    `).join("") : `<div class="empty-state">Turn on hobbies in Settings → Recreate → Hobbies.</div>`));
+    elements.recreatePlannerGrid.innerHTML = `<div class="recreate-hub">${sections.join("")}</div>`;
+    const grid = elements.recreatePlannerGrid;
+    grid.querySelectorAll("[data-open-hobby]").forEach((btn) => {
       btn.addEventListener("click", () => {
         activeRecreateHobby = btn.dataset.openHobby;
         renderRecreatePage();
       });
     });
+    grid.querySelector("[data-recreate-travel]")?.addEventListener("click", showExploreApp);
+    grid.querySelector("[data-recreate-new-workout]")?.addEventListener("click", openNewWorkoutDialog);
+    wireWorkoutPoolCards(grid.querySelector('[data-recreate-section="exercise"]') || grid);
     return;
   }
 
