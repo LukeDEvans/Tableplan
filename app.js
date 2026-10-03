@@ -32,7 +32,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, APP_CALLBACK_SCHEME, parseAppCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, APP_CALLBACK_SCHEME, parseAppCallback } from './native-bridge.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { saveFile } from './save-file.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
@@ -85,13 +85,15 @@ const NATIVE_API_BASE = "https://effervescent-malabi-e0af55.netlify.app";
 if (isNativeApp() && typeof document !== "undefined") { try { document.documentElement.setAttribute("data-native", "ios"); } catch { /* noop */ } }
 if (isNativeApp() && typeof window !== "undefined" && window.fetch) {
   const _nativeFetch = window.fetch.bind(window);
-  const rewrite = (u) => (typeof u === "string" && (u.startsWith("/.netlify/") || u.startsWith("/api/"))) ? NATIVE_API_BASE + u : u;
+  // /api/<name> (the local-dev path helpers pick here — see nativeApiPath) is
+  // mapped to the deployed function's path first.
+  const rewrite = (u) => (typeof u === "string" && (u.startsWith("/.netlify/") || u.startsWith("/api/"))) ? NATIVE_API_BASE + nativeApiPath(u) : u;
   window.fetch = (input, init) => {
     try {
       if (typeof input === "string") input = rewrite(input);
       else if (input && input.url) {
         const p = input.url.replace(/^capacitor:\/\/localhost/, "");
-        if (p.startsWith("/.netlify/") || p.startsWith("/api/")) input = new Request(NATIVE_API_BASE + p, input);
+        if (p.startsWith("/.netlify/") || p.startsWith("/api/")) input = new Request(NATIVE_API_BASE + nativeApiPath(p), input);
       }
     } catch { /* fall through with the original input */ }
     return _nativeFetch(input, init);
