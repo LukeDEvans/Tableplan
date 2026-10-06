@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveMediaTierCount } from "../media-tier.js";
+import { deriveMediaTierCount, publicationTierFor, collapsePublicationTiers } from "../media-tier.js";
 
 describe("deriveMediaTierCount", () => {
   it("keeps the stored count when it already covers every assignment", () => {
@@ -29,5 +29,27 @@ describe("deriveMediaTierCount", () => {
 
   it("caps a corrupt runaway assignment instead of spawning thousands of tiers", () => {
     expect(deriveMediaTierCount(3, { a: 99999 }, {})).toBe(12);
+  });
+});
+
+describe("one Publications tile", () => {
+  it("collapses per-paper tiers to the highest-priority one", () => {
+    expect(collapsePublicationTiers({ nyt: 3, economist: 1, startribune: 2 })).toEqual({ all: 1 });
+    expect(collapsePublicationTiers({ all: 2, nyt: 1 })).toEqual({ all: 2 });
+    expect(collapsePublicationTiers({})).toEqual({});
+    expect(collapsePublicationTiers(null)).toEqual({});
+  });
+  it("`all` wins over lingering per-paper keys; legacy keys still apply before a collapse", () => {
+    expect(publicationTierFor({ all: 2, nyt: 1 }, "nyt")).toBe(2);
+    expect(publicationTierFor({ all: 2 }, "email")).toBe(2);
+    expect(publicationTierFor({ nyt: 1 }, "nyt")).toBe(1);
+    expect(publicationTierFor({ nyt: 1 }, "economist")).toBeUndefined();
+  });
+});
+
+describe("tier count with one Publications tile", () => {
+  it("lingering per-paper keys don't keep extra tiers once `all` is set", () => {
+    expect(deriveMediaTierCount(3, {}, { all: 2, nyt: 7 })).toBe(3);
+    expect(deriveMediaTierCount(3, {}, { nyt: 5 })).toBe(5); // before a collapse, legacy keys still count
   });
 });

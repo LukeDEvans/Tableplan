@@ -91,30 +91,67 @@ exports.handler = async (event) => {
     return json(200, { ok: true, recipes });
   }
 
-  // News-article cards collected from NYT / Economist / Star Tribune mail
-  // (NEWS_INTAKE_DESIGN.md) — the Media page's notification bell. Reads only
-  // the pending list, never the seen record.
+  // The old Media bell deck (installed iPhone builds that predate the News page):
+  // the News cards not yet sent to Media. Reads only the pending list.
   if (action === "pendingNews") {
-    return json(200, { articles: await NewsLinks.loadPendingNews(serviceKey, userId) });
+    const articles = (await NewsLinks.loadPendingNews(serviceKey, userId)).filter((c) => !c.sentAt);
+    return json(200, { articles });
   }
 
-  // Accept (→ Media → Publications, under its paper) or dismiss cards, batched
-  // by the client ({ decisions: [{ id, decision }] }) so a swiping session costs
-  // one read+write, not one per card. Saves happen first, so a failed save
-  // leaves the cards for another try. The seen record keeps them from ever
-  // coming back either way.
+  // The old Media bell deck (installed iPhone builds that predate the News page):
+  // accept = Send to Media (the story stays on News, marked "In Media"), dismiss =
+  // Hide — the same meaning the News page gives them, so an old build can't
+  // silently drop stories from News.
   if (action === "resolveNews") {
     const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 300) : [];
     if (!decisions.length || decisions.some((d) => !d?.id || !["accept", "dismiss"].includes(d.decision))) {
       return json(400, { error: "decisions: [{ id, decision: accept|dismiss }] required" });
     }
-    const accepts = new Set(decisions.filter((d) => d.decision === "accept").map((d) => d.id));
-    if (accepts.size) {
-      const cards = (await NewsLinks.loadPendingNews(serviceKey, userId)).filter((c) => accepts.has(c.id));
-      for (const card of cards) await saveArticleToMediaSection(serviceKey, userId, NewsLinks.acceptedArticleRecord(card));
+    const mapped = decisions.map((d) => ({ id: d.id, decision: d.decision === "accept" ? "send" : "hide" }));
+    const all = await NewsLinks.updateNewsFeed(serviceKey, userId, mapped, {
+      saveToMedia: (record) => saveArticleToMediaSection(serviceKey, userId, record)
+    });
+    // The old deck shows only undecided cards.
+    return json(200, { ok: true, articles: all.filter((c) => !c.sentAt) });
+  }
+
+  // ── News page (NEWS_PAGE_DESIGN.md) ──
+  // The feed (last 3 days of article cards) + which papers Luke is signed in to.
+  if (action === "newsFeed") {
+    const [articles, signIns] = await Promise.all([
+      NewsLinks.loadPendingNews(serviceKey, userId),
+      NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}))
+    ]);
+    return json(200, { articles, signIns });
+  }
+
+  // Batched read / unread / send / hide from the News page. Send saves to
+  // Media → Publications first (the same record the bell's Save used).
+  if (action === "updateNews") {
+    const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 500) : [];
+    if (!decisions.length || decisions.some((d) => !d?.id || !["read", "unread", "send", "hide"].includes(d.decision))) {
+      return json(400, { error: "decisions: [{ id, decision: read|unread|send|hide }] required" });
     }
-    const articles = await NewsLinks.removePendingNews(serviceKey, userId, decisions.map((d) => d.id));
+    const articles = await NewsLinks.updateNewsFeed(serviceKey, userId, decisions, {
+      saveToMedia: (record) => saveArticleToMediaSection(serviceKey, userId, record)
+    });
     return json(200, { ok: true, articles });
+  }
+
+  // Check each paper's sign-in against its subscriber page. The client sends
+  // its own saved cookies (state.articleSync), so the large media row is never
+  // read here. Called when a sign-in is saved and when News opens on a stale
+  // (>24 h) status — never on a timer.
+  if (action === "verifyNewsSignIns") {
+    const cookies = body.cookies && typeof body.cookies === "object" ? body.cookies : {};
+    const prev = await NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}));
+    const signIns = await NewsLinks.verifySignIns(prev, {
+      nytCookie: String(cookies.nytCookie || ""),
+      economistCookie: String(cookies.economistCookie || ""),
+      stribCookie: String(cookies.stribCookie || "")
+    });
+    await NewsLinks.saveNewsSignIns(serviceKey, userId, signIns);
+    return json(200, { ok: true, signIns });
   }
 
   // Wake-time metadata for the client's Snoozed folder (the threads themselves

@@ -39,12 +39,16 @@ beforeEach(() => { process.env.SUPABASE_SERVICE_ROLE_KEY = "svc"; });
 afterEach(() => vi.restoreAllMocks());
 
 describe("resolveNews", () => {
-  it("accepts + dismisses in one batch: accepted → Media savedArticles, all removed in ONE pending write", async () => {
+  // An old iPhone build's bell: accept = Send to Media (the card stays on News,
+  // marked sent), dismiss = Hide — never a silent removal from News.
+  it("accept → Send to Media (card kept, marked sent), dismiss → Hide, in ONE pending write", async () => {
     const m = mock();
     vi.spyOn(global, "fetch").mockImplementation(m);
     const r = await call({ action: "resolveNews", decisions: [{ id: "a", decision: "accept" }, { id: "b", decision: "dismiss" }] });
     expect(r.statusCode).toBe(200);
-    expect(m.st.pending.map((c) => c.id)).toEqual(["c"]);
+    expect(m.st.pending.map((c) => c.id)).toEqual(["a", "c"]);
+    expect(m.st.pending[0].sentAt).toBeTruthy();
+    expect(JSON.parse(r.body).articles.map((c) => c.id)).toEqual(["c"]); // the old deck shows only undecided cards
     expect(m.st.pendingWrites).toBe(1);
     const saved = m.st.media.state.savedArticles;
     expect(saved.map((a) => a.id)).toEqual(["nl-a"]);

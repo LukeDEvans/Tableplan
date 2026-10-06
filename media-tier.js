@@ -19,6 +19,31 @@ export function deriveMediaTierCount(storedCount, showTiers, publicationTiers) {
   const tierValues = (m) => (m && typeof m === "object" && !Array.isArray(m))
     ? Object.values(m).map(Number).filter((n) => Number.isInteger(n) && n > 0)
     : [];
-  const maxAssigned = Math.max(0, ...tierValues(showTiers), ...tierValues(publicationTiers));
+  // With one Publications tile (publicationTiers.all), per-paper keys that
+  // linger from the union merge no longer count.
+  const pubs = publicationTiers && Number(publicationTiers.all) > 0 ? { all: publicationTiers.all } : publicationTiers;
+  const maxAssigned = Math.max(0, ...tierValues(showTiers), ...tierValues(pubs));
   return Math.min(TIER_CAP, Math.max(stored, maxAssigned, 1));
+}
+
+// One "Publications" tile (NEWS_PAGE_DESIGN.md §7, Luke 2026-10-06): every
+// paper's articles share a single tier, stored as publicationTiers.all. Old
+// per-paper keys can linger (the map union-merges across devices), so `all`
+// always wins when present.
+export const ALL_PUBLICATIONS_KEY = "all";
+const validTier = (v) => Number.isInteger(Number(v)) && Number(v) > 0;
+
+export function publicationTierFor(publicationTiers, publication) {
+  const m = publicationTiers && typeof publicationTiers === "object" ? publicationTiers : {};
+  if (validTier(m[ALL_PUBLICATIONS_KEY])) return Number(m[ALL_PUBLICATIONS_KEY]);
+  return validTier(m[publication]) ? Number(m[publication]) : undefined;
+}
+
+// The map the tier board edits: just { all }, taking the existing `all` or else
+// the highest-priority (lowest-numbered) per-paper tier; {} when nothing is ranked.
+export function collapsePublicationTiers(publicationTiers) {
+  const m = publicationTiers && typeof publicationTiers === "object" ? publicationTiers : {};
+  if (validTier(m[ALL_PUBLICATIONS_KEY])) return { [ALL_PUBLICATIONS_KEY]: Number(m[ALL_PUBLICATIONS_KEY]) };
+  const tiers = Object.values(m).filter(validTier).map(Number);
+  return tiers.length ? { [ALL_PUBLICATIONS_KEY]: Math.min(...tiers) } : {};
 }

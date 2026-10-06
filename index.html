@@ -127,6 +127,7 @@
                 <button type="button" id="titleWatchBtn">Watch</button>
                 <button type="button" id="titleMailBtn">Mail</button>
                 <button type="button" id="titleFinanceBtn">Finance</button>
+                <button type="button" id="titleNewsBtn">News</button>
               </div>
             </div>
           </div>
@@ -233,11 +234,12 @@
             <div class="home-hero">
               <img class="home-logo" src="./home-logo.png" alt="Live" width="1023" height="836" />
               <nav class="home-links" aria-label="App pages">
+                <button type="button" id="homePlanBtn">Calendar</button>
+                <button type="button" id="homeFinanceBtn">Finance</button>
                 <button type="button" id="homeMailBtn">Mail</button>
                 <button type="button" id="homeEatBtn">Meal Plan</button>
+                <button type="button" id="homeNewsBtn">News</button>
                 <button type="button" id="homeRecreateBtn">Recreate</button>
-                <button type="button" id="homeFinanceBtn">Finance</button>
-                <button type="button" id="homePlanBtn">Calendar</button>
                 <button type="button" id="homeShopBtn">Shop</button>
                 <button type="button" id="homeDoBtn">Tasks</button>
                 <button type="button" id="homeWatchBtn">Watch</button>
@@ -734,6 +736,28 @@
             </div>
           </div>
         </section>
+        <section class="planner-column do-column article-read-page news-page" id="newsMainPage" aria-label="News" hidden>
+          <div class="article-page-inner">
+            <div class="mail-topbar media-topbar news-topbar">
+              <button class="icon-btn mail-sidebar-toggle" type="button" id="newsSidebarToggle" title="Toggle sections" aria-label="Toggle sections menu">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              </button>
+              <div class="mail-search-wrap">
+                <svg class="mail-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input class="mail-search-input" id="newsSearchInput" type="search" placeholder="Search news" aria-label="Search news" />
+              </div>
+              <div class="mail-topbar-right">
+                <button class="icon-btn" type="button" id="newsRefreshBtn" title="Refresh" aria-label="Refresh News">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="article-layout">
+              <nav class="article-sidebar news-sidebar" id="newsSidebar" aria-label="News sections"></nav>
+              <div class="article-content news-content" id="newsContent"></div>
+            </div>
+          </div>
+        </section>
         <section class="planner-column do-column weather-page" id="weatherMainPage" aria-label="Weather" hidden>
           <div class="weather-page-inner" id="weatherPageInner"></div>
         </section>
@@ -977,7 +1001,7 @@
               </button>
               <div class="settings-page-body" id="readListenSettingsMenu" hidden>
                 <div class="read-listen-settings">
-                  <p class="settings-hint">Paste your session cookies below to sync saved articles from the New York Times and The Economist. Cookies are stored securely in your account and used only on your behalf.</p>
+                  <p class="settings-hint">Paste your session cookies below to sync saved articles from the New York Times and The Economist. News also uses them: it collects articles only from papers you're signed in to (The Athletic uses your NYT sign-in). Cookies are stored securely in your account and used only on your behalf.</p>
                   <div class="settings-field-row">
                     <label class="settings-field-label" for="nytCookieInput">New York Times <span class="settings-field-key">NYT-S</span></label>
                     <div class="settings-field-input-row">
@@ -990,6 +1014,13 @@
                     <div class="settings-field-input-row">
                       <input class="settings-field-input" type="password" id="economistCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your blaize_session cookie value" />
                       <button class="secondary-btn" type="button" id="saveEconomistCookieBtn">Save</button>
+                    </div>
+                  </div>
+                  <div class="settings-field-row">
+                    <label class="settings-field-label" for="stribCookieInput">Star Tribune <span class="settings-field-key">session cookie</span></label>
+                    <div class="settings-field-input-row">
+                      <input class="settings-field-input" type="password" id="stribCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your Star Tribune session cookie" />
+                      <button class="secondary-btn" type="button" id="saveStribCookieBtn">Save</button>
                     </div>
                   </div>
                   <div class="settings-field-row settings-field-row--action">
@@ -1243,6 +1274,14 @@
                 <button class="secondary-btn" type="button" id="dialogSaveEconomistCookieBtn">Save</button>
               </div>
             </div>
+            <div class="sync-settings-field">
+              <label class="sync-settings-label" for="dialogStribCookieInput">Star Tribune <span class="settings-field-key">session cookie</span></label>
+              <div class="settings-field-input-row">
+                <input class="settings-field-input" type="password" id="dialogStribCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your Star Tribune session cookie" />
+                <button class="secondary-btn" type="button" id="dialogSaveStribCookieBtn">Save</button>
+              </div>
+            </div>
+            <p class="article-save-hint">News collects articles only from papers you're signed in to here. The Athletic uses your New York Times sign-in.</p>
           </div>
           <div class="dialog-actions">
             <button class="secondary-btn" type="button" id="cancelArticleSyncSettingsBtn">Close</button>

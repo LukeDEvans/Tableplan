@@ -121,10 +121,12 @@ describe("parseArticleMeta", () => {
       <meta property="og:title" content="Deal &amp; Done">
       <meta content="A subtitle here" property="og:description">
       <meta property="og:image" content="https://img.example/x.jpg">
-      <meta property="article:published_time" content="2026-09-26T10:00:00Z">`;
+      <meta property="article:published_time" content="2026-09-26T10:00:00Z">
+      <meta property="article:section" content="Local">`;
     expect(N.parseArticleMeta(head)).toEqual({
       title: "Deal & Done", description: "A subtitle here",
-      image: "https://img.example/x.jpg", publishedAt: "2026-09-26T10:00:00Z"
+      image: "https://img.example/x.jpg", publishedAt: "2026-09-26T10:00:00Z",
+      section: "Local"
     });
   });
 });

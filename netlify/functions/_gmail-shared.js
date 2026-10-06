@@ -486,9 +486,16 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
     // The news seen record, read once per sweep (not per message). A failed
     // read just means cross-sweep dedup happens at merge time instead.
     let newsSeenAtStart = {};
+    // Which papers Luke is signed in to (NEWS_PAGE_DESIGN.md §4) — a paper's links
+    // are collected only while it is. A failed read leaves news mail pending for
+    // the next sweep (below) rather than triaging it, which would lose it for good.
+    let newsSignIns = {};
+    let newsSignInsFailed = false;
     if (newsEnabled) {
       try { newsSeenAtStart = await NewsLinks.loadNewsSeen(serviceKey, userId); }
       catch (e) { console.error("[news-links] seen load failed:", e.message); }
+      try { newsSignIns = await NewsLinks.loadNewsSignIns(serviceKey, userId); }
+      catch (e) { newsSignInsFailed = true; console.error("[news-links] sign-in status load failed — news mail left for retry:", e.message); }
     }
     const receiptCtx = await loadReceiptContext(serviceKey, userId, mailAi);
     const sugg = await loadMailSuggestions(serviceKey, userId);
@@ -527,6 +534,9 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
         return { suggestions: [], disposed: true };
       }
 
+      // Sign-in status unknown this sweep: leave mail from an enabled paper pending.
+      if (newsSignInsFailed && NewsLinks.newsLinkSourceForSender(hdrs.from, mailAi)) return { suggestions: [], retry: true };
+
       const rawBody = extractBody(msg.payload) || "";
 
       // One email can feed several outputs (NEWS_INTAKE_DESIGN.md §3.1): recipe
@@ -535,7 +545,7 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
       // article by id news-<messageId>). If ANY produced something, the email is
       // filed; otherwise it falls through to normal triage.
       const recipeSource = recipeSourceForSender(hdrs.from, mailAi);
-      const newsLinkSource = NewsLinks.newsLinkSourceForSender(hdrs.from, mailAi);
+      const newsLinkSource = NewsLinks.newsLinkSourceForSender(hdrs.from, mailAi, { signIns: newsSignIns });
       const convSource = conversionSourceFor(hdrs.from, hdrs.subject, mailAi);
       let recipeHandled = false;
 
@@ -558,7 +568,10 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
       // after all messages finish (parallel per-message writes would race).
       let news = null;
       if (newsLinkSource) {
-        news = await NewsLinks.collectNewsCards(rawBody, newsLinkSource, { emailDate: hdrs.date || "", seen: newsSeenAtStart });
+        // A paper's main newsletter (one the briefing conversion takes) supplies
+        // the Front page lead: its first linked article.
+        const lead = !!convSource && !(convSource.generic && recipeHandled) && !conversionTooShort(convSource, rawBody);
+        news = await NewsLinks.collectNewsCards(rawBody, newsLinkSource, { emailDate: hdrs.date || "", seen: newsSeenAtStart, lead });
         console.log(`[news-links] ${newsLinkSource.name}: ${news.cards.length} new of ${news.seenIds.length} unseen from ${messageId}`);
       }
 

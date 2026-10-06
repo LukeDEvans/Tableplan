@@ -15,6 +15,7 @@ import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherModule } from './weather-ui.js';
+import { createNewsModule } from './news-ui.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
@@ -53,7 +54,7 @@ import { indexFromState, search as searchIndexQuery } from './search-index.js';
 import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
-import { deriveMediaTierCount } from './media-tier.js';
+import { deriveMediaTierCount, publicationTierFor, collapsePublicationTiers, ALL_PUBLICATIONS_KEY } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
@@ -71,7 +72,6 @@ import * as TravelRefs from './travel-refs.js';
 import * as TravelGeo from './travel-geo.js';
 import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
-import { createNewsNotifModule } from './news-notif-ui.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
 // so every RELATIVE backend call (`/.netlify/functions/…`, `/api/…`) would resolve
@@ -598,6 +598,7 @@ const MANAGED_PAGES = [
   { key: "inventory", label: "Inventory" },
   { key: "finance",   label: "Finance" },
   { key: "contacts",  label: "Contacts" },
+  { key: "news",      label: "News" },
 ];
 
 // JSON snapshot of each section as of the last successful Supabase write.
@@ -1083,6 +1084,7 @@ const elements = {
   titlePlanBtn: document.querySelector("#titlePlanBtn"),
   contactsMainPage: document.querySelector("#contactsMainPage"),
   weatherMainPage: document.querySelector("#weatherMainPage"),
+  newsMainPage: document.querySelector("#newsMainPage"),
   articleScanDialog: document.querySelector("#articleScanDialog"),
   articleScanImages: document.querySelector("#articleScanImages"),
   articleScanCameraImage: document.querySelector("#articleScanCameraImage"),
@@ -1137,6 +1139,8 @@ const elements = {
   mailMainPage: document.querySelector("#mailMainPage"),
   homeMailBtn: document.querySelector("#homeMailBtn"),
   titleMailBtn: document.querySelector("#titleMailBtn"),
+  homeNewsBtn: document.querySelector("#homeNewsBtn"),
+  titleNewsBtn: document.querySelector("#titleNewsBtn"),
   mailConnectBtn: document.querySelector("#mailConnectBtn"),
   mailComposeBtn: document.querySelector("#mailComposeBtn"),
   mailRefreshBtn: document.querySelector("#mailRefreshBtn"),
@@ -1616,21 +1620,9 @@ const PAGE_NOTIF_BUTTONS = {
   media: ["miniPlayerInfoBtn"], // Media opens from the bottom dock's mini-player (no home / menu entry)
 };
 
-// ── Media news notifications (news-notif-ui.js) ─────────────────────────────
-// Articles linked in NYT / Economist / Star Tribune email, collected server-side
-// by the mail sweep (_news-links.js). Saving one adds it to Media → Publications
-// right away (the server saves the same record by id; savedArticles unions by id).
-// All deps are hoisted function declarations or deferred closures (boot-safe).
-const _newsNotif = createNewsNotifModule({
-  callGmailApi: (...a) => callGmailApi(...a),
-  escapeHtml: (...a) => escapeHtml(...a),
-  showToast: (...a) => showMailToast(...a),
-  isSignedIn: () => !!authSession?.access_token,
-  setDotCount: (...a) => setNewsNotifDot(...a),
-  onAccepted: (...a) => addAcceptedNewsArticle(...a)
-});
-const { wire: wireNewsNotif, warm: warmNewsNotif, seed: seedNewsNotif } = _newsNotif;
-function setNewsNotifDot(n) { setPageNotifCount("media", n); }
+// A News article sent to Media (news-ui.js ⋯ → Send to Media / Open / Listen) is
+// added to Media → Publications right away; the server saves the same record by
+// id (savedArticles unions by id).
 function addAcceptedNewsArticle(article) {
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
   if (!state.savedArticles.some((a) => a.id === article.id)) state.savedArticles.unshift(article);
@@ -1692,6 +1684,25 @@ const _weather = createWeatherModule({
   onLocationChosen: () => renderWeatherTicker(document.getElementById("weatherTicker")),
 });
 const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent } = _weather;
+
+// ── News domain (news-ui.js, NEWS_PAGE_DESIGN.md) ──────────────────────
+// Instantiated above render() (consts not hoisted). Nav entry showNewsApp stays in
+// app.js. Cross-domain (all deferred): a sent article is added to Media →
+// Publications right away (addAcceptedNewsArticle — the server saves the same
+// record by id); Open / Listen hand off to the Media reader and its TTS.
+const _news = createNewsModule({
+  escapeHtml: (...a) => escapeHtml(...a),
+  callGmailApi: (...a) => callGmailApi(...a),
+  showToast: (...a) => showMailToast(...a),
+  isSignedIn: () => !!authSession?.access_token,
+  getState: () => state,
+  getActiveAppArea: () => activeAppArea,
+  onSentToMedia: (...a) => addAcceptedNewsArticle(...a),
+  openInMedia: (id) => { showMediaApp(); switchMediaTab("all"); openArticle(id, "articleList"); },
+  listenInMedia: (id) => listenToArticle(id),
+  openSignInSettings: () => openSyncSettingsDialog("read"),
+});
+const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed } = _news;
 
 // ── Inventory domain (extracted to inventory-ui.js) ────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
@@ -2384,6 +2395,8 @@ function bindEvents() {
   elements.titleFinanceBtn?.addEventListener("click", showFinanceApp);
   elements.homeMailBtn?.addEventListener("click", showMailApp);
   elements.titleMailBtn?.addEventListener("click", showMailApp);
+  elements.homeNewsBtn?.addEventListener("click", showNewsApp);
+  elements.titleNewsBtn?.addEventListener("click", showNewsApp);
   elements.mailConnectBtn?.addEventListener("click", connectGmail);
   elements.mailComposeBtn?.addEventListener("click", showMailCompose);
   document.getElementById("mailSuggCheckNow")?.addEventListener("click", async (e) => {
@@ -2671,11 +2684,13 @@ function bindEvents() {
   document.getElementById("readListenSettingsBtn")?.addEventListener("click", toggleReadListenSettingsMenu);
   document.getElementById("saveNytCookieBtn")?.addEventListener("click", saveNytCookie);
   document.getElementById("saveEconomistCookieBtn")?.addEventListener("click", saveEconomistCookie);
+  document.getElementById("saveStribCookieBtn")?.addEventListener("click", saveStribCookie);
   document.getElementById("syncArticlesSettingsBtn")?.addEventListener("click", () => syncSavedArticles("settings"));
   document.getElementById("closeArticleSyncSettingsBtn")?.addEventListener("click", closeSyncSettingsDialog);
   document.getElementById("cancelArticleSyncSettingsBtn")?.addEventListener("click", closeSyncSettingsDialog);
   document.getElementById("dialogSaveNytCookieBtn")?.addEventListener("click", saveDialogNytCookie);
   document.getElementById("dialogSaveEconomistCookieBtn")?.addEventListener("click", saveDialogEconomistCookie);
+  document.getElementById("dialogSaveStribCookieBtn")?.addEventListener("click", saveDialogStribCookie);
   document.getElementById("dialogSyncNowBtn")?.addEventListener("click", () => syncSavedArticles("dialog"));
   elements.openRecurringTasksBtn.addEventListener("click", openRecurringTasksDialog);
   elements.openWorkoutLibraryBtn.addEventListener("click", openWorkoutLibraryDialog);
@@ -3116,6 +3131,7 @@ function handleHashNavigation() {
     schedule: showPlanApp,
     contacts: showContactsApp,
     weather: showWeatherApp,
+    news: showNewsApp,
     settings: showSettingsApp,
     home: showHomeApp,
     read: showMediaApp,
@@ -3587,11 +3603,11 @@ function setupDiagnostics() {
     // they're not callable from here by name. Assign the variable directly instead;
     // this reproduces warmMealPlanRecipes' result, the same shortcut mpAddRecipeEntry
     // takes for a picked recipe.
-    // The Media news deck (news-notif-ui.js) — normally filled from Gmail's
-    // "pendingNews"; seeds it directly so the deck can be exercised locally.
-    newsSetPending: (articles) => {
+    // The News page feed (news-ui.js) — normally gmail.js "newsFeed"; seeds it
+    // directly so the page can be exercised locally.
+    newsSetFeed: (articles, signIns) => {
       if (!localDevMode) return null;
-      return seedNewsNotif(articles);
+      return seedNewsFeed(articles, signIns);
     },
     mpSetSuggestions: (recipes) => {
       if (!localDevMode) return null;
@@ -4548,7 +4564,7 @@ function defaultState() {
     readingItems: [],
     readingSettings: { categories: [] },
     savedArticles: [],
-    articleSync: { nytCookie: "", economistCookie: "", lastSyncedAt: null },
+    articleSync: { nytCookie: "", economistCookie: "", stribCookie: "", lastSyncedAt: null },
     readPublications: defaultReadPublications(),
     articleSortOrder: "newest",
     readArticleIds: [],
@@ -4737,8 +4753,8 @@ function normalizeState(parsed) {
     readingSettings: normalizeReadingSettings(parsed?.readingSettings),
     savedArticles: Array.isArray(parsed?.savedArticles) ? parsed.savedArticles : [],
     articleSync: typeof parsed?.articleSync === "object" && parsed.articleSync !== null
-      ? { nytCookie: String(parsed.articleSync.nytCookie || ""), economistCookie: String(parsed.articleSync.economistCookie || ""), lastSyncedAt: parsed.articleSync.lastSyncedAt || null }
-      : { nytCookie: "", economistCookie: "", lastSyncedAt: null },
+      ? { nytCookie: String(parsed.articleSync.nytCookie || ""), economistCookie: String(parsed.articleSync.economistCookie || ""), stribCookie: String(parsed.articleSync.stribCookie || ""), lastSyncedAt: parsed.articleSync.lastSyncedAt || null }
+      : { nytCookie: "", economistCookie: "", stribCookie: "", lastSyncedAt: null },
     readPublications: Array.isArray(parsed?.readPublications) && parsed.readPublications.length > 0
       ? parsed.readPublications.map(p => ({ key: String(p.key || ""), label: String(p.label || p.key || ""), domain: String(p.domain || "") })).filter(p => p.key)
       : defaultReadPublications(),
@@ -7662,6 +7678,10 @@ function hideAllPages() {
   if (elements.contactsMainPage) elements.contactsMainPage.hidden = true;
   if (elements.weatherMainPage) elements.weatherMainPage.hidden = true;
   if (typeof stopWeatherRefreshLoop === "function") stopWeatherRefreshLoop(); // pause weather polling when leaving
+  if (elements.newsMainPage) {
+    if (!elements.newsMainPage.hidden) leaveNewsPage(); // send any queued read/send/hide now
+    elements.newsMainPage.hidden = true;
+  }
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
   document.getElementById("exploreMainPage").hidden = true;
@@ -7802,6 +7822,23 @@ function showWeatherApp(event) {
   closeAppMenu();
   initWeatherPage();
 }
+// News page logic lives in news-ui.js (createNewsModule); this is the nav/router
+// entry (NEWS_PAGE_DESIGN.md).
+function showNewsApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("news")) { showHomeApp(); return; }
+  activeAppArea = "news";
+  hideAllPages();
+  elements.newsMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("News");
+  setPageHash("news");
+  closePageTitleMenu();
+  closeAppMenu();
+  enterNewsPage();
+}
+
 // Shared Leaflet CDN loader — used by the Weather radar map (weather-ui.js, via
 // injected dep) AND Travel Mode's map (renderTravelMap). Kept here as shared infra.
 let weatherLeafletPromise = null;
@@ -8270,7 +8307,6 @@ function warmPageNotifs() {
   if (getFinanceLinkStatus() === null) checkFinanceLinkStatus();
   warmMealPlanRecipes();
   refreshRecipeReviewQueue();
-  warmNewsNotif();
 }
 
 // ── Meal Plan recipe notifications ───────────────────────────────────────────
@@ -15987,6 +16023,7 @@ function updatePageTitleMenu() {
   if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
   elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
+  if (elements.titleNewsBtn) elements.titleNewsBtn.hidden = activeAppArea === "news" || !isPagePersonallyEnabled("news");
   const menu = elements.pageTitleMenu;
   const btns = [...menu.querySelectorAll("button")];
   btns.sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()));
@@ -16004,6 +16041,14 @@ function updatePageVisibility() {
   const mailContactsBtn = document.getElementById("mailContactsBtn");
   if (mailContactsBtn) mailContactsBtn.hidden = !isPagePersonallyEnabled("contacts");
   elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
+  if (elements.homeNewsBtn) elements.homeNewsBtn.hidden = !isPagePersonallyEnabled("news");
+  // Home buttons stay in alphabetical order (Luke, 2026-10-06), like the page menu.
+  const homeLinks = elements.homeMailBtn.closest(".home-links");
+  if (homeLinks) {
+    [...homeLinks.querySelectorAll(":scope > button")]
+      .sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()))
+      .forEach((btn) => homeLinks.appendChild(btn));
+  }
   updatePageVisibilityControls();
 }
 
@@ -16208,20 +16253,26 @@ const MAIL_AI_FEATURES = [
   {
     key: "nytNewsLinks",
     defaultOn: true,
-    label: "NYT articles → Media notifications",
-    desc: "Every New York Times article linked in an NYT email becomes a card in the Media page's notification bell (swipe right to save it to Publications, left to dismiss). An article is never delivered twice, and nothing older than a week. Real newsletters are also converted into a listenable article. The email is then filed to Apps/AI trash."
+    label: "NYT articles → News",
+    desc: "Every New York Times article linked in an NYT email goes on the News page, sorted into its section, while you're signed in to the NYT (Settings → Sync). An article is never delivered twice, and nothing older than 3 days. Real newsletters are also converted into a listenable article. The email is then filed to Apps/AI trash."
   },
   {
     key: "economistNewsLinks",
     defaultOn: true,
-    label: "Economist articles → Media notifications",
+    label: "Economist articles → News",
     desc: "Same for The Economist's emails."
   },
   {
     key: "startribuneNewsLinks",
     defaultOn: true,
-    label: "Star Tribune articles → Media notifications",
+    label: "Star Tribune articles → News",
     desc: "Same for the Minnesota Star Tribune's emails."
+  },
+  {
+    key: "athleticNewsLinks",
+    defaultOn: true,
+    label: "The Athletic articles → News (Sports)",
+    desc: "Same for The Athletic's emails, which follow your NYT sign-in."
   },
   {
     key: "autoDeleteSimplefin",
@@ -27595,8 +27646,11 @@ function wireMediaTabs() {
     if (mediaSearchQuery) renderMediaSearchResults();
     else exitMediaSearch();
   });
-  // Media bell → news-article deck (news-notif-ui.js, NEWS_INTAKE_DESIGN.md).
-  wireNewsNotif();
+  // Media bell: a placeholder again — news articles moved to the News page
+  // (NEWS_PAGE_DESIGN.md).
+  document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => {
+    showMailToast("Media notifications are coming soon.");
+  });
 
   // (Reset-order moved into the Playlist settings modal.)
 
@@ -29147,7 +29201,8 @@ function showPodcastPriorityModal() {
     playlistWindow: state.podcastPlaylistWindow ?? "month",
     queueFallback: state.mediaQueueFallback || "auto",
     showTiers: { ...(state.podcastShowTiers || {}) },
-    publicationTiers: { ...(state.publicationTiers || {}) },
+    // One Publications tile for every paper (NEWS_PAGE_DESIGN.md §7).
+    publicationTiers: collapsePublicationTiers(state.publicationTiers),
   };
 
   const overlay = document.createElement("div");
@@ -29235,7 +29290,7 @@ function showPodcastPriorityModal() {
     d.setAttribute("role", "listitem");
     d.setAttribute("aria-label", `${pub.label} — Article`);
     const logoUrl = pub.domain ? publicationLogoUrl(pub.domain) : null;
-    const ph = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`;
+    const ph = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h13a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H4z"/><path d="M19 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="8" x2="14" y2="8"/><line x1="7" y1="12" x2="14" y2="12"/><line x1="7" y1="16" x2="11" y2="16"/></svg>`;
     d.innerHTML = `${tileArt(logoUrl, ph, ` onerror="this.style.display='none'"`)}<span class="priority-show-label">${escapeHtml(pub.label || "")}</span>`;
     return d;
   }
@@ -29323,17 +29378,9 @@ function showPodcastPriorityModal() {
       showsByTier[(t > 0 && t <= ms.tierCount) ? t : 0].push(show);
     }
 
-    // Pseudo-publications: articles saved from email carry publication
-    // "email" and Wikipedia saves carry "wikipedia" — tiering them here
-    // orders them in playlists like any real publication.
-    const pseudo = [
-      { key: "email", label: "Email", domain: "" },
-      { key: "wikipedia", label: "Wikipedia", domain: "wikipedia.org" },
-    ];
-    const publications = [
-      ...getReadPublications().filter((p) => !pseudo.some((x) => x.key === p.key)),
-      ...pseudo,
-    ];
+    // Every saved article — each paper, email saves, Wikipedia — shares one
+    // Publications tile (NEWS_PAGE_DESIGN.md §7).
+    const publications = [{ key: ALL_PUBLICATIONS_KEY, label: "Publications", domain: "" }];
     const pubsByTier = {};
     for (let t = 0; t <= ms.tierCount; t++) pubsByTier[t] = [];
     for (const pub of publications) {
@@ -29702,7 +29749,7 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
   }
 
   const effectiveTier = (e) => {
-    if (e.type === "article") return pubTiers[e.publication] ?? 4;
+    if (e.type === "article") return publicationTierFor(pubTiers, e.publication) ?? 4;
     return epTiers[e.id] ?? tiers[e.showId] ?? 4;
   };
   const newestFirst = (state.podcastPrioritySort ?? "oldest") === "newest";
@@ -30431,9 +30478,8 @@ function initPodcastEpisodeListDelegation() {
     if (!dragItem || dragItem.id === rowId) return;
     const targetTier = parseInt(row.dataset.tier, 10);
     if (dragItem.kind === "article") {
-      if (!state.publicationTiers) state.publicationTiers = {};
-      if (targetTier === 4) delete state.publicationTiers[dragItem.pubKey];
-      else state.publicationTiers[dragItem.pubKey] = targetTier;
+      // Articles move as one Publications tier (NEWS_PAGE_DESIGN.md §7).
+      state.publicationTiers = targetTier === 4 ? {} : { [ALL_PUBLICATIONS_KEY]: targetTier };
     } else {
       if (!state.podcastEpisodeTiers) state.podcastEpisodeTiers = {};
       if (targetTier === 4) delete state.podcastEpisodeTiers[dragItem.id];
@@ -30509,7 +30555,7 @@ function renderAutoPlaylist(listEl, items) {
   const pubTiers = state.publicationTiers || {};
   const progress = state.podcastProgress || {};
   const effectiveTier = (e) => {
-    if (e.type === "article") return pubTiers[e.publication] ?? 4;
+    if (e.type === "article") return publicationTierFor(pubTiers, e.publication) ?? 4;
     return epTiers[e.id] ?? tiers[e.showId] ?? 4;
   };
   const tierLabel = (t) => t <= (state.podcastTierCount ?? 3) ? `Tier ${t}` : "Untiered";
@@ -36102,6 +36148,11 @@ function openSyncSettingsDialog(source) {
     econInput.value = "";
     econInput.placeholder = state.articleSync?.economistCookie ? "blaize_session set ✓ — paste to update" : "Paste blaize_session cookie value";
   }
+  const stribInput = document.getElementById("dialogStribCookieInput");
+  if (stribInput) {
+    stribInput.value = "";
+    stribInput.placeholder = state.articleSync?.stribCookie ? "Star Tribune sign-in set ✓ — paste to update" : "Paste your Star Tribune session cookie";
+  }
   if (statusEl) statusEl.textContent = "";
   dialog.dataset.source = source;
   dialog.showModal();
@@ -36124,6 +36175,7 @@ function saveDialogNytCookie() {
   if (el) { el.textContent = "NYT cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
   const source = document.getElementById("articleSyncSettingsDialog")?.dataset.source || "read";
   updateSyncButtons(source);
+  verifyNewsSignIns(); // News only collects from papers you're signed in to
 }
 
 function saveDialogEconomistCookie() {
@@ -36138,6 +36190,20 @@ function saveDialogEconomistCookie() {
   if (el) { el.textContent = "Economist cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
   const source = document.getElementById("articleSyncSettingsDialog")?.dataset.source || "read";
   updateSyncButtons(source);
+  verifyNewsSignIns();
+}
+
+function saveDialogStribCookie() {
+  const val = document.getElementById("dialogStribCookieInput")?.value.trim();
+  if (!val) return;
+  if (!state.articleSync) state.articleSync = {};
+  state.articleSync.stribCookie = val;
+  persist();
+  const input = document.getElementById("dialogStribCookieInput");
+  if (input) { input.value = ""; input.placeholder = "Star Tribune sign-in set ✓ — paste to update"; }
+  const el = document.getElementById("dialogSyncStatus");
+  if (el) { el.textContent = "Star Tribune sign-in saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
+  verifyNewsSignIns(); // News only collects from papers you're signed in to
 }
 
 function updateSyncButtons(source) {
@@ -36167,6 +36233,7 @@ function saveNytCookie() {
   persist();
   const el = document.getElementById("articleSyncStatus");
   if (el) { el.textContent = "NYT cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
+  verifyNewsSignIns(); // News only collects from papers you're signed in to
 }
 
 function saveEconomistCookie() {
@@ -36176,6 +36243,17 @@ function saveEconomistCookie() {
   persist();
   const el = document.getElementById("articleSyncStatus");
   if (el) { el.textContent = "Economist cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
+  verifyNewsSignIns();
+}
+
+function saveStribCookie() {
+  const val = document.getElementById("stribCookieInput")?.value.trim();
+  if (!state.articleSync) state.articleSync = {};
+  state.articleSync.stribCookie = val || "";
+  persist();
+  const el = document.getElementById("articleSyncStatus");
+  if (el) { el.textContent = "Star Tribune sign-in saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
+  verifyNewsSignIns();
 }
 
 function populateReadListenSettings() {
@@ -36183,6 +36261,8 @@ function populateReadListenSettings() {
   const econInput = document.getElementById("economistCookieInput");
   if (nytInput && state.articleSync?.nytCookie) nytInput.placeholder = "NYT-S cookie set ✓";
   if (econInput && state.articleSync?.economistCookie) econInput.placeholder = "blaize_session cookie set ✓";
+  const stribInput = document.getElementById("stribCookieInput");
+  if (stribInput && state.articleSync?.stribCookie) stribInput.placeholder = "Star Tribune sign-in set ✓";
 }
 
 // ─── TTS audio ────────────────────────────────────────────────────────────────
