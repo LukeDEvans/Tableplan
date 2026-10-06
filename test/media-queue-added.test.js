@@ -186,3 +186,72 @@ describe("an added album hands the queue on when its last track ends", () => {
     expect(env.stopMusicPlayback).toHaveBeenCalled();
   });
 });
+
+// The queue plays from a snapshot of ids taken when playback started; the reader's
+// Play button belongs to the open article. Both run the real app.js functions.
+describe("adding while the queue plays, and the reader's Play button", () => {
+  function build(vars) {
+    const env = {
+      state: { mediaQueueAdded: [], savedArticles: [{ id: "a1" }, { id: "a2" }] }, withQueueEntry,
+      mediaQueueIdCache: null, mediaAllQueueId: null, mediaAllQueueRest: [], prefetched: 0, nativeQueued: 0,
+      listenSpeechSynth: null, listenAudio: null, listenArticle: null, listenLoading: false, openArticleId: null,
+      started: [], toggled: 0, ...vars,
+    };
+    const body = `let { ${Object.keys(env).join(", ")} } = env;
+      const prefetchNextQueueAudio = () => { prefetched++; };
+      const queueNativeUpcoming = () => { nativeQueued++; };
+      const unlockListenAudio = () => {};
+      const startListenTTS = (a) => { started.push(a.id); };
+      const toggleListenPlayPause = () => { toggled++; };
+      ${["addQueueAddedEntry", "listenSessionArticleId", "toggleReaderListen"].map(extract).join("\n")}
+      return { addQueueAddedEntry, listenSessionArticleId, toggleReaderListen, get: () => ({ mediaAllQueueRest, prefetched, nativeQueued, started, toggled }) };`;
+    return new Function("env", body)(env); // eslint-disable-line no-new-func
+  }
+  const ep = (id) => ({ kind: "episode", ref: episodeRef(id), itemId: id });
+
+  it("an add while the queue is playing joins the running order, once", () => {
+    const app = build({ mediaAllQueueId: "now", mediaAllQueueRest: ["next"] });
+    app.addQueueAddedEntry(ep("old"));
+    app.addQueueAddedEntry(ep("old")); // already queued → no second copy
+    expect(app.get().mediaAllQueueRest).toEqual(["next", "old"]);
+    expect(app.get().prefetched).toBe(1);
+  });
+  it("an added album joins under its entry id, and the iPhone app's up-next is refreshed", () => {
+    const app = build({ mediaAllQueueId: "now", listenSpeechSynth: { native: true, kind: "audio", currentId: "now" } });
+    const { entry } = app.addQueueAddedEntry({ kind: "album", ref: libraryAlbumRef("A", "B"), title: "B" });
+    expect(app.get().mediaAllQueueRest).toEqual([entry.id]);
+    expect(app.get().nativeQueued).toBe(1);
+  });
+  it("nothing playing from the queue → the snapshot is left alone", () => {
+    const app = build({});
+    app.addQueueAddedEntry(ep("old"));
+    expect(app.get().mediaAllQueueRest).toEqual([]);
+  });
+
+  it("reader Play starts the open article when another article is loaded", () => {
+    const app = build({ openArticleId: "a2", listenAudio: {}, listenArticle: { id: "a1" } });
+    app.toggleReaderListen();
+    expect(app.get()).toMatchObject({ started: ["a2"], toggled: 0 });
+  });
+  it("reader Play starts the open article when the iPhone app is playing a podcast", () => {
+    const app = build({ openArticleId: "a2", listenSpeechSynth: { native: true, kind: "audio", currentId: "ep1" } });
+    app.toggleReaderListen();
+    expect(app.get()).toMatchObject({ started: ["a2"], toggled: 0 });
+  });
+  it("reader Play pauses / resumes when the open article is the one loaded", () => {
+    for (const vars of [
+      { listenAudio: {}, listenArticle: { id: "a2" } },
+      { listenSpeechSynth: { native: true, kind: "speech", currentId: "a2" } },
+      { listenSpeechSynth: { article: { id: "a2" } } },
+    ]) {
+      const app = build({ openArticleId: "a2", ...vars });
+      app.toggleReaderListen();
+      expect(app.get()).toMatchObject({ started: [], toggled: 1 });
+    }
+  });
+  it("reader Play does nothing new while audio is still loading", () => {
+    const app = build({ openArticleId: "a2", listenLoading: true });
+    app.toggleReaderListen();
+    expect(app.get()).toMatchObject({ started: [], toggled: 1 });
+  });
+});

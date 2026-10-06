@@ -27736,7 +27736,7 @@ function wireMediaTabs() {
   document.getElementById("articleAddBtn")?.addEventListener("click", openArticleSaveDialog);
   document.getElementById("articleSyncBtn")?.addEventListener("click", () => syncSavedArticles("read"));
   document.getElementById("articleSyncSettingsBtn")?.addEventListener("click", () => openSyncSettingsDialog("read"));
-  document.getElementById("listenPlayPauseBtn")?.addEventListener("click", toggleListenPlayPause);
+  document.getElementById("listenPlayPauseBtn")?.addEventListener("click", toggleReaderListen);
   document.getElementById("listenStopBtn")?.addEventListener("click", stopListen);
   document.getElementById("listenSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
   document.getElementById("exListenSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
@@ -29971,6 +29971,15 @@ function addQueueAddedEntry(draft) {
   const res = withQueueEntry(state.mediaQueueAdded, draft);
   state.mediaQueueAdded = res.list;
   mediaQueueIdCache = null;
+  // The queue plays from a snapshot of what was listed when playback started
+  // (mediaAllQueueRest). Something added while it plays goes on the end of that
+  // too, or it would sit in the list and never be reached.
+  const rowId = res.entry ? (res.entry.itemId || res.entry.id) : null;
+  if (rowId && mediaAllQueueId && mediaAllQueueId !== rowId && !mediaAllQueueRest.includes(rowId)) {
+    mediaAllQueueRest.push(rowId);
+    prefetchNextQueueAudio();
+    if (listenSpeechSynth?.native) queueNativeUpcoming(listenSpeechSynth); // the iPhone app's own up-next list
+  }
   return res;
 }
 function removeQueueAddedEntries(match) {
@@ -35889,6 +35898,7 @@ function openArticle(id, fromListId) {
   const readerBody = document.getElementById("articleReaderBody");
   if (readerBody) readerBody.scrollTop = 0;
   readerPanel.scrollTop = 0;
+  updateListenPlayBtn(); // Play / Pause is about THIS article now
 }
 
 function closeArticleReader() {
@@ -38105,6 +38115,26 @@ function advanceListenArticle() {
   return true;
 }
 
+// The article the listen session has loaded (reading or paused), or null — also
+// null while a podcast plays through the iPhone app's player, which shares the
+// session object.
+function listenSessionArticleId() {
+  const s = listenSpeechSynth;
+  if (s) return s.native ? (s.kind === "audio" ? null : s.currentId || null) : s.article?.id || null;
+  return listenAudio ? listenArticle?.id || null : null;
+}
+// The reader's own Play button. It belongs to the article that is OPEN: if
+// something else is loaded (another article, or a podcast in the iPhone app),
+// pressing it starts this article instead of resuming that.
+function toggleReaderListen() {
+  const openId = openArticleId;
+  if (openId && !listenLoading && listenSessionArticleId() !== openId) {
+    const article = (state.savedArticles || []).find((a) => a.id === openId);
+    if (article) { unlockListenAudio(); startListenTTS(article); return; }
+  }
+  toggleListenPlayPause();
+}
+
 function toggleListenPlayPause() {
   unlockListenAudio();
   // On-device voice session: pause/resume it directly (native plugin or Web Speech).
@@ -38180,11 +38210,14 @@ function updateListenPlayBtn() {
   // mini-player's button (not delegated to that function directly -- it also
   // covers music/podcasts, which this button, scoped to the article reader's
   // own listen session, must not react to).
-  const playing = listenSpeechSynth
+  const sessionPlaying = listenSpeechSynth
     ? (listenSpeechSynth.native
         ? (listenSpeechSynth.kind !== "audio" && !listenSpeechSynth.paused) // a native podcast isn't the article's audio
         : (() => { try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; } })())
     : (listenSpeaking && listenAudio && !listenAudio.paused);
+  // The button sits in the reader, so it shows Pause only while the article that
+  // is open is the one being read (see toggleReaderListen).
+  const playing = sessionPlaying && (!openArticleId || listenSessionArticleId() === openArticleId);
   if (label) label.textContent = playing ? "Pause" : "Play";
   if (icon) icon.innerHTML = playing
     ? `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`
