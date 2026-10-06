@@ -239,6 +239,20 @@ describe("runInboxSweep — news email → Media notification cards (NEWS_INTAKE
     }
   });
 
+  it("a failed sign-in status read leaves the news email pending for retry (not triaged)", async () => {
+    const mock = newsMock();
+    const inner = mock;
+    const failing = async (url, opts = {}) => {
+      if (String(url).includes("mailnewssubs_")) return { ok: false, status: 500, json: async () => ({}), text: async () => "boom" };
+      return inner(url, opts);
+    };
+    failing.state = mock.state; failing.count = mock.count;
+    vi.spyOn(global, "fetch").mockImplementation(failing);
+    await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    expect(mock.state.done.has("m1")).toBe(false);
+    expect(mock.state.calls.some((c) => c.cat === "anthropic")).toBe(false);
+  });
+
   it("an unverified sign-in counts; each card carries its section", async () => {
     const mock = newsMock();
     mock.state.subsRow = { papers: { economist: { status: "unverified" } } };

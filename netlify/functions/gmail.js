@@ -91,30 +91,28 @@ exports.handler = async (event) => {
     return json(200, { ok: true, recipes });
   }
 
-  // News-article cards collected from NYT / Economist / Star Tribune mail
-  // (NEWS_INTAKE_DESIGN.md) — the Media page's notification bell. Reads only
-  // the pending list, never the seen record.
+  // The old Media bell deck (installed iPhone builds that predate the News page):
+  // the News cards not yet sent to Media. Reads only the pending list.
   if (action === "pendingNews") {
-    return json(200, { articles: await NewsLinks.loadPendingNews(serviceKey, userId) });
+    const articles = (await NewsLinks.loadPendingNews(serviceKey, userId)).filter((c) => !c.sentAt);
+    return json(200, { articles });
   }
 
-  // Accept (→ Media → Publications, under its paper) or dismiss cards, batched
-  // by the client ({ decisions: [{ id, decision }] }) so a swiping session costs
-  // one read+write, not one per card. Saves happen first, so a failed save
-  // leaves the cards for another try. The seen record keeps them from ever
-  // coming back either way.
+  // The old Media bell deck (installed iPhone builds that predate the News page):
+  // accept = Send to Media (the story stays on News, marked "In Media"), dismiss =
+  // Hide — the same meaning the News page gives them, so an old build can't
+  // silently drop stories from News.
   if (action === "resolveNews") {
     const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 300) : [];
     if (!decisions.length || decisions.some((d) => !d?.id || !["accept", "dismiss"].includes(d.decision))) {
       return json(400, { error: "decisions: [{ id, decision: accept|dismiss }] required" });
     }
-    const accepts = new Set(decisions.filter((d) => d.decision === "accept").map((d) => d.id));
-    if (accepts.size) {
-      const cards = (await NewsLinks.loadPendingNews(serviceKey, userId)).filter((c) => accepts.has(c.id));
-      for (const card of cards) await saveArticleToMediaSection(serviceKey, userId, NewsLinks.acceptedArticleRecord(card));
-    }
-    const articles = await NewsLinks.removePendingNews(serviceKey, userId, decisions.map((d) => d.id));
-    return json(200, { ok: true, articles });
+    const mapped = decisions.map((d) => ({ id: d.id, decision: d.decision === "accept" ? "send" : "hide" }));
+    const all = await NewsLinks.updateNewsFeed(serviceKey, userId, mapped, {
+      saveToMedia: (record) => saveArticleToMediaSection(serviceKey, userId, record)
+    });
+    // The old deck shows only undecided cards.
+    return json(200, { ok: true, articles: all.filter((c) => !c.sentAt) });
   }
 
   // ── News page (NEWS_PAGE_DESIGN.md) ──

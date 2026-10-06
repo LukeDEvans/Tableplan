@@ -46,3 +46,10 @@ describe("one Publications tile", () => {
     expect(publicationTierFor({ nyt: 1 }, "economist")).toBeUndefined();
   });
 });
+
+describe("tier count with one Publications tile", () => {
+  it("lingering per-paper keys don't keep extra tiers once `all` is set", () => {
+    expect(deriveMediaTierCount(3, {}, { all: 2, nyt: 7 })).toBe(3);
+    expect(deriveMediaTierCount(3, {}, { nyt: 5 })).toBe(5); // before a collapse, legacy keys still count
+  });
+});

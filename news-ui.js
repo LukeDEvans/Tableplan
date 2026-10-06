@@ -183,6 +183,7 @@ export function createNewsModule(deps) {
 
   // ── Decision queue (batched like the old bell deck) ──
   let queue = [];
+  let inflight = []; // sent to the server, not yet answered — re-applied to any load meanwhile
   let flushTimer = null;
   function enqueue(id, decision) {
     queue.push({ id, decision });
@@ -195,9 +196,11 @@ export function createNewsModule(deps) {
     if (!queue.length) return;
     const decisions = queue;
     queue = [];
+    inflight = [...inflight, ...decisions];
     callGmailApi({ action: "updateNews", decisions }).then((d) => {
+      inflight = inflight.filter((x) => !decisions.includes(x));
       if (Array.isArray(d?.articles)) {
-        articles = applyLocalDecisions(d.articles, queue);
+        articles = applyLocalDecisions(d.articles, [...inflight, ...queue]);
         updateDot();
         if (isActive()) render();
         return;
@@ -225,24 +228,41 @@ export function createNewsModule(deps) {
       return;
     }
     loadError = "";
-    articles = applyLocalDecisions(d.articles, queue);
+    articles = applyLocalDecisions(d.articles, [...inflight, ...queue]);
     signIns = d.signIns || {};
     updateDot();
     render();
-    if (signInsNeedCheck(signIns)) verifySignIns();
+    // Auto-recheck only from a device that has sign-ins saved: one whose synced
+    // settings haven't arrived yet would otherwise record every paper as "none".
+    if (signInsNeedCheck(signIns) && hasSavedSignIn()) verifySignIns();
+  }
+
+  function hasSavedSignIn() {
+    const sync = getState()?.articleSync || {};
+    return !!(sync.nytCookie || sync.economistCookie || sync.stribCookie);
   }
 
   // Re-check every paper's sign-in with the cookies saved in Settings → Sync.
+  // A call during a check runs once more afterward, with the latest cookies
+  // (saving NYT then Economist in quick succession must check both).
+  let verifyAgain = false;
   async function verifySignIns() {
-    if (verifying || !isSignedIn?.()) return;
+    if (!isSignedIn?.()) return;
+    if (verifying) { verifyAgain = true; return; }
     verifying = true;
-    const sync = getState()?.articleSync || {};
-    const d = await callGmailApi({
-      action: "verifyNewsSignIns",
-      cookies: { nytCookie: sync.nytCookie || "", economistCookie: sync.economistCookie || "", stribCookie: sync.stribCookie || "" }
-    });
-    verifying = false;
-    if (d?.signIns) { signIns = d.signIns; if (isActive()) render(); }
+    try {
+      do {
+        verifyAgain = false;
+        const sync = getState()?.articleSync || {};
+        const d = await callGmailApi({
+          action: "verifyNewsSignIns",
+          cookies: { nytCookie: sync.nytCookie || "", economistCookie: sync.economistCookie || "", stribCookie: sync.stribCookie || "" }
+        });
+        if (d?.signIns) { signIns = d.signIns; if (isActive()) render(); }
+      } while (verifyAgain);
+    } finally {
+      verifying = false;
+    }
   }
 
   function cardFor(id) { return (articles || []).find((a) => a.id === id) || null; }
@@ -265,8 +285,11 @@ export function createNewsModule(deps) {
       enqueue(id, "send");
       onSentToMedia?.(record);
       if (!quiet) showToast?.("Sent to Media → Publications.");
-    } else if (!quiet) {
-      showToast?.("Already in Media → Publications.");
+    } else {
+      // Sent from another device (or since removed from Media): make sure this
+      // device has the copy Open / Listen hand to the reader. Skips duplicates by id.
+      onSentToMedia?.(record);
+      if (!quiet) showToast?.("Already in Media → Publications.");
     }
     return record;
   }

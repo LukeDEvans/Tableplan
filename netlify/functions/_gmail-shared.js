@@ -487,14 +487,15 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
     // read just means cross-sweep dedup happens at merge time instead.
     let newsSeenAtStart = {};
     // Which papers Luke is signed in to (NEWS_PAGE_DESIGN.md §4) — a paper's links
-    // are collected only while it is. A failed read fails closed: no paper counts
-    // this sweep, so its mail goes through normal triage instead.
+    // are collected only while it is. A failed read leaves news mail pending for
+    // the next sweep (below) rather than triaging it, which would lose it for good.
     let newsSignIns = {};
+    let newsSignInsFailed = false;
     if (newsEnabled) {
       try { newsSeenAtStart = await NewsLinks.loadNewsSeen(serviceKey, userId); }
       catch (e) { console.error("[news-links] seen load failed:", e.message); }
       try { newsSignIns = await NewsLinks.loadNewsSignIns(serviceKey, userId); }
-      catch (e) { console.error("[news-links] sign-in status load failed:", e.message); }
+      catch (e) { newsSignInsFailed = true; console.error("[news-links] sign-in status load failed — news mail left for retry:", e.message); }
     }
     const receiptCtx = await loadReceiptContext(serviceKey, userId, mailAi);
     const sugg = await loadMailSuggestions(serviceKey, userId);
@@ -532,6 +533,9 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
         console.log(`[simplefin-autodelete] disposed ${messageId} (${testMode ? "AI trash" : "trash"})`);
         return { suggestions: [], disposed: true };
       }
+
+      // Sign-in status unknown this sweep: leave mail from an enabled paper pending.
+      if (newsSignInsFailed && NewsLinks.newsLinkSourceForSender(hdrs.from, mailAi)) return { suggestions: [], retry: true };
 
       const rawBody = extractBody(msg.payload) || "";
 

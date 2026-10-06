@@ -19,7 +19,10 @@ export function deriveMediaTierCount(storedCount, showTiers, publicationTiers) {
   const tierValues = (m) => (m && typeof m === "object" && !Array.isArray(m))
     ? Object.values(m).map(Number).filter((n) => Number.isInteger(n) && n > 0)
     : [];
-  const maxAssigned = Math.max(0, ...tierValues(showTiers), ...tierValues(publicationTiers));
+  // With one Publications tile (publicationTiers.all), per-paper keys that
+  // linger from the union merge no longer count.
+  const pubs = publicationTiers && Number(publicationTiers.all) > 0 ? { all: publicationTiers.all } : publicationTiers;
+  const maxAssigned = Math.max(0, ...tierValues(showTiers), ...tierValues(pubs));
   return Math.min(TIER_CAP, Math.max(stored, maxAssigned, 1));
 }
 
