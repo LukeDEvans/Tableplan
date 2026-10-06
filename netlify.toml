@@ -67,6 +67,11 @@
 [functions."recipe-digest"]
   schedule = "0 15 * * 0"
 
+# News: every section feed of the papers you're signed in to, hourly at :07
+# (_news-feeds.js, NEWS_PAGE_DESIGN.md §10). Bounded single pass, insert-only.
+[functions."news-feeds"]
+  schedule = "7 * * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]

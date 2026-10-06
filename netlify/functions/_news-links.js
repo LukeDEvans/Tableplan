@@ -9,7 +9,6 @@
 // service-role functions touch them (no group prefix → no client RLS match).
 // Files prefixed with _ are not deployed as individual functions.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
-const { updateRawRow } = require("./_state-sections.js");
 
 const DAY_MS = 86400000;
 const FRESH_DAYS = 3;          // older articles are never delivered (News keeps 3 days)
@@ -408,39 +407,6 @@ function prunePending(list, nowMs = Date.now()) {
     && isFresh(c.publishedAt || c.discoveredAt, nowMs));
 }
 
-// Apply the News page's batched decisions to the stored list. Pure. Returns the
-// new list, the cards to save to Media (send), and whether anything changed.
-//   read / unread → readAt set / cleared
-//   send          → sentAt set (the card stays on News, shown "In Media")
-//   hide          → removed (the seen record keeps it from ever coming back)
-const NEWS_DECISIONS = ["read", "unread", "send", "hide"];
-function applyNewsDecisions(list, decisions, nowIso = new Date().toISOString()) {
-  const byId = new Map();
-  for (const d of decisions || []) {
-    if (!d?.id || !NEWS_DECISIONS.includes(d.decision)) continue;
-    const cur = byId.get(d.id) || {};
-    if (d.decision === "hide") cur.hide = true;
-    else if (d.decision === "send") cur.send = true;
-    else cur.read = d.decision === "read"; // the last read/unread wins
-    byId.set(d.id, cur);
-  }
-  const toSend = [];
-  let changed = false;
-  const out = [];
-  for (const card of Array.isArray(list) ? list : []) {
-    const d = byId.get(card?.id);
-    if (!d) { out.push(card); continue; }
-    if (d.hide) { changed = true; continue; }
-    const next = { ...card };
-    if (d.send && !card.sentAt) { next.sentAt = nowIso; toSend.push(card); }
-    if (d.read === true && !card.readAt) next.readAt = nowIso;
-    if (d.read === false && card.readAt) delete next.readAt;
-    if (next.sentAt !== card.sentAt || next.readAt !== card.readAt) changed = true;
-    out.push(next);
-  }
-  return { list: out, toSend, changed };
-}
-
 // ── Sign-in gate (NEWS_PAGE_DESIGN.md §4) ────────────────────────────────────
 // A paper feeds News only while Luke is signed in to it. Status per paper:
 //   signed-in   the subscriber page answered as signed in
@@ -595,61 +561,21 @@ async function saveNewsSignIns(serviceKey, userId, papers) {
   await saveRowState(serviceKey, `mailnewssubs_${userId}`, { papers });
 }
 
-async function loadPendingNews(serviceKey, userId) {
-  return prunePending((await loadRowState(serviceKey, `mailnews_${userId}`)).newsPending);
-}
-
-// The pending row has two writers — the mail sweep adding cards and a swipe
-// removing them — so both go through updateRawRow's optimistic lock (conditional
-// PATCH on updated_at, re-read + retry on conflict). Without it, a write landing
-// between the other's read and write was lost: a swiped card came back once, or a
-// just-collected card vanished. The seen row has one writer (the sweep).
-
-// The sweep's batch write: merge into pending under the lock, then write seen.
-// If the seen write fails after pending succeeded, the cards are already in
-// pending (merge skips pending ids), so nothing is delivered twice.
+// The sweep's batch write (NEWS_PAGE_DESIGN.md §10): the batch's cards go into
+// news_articles (insert, ignore duplicates), newsletter leads are marked, then the
+// seen record is updated. Insert first: if the seen write fails the emails are
+// retried, and re-inserting is a no-op. Must throw on failure — the sweep files the
+// source emails only after this succeeds.
 async function saveNewsBatch(serviceKey, userId, results, nowMs = Date.now()) {
+  const Store = require("./_news-store.js");
+  const cards = (results || []).flatMap((r) => r.cards || []);
+  const added = await Store.insertArticles(serviceKey, userId, cards, "email");
+  const leadIds = (results || []).map((r) => r.leadId).filter(Boolean);
+  if (leadIds.length) await Store.markLeads(serviceKey, userId, leadIds, new Date(nowMs).toISOString());
   const seenState = await loadRowState(serviceKey, `mailnewsseen_${userId}`);
-  let merged = null;
-  await updateRawRow(serviceKey, `mailnews_${userId}`, (pendingState) => {
-    // Recomputed on every retry against the freshly re-read pending list.
-    merged = mergeNewsResults({ newsPending: pendingState.newsPending, newsSeen: seenState.newsSeen }, results, nowMs);
-    return { ...pendingState, newsPending: merged.row.newsPending };
-  });
+  const merged = mergeNewsResults({ newsSeen: seenState.newsSeen }, results, nowMs);
   await saveRowState(serviceKey, `mailnewsseen_${userId}`, { newsSeen: merged.row.newsSeen });
-  return { added: merged.added, pending: merged.row.newsPending.length };
-}
-
-// The News page's batched read / unread / send / hide. Cards to send are saved to
-// Media first (by the caller's `saveToMedia`), so a failed save leaves them
-// un-sent for another try. Returns the new list.
-async function updateNewsFeed(serviceKey, userId, decisions, { saveToMedia }) {
-  const sends = new Set((decisions || []).filter((d) => d?.decision === "send").map((d) => d.id));
-  if (sends.size) {
-    const cards = (await loadPendingNews(serviceKey, userId)).filter((c) => sends.has(c.id) && !c.sentAt);
-    for (const card of cards) await saveToMedia(acceptedArticleRecord(card));
-  }
-  let after = [];
-  await updateRawRow(serviceKey, `mailnews_${userId}`, (pendingState) => {
-    const before = pendingState.newsPending || [];
-    const res = applyNewsDecisions(prunePending(before), decisions);
-    after = res.list;
-    return res.changed || after.length !== before.length ? { ...pendingState, newsPending: after } : null;
-  });
-  return after;
-}
-
-// Remove resolved cards from the pending list (accept and dismiss both do this;
-// the seen record is untouched, so they never come back). Returns the new list.
-async function removePendingNews(serviceKey, userId, ids) {
-  const drop = new Set(ids);
-  let after = [];
-  await updateRawRow(serviceKey, `mailnews_${userId}`, (pendingState) => {
-    const before = pendingState.newsPending || [];
-    after = prunePending(before.filter((c) => !drop.has(c.id)));
-    return after.length !== before.length ? { ...pendingState, newsPending: after } : null; // null = nothing to write
-  });
-  return after;
+  return { added };
 }
 
 module.exports = {
@@ -673,7 +599,6 @@ module.exports = {
   collectNewsCards,
   mergeNewsResults,
   prunePending,
-  applyNewsDecisions,
   paperSignedIn,
   checkPaperSignIn,
   verifySignIns,
@@ -681,10 +606,7 @@ module.exports = {
   followRedirects,
   fetchArticleMeta,
   loadNewsSeen,
-  loadPendingNews,
   loadNewsSignIns,
   saveNewsSignIns,
-  updateNewsFeed,
-  saveNewsBatch,
-  removePendingNews
+  saveNewsBatch
 };

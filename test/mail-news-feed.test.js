@@ -107,28 +107,6 @@ describe("3-day retention", () => {
   });
 });
 
-describe("applyNewsDecisions", () => {
-  const list = [{ id: "a" }, { id: "b", readAt: "x" }, { id: "c" }, { id: "d", sentAt: "earlier" }];
-  it("read / unread / send / hide", () => {
-    const r = N.applyNewsDecisions(list, [
-      { id: "a", decision: "read" }, { id: "b", decision: "unread" },
-      { id: "c", decision: "send" }, { id: "c", decision: "hide" },
-      { id: "d", decision: "send" }
-    ], "now");
-    expect(r.list).toEqual([{ id: "a", readAt: "now" }, { id: "b" }, { id: "d", sentAt: "earlier" }]);
-    expect(r.toSend).toEqual([]); // c was hidden; d was already sent
-    expect(r.changed).toBe(true);
-  });
-  it("send keeps the card and stamps it", () => {
-    const r = N.applyNewsDecisions(list, [{ id: "a", decision: "send" }], "now");
-    expect(r.list[0]).toEqual({ id: "a", sentAt: "now" });
-    expect(r.toSend.map((c) => c.id)).toEqual(["a"]);
-  });
-  it("a no-op batch reports no change", () => {
-    expect(N.applyNewsDecisions(list, [{ id: "b", decision: "read" }, { id: "zz", decision: "hide" }]).changed).toBe(false);
-  });
-});
-
 describe("sign-in checks", () => {
   const page = (html, { url = "https://www.nytimes.com/saved", status = 200 } = {}) =>
     async () => ({ ok: status >= 200 && status < 300, status, url, text: async () => html });
@@ -161,25 +139,40 @@ describe("sign-in checks", () => {
   });
 });
 
-// ── gmail.js actions ─────────────────────────────────────────────────────────
+// ── gmail.js actions (backed by the news_articles table) ─────────────────────
 const USER = "u1";
 const today = new Date().toISOString();
-const card = (id, extra = {}) => ({ id, url: `https://www.nytimes.com/x/${id}.html`, title: `T ${id}`, paper: "nyt", source: "The New York Times", section: "us", publishedAt: today, ...extra });
+const row = (id, extra = {}) => ({ id, url: `https://www.nytimes.com/x/${id}.html`, title: `T ${id}`, paper: "nyt", source: "The New York Times", section: "us", published_at: today, discovered_at: today, lead_at: null, read_at: null, sent_at: null, ...extra });
 
 function mock() {
-  const st = { pending: [card("a"), card("b"), card("c")], stamp: "t0", writes: 0, media: null, subs: { papers: { nyt: { status: "signed-in" } } }, fetched: [] };
+  const st = { rows: [row("a"), row("b"), row("c")], media: null, subs: { papers: { nyt: { status: "signed-in" } } }, fetched: [], calls: [] };
   const resp = (data, ok = true, status = 200) => ({ ok, status, url: "", json: async () => data, text: async () => JSON.stringify(data) });
+  const idsOf = (u) => (decodeURIComponent(u).match(/id=in\.\(([^)]*)\)/)?.[1] || "").split(",").map((x) => x.replace(/"/g, "")).filter(Boolean);
   const fn = async (url, opts = {}) => {
     const u = String(url), method = opts.method || "GET";
     const body = opts.body ? JSON.parse(opts.body) : null;
+    st.calls.push(`${method} ${decodeURIComponent(u)}`);
     if (u.includes("/auth/v1/user")) return resp({ id: USER });
     if (u.includes("mailnewssubs_") && method === "GET") return resp(st.subs ? [{ state: st.subs }] : []);
     if (method === "POST" && body?.id === `mailnewssubs_${USER}`) { st.subs = body.state; return resp(null); }
-    if (u.includes("mailnews_") && method === "GET") return resp([{ state: { newsPending: st.pending }, updated_at: st.stamp }]);
-    if (method === "PATCH" && u.includes(`mailnews_${USER}`)) {
-      if (!u.includes(`updated_at=eq.${st.stamp}`)) return resp([]);
-      st.pending = body.state.newsPending; st.writes++; st.stamp = `t${st.writes}`;
-      return resp([{ state: body.state, updated_at: st.stamp }]);
+    if (u.includes("/rpc/news_counts")) {
+      const live = st.rows.filter((r) => !r.hidden_at);
+      return resp(live.map((r) => ({ section: r.section, paper: r.paper, unread: r.read_at ? 0 : 1, total: 1, sent: r.sent_at ? 1 : 0 })));
+    }
+    if (u.includes("/news_articles") && method === "GET") {
+      let rows = st.rows.filter((r) => !r.hidden_at);
+      const ids = idsOf(u);
+      if (ids.length) rows = rows.filter((r) => ids.includes(r.id));
+      if (u.includes("sent_at=is.null")) rows = rows.filter((r) => !r.sent_at);
+      if (u.includes("lead_at=gte.")) rows = rows.filter((r) => r.lead_at);
+      return resp(rows);
+    }
+    if (u.includes("/news_articles") && method === "PATCH") {
+      for (const r of st.rows) if (idsOf(u).includes(r.id)) {
+        if (u.includes("read_at=is.null") && r.read_at) continue;
+        Object.assign(r, body);
+      }
+      return resp(null);
     }
     if (u.includes(`u-${USER}`) && method === "GET") return resp(st.media ? [st.media] : []);
     if (method === "POST" && body?.id === `u-${USER}:media`) { st.media = { id: body.id, state: body.state, updated_at: body.updated_at }; return resp(null); }
@@ -195,40 +188,64 @@ describe("gmail.js News actions", () => {
   beforeEach(() => { process.env.SUPABASE_SERVICE_ROLE_KEY = "svc"; });
   afterEach(() => vi.restoreAllMocks());
 
-  it("newsFeed returns the cards and the sign-in status", async () => {
-    vi.spyOn(global, "fetch").mockImplementation(mock());
-    const d = JSON.parse((await call({ action: "newsFeed" })).body);
+  it("newsFeed returns a page of cards, the counts and the sign-in status", async () => {
+    const m = mock();
+    vi.spyOn(global, "fetch").mockImplementation(m);
+    const d = JSON.parse((await call({ action: "newsFeed", view: { kind: "section", key: "us" } })).body);
     expect(d.articles.map((a) => a.id)).toEqual(["a", "b", "c"]);
+    expect(d.articles[0]).toMatchObject({ paper: "nyt", section: "us", publishedAt: today });
+    expect(d.counts).toMatchObject({ all: 3, section: { us: 3 } });
     expect(d.signIns.nyt.status).toBe("signed-in");
+    expect(m.st.calls.some((c) => c.includes("section=eq.us"))).toBe(true);
+    expect(m.st.calls.some((c) => c.includes("select=*"))).toBe(false);
   });
 
-  it("updateNews: send saves to Media and keeps the card; hide removes; one locked write", async () => {
+  it("paging further (before=…) skips the counts and sign-in reads", async () => {
+    const m = mock();
+    vi.spyOn(global, "fetch").mockImplementation(m);
+    const d = JSON.parse((await call({ action: "newsFeed", before: today })).body);
+    expect(d.counts).toBeNull();
+    expect(m.st.calls.some((c) => c.includes("news_counts"))).toBe(false);
+  });
+
+  it("updateNews: send saves to Media and stamps the row; hide and read patch only their rows", async () => {
     const m = mock();
     vi.spyOn(global, "fetch").mockImplementation(m);
     const d = JSON.parse((await call({ action: "updateNews", decisions: [
       { id: "a", decision: "send" }, { id: "b", decision: "hide" }, { id: "c", decision: "read" }
     ] })).body);
-    expect(d.articles.map((a) => a.id)).toEqual(["a", "c"]);
-    expect(d.articles[0].sentAt).toBeTruthy();
-    expect(d.articles[1].readAt).toBeTruthy();
-    expect(m.st.writes).toBe(1);
+    expect(d.ok).toBe(true);
+    const [a, b, c] = m.st.rows;
+    expect(a.sent_at).toBeTruthy();
+    expect(b.hidden_at).toBeTruthy();
+    expect(c.read_at).toBeTruthy();
     expect(m.st.media.state.savedArticles.map((x) => x.id)).toEqual(["nl-a"]);
-    expect(m.st.media.state.savedArticles[0].publication).toBe("nyt");
+    expect(d.counts.all).toBe(1); // a unread; b hidden; c read
   });
 
-  it("updateNews: sending an already-sent card saves nothing again", async () => {
+  it("updateNews: sending an already-sent story saves nothing again", async () => {
     const m = mock();
-    m.st.pending = [card("a", { sentAt: "earlier" })];
+    m.st.rows[0].sent_at = "earlier";
     vi.spyOn(global, "fetch").mockImplementation(m);
     await call({ action: "updateNews", decisions: [{ id: "a", decision: "send" }] });
     expect(m.st.media).toBeNull();
-    expect(m.st.writes).toBe(0);
   });
 
   it("updateNews rejects a malformed batch", async () => {
     vi.spyOn(global, "fetch").mockImplementation(mock());
     expect((await call({ action: "updateNews", decisions: [{ id: "a", decision: "accept" }] })).statusCode).toBe(400);
     expect((await call({ action: "updateNews", decisions: [] })).statusCode).toBe(400);
+  });
+
+  it("old bell builds: resolveNews maps accept → send and dismiss → hide; pendingNews lists unsent stories", async () => {
+    const m = mock();
+    vi.spyOn(global, "fetch").mockImplementation(m);
+    const d = JSON.parse((await call({ action: "resolveNews", decisions: [{ id: "a", decision: "accept" }, { id: "b", decision: "dismiss" }] })).body);
+    expect(m.st.rows[0].sent_at).toBeTruthy();
+    expect(m.st.rows[1].hidden_at).toBeTruthy();
+    expect(d.articles.map((x) => x.id)).toEqual(["c"]);
+    expect(JSON.parse((await call({ action: "pendingNews" })).body).articles.map((x) => x.id)).toEqual(["c"]);
+    expect((await call({ action: "resolveNews", decisions: [{ id: "a", decision: "maybe" }] })).statusCode).toBe(400);
   });
 
   it("verifyNewsSignIns checks with the sent cookies and stores the result", async () => {

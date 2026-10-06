@@ -8,6 +8,7 @@ const {
 } = require("./_gmail-shared");
 const { loadMailAiRow, dismissPendingRecipe } = require("./_recipe-digest");
 const NewsLinks = require("./_news-links");
+const NewsStore = require("./_news-store");
 const { saveArticleToMediaSection } = require("./_news-articles");
 
 // Domains that send travel booking confirmations, used by listBookingEmails
@@ -91,51 +92,53 @@ exports.handler = async (event) => {
     return json(200, { ok: true, recipes });
   }
 
-  // The old Media bell deck (installed iPhone builds that predate the News page):
-  // the News cards not yet sent to Media. Reads only the pending list.
-  if (action === "pendingNews") {
-    const articles = (await NewsLinks.loadPendingNews(serviceKey, userId)).filter((c) => !c.sentAt);
-    return json(200, { articles });
-  }
+  // ── News (NEWS_PAGE_DESIGN.md §10 — the news_articles table, via _news-store) ──
+  const VIEW_KINDS = ["front", "section", "paper", "sent"];
+  const saveToMedia = (record) => saveArticleToMediaSection(serviceKey, userId, record);
 
-  // The old Media bell deck (installed iPhone builds that predate the News page):
-  // accept = Send to Media (the story stays on News, marked "In Media"), dismiss =
-  // Hide — the same meaning the News page gives them, so an old build can't
-  // silently drop stories from News.
-  if (action === "resolveNews") {
-    const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 300) : [];
-    if (!decisions.length || decisions.some((d) => !d?.id || !["accept", "dismiss"].includes(d.decision))) {
-      return json(400, { error: "decisions: [{ id, decision: accept|dismiss }] required" });
-    }
-    const mapped = decisions.map((d) => ({ id: d.id, decision: d.decision === "accept" ? "send" : "hide" }));
-    const all = await NewsLinks.updateNewsFeed(serviceKey, userId, mapped, {
-      saveToMedia: (record) => saveArticleToMediaSection(serviceKey, userId, record)
-    });
-    // The old deck shows only undecided cards.
-    return json(200, { ok: true, articles: all.filter((c) => !c.sentAt) });
-  }
-
-  // ── News page (NEWS_PAGE_DESIGN.md) ──
-  // The feed (last 3 days of article cards) + which papers Luke is signed in to.
+  // One page of a view + the sidebar counts + which papers Luke is signed in to.
+  // body: { view: { kind, key }, before?: ISO cursor, q?: title search, limit? }
   if (action === "newsFeed") {
-    const [articles, signIns] = await Promise.all([
-      NewsLinks.loadPendingNews(serviceKey, userId),
-      NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}))
+    const v = body.view && typeof body.view === "object" ? body.view : {};
+    const view = { kind: VIEW_KINDS.includes(v.kind) ? v.kind : "front", key: typeof v.key === "string" ? v.key.slice(0, 40) : undefined };
+    const before = typeof body.before === "string" && !Number.isNaN(Date.parse(body.before)) ? body.before : undefined;
+    const q = typeof body.q === "string" ? body.q : "";
+    const [page, counts, signIns] = await Promise.all([
+      NewsStore.loadFeedPage(serviceKey, userId, { view, before, q, limit: body.limit }),
+      // Counts only change the sidebar; skip them when paging further down a view.
+      before ? Promise.resolve(null) : NewsStore.loadCounts(serviceKey, userId),
+      before ? Promise.resolve(null) : NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}))
     ]);
-    return json(200, { articles, signIns });
+    return json(200, { ...page, counts, signIns });
   }
 
-  // Batched read / unread / send / hide from the News page. Send saves to
-  // Media → Publications first (the same record the bell's Save used).
+  // Batched read / unread / send / hide. Send saves to Media → Publications first.
+  // Returns the fresh counts (one small RPC) so the sidebar stays right.
   if (action === "updateNews") {
     const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 500) : [];
     if (!decisions.length || decisions.some((d) => !d?.id || !["read", "unread", "send", "hide"].includes(d.decision))) {
       return json(400, { error: "decisions: [{ id, decision: read|unread|send|hide }] required" });
     }
-    const articles = await NewsLinks.updateNewsFeed(serviceKey, userId, decisions, {
-      saveToMedia: (record) => saveArticleToMediaSection(serviceKey, userId, record)
-    });
-    return json(200, { ok: true, articles });
+    await NewsStore.applyDecisions(serviceKey, userId, decisions, { saveToMedia });
+    return json(200, { ok: true, counts: await NewsStore.loadCounts(serviceKey, userId) });
+  }
+
+  // The old Media bell deck (installed builds that predate the News page): the
+  // newest stories not yet sent; accept = Send to Media, dismiss = Hide — the same
+  // meaning the News page gives them.
+  if (action === "pendingNews") {
+    const { articles } = await NewsStore.loadFeedPage(serviceKey, userId, { view: { kind: "front" }, limit: 100 });
+    return json(200, { articles: articles.filter((c) => !c.sentAt) });
+  }
+  if (action === "resolveNews") {
+    const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 300) : [];
+    if (!decisions.length || decisions.some((d) => !d?.id || !["accept", "dismiss"].includes(d.decision))) {
+      return json(400, { error: "decisions: [{ id, decision: accept|dismiss }] required" });
+    }
+    await NewsStore.applyDecisions(serviceKey, userId,
+      decisions.map((d) => ({ id: d.id, decision: d.decision === "accept" ? "send" : "hide" })), { saveToMedia });
+    const { articles } = await NewsStore.loadFeedPage(serviceKey, userId, { view: { kind: "front" }, limit: 100 });
+    return json(200, { ok: true, articles: articles.filter((c) => !c.sentAt) });
   }
 
   // Check each paper's sign-in against its subscriber page. The client sends
