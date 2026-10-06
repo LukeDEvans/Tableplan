@@ -1871,6 +1871,10 @@ function updateFinanceReviewProgress(deck) {
   const cards = [...deck.querySelectorAll(".fin-notif-card")];
   const countEl = document.querySelector("[data-fin-review-count]");
   if (!cards.length) {
+    // Notifications-window standard: the last card is addressed, so the window
+    // closes (through its own close button, which commits and re-renders).
+    const closeBtn = deck.closest(".fin-review-overlay")?.querySelector(".fin-review-close");
+    if (closeBtn) { closeBtn.click(); return; }
     deck.innerHTML = `<div class="fin-review-empty">
       <div class="fin-review-empty-check" aria-hidden="true">✓</div>
       <div class="fin-review-empty-title">All caught up</div>
