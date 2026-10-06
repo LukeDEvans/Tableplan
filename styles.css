@@ -23403,3 +23403,15 @@ body[data-theme="dark"] .news-card { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
 @media (max-width: 680px) { #newsMainPage .article-sidebar:not(.is-expanded) { border-right: 0; } }
 .news-more { align-self: center; width: auto !important; margin: 4px auto 0; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 8px 18px; font: inherit; font-size: 0.86rem; font-weight: 700; cursor: pointer; }
 .news-more:hover { border-color: var(--accent); }
+
+/* Media item menu (long-press / right-click on an article, album or song).
+   Rows that open it must not also trigger the phone's own long-press actions
+   (text selection, the image "Save" callout). */
+.fin-txn-menu-option:disabled { opacity: 0.5; cursor: default; }
+.fin-txn-menu-option:disabled:hover { background: none; }
+.article-row[data-article-id],
+#mediaMusicPanel :is(.music-row, .music-album-head, .music-item-head, .music-card, .music-result, .md-hero, .md-rank-row) {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
