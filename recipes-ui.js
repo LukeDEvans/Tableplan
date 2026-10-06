@@ -837,7 +837,10 @@ function setRecipeReviewItems(items) {
   recipeReviewItems = Array.isArray(items) ? items : [];
   recipeReviewLoaded = true;
   renderRecipeReviewBell();
-  if (recipeReviewPanelOpen) renderRecipeReviewPanel();
+  if (recipeReviewPanelOpen) {
+    if (recipeReviewItems.length) renderRecipeReviewPanel();
+    else setRecipeReviewPanelOpen(false); // standard: never open with nothing in it
+  }
   // The meal-plan Recipe Book button carries the same count.
   if (before !== recipeReviewItems.length && getActiveAppArea() === "eat") render();
 }
@@ -866,7 +869,10 @@ async function removeRecipeReviewItem(itemId) {
   if (!itemId) return;
   recipeReviewItems = recipeReviewItems.filter((item) => item.id !== itemId);
   renderRecipeReviewBell();
-  if (recipeReviewPanelOpen) renderRecipeReviewPanel();
+  if (recipeReviewPanelOpen) {
+    if (recipeReviewItems.length) renderRecipeReviewPanel();
+    else setRecipeReviewPanelOpen(false); // last one addressed: the window closes
+  }
   try {
     const payload = await callRecipeReviewApi({ action: "remove", ids: [itemId] });
     setRecipeReviewItems(payload.items);
@@ -924,8 +930,14 @@ function setRecipeReviewPanelOpen(open) {
   }
 }
 
-function toggleRecipeReviewPanel() {
-  setRecipeReviewPanelOpen(!recipeReviewPanelOpen);
+// Notifications-window standard (CLAUDE.md, UI conventions): the window only
+// opens with something in it. Before the queue's first load the count isn't
+// known yet, so the tap loads it and then opens only if there is something.
+async function toggleRecipeReviewPanel() {
+  if (recipeReviewPanelOpen) { setRecipeReviewPanelOpen(false); return; }
+  if (!recipeReviewLoaded) await refreshRecipeReviewQueue();
+  if (!recipeReviewItems.length) return;
+  setRecipeReviewPanelOpen(true);
 }
 
 function renderRecipeReviewBell() {

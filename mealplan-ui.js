@@ -211,6 +211,7 @@ function dismissMealPlanRecipe(url, { serverDismiss = true } = {}) {
   const savedScroll = panel?.scrollTop || 0;
   setMealPlanRecipes(getMealPlanRecipes().filter((r) => r.url !== url));
   setPageNotifCount("eat", getMealPlanRecipes().length);
+  if (!getMealPlanRecipes().length) setMealPlanNotifOpen(false); // last one addressed: the window closes
   renderPlanner();
   const newPanel = elements.plannerGrid.querySelector(".eat-notif-panel:not(.eat-notif-panel-swipe)");
   if (newPanel) newPanel.scrollTop = savedScroll;
@@ -356,6 +357,10 @@ function unflipMealPlanCard(cardEl) {
 function mealPlanNotifBellHtml() {
   const recipes = getMealPlanRecipes() || [];
   const count = recipes.length;
+  // Notifications-window standard (CLAUDE.md, UI conventions): the window is
+  // never open with nothing in it — not on a tap, and not after a refresh
+  // comes back empty.
+  if (!count && getMealPlanNotifOpen()) setMealPlanNotifOpen(false);
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
   return `
     <div class="eat-notif-wrap">
@@ -374,7 +379,13 @@ function wireMealPlanNotifDelegation() {
   if (mealPlanNotifWired) return;
   mealPlanNotifWired = true;
   elements.plannerGrid.addEventListener("click", (e) => {
-    if (e.target.closest("[data-eat-notif-toggle]")) { setMealPlanNotifOpen(!getMealPlanNotifOpen()); if (getMealPlanNotifOpen()) mealPlanSwipeIndex = 0; renderPlanner(); return; }
+    if (e.target.closest("[data-eat-notif-toggle]")) {
+      if (!getMealPlanNotifOpen() && !(getMealPlanRecipes() || []).length) { showMailToast("You're all caught up."); return; }
+      setMealPlanNotifOpen(!getMealPlanNotifOpen());
+      if (getMealPlanNotifOpen()) mealPlanSwipeIndex = 0;
+      renderPlanner();
+      return;
+    }
     const flip = e.target.closest("[data-eat-notif-flip]");
     if (flip) { const card = flip.closest(".eat-swipe-card"); if (card) flipMealPlanCard(flip.dataset.eatNotifFlip, card); return; }
     const flipBack = e.target.closest("[data-eat-notif-flip-back]");

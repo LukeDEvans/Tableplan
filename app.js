@@ -2425,15 +2425,25 @@ function bindEvents() {
   document.getElementById("mailSuggCheckNow")?.addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     if (mailNotifPanelOpen) { setMailNotifPanelOpen(false); return; }
-    // Open immediately with what we already know, then refresh in place
-    setMailNotifPanelOpen(true);
-    renderMailSuggestions(lastMailSuggestions);
+    // Notifications-window standard: the window only opens with something in
+    // it. With suggestions already known it opens at once and refreshes in
+    // place; with none, the tap still checks the inbox and opens the window
+    // only if that check finds some.
+    const hadPending = lastMailSuggestions.some((s) => s.status === "pending");
+    if (hadPending) {
+      setMailNotifPanelOpen(true);
+      renderMailSuggestions(lastMailSuggestions);
+    }
     btn.classList.add("is-checking");
     const data = await callGmailApi({ action: "checkInboxNow" });
     btn.classList.remove("is-checking");
     if (!data) { btn.title = lastGmailApiError || "Check failed"; return; }
     btn.title = "Notifications — AI-suggested actions from your email";
-    renderMailSuggestions(data.suggestions || []);
+    const fresh = data.suggestions || [];
+    const hasPending = fresh.some((s) => s.status === "pending");
+    if (!hadPending && hasPending && activeAppArea === "mail") setMailNotifPanelOpen(true);
+    renderMailSuggestions(fresh);
+    if (!hadPending && !hasPending) showMailToast("You're all caught up.");
   });
   document.addEventListener("click", (e) => {
     if (!mailNotifPanelOpen) return;
@@ -8535,7 +8545,6 @@ async function loadMailSuggestionsPanel() {
 // in the background regardless of whether the panel is open.
 let mailNotifPanelOpen = false;
 let lastMailSuggestions = [];
-let lastMailPendingCount = 0;
 
 function setMailNotifPanelOpen(open) {
   mailNotifPanelOpen = open;
@@ -8564,13 +8573,9 @@ function renderMailSuggestions(suggestions) {
   const pending = suggestions.filter(s => s.status === "pending");
   setPageNotifCount("mail", pending.length);
 
-  // Auto-close the panel the moment the last pending item is addressed. Only
-  // fire on the >0 → 0 transition, so opening the bell with nothing pending
-  // still shows the "No suggested actions" state rather than snapping shut.
-  if (mailNotifPanelOpen && pending.length === 0 && lastMailPendingCount > 0) {
-    setMailNotifPanelOpen(false);
-  }
-  lastMailPendingCount = pending.length;
+  // Notifications-window standard: the window is never open with nothing in
+  // it, so it closes the moment the last pending item is addressed.
+  if (mailNotifPanelOpen && pending.length === 0) setMailNotifPanelOpen(false);
 
   // Topbar bell: red badge with the pending count (no badge when zero)
   const notifBtn = document.getElementById("mailSuggCheckNow");
@@ -10588,6 +10593,8 @@ function findTripItemRaw(trip, id, section, dateKey) {
 
 function openExploreProposalsPanel() {
   const pending = allPendingProposals();
+  // Notifications-window standard: nothing to review, nothing to open.
+  if (!pending.length) { showMailToast("You're all caught up."); return; }
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog ingest-dialog";
   const typeLabel = { modify: "Possible update", cancel: "Cancellation", itinerary: "Itinerary update" };
