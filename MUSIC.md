@@ -197,6 +197,8 @@ Discover result (CanonicalTrack/Album)
 
 The queue interleaves library and streaming items; `onMusicEnded` advances it; a failed item auto-skips. Controls (play/pause/seek/next, background persistence, artwork, title/artist, provider) run through the existing now-playing bar — music is just a third `providerId` ("music") alongside "podcast"/"tts".
 
+**Media queue entries.** "Add to queue" (long-press / right-click an album or song) stores an entry in `state.mediaQueueAdded` (`media-queue-added.js`). The Media queue shows it as one row (provider `queue-music`). Playing that row resolves the entry to tagged items (`queuedMusicItems`) and calls `playMusicQueueItem(first, rest, { queueOwner })`, so the tracks run through this same music queue. `musicQueueOwnerId` survives track-to-track advance and is cleared by any other music start or a stop; when the last track ends, `onMusicEnded` removes the entry and calls `advanceMediaAllQueue`.
+
 ---
 
 ## 5. Favorites, history, playlists
