@@ -5,6 +5,61 @@ shipped yet is listed in [UNDEPLOYED.md](UNDEPLOYED.md).) When deploying, move e
 UNDEPLOYED.md entry's "After deploying" steps here under a heading for that deploy.
 Tick items off as they're done; delete a deploy's section once it's all ticked.
 
+## 2026-10-06 deploy (PRs #51–#56)
+Web deploy plus a TestFlight build from `main`. Service worker cache bumped to v39 — hard-refresh once. The iPhone app bundles its web code, so #51, #54 and the client side of #52–#56 reach the phone only through the TestFlight build.
+
+**Weather and other server features in the iPhone app: real root cause (PR #51)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/51
+
+In the app, URL helpers used local-dev `/api/<name>` paths that 404 on the live site. The native fetch shim now maps them to the deployed functions (`nativeApiPath`, native-bridge.js).
+
+**After deploying (needs the TestFlight build):**
+- [ ] the dock's weather slide shows local weather; Weather → search "Minneapolis" returns results
+- [ ] spot-check Watch search and a recipe import in the app
+
+**News page (PR #52) and News via RSS with the `news_articles` table (PR #53)**
+PRs: https://github.com/LukeDEvans/Tableplan/pull/52 · https://github.com/LukeDEvans/Tableplan/pull/53
+
+New top-level News page: stories from NYT / The Economist / Star Tribune / The Athletic emails and, hourly at :07, every section feed. Stories live in the `news_articles` table (migration applied 2026-10-06; the table held 496 rows just before this deploy).
+
+**After deploying:**
+- [ ] **open News right away** so the first sign-in check runs (the sweep and the feed job only collect for signed-in papers)
+- [ ] Sync Settings → re-save the Economist cookie and confirm the Economist doesn't show "Sign in again" (untested against the live site; ISSUES.md)
+- [ ] after the next hour, read the `newsfeeds_status` row in `tableplan_states` and remove feed URLs that failed (`_news-feeds.js` FEEDS), especially the Star Tribune's
+- [ ] News shows stories across sections; after the next NYT / Star Tribune email, stories land in sensible sections (unknown Star Tribune labels go to More)
+
+**Windows fit the screen above the bottom dock (PR #54)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/54
+
+Windows sized to the full screen now end at the dock's top; context menus and popovers clamp to it.
+
+**After deploying (needs the TestFlight build):**
+- [ ] Meal Plan → bell: the window's bottom border shows above the dock
+- [ ] open the assistant: the text box and send button sit above the dock
+- [ ] Mail → bell with many suggestions: the last one is reachable (not checked before merge; ISSUES.md)
+- [ ] long-press a row near the bottom of a list: its menu opens fully above the dock
+
+**Settings: each setting syncs by its own stamp and saves within seconds (PR #55)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/55
+
+A changed setting could be put back to its old value by a device holding a stale copy. Each tracked setting now carries its own "last changed" stamp, the later stamp wins the merge, and a changed setting is written within about 1–5 s. New keys: `configSettingStamps`, `mediaSettingStamps`, `grocerySettingStamps`, `recreateSettingStamps`. The Supabase write path was tested against the local backend only.
+
+**After deploying:**
+- [ ] change the theme on one device, close the app at once, open another device: the new theme arrives and is not put back
+- [ ] toggle two different Mail AI settings on two devices: both survive
+- [ ] watch Supabase usage for a day: settings writes are capped at one early write per 5 s, dirty sections only
+- [ ] a device still on the old code can undo a setting until it reloads — reload every device (and install the TestFlight build)
+
+**Media: long-press menu with "Add to queue"; newsletters back in the queue (PR #56)**
+PR: https://github.com/LukeDEvans/Tableplan/pull/56
+
+Press and hold (or right-click) an article, album or song for a menu with Add to queue; added items go to the end of the Media queue. Emailed newsletters whose text had moved to the content store are back in the queue. New keys: `mediaQueueAdded`, `mediaQueueRemoved`.
+
+**After deploying:**
+- [ ] open the queue and confirm today's newsletters are listed
+- [ ] add one Apple Music or Internet Archive album and play it from the queue (only uploaded-library albums were run locally; ISSUES.md)
+- [ ] on the iPhone (TestFlight build), press and hold an album and a publication article: the system text-selection / image callout doesn't appear over the menu
+
 ## 2026-10-03 deploy #2 (PR #49)
 Server-only deploy (Netlify functions). No client change, no service-worker bump, no TestFlight build — the app already installed picks it up.
 
