@@ -16,6 +16,7 @@ import * as LiveMealPlanServings from './meal-plan-servings.js';
 import * as LiveInstacart from './instacart.js';
 import { makeSortable } from './sortable.js';
 import { stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff } from './grocery-list-stamps.js';
+import { usableViewportBottom } from './dock-space.js';
 
 // Module-scope copies of two tiny standalone helpers (identical to app.js) so the pure
 // exports and the factory share one definition without threading them through as deps.
@@ -942,7 +943,7 @@ function openGroceryStoreMenu(event) {
   const rawX = event.clientX || sourceRect.right;
   const rawY = event.clientY || sourceRect.bottom;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -1986,7 +1987,7 @@ function openGroceryLibraryItemMenu(event) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -3060,7 +3061,7 @@ function openGroceryItemMenu(event) {
   `;
   document.body.append(menu);
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY || 10, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
   menu.querySelector("[data-move-grocery-item]").addEventListener("click", () => {

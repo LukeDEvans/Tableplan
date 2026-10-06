@@ -23,6 +23,7 @@
 import {
   SORTABLE_DEFAULTS, preActivationOutcome, autoScrollVelocity,
 } from "./sortable-core.js";
+import { usableViewportBottom } from './dock-space.js';
 
 const INTERACTIVE = "button, a, input, select, textarea, [role='button'], [role='menuitem'], [role='switch'], [contenteditable='true'], .no-drag";
 const reduceMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -137,7 +138,7 @@ export function makeSortable(container, opts = {}) {
     if (!sc) return;
     const isDoc = sc === document.scrollingElement;
     const top = isDoc ? 0 : sc.getBoundingClientRect().top;
-    const bottom = isDoc ? window.innerHeight : sc.getBoundingClientRect().bottom;
+    const bottom = isDoc ? usableViewportBottom() : sc.getBoundingClientRect().bottom;
     const v = autoScrollVelocity(g.lastY, top, bottom, { edgePx, maxVel: maxScrollVel });
     if (!v) return;
     const before = sc.scrollTop;

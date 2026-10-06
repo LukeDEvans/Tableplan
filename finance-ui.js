@@ -6,6 +6,7 @@ import { saveFile } from './save-file.js';
 import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns, manualTxnToRow, mergeManualTxns, manualRowsToCopy, planAccountRemap, remapCandidateAccounts, suggestRemapTarget, carrySupersededAnnotations } from './finance-transactions.js';
 import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn-store.js';
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
+import { usableViewportBottom } from './dock-space.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
 // commits (see FINANCE_EXTRACTION.md). This is COMMIT 1: the pure normalizers,
@@ -4359,7 +4360,7 @@ function showFinAcctMenu(x, y, opts) {
   menu.id = "finAcctMenu";
   menu.className = "fin-txn-menu";
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 180)) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - 40 - items.length * 34) + "px";
+  menu.style.top = Math.min(y, usableViewportBottom() - 40 - items.length * 34) + "px";
   menu.innerHTML = items.map((it, i) => `<button class="fin-txn-menu-option${it.danger ? " fin-danger" : ""}" type="button" data-i="${i}">${escapeHtml(it.label)}</button>`).join("");
   menu.querySelectorAll("button").forEach((btn, i) => btn.addEventListener("click", () => {
     menu.remove();
@@ -4386,7 +4387,7 @@ function showFinTxnMenu(x, y, txnId) {
   menu.id = "finTxnMenu";
   menu.className = "fin-txn-menu";
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 180)) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - 90) + "px";
+  menu.style.top = Math.min(y, usableViewportBottom() - 90) + "px";
   menu.innerHTML = `
     <button class="fin-txn-menu-option" type="button" data-menu-action="rename">Rename / add note</button>
     ${isManual ? `
