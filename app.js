@@ -72,6 +72,7 @@ import * as TravelRefs from './travel-refs.js';
 import * as TravelGeo from './travel-geo.js';
 import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
+import { usableViewportBottom } from './dock-space.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
 // so every RELATIVE backend call (`/.netlify/functions/…`, `/api/…`) would resolve
@@ -9265,7 +9266,7 @@ function showMailFolderMenu(x, y, label) {
   menu.id = "mailFolderMenu";
   menu.className = "mail-more-menu mail-folder-menu";
   menu.style.left = Math.min(x, window.innerWidth - 190) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - 110) + "px";
+  menu.style.top = Math.min(y, usableViewportBottom() - 110) + "px";
   menu.innerHTML = `
     <button class="mail-more-option" type="button" data-folder-menu="rename">Rename folder</button>
     <button class="mail-more-option" type="button" data-folder-menu="delete">Delete folder</button>`;
@@ -9368,7 +9369,7 @@ function showMailSnoozeMenu(threadId, anchorEl) {
   const rect = anchorEl.getBoundingClientRect();
   menu.style.position = "fixed";
   menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 268)) + "px";
-  menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - 300) + "px";
+  menu.style.top = Math.min(rect.bottom + 4, usableViewportBottom() - 300) + "px";
   const renderOptions = () => {
     menu.innerHTML = `
       <div class="mail-snooze-title">Snooze until…</div>
@@ -11033,7 +11034,7 @@ function showMailAddressMenu(x, y, addr) {
   menu.className = "mail-more-menu";
   menu.style.position = "fixed";
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 220)) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - 150) + "px";
+  menu.style.top = Math.min(y, usableViewportBottom() - 150) + "px";
   menu.innerHTML = `
     <button class="mail-more-option" type="button" data-addr-action="compose">Email ${escapeHtml(addr)}</button>
     <button class="mail-more-option" type="button" data-addr-action="copy">Copy address</button>
@@ -13974,7 +13975,7 @@ function openDoTaskMenu(event) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -14360,7 +14361,7 @@ function openWorkoutPoolContextMenu(event, workoutId) {
   const rawX = event.clientX || 10;
   const rawY = event.clientY || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -15985,7 +15986,7 @@ function openPlayTaskMenu(event) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -21944,7 +21945,7 @@ function openWatchScheduledMenu(event) {
 
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -22013,7 +22014,7 @@ function openWatchItemMenu(event) {
   const rawX = event.clientX || 10;
   const rawY = event.clientY || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -22429,7 +22430,7 @@ function openWatchArchiveItemMenu(event) {
 
   elements.watchArchiveDialog.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -24308,7 +24309,7 @@ function openSailLogCardMenu(event) {
   `;
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
   let handled = false;
@@ -26759,7 +26760,7 @@ function openPlanEventContextMenu(event, id, date) {
     <button type="button" role="menuitem" class="danger" data-evt-del>Delete</button>`;
   document.body.append(menu);
   menu.style.left = `${Math.max(10, Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10))}px`;
-  menu.style.top = `${Math.max(10, Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10))}px`;
+  menu.style.top = `${Math.max(10, Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10))}px`;
   menu.querySelector("[data-evt-edit]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); openPlanEventDialog(date, id); });
   menu.querySelector("[data-evt-dup]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); duplicatePlanEvent(id); });
   menu.querySelector("[data-evt-del]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); editingPlanEventId = id; editingPlanEventOccurrenceDate = date; deletePlanEvent(); });
@@ -27133,7 +27134,7 @@ function openPlanCalContextMenu(event, id) {
     <button type="button" role="menuitem" class="danger" data-ctx-delete>Delete</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
   menu.querySelector("[data-ctx-edit]").addEventListener("click", (ev) => { ev.stopPropagation(); closeFolderMenu(); openPlanCalEditMode(id); });
@@ -28998,7 +28999,7 @@ function openMediaShareMenu(event, kind, id) {
     <button type="button" role="menuitem" class="media-share-remove" data-media-share-remove>${escapeHtml(removeLabel)}</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY || 10, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
   menu.querySelector("[data-media-share-copy]").addEventListener("click", () => {
@@ -30146,7 +30147,7 @@ function makeTouchReorder(listEl, { rowSelector, getId, onDrop, longPressMs = 28
       if (lastY < r.top + EDGE && cont.scrollTop > 0) { cont.scrollTop -= SPEED; scrolled = true; }
       else if (lastY > r.bottom - EDGE && cont.scrollTop + cont.clientHeight < cont.scrollHeight) { cont.scrollTop += SPEED; scrolled = true; }
     } else {
-      const h = window.innerHeight;
+      const h = usableViewportBottom();
       if (lastY < EDGE && window.scrollY > 0) { window.scrollBy(0, -SPEED); scrolled = true; }
       else if (lastY > h - EDGE) { window.scrollBy(0, SPEED); scrolled = true; }
     }
@@ -30820,7 +30821,7 @@ function showEpisodeContextMenu(episodeId, x, y) {
   // Clamp within the viewport (menu is ~200px wide, height grows with options).
   const mw = 200, mh = menu.offsetHeight || 200;
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - mw - 8)) + "px";
-  menu.style.top = Math.max(8, Math.min(y, window.innerHeight - mh - 8)) + "px";
+  menu.style.top = Math.max(8, Math.min(y, usableViewportBottom() - mh - 8)) + "px";
 
   const close = () => closeEpisodeContextMenu();
   menu.addEventListener("click", (e) => {
@@ -38331,7 +38332,7 @@ function openReadingItemMenu(event) {
   const rawX = event.clientX || 10;
   const rawY = event.clientY || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -38565,7 +38566,7 @@ function openReadingArchiveItemMenu(event) {
 
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -40439,7 +40440,7 @@ function openExploreTripMenu(event, tripId) {
   document.body.append(menu);
 
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -41167,7 +41168,7 @@ function openItineraryStopMenu(event, stop, trip, rerender) {
     `<button type="button" role="menuitem" class="danger" data-act="delete">🗑 Remove from trip</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
   const act = a => {
@@ -41310,7 +41311,7 @@ function openDayAddMenu(anchorEl, trip, dateKey, rerender) {
   document.body.append(menu);
   const r = anchorEl.getBoundingClientRect();
   menu.style.left = `${Math.max(10, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 10))}px`;
-  menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 10)}px`;
+  menu.style.top = `${Math.min(r.bottom + 4, usableViewportBottom() - menu.offsetHeight - 10)}px`;
   menu.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
     const kind = b.dataset.add;
     closeFolderMenu();

@@ -17,6 +17,7 @@ import { mealColumnIndexForTime, mealTimeWindowForLabel, minutesSinceMidnight } 
 import { hasMealAheadTask, restoreWeekPlan, snapshotWeekPlan } from './meal-plan-state.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { attachSwipeGesture } from './swipe-deck.js';
+import { usableViewportBottom, dockInset } from './dock-space.js';
 
 function createId(prefix = "id") {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -418,7 +419,8 @@ function positionMealPlanNotifPanel() {
   const gap = Math.max(8, Math.round(window.innerWidth - r.right)); // current distance from the right edge
   panel.style.left = gap + "px";
   panel.style.right = gap + "px";
-  panel.style.bottom = gap + "px";
+  // The window stops above the bottom dock, level with the page window behind it.
+  panel.style.bottom = (dockInset() + Math.min(gap, 10)) + "px";
   panel.style.top = Math.round(r.bottom + 6) + "px"; // just under the bell = where it opened before
 }
 
@@ -477,7 +479,7 @@ function openMealEntryMenu(event) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -599,7 +601,7 @@ function openEmptyMealEntryMenu(event) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -647,7 +649,7 @@ function openMealSlotMenu(event) {
   const rawX = event.clientX || sourceRect.right || 10;
   const rawY = event.clientY || sourceRect.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -819,7 +821,7 @@ function openAutoRuleEntryMenu(event) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -935,7 +937,7 @@ function openMealPlanContextMenu(event, scope, dayId = "", options = {}) {
   const rawX = event.clientX || sourceRect?.left || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -991,7 +993,7 @@ function openRestaurantInfoPopover(restaurant, day, meal, index, anchorEl) {
     const pw = popover.offsetWidth;
     const ph = popover.offsetHeight;
     const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const vh = usableViewportBottom();
     let left = rect.left;
     if (left + pw > vw - 8) left = vw - pw - 8;
     if (left < 8) left = 8;

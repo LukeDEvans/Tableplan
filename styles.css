@@ -7419,7 +7419,7 @@ textarea {
 /* ── Recipe timer widget (floating) ─────────────────────────────── */
 .recipe-timer-widget {
   position: fixed;
-  bottom: calc(var(--nav-height, 60px) + 16px);
+  bottom: calc(var(--dock-h) + 16px);
   left: 50%;
   transform: translateX(-50%);
   background: var(--card-bg, #fff);
@@ -11983,7 +11983,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
   display: flex;
   flex-direction: column;
   width: min(380px, 100vw);
-  height: 100dvh;
+  height: 100%; /* of .plan-detail, which stops at the bottom dock */
   box-sizing: border-box;
   background: var(--window-bg);
   border-left: 1px solid var(--line);
@@ -12012,7 +12012,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
   .plan-detail-card {
     width: 100%;
     height: auto;
-    max-height: 86dvh;
+    max-height: min(86dvh, 100%);
     border-left: 0;
     border-top-left-radius: 16px;
     border-top-right-radius: 16px;
@@ -14206,7 +14206,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-height: 82vh;
+  max-height: min(82vh, 100%); /* 100% = .ai-chat-panel, which stops at the bottom dock */
   background: var(--surface, #fff);
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -4px 32px rgba(0, 0, 0, 0.15);
@@ -21947,8 +21947,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 /* ── Transaction review: full-window swipe deck for labeling ─────────────────── */
 .fin-review-overlay { position: fixed; inset: 0; z-index: 120; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0.5); }
-.fin-review-modal { width: min(560px, 100%); height: 92vh; display: flex; flex-direction: column; background: var(--window-bg); border-radius: 18px 18px 0 0; overflow: hidden; box-shadow: 0 -8px 40px rgba(0,0,0,0.25); }
-@media (min-width: 620px) { .fin-review-overlay { align-items: center; } .fin-review-modal { border-radius: 16px; height: min(760px, 92vh); } }
+.fin-review-modal { width: min(560px, 100%); height: min(92vh, 100%); display: flex; flex-direction: column; background: var(--window-bg); border-radius: 18px 18px 0 0; overflow: hidden; box-shadow: 0 -8px 40px rgba(0,0,0,0.25); }
+@media (min-width: 620px) { .fin-review-overlay { align-items: center; } .fin-review-modal { border-radius: 16px; height: min(760px, 92vh, 100%); } }
 .fin-review-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
 .fin-review-title { font-weight: 850; font-size: 1rem; color: var(--ink); }
 .fin-review-close { width: 34px; height: 34px; border-radius: 50%; border: none; background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -22327,7 +22327,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   top: 120px;
   left: 14px;
   right: 14px;
-  bottom: 14px;
+  bottom: calc(var(--dock-h) + var(--mini-player-gap));
   overflow-y: auto;
   background: var(--window-bg);
   border: 2px solid var(--window-border);
@@ -23223,6 +23223,42 @@ body.has-bottom-dock .voice-mic-btn,
 body.has-bottom-dock .voice-toast,
 body.has-bottom-dock .mail-toast,
 body.has-bottom-dock .sync-status { bottom: calc(var(--mini-player-h) + 26px); }
+
+/* ── Windows fit the screen above the dock ───────────────────────────────────
+   --dock-h is the strip the dock takes off the bottom of the screen (0 when it
+   isn't showing). The JS twin is usableViewportBottom() in dock-space.js, which
+   context menus and popovers clamp against instead of window.innerHeight.
+
+   A window that opens over a page but under the dock (z-index below 900) ends at
+   the dock's top edge, so its last rows and its buttons aren't hidden behind it.
+   Modal <dialog>s and the full-screen overlays above 900 (Now Playing, video,
+   Travel Mode, the lock screen) cover the dock on purpose and are left alone.
+   New window? Size it against --dock-h, or add it to this list. */
+:root { --dock-h: 0px; }
+body.app-authed.has-bottom-dock { --dock-h: var(--mini-player-h); }
+
+.meal-trash-overlay,
+.shop-move-sheet,
+.plan-detail,
+.ai-chat-panel,
+.priority-overlay,
+.fin-review-overlay,
+.wx-map-overlay { bottom: var(--dock-h); }
+
+/* These pad for the home indicator when they reach the screen bottom; above the
+   dock there is no indicator to clear. */
+body.app-authed.has-bottom-dock .plan-detail-card { padding-bottom: 16px; }
+body.app-authed.has-bottom-dock .priority-overlay { padding-bottom: 0; }
+.priority-modal { max-height: min(85vh, 100%); }
+@media (max-width: 640px) {
+  .priority-modal { max-height: 100%; }
+}
+
+/* Dropdowns off a toolbar button: never taller than the room above the dock.
+   (The offset is roughly where each one opens — below the page header.) */
+.mail-suggestions { max-height: min(65vh, 480px, calc(100dvh - var(--dock-h) - 130px)); }
+.week-jump-menu { max-height: min(70dvh, 560px, calc(100dvh - var(--dock-h) - 150px)); }
+.grocery-range-menu { max-height: min(60dvh, 380px, calc(100dvh - var(--dock-h) - 170px)); }
 
 /* ══ Contacts inside Mail ═══════════════════════════════════════════════════
    Contacts is a section of the Mail page: its sidebar entry sits under the

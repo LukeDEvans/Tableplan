@@ -22,6 +22,7 @@
 
 import { makeSortable } from './sortable.js';
 import { saveFile } from './save-file.js';
+import { usableViewportBottom } from './dock-space.js';
 
 // "YYYY-MM-DD" (with year), so the birthday calendar can show an age.
 const CONTACT_DATE_RE = /^(\d{4}-)?(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -440,7 +441,7 @@ function showContactGroupMenu(x, y, name) {
   menu.id = "contactsGroupMenu";
   menu.className = "mail-more-menu contacts-group-menu-popover";
   menu.style.left = Math.min(x, window.innerWidth - 190) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - 110) + "px";
+  menu.style.top = Math.min(y, usableViewportBottom() - 110) + "px";
   menu.innerHTML = `
     <button class="mail-more-option" type="button" data-group-act="rename">Rename group</button>
     <button class="mail-more-option" type="button" data-group-act="delete">Delete group</button>`;

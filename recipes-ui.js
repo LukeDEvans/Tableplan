@@ -14,6 +14,7 @@
 import * as LiveMealPlanServings from './meal-plan-servings.js';
 import * as NutritionDomain from './nutrition-domain.js'; // was a bundle-masked free var
 import { makeSortable } from './sortable.js';
+import { usableViewportBottom } from './dock-space.js';
 
 // Module-scope copies of two tiny standalone helpers (identical to app.js) so the pure
 // exports and the factory share one definition without threading them through as deps.
@@ -1489,7 +1490,7 @@ function openFolderMenu(event, folderId) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -1535,7 +1536,7 @@ function openRecipeMenu(event, recipeId) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
