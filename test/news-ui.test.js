@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   articlesForView, arrangeFront, unreadCounts, briefingsFrom, signInsNeedCheck,
-  paperStatus, sentArticleRecord, applyLocalDecisions, timeAgo, NEWS_SECTIONS
+  paperStatus, sentArticleRecord, applyLocalDecisions, timeAgo, NEWS_SECTIONS, mergeArticles
 } from "../news-ui.js";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
@@ -108,5 +108,12 @@ describe("misc", () => {
   });
   it("client and server share one section list", () => {
     expect(NEWS_SECTIONS.map((s) => s.key)).toEqual(server.NEWS_SECTIONS);
+  });
+});
+
+describe("mergeArticles", () => {
+  it("appends the next page, dropping the boundary story the inclusive cursor repeats", () => {
+    const out = mergeArticles([card("a"), card("b")], [card("b"), card("c"), card("c")]);
+    expect(out.map((a) => a.id)).toEqual(["a", "b", "c"]);
   });
 });

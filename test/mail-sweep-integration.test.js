@@ -18,7 +18,7 @@ function makeMock() {
     done: new Set(),
     recipesPending: [],
     mailAi: { receiptExtract: false },
-    newsRow: null,     // mailnews_ (pending)
+    articles: [],      // news_articles rows (NEWS_PAGE_DESIGN.md §10)
     seenRow: null,     // mailnewsseen_
     // mailnewssubs_ — the sign-in status the sweep gates on (NEWS_PAGE_DESIGN.md §4)
     subsRow: { papers: { nyt: { status: "signed-in" }, economist: { status: "signed-in" }, startribune: { status: "unverified" } } },
@@ -53,18 +53,17 @@ function makeMock() {
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("config")) { cat = "db-read"; out = resp([{ state: { mailAiSettings: state.mailAi } }]); }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnewssubs_")) { cat = "db-read"; out = resp(state.subsRow ? [{ state: JSON.parse(JSON.stringify(state.subsRow)) }] : []); }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnewsseen_")) { cat = "db-read"; out = resp(state.seenRow ? [{ state: JSON.parse(JSON.stringify(state.seenRow)) }] : []); }
-    else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnews_")) { cat = "db-read"; out = resp(state.newsRow ? [{ state: JSON.parse(JSON.stringify(state.newsRow)), updated_at: state.newsStamp || "t0" }] : []); }
-    // The pending row is written under an optimistic lock (PATCH …&updated_at=eq.<read stamp>).
-    else if (u.includes("tableplan_states") && method === "PATCH" && u.includes("mailnews_")) {
+    // news_articles: insert ignores duplicates by id; PATCH marks leads.
+    else if (u.includes("/rest/v1/news_articles") && method === "POST") {
       cat = "db-write";
       if (state.newsSaveFails) out = resp({}, { ok: false, status: 500 });
-      else if (!u.includes(`updated_at=eq.${state.newsStamp || "t0"}`)) out = resp([]);
-      else { state.newsRow = body.state; state.newsStamp = `t${Date.now()}${Math.random()}`; out = resp([{ state: body.state }]); }
+      else { for (const r of body || []) if (!state.articles.some((a) => a.id === r.id)) state.articles.push(r); out = resp(null); }
     }
+    else if (u.includes("/rest/v1/news_articles") && method === "PATCH") { cat = "db-write"; out = resp(null); }
     else if (u.includes("tableplan_states") && method === "POST" && body?.id?.startsWith("mailnews")) {
       cat = "db-write";
       if (state.newsSaveFails) out = resp({}, { ok: false, status: 500 });
-      else { if (body.id.startsWith("mailnewsseen_")) state.seenRow = body.state; else state.newsRow = body.state; out = resp(null); }
+      else { if (body.id.startsWith("mailnewsseen_")) state.seenRow = body.state; out = resp(null); }
     }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailsugg")) { cat = "db-read"; out = resp([{ state: { suggestions: [] } }]); }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailai")) { cat = "db-read"; out = resp([{ state: { recipesPending: [...state.recipesPending] } }]); }
@@ -189,20 +188,20 @@ describe("runInboxSweep — news email → Media notification cards (NEWS_INTAKE
     const mock = newsMock();
     vi.spyOn(global, "fetch").mockImplementation(mock);
     await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
-    expect(mock.state.newsRow.newsPending.map((c) => c.url)).toEqual([ARTICLE]);
-    expect(mock.state.newsRow.newsPending[0]).toMatchObject({ paper: "economist", title: "The case for cheaper housing" });
-    const writeIdx = mock.state.calls.findIndex((c) => c.method === "POST" && c.url.includes("tableplan_states"));
+    expect(mock.state.articles.map((c) => c.url)).toEqual([ARTICLE]);
+    expect(mock.state.articles[0]).toMatchObject({ paper: "economist", title: "The case for cheaper housing", origin: "email", user_id: USER });
+    const writeIdx = mock.state.calls.findIndex((c) => c.method === "POST" && c.url.includes("news_articles"));
     const fileIdx = mock.state.calls.findIndex((c) => /\/messages\/m1\/modify/.test(c.url));
     expect(fileIdx).toBeGreaterThan(writeIdx); // filed only after the save
     expect(mock.state.done.has("m1")).toBe(true);
     expect(mock.count("anthropic")).toBe(0); // too short for conversion, no triage
 
-    // A second email linking the same article: no new card (the seen record).
-    mock.state.newsRow.newsPending = []; // e.g. already dismissed
+    // A second email linking the same article: nothing is inserted again (the seen record).
+    mock.state.articles = []; // e.g. pruned
     mock.state.message = { ...mock.state.message, id: "m2" };
     mock.state.delta = ["m2"];
     await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
-    expect(mock.state.newsRow.newsPending).toEqual([]);
+    expect(mock.state.articles).toEqual([]);
   });
 
   it("an email whose articles were ALL delivered before is still filed (not sent to AI triage)", async () => {
@@ -233,7 +232,7 @@ describe("runInboxSweep — news email → Media notification cards (NEWS_INTAKE
       mock.state.subsRow = status ? { papers: { economist: { status } } } : null;
       vi.spyOn(global, "fetch").mockImplementation(mock);
       await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
-      expect(mock.state.newsRow?.newsPending || []).toEqual([]);
+      expect(mock.state.articles).toEqual([]);
       expect(mock.state.calls.some((c) => /\/messages\/m1\/modify/.test(c.url))).toBe(false);
       vi.restoreAllMocks();
     }
@@ -258,14 +257,14 @@ describe("runInboxSweep — news email → Media notification cards (NEWS_INTAKE
     mock.state.subsRow = { papers: { economist: { status: "unverified" } } };
     vi.spyOn(global, "fetch").mockImplementation(mock);
     await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
-    expect(mock.state.newsRow.newsPending.map((c) => c.section)).toEqual(["opinion"]); // Economist "leaders"
+    expect(mock.state.articles.map((c) => c.section)).toEqual(["opinion"]); // Economist "leaders"
   });
 
   it("with the paper's toggle off, the email is not carded or filed", async () => {
     const mock = newsMock({ enabled: false });
     vi.spyOn(global, "fetch").mockImplementation(mock);
     await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
-    expect(mock.state.newsRow).toBeNull();
+    expect(mock.state.articles).toEqual([]);
     expect(mock.state.calls.some((c) => /\/messages\/m1\/(modify|trash)/.test(c.url))).toBe(false);
   });
 });

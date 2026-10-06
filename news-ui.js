@@ -4,8 +4,10 @@
 // a sidebar directory (Front page · Briefings · Sent to Media · sections · papers)
 // and the stories. Each story's ⋯ menu: Send to Media, Open, Listen, Share, Hide.
 //
-// Data: gmail.js `newsFeed` — read when the page opens (at most once a minute)
-// and on Refresh. No polling. Read / send / hide are batched into one
+// Data: gmail.js `newsFeed` over the news_articles table (NEWS_PAGE_DESIGN.md §10)
+// — one page of one view at a time (Front page, a section, a paper, Sent), plus
+// sidebar counts. A view is re-read when shown if over a minute old, on Refresh,
+// or on "Load more". No polling. Read / send / hide are batched into one
 // `updateNews` call. Briefings come from client state (savedArticles "news-*").
 
 const REFRESH_MS = 60_000;
@@ -137,6 +139,13 @@ export function applyLocalDecisions(list, decisions) {
   });
 }
 
+// Append a further page to a view's list, de-duplicated by id (the server's
+// cursor is inclusive, so the boundary story can come back). Order kept.
+export function mergeArticles(existing, incoming) {
+  const seen = new Set((existing || []).map((a) => a.id));
+  return [...(existing || []), ...(incoming || []).filter((a) => a && !seen.has(a.id) && seen.add(a.id))];
+}
+
 export function timeAgo(iso, nowMs = Date.now()) {
   const t = ms(iso);
   if (!t) return "";
@@ -166,11 +175,13 @@ export function createNewsModule(deps) {
     openInMedia, listenInMedia, openSignInSettings, getActiveAppArea, setDotCount
   } = deps;
 
-  let articles = null;   // null = never loaded
+  const pages = new Map(); // viewKey → { articles, nextBefore, loadedAt }
+  let counts = null;       // server sidebar counts (unreadCounts shape + sections)
   let signIns = {};
-  let lastLoadedAt = 0;
-  let loading = false;
+  let loadingKey = null;
   let loadError = "";
+  let seeded = null;       // local-dev seed (window.__liveQA.newsSetFeed)
+  let searchTimer = null;
   let view = { kind: "front" };
   let query = "";
   let openMenuId = null;
@@ -180,6 +191,9 @@ export function createNewsModule(deps) {
   const $ = (id) => document.getElementById(id);
   const isNarrow = () => window.innerWidth <= 680;
   const isActive = () => getActiveAppArea?.() === "news";
+  const viewKey = (v = view, q = query) => `${v.kind}:${v.key || ""}:${String(q || "").trim().toLowerCase()}`;
+  const currentPage = () => pages.get(viewKey()) || null;
+  const allCards = function* () { for (const p of pages.values()) yield* p.articles; };
 
   // ── Decision queue (batched like the old bell deck) ──
   let queue = [];
@@ -197,12 +211,13 @@ export function createNewsModule(deps) {
     const decisions = queue;
     queue = [];
     inflight = [...inflight, ...decisions];
+    if (seeded) { inflight = []; return; } // local dev: nothing to send
     callGmailApi({ action: "updateNews", decisions }).then((d) => {
       inflight = inflight.filter((x) => !decisions.includes(x));
-      if (Array.isArray(d?.articles)) {
-        articles = applyLocalDecisions(d.articles, [...inflight, ...queue]);
+      if (d?.ok) {
+        if (d.counts) counts = d.counts;
         updateDot();
-        if (isActive()) render();
+        if (isActive()) renderSidebar();
         return;
       }
       // Server unreachable: put the decisions back for the next flush.
@@ -211,30 +226,53 @@ export function createNewsModule(deps) {
     });
   }
 
-  function updateDot() { setDotCount?.(articles ? unreadCounts(articles).all : 0); }
+  function updateDot() { setDotCount?.(counts ? counts.all : 0); }
 
-  async function load(force = false) {
-    if (!isSignedIn?.()) { if (!articles) loadError = "Sign in to see your news."; render(); return; }
-    if (loading) return;
-    if (!force && articles && Date.now() - lastLoadedAt < REFRESH_MS) return;
-    loading = true;
-    lastLoadedAt = Date.now();
-    if (!articles) render();
-    const d = await callGmailApi({ action: "newsFeed" });
-    loading = false;
-    if (!Array.isArray(d?.articles)) {
-      loadError = articles ? "" : "Couldn't load News. Try Refresh.";
+  const countsFor = (list) => ({ ...unreadCounts(list), sections: [...new Set(list.map(sectionOf))] });
+
+  // Load (or refresh) the current view's first page, or with `more` its next page.
+  async function load(force = false, { more = false } = {}) {
+    if (view.kind === "briefings") { render(); return; }
+    const key = viewKey();
+    const page = pages.get(key);
+    if (seeded) {
+      pages.set(key, { articles: articlesForView(seeded, view, query), nextBefore: null, loadedAt: Date.now() });
       render();
       return;
     }
+    if (!isSignedIn?.()) { if (!page) loadError = "Sign in to see your news."; render(); return; }
+    if (loadingKey === key) return;
+    if (more && !page?.nextBefore) return;
+    if (!force && !more && page && Date.now() - page.loadedAt < REFRESH_MS) { render(); return; }
+    loadingKey = key;
+    if (!page) render();
+    const d = await callGmailApi({
+      action: "newsFeed",
+      view: { kind: view.kind, key: view.key },
+      q: String(query || "").trim() || undefined,
+      before: more ? page.nextBefore : undefined
+    });
+    loadingKey = null;
+    if (!Array.isArray(d?.articles)) {
+      loadError = page ? "" : "Couldn't load News. Try Refresh.";
+      if (more) showToast?.("Couldn't load more stories.");
+      if (isActive()) render();
+      return;
+    }
     loadError = "";
-    articles = applyLocalDecisions(d.articles, [...inflight, ...queue]);
-    signIns = d.signIns || {};
+    const incoming = applyLocalDecisions(d.articles, [...inflight, ...queue]);
+    pages.set(key, {
+      articles: more ? mergeArticles(page.articles, incoming) : incoming,
+      nextBefore: d.nextBefore || null,
+      loadedAt: more ? page.loadedAt : Date.now()
+    });
+    if (d.counts) counts = d.counts;
+    if (d.signIns) signIns = d.signIns;
     updateDot();
-    render();
+    if (isActive()) { if (viewKey() === key) render(); else renderSidebar(); }
     // Auto-recheck only from a device that has sign-ins saved: one whose synced
     // settings haven't arrived yet would otherwise record every paper as "none".
-    if (signInsNeedCheck(signIns) && hasSavedSignIn()) verifySignIns();
+    if (d.signIns && signInsNeedCheck(signIns) && hasSavedSignIn()) verifySignIns();
   }
 
   function hasSavedSignIn() {
@@ -265,15 +303,25 @@ export function createNewsModule(deps) {
     }
   }
 
-  function cardFor(id) { return (articles || []).find((a) => a.id === id) || null; }
+  function cardFor(id) { for (const a of allCards()) if (a.id === id) return a; return null; }
+  // The same story can be cached in several views (Front page and its section).
   function patch(id, fn) {
-    articles = (articles || []).map((a) => (a.id === id ? fn({ ...a }) : a));
+    for (const p of pages.values()) p.articles = p.articles.map((a) => (a.id === id ? fn({ ...a }) : a));
+  }
+  // Optimistic sidebar counts until the server's arrive with the flush reply.
+  function bumpUnread(a, delta) {
+    if (!counts || !a) return;
+    counts.all = Math.max(0, counts.all + delta);
+    const s = sectionOf(a);
+    counts.section[s] = Math.max(0, (counts.section[s] || 0) + delta);
+    counts.paper[a.paper] = Math.max(0, (counts.paper[a.paper] || 0) + delta);
   }
 
   function markRead(id) {
     const a = cardFor(id);
     if (!a || a.readAt) return;
     patch(id, (x) => ({ ...x, readAt: new Date().toISOString() }));
+    bumpUnread(a, -1);
     enqueue(id, "read");
   }
   function sendToMedia(id, { quiet = false } = {}) {
@@ -282,6 +330,8 @@ export function createNewsModule(deps) {
     const record = sentArticleRecord(a);
     if (!a.sentAt) {
       patch(id, (x) => ({ ...x, sentAt: new Date().toISOString() }));
+      if (counts) counts.sent += 1;
+      for (const k of [...pages.keys()]) if (k.startsWith("sent:")) pages.delete(k); // re-read on next visit
       enqueue(id, "send");
       onSentToMedia?.(record);
       if (!quiet) showToast?.("Sent to Media → Publications.");
@@ -294,8 +344,10 @@ export function createNewsModule(deps) {
     return record;
   }
   function hide(id) {
-    if (!cardFor(id)) return;
-    articles = articles.filter((a) => a.id !== id);
+    const a = cardFor(id);
+    if (!a) return;
+    if (!a.readAt) bumpUnread(a, -1);
+    for (const p of pages.values()) p.articles = p.articles.filter((x) => x.id !== id);
     enqueue(id, "hide");
     showToast?.("Hidden. It won't come back.");
   }
@@ -335,24 +387,23 @@ export function createNewsModule(deps) {
   function renderSidebar() {
     const el = $("newsSidebar");
     if (!el) return;
-    const list = articles || [];
-    const counts = unreadCounts(list);
+    const c = counts || { all: 0, sent: 0, section: {}, paper: {}, sections: [] };
     const briefings = briefingsFrom(getState()?.savedArticles);
-    const present = new Set(list.map(sectionOf));
-    let h = sideTab("front", null, `${ICONS.front}<span>Front page</span>`, counts.all);
+    const present = new Set(c.sections || []);
+    let h = sideTab("front", null, `${ICONS.front}<span>Front page</span>`, c.all);
     h += sideTab("briefings", null, `${ICONS.briefings}<span>Briefings</span>`, briefings.length);
-    h += sideTab("sent", null, `${ICONS.sent}<span>Sent to Media</span>`, counts.sent);
+    h += sideTab("sent", null, `${ICONS.sent}<span>Sent to Media</span>`, c.sent);
     h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Sections</div>`;
     for (const s of NEWS_SECTIONS) {
       if (!present.has(s.key) && !(view.kind === "section" && view.key === s.key)) continue;
-      h += sideTab("section", s.key, `<i class="news-side-dot article-sidebar-icon" style="${hue(s.key)}" aria-hidden="true"></i><span>${esc(s.label)}</span>`, counts.section[s.key]);
+      h += sideTab("section", s.key, `<i class="news-side-dot article-sidebar-icon" style="${hue(s.key)}" aria-hidden="true"></i><span>${esc(s.label)}</span>`, c.section[s.key]);
     }
     if (!present.size) h += `<div class="news-side-empty">Sections appear as articles arrive.</div>`;
     h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Papers</div>`;
     for (const p of NEWS_PAPERS) {
       const st = paperStatus(signIns, p.key);
       const note = st === "expired" ? "Sign in again" : st === "none" ? "Not signed in" : "";
-      h += sideTab("paper", p.key, `<i class="news-side-mark article-sidebar-icon" aria-hidden="true">${p.mark}</i><span class="news-side-paper"><span>${esc(p.label)}</span>${note ? `<small class="news-side-warn">${note}</small>` : ""}</span>`, counts.paper[p.key]);
+      h += sideTab("paper", p.key, `<i class="news-side-mark article-sidebar-icon" aria-hidden="true">${p.mark}</i><span class="news-side-paper"><span>${esc(p.label)}</span>${note ? `<small class="news-side-warn">${note}</small>` : ""}</span>`, c.paper[p.key]);
     }
     el.innerHTML = h;
   }
@@ -424,7 +475,8 @@ export function createNewsModule(deps) {
   function renderContent() {
     const el = $("newsContent");
     if (!el) return;
-    if (!articles) {
+    const page = currentPage();
+    if (!page && view.kind !== "briefings") {
       el.innerHTML = `<div class="news-scroll"><p class="news-empty">${esc(loadError || "Loading News…")}</p></div>`;
       return;
     }
@@ -440,9 +492,13 @@ export function createNewsModule(deps) {
     if (view.kind === "briefings") {
       body = briefingsHtml(briefings, false);
     } else {
-      const list = articlesForView(articles, view, query);
-      const unread = list.filter((a) => !a.readAt).length;
-      body += `<div class="news-head-sub">${list.length} ${list.length === 1 ? "story" : "stories"} · ${unread} unread${query ? ` · matching “${esc(query)}”` : ""}</div>`;
+      const list = articlesForView(page.articles, view); // search already applied by the server
+      const c = counts || { all: 0, section: {}, paper: {} };
+      const unread = view.kind === "section" ? c.section[view.key] || 0
+        : view.kind === "paper" ? c.paper[view.key] || 0
+        : view.kind === "front" ? c.all : list.filter((a) => !a.readAt).length;
+      const shown = `${list.length}${page.nextBefore ? "+" : ""} ${list.length === 1 && !page.nextBefore ? "story" : "stories"}`;
+      body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : `${shown} · ${unread} unread`}</div>`;
       if (view.kind === "front" && !query) body += briefingsHtml(briefings.slice(0, 4), true);
       if (view.kind === "section" && view.key === "sports") {
         body += `<div class="news-scores-slot">Scores, schedules and standings will go here.</div>`;
@@ -456,6 +512,7 @@ export function createNewsModule(deps) {
           : `Top in ${title}`;
         body += leadHtml(lead, kicker);
         if (rest.length) body += `<div class="news-grid">${rest.map(cardHtml).join("")}</div>`;
+        if (page.nextBefore) body += `<button class="news-more" type="button" data-news-more>${loadingKey === viewKey() ? "Loading…" : "Load more stories"}</button>`;
       }
     }
     el.innerHTML = `<div class="news-scroll">
@@ -477,6 +534,7 @@ export function createNewsModule(deps) {
     if (isNarrow()) $("newsSidebar")?.classList.remove("is-expanded");
     render();
     $("newsContent")?.querySelector(".news-scroll")?.scrollTo?.({ top: 0 });
+    load();
   }
 
   function wire() {
@@ -490,14 +548,24 @@ export function createNewsModule(deps) {
       if (isNarrow()) sb.classList.toggle("is-expanded");
       else sb.classList.toggle("is-collapsed");
     });
-    $("newsRefreshBtn")?.addEventListener("click", () => { flush(); load(true); });
-    $("newsSearchInput")?.addEventListener("input", (e) => { query = e.target.value; renderContent(); });
+    $("newsRefreshBtn")?.addEventListener("click", () => {
+      flush();
+      for (const p of pages.values()) p.loadedAt = 0; // every view re-reads when next shown
+      load(true);
+    });
+    // Search runs on the server (titles across the whole window), debounced.
+    $("newsSearchInput")?.addEventListener("input", (e) => {
+      query = e.target.value;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => load(), 300);
+    });
     $("newsSidebar")?.addEventListener("click", (e) => {
       const tab = e.target.closest("[data-news-view]");
       if (tab) setView({ kind: tab.dataset.newsView, key: tab.dataset.newsKey });
     });
     $("newsContent")?.addEventListener("click", (e) => {
       if (e.target.closest("[data-news-signin]")) { openSignInSettings?.(); return; }
+      if (e.target.closest("[data-news-more]")) { load(false, { more: true }); renderContent(); return; }
       const brief = e.target.closest("[data-news-brief]");
       if (brief) { openInMedia?.(brief.dataset.newsBrief); return; }
       const item = e.target.closest("[data-news-id]");
@@ -544,12 +612,13 @@ export function createNewsModule(deps) {
 
   // Local-dev only (window.__liveQA.newsSetFeed): fill the feed without a server.
   function seed(list, status) {
-    articles = Array.isArray(list) ? list : [];
+    seeded = Array.isArray(list) ? list : [];
     signIns = status || {};
-    lastLoadedAt = Date.now() + 3_600_000; // keep load() from replacing the seed
+    counts = countsFor(seeded);
+    pages.clear();
     updateDot();
-    render();
-    return articles.length;
+    load();
+    return seeded.length;
   }
 
   return { enter, leave: flush, load, verifySignIns, render, seed };

@@ -171,3 +171,42 @@ Each phase: `npm test`, `npm run check:boot`, browser check. Deploy gated on Luk
    card shows "In Media" on every device. Hide → gone and never back.
 5. The Media bell does nothing. The Playlist board has one Publications tile.
 6. Home buttons are alphabetical; News opens; layout fits at 360 px; boot is clean.
+
+## 10. Expanded intake: every section via RSS (Luke, 2026-10-06)
+
+News is now a major part of the app, so it takes **every section of all four papers**,
+not only articles linked in emails. Email intake keeps running alongside (it supplies
+newsletter leads and briefings). A personalized feed (ranking by your interests) is
+the next step; this section only widens the intake.
+
+**Storage moved to a table** — `news_articles` (`migrations/2026-10-06-news-articles.sql`,
+service-role only, PK `user_id, id`). Kept in the old `mailnews_<user>` JSONB row,
+~1,000 live stories would have meant downloading the whole list on every open and
+rewriting it on every tap (~1 GB/month of Supabase egress). As rows:
+
+| Path | Cost |
+|---|---|
+| Hourly feed job | ignore-duplicate insert, `return=minimal` (no response body) |
+| Open a view | one page (≤150) of the shown columns + one `news_counts` RPC |
+| Read / send / hide | PATCH of just those rows, batched |
+| Prune | one DELETE per hour of rows past 4 days (hidden tombstones included) |
+
+Estimated well under 100 MB/month. `mailnews_` rows are no longer written; the
+migration imports their cards once. `mailnewsseen_` (email dedup) and `mailnewssubs_`
+(sign-in status) are unchanged.
+
+**Feed job** — `netlify/functions/news-feeds.js`, hourly at :07 (netlify.toml).
+`_news-feeds.js` lists every section feed (NYT `rss.nytimes.com/…/<Section>.xml`, The
+Economist `/<section>/rss.xml`, the Star Tribune's Arc XP and legacy feeds, The
+Athletic `/athletic/rss/<league>/`), fetches only the papers some user is signed in
+to (16 at a time, 6 s timeout), de-duplicates across feeds (a section copy beats
+HomePage), keeps only fresh article URLs, and inserts per user for that user's
+signed-in papers. RSS is gated by sign-in only, not by the Mail AI email toggles.
+
+**Unverified:** the feed URLs couldn't be fetched from the build environment
+(egress-blocked). Each run writes `newsfeeds_status` (`tableplan_states`) with every
+feed's HTTP status, item count and accepted-card count. After the first deploy, read
+that row and remove dead URLs. The Star Tribune is the least certain.
+
+**Client** — each view loads its own page from the server (`newsFeed { view, before,
+q }`), counts come from the server, "Load more" pages on, search is server-side.
