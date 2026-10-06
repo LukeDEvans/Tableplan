@@ -1,7 +1,8 @@
-// News intake (NEWS_INTAKE_DESIGN.md): every article LINKED in an email from
-// NYT / The Economist / the Star Tribune becomes one card in the Media page's
-// notification bell. Never the same article twice (a compact "seen" record),
-// never stale news (7-day freshness cutoff).
+// News intake (NEWS_INTAKE_DESIGN.md, NEWS_PAGE_DESIGN.md): every article LINKED
+// in an email from NYT / The Economist / the Star Tribune / The Athletic becomes
+// one card on the News page, tagged with a newspaper section. Never the same
+// article twice (a compact "seen" record), never stale news (3-day cutoff), and
+// only from papers Luke is signed in to (the sign-in status row, see Storage).
 //
 // Storage is two rows of their own (see Storage below), kept apart from
 // mailai_<userId> so the recipe bell's reads never carry news data. Only
@@ -11,7 +12,7 @@ const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const { updateRawRow } = require("./_state-sections.js");
 
 const DAY_MS = 86400000;
-const FRESH_DAYS = 7;          // older articles are never delivered
+const FRESH_DAYS = 3;          // older articles are never delivered (News keeps 3 days)
 const SEEN_DAYS = 30;          // seen-record window (well past FRESH_DAYS)
 const PENDING_CAP = 300;
 const PER_EMAIL_CAP = 40;      // articles taken from one email
@@ -21,7 +22,20 @@ const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15
 
 // One entry per paper. `key` is the Settings → Mail AI toggle (on by default:
 // only an explicit false disables — Luke, 2026-09-29). `paper` is the Media → Publications key.
+// Order matters: the first source whose sender matches wins, so The Athletic
+// (whose mail can come from nytimes.com) is listed before the NYT.
 const NEWS_LINK_SOURCES = [
+  {
+    key: "athleticNewsLinks",
+    paper: "athletic",
+    name: "The Athletic",
+    // theathletic.com senders, or NYT mail whose display name is The Athletic.
+    senderRe: /theathletic\.com|\bthe athletic\b/i,
+    // nytimes.com/athletic/<id>/YYYY/MM/DD/<slug> (and the legacy theathletic.com).
+    articleRe: /^https?:\/\/(?:www\.)?(?:nytimes\.com\/athletic|theathletic\.com)\/\d{4,}\/\d{4}\/\d{2}\/\d{2}\/[a-z0-9-]+/i,
+    trackerRe: /^https?:\/\/(?:nl|email|click|e|links?)\.(?:nytimes|theathletic)\.com\/|^https?:\/\/[^/]*(?:exacttarget|sailthru|cmail\d*|list-manage|sendgrid|braze|bnc\.lt)\.[^/]+\//i,
+    titleSuffixRe: /\s*[-–|]\s*(?:The Athletic|The New York Times)\s*$/i
+  },
   {
     key: "nytNewsLinks",
     paper: "nyt",
@@ -58,8 +72,12 @@ function enabledNewsLinkSources(mailAiSettings) {
   return NEWS_LINK_SOURCES.filter((s) => mailAiSettings?.[s.key] !== false);
 }
 
-function newsLinkSourceForSender(from, mailAiSettings) {
-  return enabledNewsLinkSources(mailAiSettings).find((s) => s.senderRe.test(from || "")) || null;
+// `signIns` (the sweep passes it): also require a working sign-in for the paper.
+// Without it (newsletter conversion) only the Mail AI toggle counts.
+function newsLinkSourceForSender(from, mailAiSettings, { signIns } = {}) {
+  const source = enabledNewsLinkSources(mailAiSettings).find((s) => s.senderRe.test(from || "")) || null;
+  if (source && signIns !== undefined && !paperSignedIn(signIns, source.paper)) return null;
+  return source;
 }
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
@@ -153,33 +171,36 @@ async function extractNewsLinks(html, source, { resolve } = {}) {
   const anchors = [];
   const anchorRe = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   let m;
-  while ((m = anchorRe.exec(String(html || ""))) !== null) anchors.push({ href: decodeEntities(m[1]), inner: m[2] });
+  while ((m = anchorRe.exec(String(html || ""))) !== null) anchors.push({ href: decodeEntities(m[1]), inner: m[2], pos: anchors.length });
 
-  const hits = [];       // { url, inner }
+  const hits = [];       // { url, inner, pos } — pos = the anchor's place in the email
   const candidates = []; // trackers to resolve
   const seenHrefs = new Set();
-  for (const { href, inner } of anchors) {
+  for (const { href, inner, pos } of anchors) {
     const embedded = unwrapEmbeddedUrl(href);
     const unwrapped = unwrapParamRedirect(embedded);
     const direct = unwrapped.match(source.articleRe);
-    if (direct) { hits.push({ url: direct[0], inner }); continue; }
+    if (direct) { hits.push({ url: direct[0], inner, pos }); continue; }
     if (embedded !== href) continue; // destination decoded and it isn't an article — nothing to resolve
     if (!resolve || !source.trackerRe.test(href) || seenHrefs.has(href)) continue;
     seenHrefs.add(href);
     const text = textOf(inner);
     if (BOILER_RE.test(text)) continue;
     const weight = (/<img\b/i.test(inner) ? 2 : 0) + (text.length >= 20 ? 2 : text.length >= 8 ? 1 : 0);
-    candidates.push({ href, inner, weight });
+    candidates.push({ href, inner, weight, pos });
   }
   if (candidates.length) {
     const toResolve = candidates.sort((a, b) => b.weight - a.weight).slice(0, RESOLVE_CAP);
-    const resolved = await mapLimit(toResolve, 10, async ({ href, inner }) => {
+    const resolved = await mapLimit(toResolve, 10, async ({ href, inner, pos }) => {
       const final = unwrapParamRedirect(await resolve(href));
       const hit = final.match(source.articleRe);
-      return hit ? { url: hit[0], inner } : null;
+      return hit ? { url: hit[0], inner, pos } : null;
     });
     resolved.filter(Boolean).forEach((r) => hits.push(r));
   }
+  // Document order (resolved trackers were appended last): the first link is the
+  // newsletter's lead story (NEWS_PAGE_DESIGN.md §5).
+  hits.sort((a, b) => a.pos - b.pos);
 
   const byKey = new Map();
   for (const { url, inner } of hits) {
@@ -217,7 +238,8 @@ function parseArticleMeta(head) {
     title: meta["og:title"] || meta["twitter:title"] || titleTag || "",
     description: meta["og:description"] || meta["twitter:description"] || meta["description"] || "",
     image: /^https:\/\//i.test(image) ? image : "",
-    publishedAt: meta["article:published_time"] || meta["datepublished"] || meta["article:published"] || meta["pubdate"] || ""
+    publishedAt: meta["article:published_time"] || meta["datepublished"] || meta["article:published"] || meta["pubdate"] || "",
+    section: meta["article:section"] || meta["section"] || meta["parsely-section"] || ""
   };
 }
 
@@ -225,6 +247,64 @@ function titleFromSlug(url) {
   const segs = String(url || "").replace(/\.html?$/i, "").split("/").filter(Boolean);
   const slug = [...segs].reverse().find((s) => /[a-z]/i.test(s) && s.includes("-")) || "";
   return slug ? slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "";
+}
+
+// ── Sections (NEWS_PAGE_DESIGN.md §3) ─────────────────────────────────────────
+// One shared list across papers; anything unmapped is "more" (never dropped).
+const NEWS_SECTIONS = ["world", "us", "politics", "mn", "business", "science", "opinion", "culture", "sports", "more"];
+
+// NYT: the path right after /YYYY/MM/DD/.
+const NYT_SECTION_RULES = [
+  [/^us\/politics\b|^upshot\b/, "politics"],
+  [/^(?:us|nyregion)\b/, "us"],
+  [/^world\b/, "world"],
+  [/^(?:business|technology|realestate|your-money|dealbook)\b/, "business"],
+  [/^(?:science|health|climate|well)\b/, "science"],
+  [/^opinion\b/, "opinion"],
+  [/^(?:arts|books|movies|style|t-magazine|theater|travel|dining|food|fashion|magazine)\b/, "culture"],
+  [/^sports\b/, "sports"]
+];
+// Economist: the first path segment.
+const ECONOMIST_SECTIONS = {
+  europe: "world", asia: "world", china: "world", "middle-east-and-africa": "world",
+  "the-americas": "world", international: "world", britain: "world",
+  "united-states": "us",
+  business: "business", "finance-and-economics": "business",
+  "science-and-technology": "science",
+  leaders: "opinion", letters: "opinion", "by-invitation": "opinion",
+  culture: "culture"
+};
+// A free-text section label (article:section meta — the Star Tribune's only
+// source, and the fallback for every paper). Inferred labels; unknown → null.
+function sectionFromLabel(label) {
+  const l = String(label || "").toLowerCase().trim();
+  if (!l) return null;
+  if (/\bpolitic/.test(l)) return "politics";
+  if (/\b(local|minneapolis|st\.? paul|minnesota|metro|duluth|twin cities)\b/.test(l)) return "mn";
+  if (/\b(world|international|europe|asia|africa|middle east|americas)\b/.test(l)) return "world";
+  if (/^(u\.?s\.?|nation(al)?|us news)$/.test(l) || /\bnation\b/.test(l)) return "us";
+  if (/\b(business|economy|economics|finance|money|tech(nology)?|real estate|markets?)\b/.test(l)) return "business";
+  if (/\b(science|health|climate|environment|well(ness)?)\b/.test(l)) return "science";
+  if (/\b(opinion|editorial|commentary|letters?|columns?)\b/.test(l)) return "opinion";
+  if (/\b(arts?|books?|movies?|style|variety|food|dining|travel|culture|entertainment|theater|music|tv)\b/.test(l)) return "culture";
+  if (/\b(sports?|vikings|twins|timberwolves|wild|lynx|gophers|nfl|nba|mlb|nhl)\b/.test(l)) return "sports";
+  return null;
+}
+// The section for one article. Pure.
+function sectionFor(url, meta, paper) {
+  if (paper === "athletic") return "sports";
+  let path = "";
+  try { path = new URL(url).pathname.replace(/^\/+/, ""); } catch { /* bad url */ }
+  if (paper === "nyt") {
+    const after = (path.match(/(?:^|\/)\d{4}\/\d{2}\/\d{2}\/(.+)$/) || [])[1] || "";
+    const rule = NYT_SECTION_RULES.find(([re]) => re.test(after));
+    if (rule) return rule[1];
+  }
+  if (paper === "economist") {
+    const hit = ECONOMIST_SECTIONS[path.split("/")[0]];
+    if (hit) return hit;
+  }
+  return sectionFromLabel(meta?.section) || "more";
 }
 
 // A card from one extracted link + its page meta (meta may be {}), or null if it
@@ -248,6 +328,7 @@ function buildNewsCard(link, meta, source, { emailDate, nowMs }) {
     image: meta?.image || link.emailImage || "",
     paper: source.paper,
     source: source.name,
+    section: sectionFor(link.url, meta, source.paper),
     publishedAt,
     discoveredAt: new Date(nowMs).toISOString()
   };
@@ -267,8 +348,13 @@ async function mapLimit(items, limit, fn) {
 // fetch page meta (bounded, fails soft) → build cards. Returns the new cards
 // plus every seen-id considered (including stale ones, so they're never
 // re-fetched). `seen` is the current seen map ({ id: dayNumber }).
-async function collectNewsCards(html, source, { emailDate, seen = {}, nowMs = Date.now(), resolve = followRedirects, fetchMeta = fetchArticleMeta } = {}) {
+//
+// `lead`: this email is a paper's main newsletter, so its first article is a
+// Front page lead. `leadId` is returned even when that article was seen before,
+// so the merge can mark the card already on News.
+async function collectNewsCards(html, source, { emailDate, seen = {}, nowMs = Date.now(), resolve = followRedirects, fetchMeta = fetchArticleMeta, lead = false } = {}) {
   const links = await extractNewsLinks(html, source, { resolve });
+  const leadId = lead && links.length ? seenId(links[0].key) : null;
   const fresh = [];
   const seenIds = [];
   for (const link of links) {
@@ -283,7 +369,7 @@ async function collectNewsCards(html, source, { emailDate, seen = {}, nowMs = Da
   const cards = fresh.map((l, i) => buildNewsCard(l, metas[i] || {}, source, { emailDate, nowMs })).filter(Boolean);
   // `found`: article links in the email at all (seen or not) — an email whose
   // articles were all delivered before is still a news email and gets filed.
-  return { cards, seenIds, found: links.length };
+  return { cards, seenIds, found: links.length, leadId };
 }
 
 // Merge a sweep batch's results into the stored row (read fresh just before
@@ -296,7 +382,7 @@ function mergeNewsResults(row, results, nowMs = Date.now()) {
   const seen = {};
   for (const [id, day] of Object.entries(row?.newsSeen || {})) if (today - Number(day) <= SEEN_DAYS) seen[id] = Number(day);
   const storedSeen = new Set(Object.keys(seen));
-  const pending = prunePending(row?.newsPending, nowMs);
+  const pending = prunePending(row?.newsPending, nowMs).map((c) => ({ ...c }));
   const pendingIds = new Set(pending.map((c) => c.id));
   let added = 0;
   for (const r of results || []) {
@@ -307,6 +393,10 @@ function mergeNewsResults(row, results, nowMs = Date.now()) {
       added++;
     }
     for (const id of r.seenIds || []) if (seen[id] == null) seen[id] = today;
+    if (r.leadId) {
+      const card = pending.find((c) => c.id === r.leadId);
+      if (card) card.lead = new Date(nowMs).toISOString();
+    }
   }
   const ms = (c) => Date.parse(c.publishedAt || c.discoveredAt) || 0;
   pending.sort((a, b) => ms(b) - ms(a));
@@ -316,6 +406,94 @@ function mergeNewsResults(row, results, nowMs = Date.now()) {
 function prunePending(list, nowMs = Date.now()) {
   return (Array.isArray(list) ? list : []).filter((c) => c && c.id && c.url
     && isFresh(c.publishedAt || c.discoveredAt, nowMs));
+}
+
+// Apply the News page's batched decisions to the stored list. Pure. Returns the
+// new list, the cards to save to Media (send), and whether anything changed.
+//   read / unread → readAt set / cleared
+//   send          → sentAt set (the card stays on News, shown "In Media")
+//   hide          → removed (the seen record keeps it from ever coming back)
+const NEWS_DECISIONS = ["read", "unread", "send", "hide"];
+function applyNewsDecisions(list, decisions, nowIso = new Date().toISOString()) {
+  const byId = new Map();
+  for (const d of decisions || []) {
+    if (!d?.id || !NEWS_DECISIONS.includes(d.decision)) continue;
+    const cur = byId.get(d.id) || {};
+    if (d.decision === "hide") cur.hide = true;
+    else if (d.decision === "send") cur.send = true;
+    else cur.read = d.decision === "read"; // the last read/unread wins
+    byId.set(d.id, cur);
+  }
+  const toSend = [];
+  let changed = false;
+  const out = [];
+  for (const card of Array.isArray(list) ? list : []) {
+    const d = byId.get(card?.id);
+    if (!d) { out.push(card); continue; }
+    if (d.hide) { changed = true; continue; }
+    const next = { ...card };
+    if (d.send && !card.sentAt) { next.sentAt = nowIso; toSend.push(card); }
+    if (d.read === true && !card.readAt) next.readAt = nowIso;
+    if (d.read === false && card.readAt) delete next.readAt;
+    if (next.sentAt !== card.sentAt || next.readAt !== card.readAt) changed = true;
+    out.push(next);
+  }
+  return { list: out, toSend, changed };
+}
+
+// ── Sign-in gate (NEWS_PAGE_DESIGN.md §4) ────────────────────────────────────
+// A paper feeds News only while Luke is signed in to it. Status per paper:
+//   signed-in   the subscriber page answered as signed in
+//   unverified  a sign-in is saved but it couldn't be (or can't be) checked
+//   expired     the paper answered as signed out
+//   none        no sign-in saved
+// The Athletic is an NYT product and follows the NYT sign-in.
+const SIGNIN_PAPERS = ["nyt", "economist", "startribune"];
+const SIGNIN_COOKIE_FIELDS = { nyt: "nytCookie", economist: "economistCookie", startribune: "stribCookie" };
+const signInPaperFor = (paper) => (paper === "athletic" ? "nyt" : paper);
+const SIGNIN_RECHECK_MS = DAY_MS;
+
+function paperSignedIn(signIns, paper) {
+  const st = signIns?.[signInPaperFor(paper)]?.status;
+  return st === "signed-in" || st === "unverified";
+}
+
+// One check against a paper's subscriber page. Returns "none" | "unverified" |
+// "signed-in" | "expired", or null when the answer is inconclusive (network
+// error, blocked) — the caller then keeps the previous status. Network injected.
+async function checkPaperSignIn(paper, cookie, { fetchImpl = fetch } = {}) {
+  const c = String(cookie || "").trim();
+  if (!c) return "none";
+  if (paper === "startribune") return "unverified"; // no known subscriber page to check yet
+  const target = paper === "nyt"
+    // Same signed-out markers sync-saved-articles.js uses for this page.
+    ? { url: "https://www.nytimes.com/saved", cookie: `NYT-S=${c}`, out: /\/login\?|"isLoggedIn"\s*:\s*false|data-testid="login-button"/i }
+    : { url: "https://www.economist.com/for-you/bookmarks", cookie: `blaize_session=${c}`, out: /"isLoggedIn"\s*:\s*false|"loggedIn"\s*:\s*false|myaccount\.economist\.com\/s\/login/i };
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetchImpl(target.url, { signal: ctrl.signal, headers: { cookie: target.cookie, "user-agent": UA, accept: "text/html" } });
+    clearTimeout(t);
+    if (/\/(?:login|signin|sign-in)\b/i.test(res.url || "")) return "expired"; // redirected to a sign-in page
+    if (res.status === 401) return "expired";
+    if (!res.ok) return null;
+    const html = (await res.text()).slice(0, 400000);
+    return target.out.test(html) ? "expired" : "signed-in";
+  } catch { return null; }
+}
+
+// Check every paper against the cookies the client sent (its articleSync).
+// Returns the new status map. An inconclusive check keeps a previous answer, or
+// falls to "unverified" when a cookie is saved but has never been checked.
+async function verifySignIns(prev, cookies, { check = checkPaperSignIn, nowMs = Date.now() } = {}) {
+  const out = {};
+  await Promise.all(SIGNIN_PAPERS.map(async (paper) => {
+    const result = await check(paper, cookies?.[SIGNIN_COOKIE_FIELDS[paper]]);
+    const before = prev?.[paper]?.status;
+    const status = result || (before && before !== "none" ? before : "unverified");
+    out[paper] = { status, checkedAt: new Date(nowMs).toISOString() };
+  }));
+  return out;
 }
 
 // The Media savedArticles record for an accepted card (gmail.js resolveNews).
@@ -408,6 +586,15 @@ async function loadNewsSeen(serviceKey, userId) {
   return (await loadRowState(serviceKey, `mailnewsseen_${userId}`)).newsSeen || {};
 }
 
+// mailnewssubs_<userId> { papers: { nyt: { status, checkedAt }, … } } — tiny; the
+// sweep reads it once per run; the News page reads it and rewrites it on a check.
+async function loadNewsSignIns(serviceKey, userId) {
+  return (await loadRowState(serviceKey, `mailnewssubs_${userId}`)).papers || {};
+}
+async function saveNewsSignIns(serviceKey, userId, papers) {
+  await saveRowState(serviceKey, `mailnewssubs_${userId}`, { papers });
+}
+
 async function loadPendingNews(serviceKey, userId) {
   return prunePending((await loadRowState(serviceKey, `mailnews_${userId}`)).newsPending);
 }
@@ -433,6 +620,25 @@ async function saveNewsBatch(serviceKey, userId, results, nowMs = Date.now()) {
   return { added: merged.added, pending: merged.row.newsPending.length };
 }
 
+// The News page's batched read / unread / send / hide. Cards to send are saved to
+// Media first (by the caller's `saveToMedia`), so a failed save leaves them
+// un-sent for another try. Returns the new list.
+async function updateNewsFeed(serviceKey, userId, decisions, { saveToMedia }) {
+  const sends = new Set((decisions || []).filter((d) => d?.decision === "send").map((d) => d.id));
+  if (sends.size) {
+    const cards = (await loadPendingNews(serviceKey, userId)).filter((c) => sends.has(c.id) && !c.sentAt);
+    for (const card of cards) await saveToMedia(acceptedArticleRecord(card));
+  }
+  let after = [];
+  await updateRawRow(serviceKey, `mailnews_${userId}`, (pendingState) => {
+    const before = pendingState.newsPending || [];
+    const res = applyNewsDecisions(prunePending(before), decisions);
+    after = res.list;
+    return res.changed || after.length !== before.length ? { ...pendingState, newsPending: after } : null;
+  });
+  return after;
+}
+
 // Remove resolved cards from the pending list (accept and dismiss both do this;
 // the seen record is untouched, so they never come back). Returns the new list.
 async function removePendingNews(serviceKey, userId, ids) {
@@ -448,6 +654,9 @@ async function removePendingNews(serviceKey, userId, ids) {
 
 module.exports = {
   NEWS_LINK_SOURCES,
+  NEWS_SECTIONS,
+  SIGNIN_PAPERS,
+  SIGNIN_RECHECK_MS,
   FRESH_DAYS,
   SEEN_DAYS,
   enabledNewsLinkSources,
@@ -458,15 +667,24 @@ module.exports = {
   isFresh,
   extractNewsLinks,
   parseArticleMeta,
+  sectionFor,
+  sectionFromLabel,
   buildNewsCard,
   collectNewsCards,
   mergeNewsResults,
   prunePending,
+  applyNewsDecisions,
+  paperSignedIn,
+  checkPaperSignIn,
+  verifySignIns,
   acceptedArticleRecord,
   followRedirects,
   fetchArticleMeta,
   loadNewsSeen,
   loadPendingNews,
+  loadNewsSignIns,
+  saveNewsSignIns,
+  updateNewsFeed,
   saveNewsBatch,
   removePendingNews
 };

@@ -106,7 +106,10 @@ So "signed in" is checked with the saved-list pages the sync already uses:
   - **The Athletic** source: sender `theathletic.com` or display name "The Athletic";
     links `nytimes.com/athletic/…` and `theathletic.com/…`. NYT emails that link
     Athletic articles produce cards with `paper: "athletic"`. New Mail AI toggle
-    `athleticNewsLinks`, off by default (CLAUDE.md).
+    `athleticNewsLinks`, on by default like the other papers (Luke, 2026-09-29;
+    the sign-in gate still applies). Athletic newsletters are also converted into
+    listenable briefings by the existing generic path (Haiku, ~1–3/day). Athletic
+    links inside ordinary NYT emails are not collected (one source per email).
   - **Lead flag (Q3):** in a *main newsletter* email (one the briefing conversion
     accepts, or a long non-alert Athletic newsletter), the first article in document
     order gets `lead: <ISO>`. If that article is already on News, the merge marks the

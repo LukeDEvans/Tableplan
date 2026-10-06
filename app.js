@@ -16208,20 +16208,26 @@ const MAIL_AI_FEATURES = [
   {
     key: "nytNewsLinks",
     defaultOn: true,
-    label: "NYT articles → Media notifications",
-    desc: "Every New York Times article linked in an NYT email becomes a card in the Media page's notification bell (swipe right to save it to Publications, left to dismiss). An article is never delivered twice, and nothing older than a week. Real newsletters are also converted into a listenable article. The email is then filed to Apps/AI trash."
+    label: "NYT articles → News",
+    desc: "Every New York Times article linked in an NYT email goes on the News page, sorted into its section, while you're signed in to the NYT (Settings → Sync). An article is never delivered twice, and nothing older than 3 days. Real newsletters are also converted into a listenable article. The email is then filed to Apps/AI trash."
   },
   {
     key: "economistNewsLinks",
     defaultOn: true,
-    label: "Economist articles → Media notifications",
+    label: "Economist articles → News",
     desc: "Same for The Economist's emails."
   },
   {
     key: "startribuneNewsLinks",
     defaultOn: true,
-    label: "Star Tribune articles → Media notifications",
+    label: "Star Tribune articles → News",
     desc: "Same for the Minnesota Star Tribune's emails."
+  },
+  {
+    key: "athleticNewsLinks",
+    defaultOn: true,
+    label: "The Athletic articles → News (Sports)",
+    desc: "Same for The Athletic's emails, which follow your NYT sign-in."
   },
   {
     key: "autoDeleteSimplefin",

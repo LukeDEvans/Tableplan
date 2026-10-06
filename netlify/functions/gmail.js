@@ -117,6 +117,45 @@ exports.handler = async (event) => {
     return json(200, { ok: true, articles });
   }
 
+  // ── News page (NEWS_PAGE_DESIGN.md) ──
+  // The feed (last 3 days of article cards) + which papers Luke is signed in to.
+  if (action === "newsFeed") {
+    const [articles, signIns] = await Promise.all([
+      NewsLinks.loadPendingNews(serviceKey, userId),
+      NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}))
+    ]);
+    return json(200, { articles, signIns });
+  }
+
+  // Batched read / unread / send / hide from the News page. Send saves to
+  // Media → Publications first (the same record the bell's Save used).
+  if (action === "updateNews") {
+    const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 500) : [];
+    if (!decisions.length || decisions.some((d) => !d?.id || !["read", "unread", "send", "hide"].includes(d.decision))) {
+      return json(400, { error: "decisions: [{ id, decision: read|unread|send|hide }] required" });
+    }
+    const articles = await NewsLinks.updateNewsFeed(serviceKey, userId, decisions, {
+      saveToMedia: (record) => saveArticleToMediaSection(serviceKey, userId, record)
+    });
+    return json(200, { ok: true, articles });
+  }
+
+  // Check each paper's sign-in against its subscriber page. The client sends
+  // its own saved cookies (state.articleSync), so the large media row is never
+  // read here. Called when a sign-in is saved and when News opens on a stale
+  // (>24 h) status — never on a timer.
+  if (action === "verifyNewsSignIns") {
+    const cookies = body.cookies && typeof body.cookies === "object" ? body.cookies : {};
+    const prev = await NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}));
+    const signIns = await NewsLinks.verifySignIns(prev, {
+      nytCookie: String(cookies.nytCookie || ""),
+      economistCookie: String(cookies.economistCookie || ""),
+      stribCookie: String(cookies.stribCookie || "")
+    });
+    await NewsLinks.saveNewsSignIns(serviceKey, userId, signIns);
+    return json(200, { ok: true, signIns });
+  }
+
   // Wake-time metadata for the client's Snoozed folder (the threads themselves
   // carry the "Snoozed" Gmail label; this adds the "until when" per thread).
   if (action === "listSnoozes") {

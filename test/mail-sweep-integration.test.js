@@ -20,6 +20,8 @@ function makeMock() {
     mailAi: { receiptExtract: false },
     newsRow: null,     // mailnews_ (pending)
     seenRow: null,     // mailnewsseen_
+    // mailnewssubs_ — the sign-in status the sweep gates on (NEWS_PAGE_DESIGN.md §4)
+    subsRow: { papers: { nyt: { status: "signed-in" }, economist: { status: "signed-in" }, startribune: { status: "unverified" } } },
     newsSaveFails: false,
     delta: ["m1"],
     claim: true,
@@ -49,6 +51,7 @@ function makeMock() {
     else if (u.includes("/mail_sweep_state")) { cat = "db-read"; out = resp([{ last_history_id: "100" }]); }
     else if (u.includes("/live_group_members")) { cat = "db-read"; out = resp([{ group_id: "g1" }]); }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("config")) { cat = "db-read"; out = resp([{ state: { mailAiSettings: state.mailAi } }]); }
+    else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnewssubs_")) { cat = "db-read"; out = resp(state.subsRow ? [{ state: JSON.parse(JSON.stringify(state.subsRow)) }] : []); }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnewsseen_")) { cat = "db-read"; out = resp(state.seenRow ? [{ state: JSON.parse(JSON.stringify(state.seenRow)) }] : []); }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnews_")) { cat = "db-read"; out = resp(state.newsRow ? [{ state: JSON.parse(JSON.stringify(state.newsRow)), updated_at: state.newsStamp || "t0" }] : []); }
     // The pending row is written under an optimistic lock (PATCH …&updated_at=eq.<read stamp>).
@@ -163,7 +166,7 @@ describe("runInboxSweep — recipe email converges (no duplicates on repeat)", (
 
 describe("runInboxSweep — news email → Media notification cards (NEWS_INTAKE_DESIGN.md)", () => {
   const newsTokens = { ...tokens, email: "me@example.com" };
-  // Dated today so the 7-day freshness cutoff keeps it.
+  // Dated today so the 3-day freshness cutoff keeps it.
   const ARTICLE = `https://www.economist.com/leaders/${new Date().toISOString().slice(0, 10).replace(/-/g, "/")}/the-case-for-cheaper-housing`;
   function newsMock({ enabled = true } = {}) {
     const mock = makeMock();
@@ -222,6 +225,26 @@ describe("runInboxSweep — news email → Media notification cards (NEWS_INTAKE
     await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
     expect(mock.state.calls.some((c) => /\/messages\/m1\/(modify|trash)/.test(c.url))).toBe(false);
     expect(mock.state.done.has("m1")).toBe(false);
+  });
+
+  it("without a working sign-in for the paper, the email is not carded or filed", async () => {
+    for (const status of ["expired", "none", undefined]) {
+      const mock = newsMock();
+      mock.state.subsRow = status ? { papers: { economist: { status } } } : null;
+      vi.spyOn(global, "fetch").mockImplementation(mock);
+      await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+      expect(mock.state.newsRow?.newsPending || []).toEqual([]);
+      expect(mock.state.calls.some((c) => /\/messages\/m1\/modify/.test(c.url))).toBe(false);
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("an unverified sign-in counts; each card carries its section", async () => {
+    const mock = newsMock();
+    mock.state.subsRow = { papers: { economist: { status: "unverified" } } };
+    vi.spyOn(global, "fetch").mockImplementation(mock);
+    await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    expect(mock.state.newsRow.newsPending.map((c) => c.section)).toEqual(["opinion"]); // Economist "leaders"
   });
 
   it("with the paper's toggle off, the email is not carded or filed", async () => {
