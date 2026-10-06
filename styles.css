@@ -23365,3 +23365,5 @@ body[data-theme="dark"] .news-card { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
 /* Sports: room for the scores strip (spec later) */
 .news-scores-slot { border: 1px dashed var(--line); border-radius: 12px; padding: 12px; font-size: 0.82rem; color: var(--muted); }
 @media (max-width: 680px) { #newsMainPage .article-sidebar:not(.is-expanded) { border-right: 0; } }
+.news-more { align-self: center; width: auto !important; margin: 4px auto 0; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 8px 18px; font: inherit; font-size: 0.86rem; font-weight: 700; cursor: pointer; }
+.news-more:hover { border-color: var(--accent); }
