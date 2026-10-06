@@ -11193,7 +11193,10 @@ function buildMailBodyFrame(html, { showImages = false } = {}) {
     // darken nothing (and pair with the dark-media-query neutralizing in
     // sanitizeMailFrameHtml so email text never turns white-on-white).
     '<meta name="color-scheme" content="light">' +
-    '<style>:root{color-scheme:light}html,body{margin:0;padding:0}' +
+    // text-size-adjust: iOS inflates paragraph text in a block it considers too
+    // wide (any email the fit below zooms down) but leaves the email's fixed
+    // pixel line-heights alone, so lines printed on top of each other.
+    '<style>:root{color-scheme:light}html{-webkit-text-size-adjust:100%;text-size-adjust:100%}html,body{margin:0;padding:0}' +
     'body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#202124;background:#fff;word-break:break-word}' +
     'img{max-width:100%;height:auto}table{max-width:100%}' +
     // A blocked/broken remote image has no src — browsers draw an ugly alt-text
@@ -11227,8 +11230,11 @@ function buildMailBodyFrame(html, { showImages = false } = {}) {
       if (Math.abs(z - 1) > 0.03) b.style.zoom = z;
       // zoom is approximate on nested fixed-width layouts: if the doc still
       // spills past the pane it would be clipped (scrolling="no"), so tighten.
+      // Read the root's width only: body.scrollWidth is in body's own unzoomed
+      // units in current Chromium, so it always "still overflowed" and the
+      // email was zoomed down twice.
       if (z < 1) {
-        const still = Math.max(b.scrollWidth, doc.documentElement.scrollWidth);
+        const still = doc.documentElement.scrollWidth;
         if (still > avail + 4) b.style.zoom = z * (avail / still);
       }
       // Measure the VISUAL height: with zoom applied, scrollHeight alone can
@@ -11322,7 +11328,12 @@ function sanitizeMailFrameHtml(html) {
 // images already ship with the message, so they stay. Returns the rewritten
 // HTML plus a count so the caller can offer a "Display images" button.
 function blockRemoteMailImages(html) {
-  const div = parseInertHtml(html); // inert: parsing must not itself fetch the images
+  // inert: parsing must not itself fetch the images. keepHeadStyles: the input
+  // is sanitizeMailFrameHtml's output, which leads with the email's <style>
+  // blocks — a re-parse files those under <head>, so without this the body
+  // came back with the email's whole stylesheet gone (no mobile media queries →
+  // fixed 600–700px tables → the frame zoomed the email down to fit).
+  const div = parseInertHtml(html, { keepHeadStyles: true });
 
   let blocked = 0;
   const isRemote = (u) => /^\s*https?:\/\//i.test(u || "");
