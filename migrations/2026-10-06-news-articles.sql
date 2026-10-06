@@ -76,15 +76,35 @@ insert into public.news_articles (user_id, id, url, title, subtitle, image, pape
                                   published_at, discovered_at, lead_at, read_at, sent_at)
 select substring(s.id from 10)::uuid,
        c->>'id', c->>'url', left(c->>'title', 300), nullif(left(c->>'subtitle', 500), ''),
-       nullif(c->>'image', ''), c->>'paper', c->>'source', coalesce(nullif(c->>'section', ''), 'more'), 'email',
+       -- Old cards' values were never length-capped: a too-long image is dropped (a
+       -- cut-off URL is useless), source/section are trimmed, a too-long url skips the
+       -- card (below) — so one oversized card can't fail the whole import.
+       case when length(c->>'image') between 1 and 1000 then c->>'image' end,
+       c->>'paper', left(c->>'source', 100), left(coalesce(nullif(c->>'section', ''), 'more'), 20), 'email',
        coalesce((c->>'publishedAt')::timestamptz, (c->>'discoveredAt')::timestamptz, now()),
        coalesce((c->>'discoveredAt')::timestamptz, now()),
        (c->>'lead')::timestamptz, (c->>'readAt')::timestamptz, (c->>'sentAt')::timestamptz
 from public.tableplan_states s
 cross join lateral jsonb_array_elements(coalesce(s.state->'newsPending', '[]'::jsonb)) c
 where s.id ~ '^mailnews_[0-9a-f-]{36}$'
-  and c->>'id' is not null and c->>'url' is not null and c->>'title' is not null
+  and c->>'id' is not null and length(c->>'id') <= 64
+  and c->>'url' is not null and length(c->>'url') <= 1000 and c->>'title' is not null
   and c->>'paper' in ('nyt','economist','startribune','athletic')
+on conflict (user_id, id) do nothing;
+
+-- Hidden-before-the-move tombstones. In the old rows, dismissing a card removed it
+-- from newsPending, so the import above can't know it was hidden — and the RSS intake
+-- would bring it back. Every id in the email seen record (mailnewsseen_<user>, the last
+-- 30 days) that isn't already a row becomes a hidden placeholder, dated the day it was
+-- first seen, so it's pruned with the rest once no intake could call it fresh.
+-- Placeholders are never shown: hidden rows are excluded from pages and counts.
+insert into public.news_articles (user_id, id, url, title, paper, section, origin, published_at, discovered_at, hidden_at)
+select substring(s.id from 14)::uuid, e.key, '', '', 'nyt', 'more', 'email',
+       to_timestamp((e.value)::bigint * 86400), to_timestamp((e.value)::bigint * 86400), now()
+from public.tableplan_states s
+cross join lateral jsonb_each_text(coalesce(s.state->'newsSeen', '{}'::jsonb)) e
+where s.id ~ '^mailnewsseen_[0-9a-f-]{36}$'
+  and length(e.key) <= 64 and e.value ~ '^[0-9]{1,6}$'
 on conflict (user_id, id) do nothing;
 
 -- Verify after applying:

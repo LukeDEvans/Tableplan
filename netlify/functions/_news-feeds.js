@@ -13,8 +13,12 @@ const Links = require("./_news-links.js");
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15";
-const FETCH_TIMEOUT_MS = 6000;
-const CONCURRENCY = 16;
+// Netlify scheduled functions get ~30 s. Each fetch (headers AND body) is capped,
+// and no new fetch starts after START_DEADLINE_MS, so the inserts, prune and status
+// write always get to run.
+const FETCH_TIMEOUT_MS = 5000;
+const CONCURRENCY = 24;
+const START_DEADLINE_MS = 16000;
 const ITEMS_PER_FEED = 60;
 
 // `label` feeds sectionFor() when the URL alone can't place an article (the Star
@@ -98,8 +102,11 @@ function cardFromItem(item, feed, nowMs = Date.now()) {
   if (!hit) return null;
   const c = Links.canonicalizeArticleUrl(hit[0]);
   if (!c) return null;
+  // No date at all → skip: freshness can't be judged, and dating it "now" would
+  // re-admit it every few days for as long as the feed lists it.
   const t = Date.parse(item.publishedAt || "");
-  const publishedAt = Number.isNaN(t) ? (Links.dateFromUrl(c.url) || new Date(nowMs).toISOString()) : new Date(t).toISOString();
+  const publishedAt = Number.isNaN(t) ? Links.dateFromUrl(c.url) : new Date(t).toISOString();
+  if (!publishedAt) return null;
   if (!Links.isFresh(publishedAt, nowMs)) return null;
   const title = String(item.title || "").replace(source.titleSuffixRe, "").trim();
   if (!title) return null;
@@ -128,25 +135,33 @@ async function mapLimit(items, limit, fn) {
 }
 
 async function fetchFeed(feed, { fetchImpl = fetch } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS); // covers the body read too
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     const res = await fetchImpl(feed.url, { signal: ctrl.signal, headers: { "user-agent": UA, accept: "application/rss+xml, application/atom+xml, application/xml, text/xml" } });
-    clearTimeout(timer);
     if (!res.ok) return { status: res.status, items: [] };
-    const items = parseFeed((await res.text()).slice(0, 3_000_000)).slice(0, ITEMS_PER_FEED);
+    const body = await Promise.race([
+      res.text(),
+      new Promise((_, reject) => ctrl.signal.addEventListener("abort", () => reject(Object.assign(new Error("timeout"), { name: "AbortError" })), { once: true }))
+    ]);
+    const items = parseFeed(String(body).slice(0, 3_000_000)).slice(0, ITEMS_PER_FEED);
     return { status: res.status, items };
   } catch (e) {
     return { status: 0, error: e.name === "AbortError" ? "timeout" : String(e.message || e).slice(0, 120), items: [] };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 // Fetch the feeds of the given papers once; cards de-duplicated by id across feeds
 // (an article is often in HomePage and its section feed). Returns cards per paper
 // and per-feed status for the status row.
-async function collectFeedCards(papers, { fetchImpl = fetch, nowMs = Date.now(), feeds = FEEDS } = {}) {
+async function collectFeedCards(papers, { fetchImpl = fetch, nowMs = Date.now(), feeds = FEEDS, startDeadlineMs = START_DEADLINE_MS } = {}) {
   const wanted = feeds.filter((f) => papers.has(f.paper));
-  const results = await mapLimit(wanted, CONCURRENCY, (f) => fetchFeed(f, { fetchImpl }));
+  const startedAt = Date.now();
+  const results = await mapLimit(wanted, CONCURRENCY, (f) => (Date.now() - startedAt > startDeadlineMs
+    ? { status: 0, error: "skipped (run deadline)", items: [] }
+    : fetchFeed(f, { fetchImpl })));
   const byId = new Map();
   const status = wanted.map((f, i) => {
     const r = results[i];

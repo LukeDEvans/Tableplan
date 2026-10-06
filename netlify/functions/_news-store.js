@@ -12,7 +12,12 @@ const TABLE = `${SUPABASE_URL}/rest/v1/news_articles`;
 
 const DAY_MS = 86_400_000;
 const KEEP_DAYS = 3;            // the News window (matches _news-links FRESH_DAYS)
-const PRUNE_DAYS = KEEP_DAYS + 1;
+// Rows (hidden / read / sent state included) outlive the window by a margin: the
+// feed job accepts a story while its own pubDate is ≤ KEEP_DAYS+1 days old, and an
+// email card's stored date can be up to a day EARLIER than that (URL date at
+// midnight UTC). Pruning at +2 means a story's row is never gone while some intake
+// would still call it fresh, so hide / read / sent can't be undone by a re-insert.
+const PRUNE_DAYS = KEEP_DAYS + 2;
 const PAGE_MAX = 200;
 const LEAD_WINDOW_MS = 36 * 3_600_000;
 const INSERT_CHUNK = 500;
@@ -82,7 +87,8 @@ function countsFromRows(rows) {
 
 // PostgREST query string for one page of a view. Pure.
 //   view: { kind: "front" | "section" | "paper" | "sent", key }
-//   before: ISO published_at cursor (inclusive); q: title search.
+//   before: "<published_at ISO>|<id>" cursor — rows strictly after it in
+//   (published_at desc, id desc) order; q: title / summary search.
 function feedQuery(userId, { view = {}, before, q, limit = 150, nowMs = Date.now() } = {}) {
   const since = new Date(nowMs - KEEP_DAYS * DAY_MS - DAY_MS).toISOString(); // window incl. the URL-date grace day
   const parts = [
@@ -94,14 +100,30 @@ function feedQuery(userId, { view = {}, before, q, limit = 150, nowMs = Date.now
   if (view.kind === "section" && view.key) parts.push(`section=eq.${enc(view.key)}`);
   if (view.kind === "paper" && view.key) parts.push(`paper=eq.${enc(view.key)}`);
   if (view.kind === "sent") parts.push("sent_at=not.is.null");
-  // lte, not lt: stories sharing the boundary timestamp would otherwise be skipped;
-  // the client de-duplicates by id.
-  if (before) parts.push(`published_at=lte.${enc(before)}`);
-  const term = String(q || "").replace(/[%*(),."\\]/g, " ").trim().slice(0, 80);
-  if (term) parts.push(`title=ilike.${enc(`*${term}*`)}`);
+  // Cursor and search are both OR groups; one and=(…) param holds them so they
+  // combine with AND unambiguously.
+  const groups = [];
+  const cur = parseCursor(before);
+  // Keyset on (published_at, id) so stories sharing a timestamp page cleanly.
+  if (cur) groups.push(`or(published_at.lt.${cur.at},and(published_at.eq.${cur.at},id.lt.${cur.id}))`);
+  const term = searchTerm(q);
+  if (term) groups.push(`or(title.ilike."*${term}*",subtitle.ilike."*${term}*")`);
+  if (groups.length) parts.push(`and=${enc(`(${groups.join(",")})`)}`);
   parts.push("order=published_at.desc,id.desc");
   parts.push(`limit=${Math.max(1, Math.min(PAGE_MAX, Number(limit) || 150))}`);
   return parts.join("&");
+}
+
+// "<ISO>|<id>" → { at, id }, or null. Ids are base-36 hashes; anything else is refused.
+function parseCursor(before) {
+  const [at, id] = String(before || "").split("|");
+  if (!at || Number.isNaN(Date.parse(at)) || !/^[0-9a-z]{1,64}$/.test(id || "")) return null;
+  return { at: new Date(at).toISOString(), id };
+}
+// A search term safe inside a quoted PostgREST filter value: no quotes, backslashes,
+// wildcards or list syntax; "U.S." and other punctuation are kept.
+function searchTerm(q) {
+  return String(q || "").replace(/["\\*%(),]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
 // ── Network ──────────────────────────────────────────────────────────────────
@@ -173,9 +195,8 @@ async function loadFeedPage(serviceKey, userId, opts = {}) {
   const capped = Math.max(1, Math.min(PAGE_MAX, Number(limit) || 150));
   return {
     articles: [...byId.values()].map(cardFromRow),
-    // A full page means there may be more. A page that didn't move the cursor
-    // (all one timestamp) ends paging rather than repeating forever.
-    nextBefore: rows.length >= capped && rows[rows.length - 1].published_at !== before ? rows[rows.length - 1].published_at : null
+    // A full page means there may be more; the cursor is the last row's (time, id).
+    nextBefore: rows.length >= capped ? `${rows[rows.length - 1].published_at}|${rows[rows.length - 1].id}` : null
   };
 }
 
@@ -220,6 +241,6 @@ function acceptedArticleRecord(card, nowIso) {
 
 module.exports = {
   KEEP_DAYS, PRUNE_DAYS, PAGE_MAX, COLUMNS,
-  rowFromCard, cardFromRow, countsFromRows, feedQuery,
+  rowFromCard, cardFromRow, countsFromRows, feedQuery, parseCursor, searchTerm,
   insertArticles, markLeads, loadCounts, loadFeedPage, applyDecisions, pruneArticles
 };

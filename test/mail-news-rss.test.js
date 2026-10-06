@@ -45,6 +45,10 @@ describe("cardFromItem", () => {
     expect(F.cardFromItem(old, nytFeed, NOW)).toBeNull();
     expect(F.cardFromItem(game, nytFeed, NOW)).toBeNull();
   });
+  it("an undated item is skipped (its freshness can't be judged)", () => {
+    const item = { url: "https://www.startribune.com/vikings-defense/601234567", title: "T", publishedAt: "" };
+    expect(F.cardFromItem(item, { paper: "startribune", url: "x", label: "Sports" }, NOW)).toBeNull();
+  });
   it("Star Tribune sections come from the feed's label", () => {
     const card = F.cardFromItem(F.parseFeed(ATOM)[0], { paper: "startribune", url: "x", label: "Sports" }, NOW);
     expect(card.section).toBe("sports");
@@ -108,15 +112,28 @@ describe("runFeedIntake", () => {
 
 describe("news_articles store", () => {
   const U = "u-1";
-  it("feedQuery: selected columns only, hidden excluded, view filters, inclusive cursor, safe search", () => {
-    const q = S.feedQuery(U, { view: { kind: "section", key: "mn" }, before: "2026-10-05T10:00:00.000Z", q: "lake, street*", limit: 999, nowMs: NOW });
+  it("feedQuery: selected columns only, hidden excluded, view filters, (time, id) cursor, safe search", () => {
+    const q = S.feedQuery(U, { view: { kind: "section", key: "mn" }, before: "2026-10-05T10:00:00.000Z|abc12", q: 'U.S. "lake", street*', limit: 999, nowMs: NOW });
+    const d = decodeURIComponent(q);
     expect(q).toContain(`select=${S.COLUMNS}`);
     expect(q).toContain("hidden_at=is.null");
     expect(q).toContain("section=eq.mn");
-    expect(q).toContain("published_at=lte.");
-    expect(q).toContain(`title=ilike.${encodeURIComponent("*lake  street*")}`);
+    expect(d).toContain("and=(or(published_at.lt.2026-10-05T10:00:00.000Z,and(published_at.eq.2026-10-05T10:00:00.000Z,id.lt.abc12)),");
+    expect(d).toContain('or(title.ilike."*U.S. lake street*",subtitle.ilike."*U.S. lake street*"))');
     expect(q).toContain("limit=200");
     expect(S.feedQuery(U, { view: { kind: "sent" } })).toContain("sent_at=not.is.null");
+    expect(S.feedQuery(U, { before: "not-a-cursor" })).not.toContain("and=");
+  });
+  it("parseCursor refuses anything but <ISO>|<base-36 id>", () => {
+    expect(S.parseCursor("2026-10-05T10:00:00Z|abc12")).toEqual({ at: "2026-10-05T10:00:00.000Z", id: "abc12" });
+    expect(S.parseCursor("2026-10-05T10:00:00Z")).toBeNull();
+    expect(S.parseCursor("2026-10-05T10:00:00Z|a)b")).toBeNull();
+    expect(S.parseCursor("x|abc")).toBeNull();
+  });
+  it("prune keeps rows a margin past the window, so a hidden story can't be re-admitted", () => {
+    // Feed intake accepts up to KEEP_DAYS+1 days past a story's own date; an email
+    // card's stored date can be a day earlier. Rows must outlive both.
+    expect(S.PRUNE_DAYS).toBeGreaterThanOrEqual(L.FRESH_DAYS + 2);
   });
   it("cardFromRow / countsFromRows", () => {
     expect(S.cardFromRow({ id: "a", url: "u", title: "t", paper: "nyt", section: "us", published_at: "p", discovered_at: "d", lead_at: "l", read_at: null, sent_at: "s" }))

@@ -679,8 +679,8 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
     const newsMsgs = perMessage.filter((r) => r.news);
     if (newsMsgs.length) {
       try {
-        const { added, pending } = await NewsLinks.saveNewsBatch(serviceKey, userId, newsMsgs.map((r) => r.news));
-        console.log(`[news-links] batch: +${added} cards (${pending} pending)`);
+        const { added } = await NewsLinks.saveNewsBatch(serviceKey, userId, newsMsgs.map((r) => r.news));
+        console.log(`[news-links] batch: ${added} card(s) written to news_articles`);
         await Promise.all(newsMsgs.map(async (r) => {
           const filed = await disposeProcessedEmail(gFetch, gToken, r.messageId, { testMode: true, aiTrashLabelId });
           r.disposed = true;

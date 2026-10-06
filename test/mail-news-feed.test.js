@@ -200,11 +200,14 @@ describe("gmail.js News actions", () => {
     expect(m.st.calls.some((c) => c.includes("select=*"))).toBe(false);
   });
 
-  it("paging further (before=…) skips the counts and sign-in reads", async () => {
+  it("paging further (before=…) or searching skips the counts and sign-in reads", async () => {
     const m = mock();
     vi.spyOn(global, "fetch").mockImplementation(m);
-    const d = JSON.parse((await call({ action: "newsFeed", before: today })).body);
+    const d = JSON.parse((await call({ action: "newsFeed", before: `${today}|abc` })).body);
     expect(d.counts).toBeNull();
+    expect(m.st.calls.some((c) => c.includes("news_counts"))).toBe(false);
+    const s2 = JSON.parse((await call({ action: "newsFeed", q: "senate" })).body);
+    expect(s2.counts).toBeNull();
     expect(m.st.calls.some((c) => c.includes("news_counts"))).toBe(false);
   });
 

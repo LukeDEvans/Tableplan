@@ -101,13 +101,15 @@ exports.handler = async (event) => {
   if (action === "newsFeed") {
     const v = body.view && typeof body.view === "object" ? body.view : {};
     const view = { kind: VIEW_KINDS.includes(v.kind) ? v.kind : "front", key: typeof v.key === "string" ? v.key.slice(0, 40) : undefined };
-    const before = typeof body.before === "string" && !Number.isNaN(Date.parse(body.before)) ? body.before : undefined;
+    const before = NewsStore.parseCursor(body.before) ? body.before : undefined;
     const q = typeof body.q === "string" ? body.q : "";
+    // Counts and sign-ins only feed the sidebar: skip them when paging further or
+    // searching (search re-runs per keystroke pause).
+    const light = !!before || !!NewsStore.searchTerm(q);
     const [page, counts, signIns] = await Promise.all([
       NewsStore.loadFeedPage(serviceKey, userId, { view, before, q, limit: body.limit }),
-      // Counts only change the sidebar; skip them when paging further down a view.
-      before ? Promise.resolve(null) : NewsStore.loadCounts(serviceKey, userId),
-      before ? Promise.resolve(null) : NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}))
+      light ? Promise.resolve(null) : NewsStore.loadCounts(serviceKey, userId),
+      light ? Promise.resolve(null) : NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}))
     ]);
     return json(200, { ...page, counts, signIns });
   }
