@@ -31,6 +31,10 @@ function mergeStatesBody() {
 // reason; add here only when newer-wins is really the right semantics.
 const MERGE_NEWER_WINS_KEYS = {
   // Scalars / preferences / versions — newest choice is the answer.
+  // A reason starting "scalar preference" or "settings object" marks a user
+  // setting: test/settings-sync.test.js then requires it in TRACKED_SETTINGS
+  // (settings-sync.js), so it merges by its own stamp. Use those words for any
+  // new setting.
   groceryCatalogVersion: "scalar version stamp",
   dailyDozenTagSeedVersion: "scalar version stamp",
   foodHealthVersion: "scalar version stamp",
