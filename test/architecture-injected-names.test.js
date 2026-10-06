@@ -16,7 +16,7 @@ import { factoryFreeIdentifiers, lineOf } from "./_free-identifiers.js";
 
 const MODULES = [
   "contacts.js", "finance-ui.js", "groceries-ui.js", "inventory-ui.js",
-  "mealplan-ui.js", "news-notif-ui.js", "recipes-ui.js", "weather-ui.js",
+  "mealplan-ui.js", "news-ui.js", "recipes-ui.js", "weather-ui.js",
 ];
 
 // ECMAScript built-ins (a fresh VM context has these and no Node extras like

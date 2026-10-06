@@ -1001,7 +1001,7 @@
               </button>
               <div class="settings-page-body" id="readListenSettingsMenu" hidden>
                 <div class="read-listen-settings">
-                  <p class="settings-hint">Paste your session cookies below to sync saved articles from the New York Times and The Economist. Cookies are stored securely in your account and used only on your behalf.</p>
+                  <p class="settings-hint">Paste your session cookies below to sync saved articles from the New York Times and The Economist. News also uses them: it collects articles only from papers you're signed in to (The Athletic uses your NYT sign-in). Cookies are stored securely in your account and used only on your behalf.</p>
                   <div class="settings-field-row">
                     <label class="settings-field-label" for="nytCookieInput">New York Times <span class="settings-field-key">NYT-S</span></label>
                     <div class="settings-field-input-row">
@@ -1014,6 +1014,13 @@
                     <div class="settings-field-input-row">
                       <input class="settings-field-input" type="password" id="economistCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your blaize_session cookie value" />
                       <button class="secondary-btn" type="button" id="saveEconomistCookieBtn">Save</button>
+                    </div>
+                  </div>
+                  <div class="settings-field-row">
+                    <label class="settings-field-label" for="stribCookieInput">Star Tribune <span class="settings-field-key">session cookie</span></label>
+                    <div class="settings-field-input-row">
+                      <input class="settings-field-input" type="password" id="stribCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your Star Tribune session cookie" />
+                      <button class="secondary-btn" type="button" id="saveStribCookieBtn">Save</button>
                     </div>
                   </div>
                   <div class="settings-field-row settings-field-row--action">
@@ -1267,6 +1274,14 @@
                 <button class="secondary-btn" type="button" id="dialogSaveEconomistCookieBtn">Save</button>
               </div>
             </div>
+            <div class="sync-settings-field">
+              <label class="sync-settings-label" for="dialogStribCookieInput">Star Tribune <span class="settings-field-key">session cookie</span></label>
+              <div class="settings-field-input-row">
+                <input class="settings-field-input" type="password" id="dialogStribCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your Star Tribune session cookie" />
+                <button class="secondary-btn" type="button" id="dialogSaveStribCookieBtn">Save</button>
+              </div>
+            </div>
+            <p class="article-save-hint">News collects articles only from papers you're signed in to here. The Athletic uses your New York Times sign-in.</p>
           </div>
           <div class="dialog-actions">
             <button class="secondary-btn" type="button" id="cancelArticleSyncSettingsBtn">Close</button>

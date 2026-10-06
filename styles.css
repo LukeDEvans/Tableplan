@@ -22483,23 +22483,6 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .eat-swipe-recipe-steps { margin: 0; padding-left: 22px; display: grid; gap: 8px; font-size: 0.88rem; line-height: 1.5; }
 .eat-swipe-recipe-loading, .eat-swipe-recipe-empty, .eat-swipe-recipe-err { padding: 24px 4px; text-align: center; color: var(--muted); font-size: 0.88rem; }
 .eat-swipe-recipe-err a, .eat-swipe-recipe-loading a { color: var(--accent); font-weight: 700; }
-/* Media news deck (news-notif-ui.js) — reuses the recipe deck's .eat-swipe-* cards. */
-.media-news-panel { z-index: 70; }
-.media-news-head, .media-news-empty { padding-left: 16px; padding-right: 16px; }
-.media-news-empty { padding-top: 16px; padding-bottom: 16px; }
-.media-news-subtitle {
-  font-size: 0.88rem;
-  line-height: 1.4;
-  color: var(--ink);
-  opacity: 0.8;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
-.media-news-summary { margin: 8px 0 0; font-size: 0.95rem; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
-.media-news-panel .eat-swipe-title { overflow-wrap: anywhere; }
 .eat-swipe-hint {
   flex: 0 0 auto;
   display: flex;

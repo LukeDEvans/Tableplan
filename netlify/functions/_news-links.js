@@ -497,7 +497,7 @@ async function verifySignIns(prev, cookies, { check = checkPaperSignIn, nowMs = 
 }
 
 // The Media savedArticles record for an accepted card (gmail.js resolveNews).
-// Mirrored by news-notif-ui.js acceptedArticleRecord for the optimistic local
+// Mirrored by news-ui.js sentArticleRecord for the optimistic local
 // copy — same id, so the two merge into one (savedArticles unions by id).
 function acceptedArticleRecord(card, nowIso = new Date().toISOString()) {
   const pub = card.publishedAt ? new Date(card.publishedAt) : null;
