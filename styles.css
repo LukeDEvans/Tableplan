@@ -15924,24 +15924,24 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
    app-wide — it matches the Mail folder rail — and covers the Media tabs and
    Explore's trip list. */
 @media (min-width: 681px) {
-  :is(#mediaMainPage, #exploreMainPage) .article-layout { position: relative; padding-left: 60px; transition: padding-left 0.18s ease; }
-  :is(#mediaMainPage, #exploreMainPage) .article-layout:has(.article-sidebar.is-collapsed) { padding-left: 0; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-layout { position: relative; padding-left: 60px; transition: padding-left 0.18s ease; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-layout:has(.article-sidebar.is-collapsed) { padding-left: 0; }
 
-  :is(#mediaMainPage, #exploreMainPage) .article-sidebar {
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar {
     position: absolute; left: 0; top: 0; bottom: 0;
     width: 60px; z-index: 15;
     background: var(--paper, #fff);
     overflow-y: auto; overflow-x: hidden;
     transition: width 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
   }
-  :is(#mediaMainPage, #exploreMainPage) .article-sidebar.is-collapsed { transform: translateX(-100%); }
-  :is(#mediaMainPage, #exploreMainPage) .article-sidebar:hover { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar.is-collapsed { transform: translateX(-100%); }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:hover { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
 
   /* Rail state (not hovered): icons only, centered; hide text and headers. */
-  :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
-  :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
-  :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
-  :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
     padding-left: 0; padding-right: 0; margin-right: 0; width: 100%; justify-content: center; gap: 0; border-radius: 0;
   }
   /* Explore rail: keep each category's folder ICON visible (like Mail); hide the
@@ -23259,3 +23259,126 @@ body.has-bottom-dock .sync-status { bottom: calc(var(--mini-player-h) + 26px); }
 .mail-contacts-divider { margin-top: 8px; }
 .mail-contacts-link { flex-shrink: 0; margin-bottom: 8px; }
 .mail-connect-prompt #mailConnectContactsBtn { margin-top: 10px; }
+
+/* ══ News page (news-ui.js, NEWS_PAGE_DESIGN.md) ════════════════════════════
+   Same shell as Media (topbar + .article-sidebar rail + content). Each section
+   owns a two-stop gradient like Weather's sky moods — on the lead card, as a
+   band on each story card, and as the sidebar dot. Dark values below. */
+.news-page {
+  --news-world1:#8ec5e8; --news-world2:#d3e6f3;
+  --news-us1:#8f9fe0; --news-us2:#cdd5f5;
+  --news-politics1:#e07a62; --news-politics2:#f6d2c6;
+  --news-mn1:#4fb7a0; --news-mn2:#cdeee5;
+  --news-business1:#e9b949; --news-business2:#f7e3a8;
+  --news-science1:#5cc3c9; --news-science2:#cdeff0;
+  --news-opinion1:#a98bd6; --news-opinion2:#e3d8f4;
+  --news-culture1:#e98aa8; --news-culture2:#f8d6e1;
+  --news-sports1:#5fbf62; --news-sports2:#d3efcf;
+  --news-more1:#b8b0a2; --news-more2:#e7e2d8;
+  --news-lead-ink:#13212b;
+}
+body[data-theme="dark"] .news-page {
+  --news-world1:#294a63; --news-world2:#16283a;
+  --news-us1:#33407a; --news-us2:#1b2140;
+  --news-politics1:#7a3424; --news-politics2:#3a1a13;
+  --news-mn1:#1f5f52; --news-mn2:#10302a;
+  --news-business1:#6e561c; --news-business2:#352a10;
+  --news-science1:#1f5d61; --news-science2:#102f31;
+  --news-opinion1:#4c3a6e; --news-opinion2:#261d38;
+  --news-culture1:#6e2f45; --news-culture2:#361822;
+  --news-sports1:#2c6430; --news-sports2:#153217;
+  --news-more1:#4a453d; --news-more2:#2a2722;
+  --news-lead-ink:#eef3f8;
+}
+@media (prefers-color-scheme: dark) {
+  body[data-theme="auto"] .news-page {
+  --news-world1:#294a63; --news-world2:#16283a;
+  --news-us1:#33407a; --news-us2:#1b2140;
+  --news-politics1:#7a3424; --news-politics2:#3a1a13;
+  --news-mn1:#1f5f52; --news-mn2:#10302a;
+  --news-business1:#6e561c; --news-business2:#352a10;
+  --news-science1:#1f5d61; --news-science2:#102f31;
+  --news-opinion1:#4c3a6e; --news-opinion2:#261d38;
+  --news-culture1:#6e2f45; --news-culture2:#361822;
+  --news-sports1:#2c6430; --news-sports2:#153217;
+  --news-more1:#4a453d; --news-more2:#2a2722;
+  --news-lead-ink:#eef3f8;
+}
+}
+
+/* Sidebar */
+.news-sidebar .article-sidebar-tab { display: flex; align-items: center; }
+.news-side-dot { display: inline-block; flex-shrink: 0; width: 12px !important; height: 12px !important; margin: 4px; border-radius: 50%; background: linear-gradient(135deg, var(--c1), var(--c2)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent); }
+.news-side-mark { font-style: normal; flex-shrink: 0; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--ink); color: var(--paper, #fff); font-size: 0.7rem; font-weight: 800; stroke: none !important; }
+.news-side-paper { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.news-side-paper > span { overflow: hidden; text-overflow: ellipsis; }
+.news-side-warn { font-size: 0.7rem; color: #b3261e; font-weight: 700; }
+.news-side-count { margin-left: auto; padding-left: 8px; font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.news-side-empty { font-size: 0.78rem; color: var(--muted); padding: 4px 20px 8px; white-space: normal; }
+@media (min-width: 681px) {
+  #newsMainPage .article-sidebar:not(:hover) .news-side-count,
+  #newsMainPage .article-sidebar:not(:hover) .news-side-paper,
+  #newsMainPage .article-sidebar:not(:hover) .news-side-empty { display: none; }
+}
+
+/* Content */
+.news-content { flex-direction: column; }
+.news-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 14px clamp(12px, 3vw, 24px) 40px; display: flex; flex-direction: column; gap: 14px; }
+.news-scroll > * { width: 100%; max-width: 1080px; margin-inline: auto; }
+.news-head { display: flex; align-items: baseline; gap: 10px; }
+.news-title { margin: 0; font-size: 1.4rem; font-weight: 800; letter-spacing: -0.01em; }
+.news-head-sub { margin-top: -10px; font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+.news-empty { color: var(--muted); font-size: 0.92rem; margin: 6px 0; }
+.news-banner { border: 1px solid color-mix(in srgb, #c9902b 45%, transparent); background: color-mix(in srgb, #f1cc54 18%, var(--surface)); border-radius: 12px; padding: 10px 12px; font-size: 0.86rem; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.news-banner-btn { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 5px 12px; font: inherit; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+
+/* Briefings */
+.news-briefs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.news-brief { display: flex; flex-direction: column; gap: 2px; text-align: left; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 12px; padding: 10px 12px; font: inherit; cursor: pointer; min-width: 0; }
+.news-brief:hover { border-color: var(--accent); }
+.news-brief-title { font-weight: 700; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.news-brief-meta { font-size: 0.76rem; color: var(--muted); }
+
+/* Lead card — Weather-hero style gradient */
+.news-lead { position: relative; display: flex; gap: 16px; align-items: flex-start; border-radius: 16px; padding: 18px 20px; color: var(--news-lead-ink); background: linear-gradient(160deg, var(--c1), var(--c2)); border: 1px solid var(--line); cursor: pointer; overflow: visible; }
+.news-lead-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-right: 28px; }
+.news-kicker { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.8; }
+.news-lead-title { margin: 0; font-size: clamp(1.25rem, 2.6vw, 1.7rem); font-weight: 800; line-height: 1.18; letter-spacing: -0.01em; text-wrap: balance; }
+.news-lead-sub { margin: 0; font-size: 0.92rem; opacity: 0.88; max-width: 62ch; }
+.news-lead-meta { font-size: 0.78rem; font-weight: 700; opacity: 0.82; }
+.news-lead-img { width: min(38%, 280px); aspect-ratio: 4 / 3; object-fit: cover; border-radius: 12px; flex-shrink: 0; }
+.news-lead.is-read .news-lead-title { opacity: 0.7; }
+@media (max-width: 560px) {
+  .news-lead { flex-direction: column-reverse; padding: 14px; }
+  .news-lead-img { width: 100%; aspect-ratio: 16 / 9; }
+}
+
+/* Story cards */
+.news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.news-card { position: relative; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 4px 16px rgba(60, 46, 14, 0.06); cursor: pointer; min-width: 0; }
+body[data-theme="dark"] .news-card { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32); }
+@media (prefers-color-scheme: dark) { body[data-theme="auto"] .news-card { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32); } }
+.news-card:hover { border-color: color-mix(in srgb, var(--c1) 70%, var(--line)); }
+.news-card-band { height: 6px; border-radius: 14px 14px 0 0; background: linear-gradient(90deg, var(--c1), var(--c2)); }
+.news-card-body { display: flex; gap: 10px; padding: 10px 12px 12px; }
+.news-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-right: 24px; }
+.news-card-sec { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.news-card-title { margin: 0; font-size: 0.98rem; font-weight: 700; line-height: 1.28; overflow-wrap: anywhere; }
+.news-card-meta { font-size: 0.74rem; color: var(--muted); }
+.news-card-img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; flex-shrink: 0; margin-top: 18px; }
+.news-card.is-read .news-card-title { color: var(--muted); font-weight: 600; }
+
+/* ⋯ menu (styled like Mail's .mail-more-option) */
+.news-dots { position: absolute; top: 10px; right: 6px; width: 30px; height: 30px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); font-size: 1.15rem; line-height: 1; cursor: pointer; }
+.news-lead .news-dots { color: var(--news-lead-ink); top: 12px; right: 10px; }
+.news-dots:hover, .news-dots[aria-expanded="true"] { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.news-menu { position: absolute; top: 42px; right: 8px; z-index: 30; width: 210px; display: flex; flex-direction: column; padding: 6px; background: var(--window-bg, var(--surface)); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18); cursor: default; }
+.news-menu button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--ink); font: inherit; font-size: 0.88rem; cursor: pointer; }
+.news-menu button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.news-menu svg { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.news-menu .news-menu-primary { color: var(--accent-dark, var(--accent)); font-weight: 700; }
+.news-menu-divider { height: 1px; margin: 4px 2px; background: var(--line); }
+
+/* Sports: room for the scores strip (spec later) */
+.news-scores-slot { border: 1px dashed var(--line); border-radius: 12px; padding: 12px; font-size: 0.82rem; color: var(--muted); }
+@media (max-width: 680px) { #newsMainPage .article-sidebar:not(.is-expanded) { border-right: 0; } }

@@ -15,6 +15,7 @@ import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherModule } from './weather-ui.js';
+import { createNewsModule } from './news-ui.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
@@ -598,6 +599,7 @@ const MANAGED_PAGES = [
   { key: "inventory", label: "Inventory" },
   { key: "finance",   label: "Finance" },
   { key: "contacts",  label: "Contacts" },
+  { key: "news",      label: "News" },
 ];
 
 // JSON snapshot of each section as of the last successful Supabase write.
@@ -1083,6 +1085,7 @@ const elements = {
   titlePlanBtn: document.querySelector("#titlePlanBtn"),
   contactsMainPage: document.querySelector("#contactsMainPage"),
   weatherMainPage: document.querySelector("#weatherMainPage"),
+  newsMainPage: document.querySelector("#newsMainPage"),
   articleScanDialog: document.querySelector("#articleScanDialog"),
   articleScanImages: document.querySelector("#articleScanImages"),
   articleScanCameraImage: document.querySelector("#articleScanCameraImage"),
@@ -1137,6 +1140,8 @@ const elements = {
   mailMainPage: document.querySelector("#mailMainPage"),
   homeMailBtn: document.querySelector("#homeMailBtn"),
   titleMailBtn: document.querySelector("#titleMailBtn"),
+  homeNewsBtn: document.querySelector("#homeNewsBtn"),
+  titleNewsBtn: document.querySelector("#titleNewsBtn"),
   mailConnectBtn: document.querySelector("#mailConnectBtn"),
   mailComposeBtn: document.querySelector("#mailComposeBtn"),
   mailRefreshBtn: document.querySelector("#mailRefreshBtn"),
@@ -1692,6 +1697,25 @@ const _weather = createWeatherModule({
   onLocationChosen: () => renderWeatherTicker(document.getElementById("weatherTicker")),
 });
 const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent } = _weather;
+
+// ── News domain (news-ui.js, NEWS_PAGE_DESIGN.md) ──────────────────────
+// Instantiated above render() (consts not hoisted). Nav entry showNewsApp stays in
+// app.js. Cross-domain (all deferred): a sent article is added to Media →
+// Publications right away (addAcceptedNewsArticle — the server saves the same
+// record by id); Open / Listen hand off to the Media reader and its TTS.
+const _news = createNewsModule({
+  escapeHtml: (...a) => escapeHtml(...a),
+  callGmailApi: (...a) => callGmailApi(...a),
+  showToast: (...a) => showMailToast(...a),
+  isSignedIn: () => !!authSession?.access_token,
+  getState: () => state,
+  getActiveAppArea: () => activeAppArea,
+  onSentToMedia: (...a) => addAcceptedNewsArticle(...a),
+  openInMedia: (id) => { showMediaApp(); switchMediaTab("all"); openArticle(id, "articleList"); },
+  listenInMedia: (id) => listenToArticle(id),
+  openSignInSettings: () => openSyncSettingsDialog("read"),
+});
+const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed } = _news;
 
 // ── Inventory domain (extracted to inventory-ui.js) ────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
@@ -2384,6 +2408,8 @@ function bindEvents() {
   elements.titleFinanceBtn?.addEventListener("click", showFinanceApp);
   elements.homeMailBtn?.addEventListener("click", showMailApp);
   elements.titleMailBtn?.addEventListener("click", showMailApp);
+  elements.homeNewsBtn?.addEventListener("click", showNewsApp);
+  elements.titleNewsBtn?.addEventListener("click", showNewsApp);
   elements.mailConnectBtn?.addEventListener("click", connectGmail);
   elements.mailComposeBtn?.addEventListener("click", showMailCompose);
   document.getElementById("mailSuggCheckNow")?.addEventListener("click", async (e) => {
@@ -3116,6 +3142,7 @@ function handleHashNavigation() {
     schedule: showPlanApp,
     contacts: showContactsApp,
     weather: showWeatherApp,
+    news: showNewsApp,
     settings: showSettingsApp,
     home: showHomeApp,
     read: showMediaApp,
@@ -3589,6 +3616,12 @@ function setupDiagnostics() {
     // takes for a picked recipe.
     // The Media news deck (news-notif-ui.js) — normally filled from Gmail's
     // "pendingNews"; seeds it directly so the deck can be exercised locally.
+    // The News page feed (news-ui.js) — normally gmail.js "newsFeed"; seeds it
+    // directly so the page can be exercised locally.
+    newsSetFeed: (articles, signIns) => {
+      if (!localDevMode) return null;
+      return seedNewsFeed(articles, signIns);
+    },
     newsSetPending: (articles) => {
       if (!localDevMode) return null;
       return seedNewsNotif(articles);
@@ -7662,6 +7695,10 @@ function hideAllPages() {
   if (elements.contactsMainPage) elements.contactsMainPage.hidden = true;
   if (elements.weatherMainPage) elements.weatherMainPage.hidden = true;
   if (typeof stopWeatherRefreshLoop === "function") stopWeatherRefreshLoop(); // pause weather polling when leaving
+  if (elements.newsMainPage) {
+    if (!elements.newsMainPage.hidden) leaveNewsPage(); // send any queued read/send/hide now
+    elements.newsMainPage.hidden = true;
+  }
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
   document.getElementById("exploreMainPage").hidden = true;
@@ -7802,6 +7839,23 @@ function showWeatherApp(event) {
   closeAppMenu();
   initWeatherPage();
 }
+// News page logic lives in news-ui.js (createNewsModule); this is the nav/router
+// entry (NEWS_PAGE_DESIGN.md).
+function showNewsApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("news")) { showHomeApp(); return; }
+  activeAppArea = "news";
+  hideAllPages();
+  elements.newsMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("News");
+  setPageHash("news");
+  closePageTitleMenu();
+  closeAppMenu();
+  enterNewsPage();
+}
+
 // Shared Leaflet CDN loader — used by the Weather radar map (weather-ui.js, via
 // injected dep) AND Travel Mode's map (renderTravelMap). Kept here as shared infra.
 let weatherLeafletPromise = null;
@@ -15987,6 +16041,7 @@ function updatePageTitleMenu() {
   if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
   elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
+  if (elements.titleNewsBtn) elements.titleNewsBtn.hidden = activeAppArea === "news" || !isPagePersonallyEnabled("news");
   const menu = elements.pageTitleMenu;
   const btns = [...menu.querySelectorAll("button")];
   btns.sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()));
@@ -16004,6 +16059,14 @@ function updatePageVisibility() {
   const mailContactsBtn = document.getElementById("mailContactsBtn");
   if (mailContactsBtn) mailContactsBtn.hidden = !isPagePersonallyEnabled("contacts");
   elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
+  if (elements.homeNewsBtn) elements.homeNewsBtn.hidden = !isPagePersonallyEnabled("news");
+  // Home buttons stay in alphabetical order (Luke, 2026-10-06), like the page menu.
+  const homeLinks = elements.homeMailBtn.closest(".home-links");
+  if (homeLinks) {
+    [...homeLinks.querySelectorAll(":scope > button")]
+      .sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()))
+      .forEach((btn) => homeLinks.appendChild(btn));
+  }
   updatePageVisibilityControls();
 }
 

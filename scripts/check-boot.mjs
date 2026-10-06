@@ -216,13 +216,20 @@ async function main() {
     });
   });
 
+  // News (news-ui.js): opened from the page-title menu, like a real tap.
+  await visitDomain(page, "News", "newsMainPage", async () => {
+    await page.click("#pageTitleBtn");
+    await page.waitForTimeout(300);
+    await page.click("#titleNewsBtn");
+  });
+
   // Any errors accumulated across the whole run?
   if (pageErrors.length || consoleErrors.length) {
     fail(`${pageErrors.length} page error(s) + ${consoleErrors.length} console error(s) during boot/smoke.`);
   }
 
   await browser.close();
-  console.log(`\n✔ BOOT CHECK PASSED — booted, gate lifted, Weather + Contacts rendered clean.`);
+  console.log(`\n✔ BOOT CHECK PASSED — booted, gate lifted, Weather + Contacts + News rendered clean.`);
   process.exit(0);
 }
 
