@@ -22403,6 +22403,12 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   scroll-snap-type: y mandatory;
   -webkit-overflow-scrolling: touch;
 }
+/* No scrollbar down the side of the window (list or cards): it still scrolls,
+   and the count on the bell already says how many are waiting. */
+.eat-notif-panel,
+.eat-swipe-deck { scrollbar-width: none; -ms-overflow-style: none; }
+.eat-notif-panel::-webkit-scrollbar,
+.eat-swipe-deck::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .eat-swipe-card {
   position: relative;
   height: 100%;
