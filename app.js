@@ -56,6 +56,7 @@ import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
 import { deriveMediaTierCount, publicationTierFor, collapsePublicationTiers, ALL_PUBLICATIONS_KEY } from './media-tier.js';
+import { normalizeQueueAdded, queueAddedFindRef, withQueueEntry, withoutQueueEntries, episodeRef, articleRef, libraryAlbumRef, catalogAlbumRef, trackRef, slimCatalogItem, libraryAlbumTracks } from './media-queue-added.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
@@ -73,6 +74,7 @@ import * as TravelRefs from './travel-refs.js';
 import * as TravelGeo from './travel-geo.js';
 import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
+import { usableViewportBottom } from './dock-space.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
 // so every RELATIVE backend call (`/.netlify/functions/…`, `/api/…`) would resolve
@@ -298,7 +300,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "mediaQueueAdded", "mediaQueueRemoved", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -3099,6 +3101,7 @@ async function initializeApp() {
   initPlanEventDetail();
   initPodcastEpisodeListDelegation();
   initEpisodeContextMenu();
+  initMediaItemMenus();
   initTouchDragPolyfill();
   registerServiceWorker();
   window.addEventListener("online", handleCameOnline);
@@ -4637,6 +4640,8 @@ function defaultState() {
     libraryKey: "hclib",
     podcastPlaylistIncludeArticles: false,
     mediaAllPinnedOrder: [],
+    mediaQueueAdded: [],
+    mediaQueueRemoved: [],
     podcastAutoSkipped: [],
     podcastSkipAds: false,
     publicationTiers: {},
@@ -5002,6 +5007,8 @@ function normalizeState(parsed) {
     podcastEpisodeTiers: (parsed?.podcastEpisodeTiers !== null && typeof parsed?.podcastEpisodeTiers === "object" && !Array.isArray(parsed?.podcastEpisodeTiers)) ? parsed.podcastEpisodeTiers : {},
     podcastSkipAds: Boolean(parsed?.podcastSkipAds),
     mediaAllPinnedOrder: Array.isArray(parsed?.mediaAllPinnedOrder) ? parsed.mediaAllPinnedOrder : [],
+    mediaQueueAdded: normalizeQueueAdded(parsed?.mediaQueueAdded),
+    mediaQueueRemoved: Array.isArray(parsed?.mediaQueueRemoved) ? parsed.mediaQueueRemoved : [],
     podcastTierCount: deriveMediaTierCount(parsed?.podcastTierCount, parsed?.podcastShowTiers, parsed?.publicationTiers),
     podcastPrioritySort: parsed?.podcastPrioritySort === "newest" ? "newest" : "oldest"
   };
@@ -6210,6 +6217,9 @@ function mergeStates(newer, older) {
     // when another device synced. (radioFavorites / radioFollowedPrograms stay
     // newer-wins: see MERGE_NEWER_WINS_KEYS in test/architecture-state-merge-coverage.test.js.)
     "radioUserStations",
+    // Manual "Add to queue" entries (media-queue-added.js): each add gets a fresh
+    // random id, so a removal's tombstone is exact and re-adding still works.
+    "mediaQueueAdded",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
@@ -6270,6 +6280,8 @@ function mergeStates(newer, older) {
   merged.podcastSaved = unionStrings(newer.podcastSaved, older.podcastSaved);
   merged.podcastQueue = unionStrings(newer.podcastQueue, older.podcastQueue);
   merged.podcastAutoSkipped = unionStrings(newer.podcastAutoSkipped, older.podcastAutoSkipped);
+  // Episodes taken out of the queue by hand (still listed under Recent / their show).
+  merged.mediaQueueRemoved = unionStrings(newer.mediaQueueRemoved, older.mediaQueueRemoved);
 
   // ── Flat keyed maps: union keys, newer wins on conflict ───────────────────
   for (const key of [
@@ -9330,7 +9342,7 @@ function showMailFolderMenu(x, y, label) {
   menu.id = "mailFolderMenu";
   menu.className = "mail-more-menu mail-folder-menu";
   menu.style.left = Math.min(x, window.innerWidth - 190) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - 110) + "px";
+  menu.style.top = Math.min(y, usableViewportBottom() - 110) + "px";
   menu.innerHTML = `
     <button class="mail-more-option" type="button" data-folder-menu="rename">Rename folder</button>
     <button class="mail-more-option" type="button" data-folder-menu="delete">Delete folder</button>`;
@@ -9433,7 +9445,7 @@ function showMailSnoozeMenu(threadId, anchorEl) {
   const rect = anchorEl.getBoundingClientRect();
   menu.style.position = "fixed";
   menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 268)) + "px";
-  menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - 300) + "px";
+  menu.style.top = Math.min(rect.bottom + 4, usableViewportBottom() - 300) + "px";
   const renderOptions = () => {
     menu.innerHTML = `
       <div class="mail-snooze-title">Snooze until…</div>
@@ -11098,7 +11110,7 @@ function showMailAddressMenu(x, y, addr) {
   menu.className = "mail-more-menu";
   menu.style.position = "fixed";
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 220)) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - 150) + "px";
+  menu.style.top = Math.min(y, usableViewportBottom() - 150) + "px";
   menu.innerHTML = `
     <button class="mail-more-option" type="button" data-addr-action="compose">Email ${escapeHtml(addr)}</button>
     <button class="mail-more-option" type="button" data-addr-action="copy">Copy address</button>
@@ -14039,7 +14051,7 @@ function openDoTaskMenu(event) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -14425,7 +14437,7 @@ function openWorkoutPoolContextMenu(event, workoutId) {
   const rawX = event.clientX || 10;
   const rawY = event.clientY || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -16050,7 +16062,7 @@ function openPlayTaskMenu(event) {
   const rawX = event.clientX || sourceRect?.right || 10;
   const rawY = event.clientY || sourceRect?.bottom || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -22009,7 +22021,7 @@ function openWatchScheduledMenu(event) {
 
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -22078,7 +22090,7 @@ function openWatchItemMenu(event) {
   const rawX = event.clientX || 10;
   const rawY = event.clientY || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -22494,7 +22506,7 @@ function openWatchArchiveItemMenu(event) {
 
   elements.watchArchiveDialog.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -24373,7 +24385,7 @@ function openSailLogCardMenu(event) {
   `;
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
   let handled = false;
@@ -26824,7 +26836,7 @@ function openPlanEventContextMenu(event, id, date) {
     <button type="button" role="menuitem" class="danger" data-evt-del>Delete</button>`;
   document.body.append(menu);
   menu.style.left = `${Math.max(10, Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10))}px`;
-  menu.style.top = `${Math.max(10, Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10))}px`;
+  menu.style.top = `${Math.max(10, Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10))}px`;
   menu.querySelector("[data-evt-edit]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); openPlanEventDialog(date, id); });
   menu.querySelector("[data-evt-dup]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); duplicatePlanEvent(id); });
   menu.querySelector("[data-evt-del]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); editingPlanEventId = id; editingPlanEventOccurrenceDate = date; deletePlanEvent(); });
@@ -27198,7 +27210,7 @@ function openPlanCalContextMenu(event, id) {
     <button type="button" role="menuitem" class="danger" data-ctx-delete>Delete</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
   menu.querySelector("[data-ctx-edit]").addEventListener("click", (ev) => { ev.stopPropagation(); closeFolderMenu(); openPlanCalEditMode(id); });
@@ -28514,6 +28526,7 @@ let musicLastSavedPos = null;  // { id, pos } of the last resume-point write (sk
 let musicStartGen = 0;         // bumped per music start/stop; a start that awaits bails if superseded
 let musicCurTrack = null;      // track loaded into the shared element
 let musicQueueRest = [];       // remaining track ids to auto-advance through
+let musicQueueOwnerId = null;  // Media-queue entry (an added album / song) this music run plays for, else null
 let musicCurUrl = null;        // object URL for the current local blob (revoked on change)
 let musicLibrary = [];         // cached flat track list for the panel
 let musicImporting = false;    // an import is in flight (drives the panel status)
@@ -29063,7 +29076,7 @@ function openMediaShareMenu(event, kind, id) {
     <button type="button" role="menuitem" class="media-share-remove" data-media-share-remove>${escapeHtml(removeLabel)}</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY || 10, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
   menu.querySelector("[data-media-share-copy]").addEventListener("click", () => {
@@ -29152,7 +29165,7 @@ function podcastEpisodeRowHtml(e, { showShowTitle = false, hasPlaylists = false 
   const pct = (dur && pos && !played) ? Math.min(100, Math.round((pos / dur) * 100)) : 0;
   const isOpen = e.id === openPodcastEpisodeId;
   const isSaved = (state.podcastSaved || []).includes(e.id);
-  const isQueued = (state.podcastQueue || []).includes(e.id);
+  const isQueued = isInMediaQueue(e.id);
   const plIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`;
   return `
   <div class="article-row podcast-episode-row${played ? " article-row--read" : ""}${isOpen ? " article-row--active" : ""}" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
@@ -29234,16 +29247,17 @@ function toggleEpisodeSaved(episodeId) {
   }
 }
 
+// "Add to queue" / "Remove from queue" for an episode — acts on the real Media
+// queue (see addEpisodeToMediaQueue). The old state.podcastQueue list this used
+// to edit was never read by the queue, so the action did nothing visible.
 function toggleEpisodeInQueue(episodeId) {
-  if (!Array.isArray(state.podcastQueue)) state.podcastQueue = [];
-  const idx = state.podcastQueue.indexOf(episodeId);
-  if (idx >= 0) state.podcastQueue.splice(idx, 1); else state.podcastQueue.push(episodeId);
-  persist();
+  if (isInMediaQueue(episodeId)) { removeEpisodeFromMediaQueue(episodeId); showMailToast("Removed from queue"); }
+  else addEpisodeToMediaQueue(episodeId);
   if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
   else {
     const btn = document.querySelector(`[data-episode-queue="${CSS.escape(episodeId)}"]`);
     if (btn) {
-      const isQueued = state.podcastQueue.includes(episodeId);
+      const isQueued = isInMediaQueue(episodeId);
       btn.title = isQueued ? "Remove from queue" : "Add to queue";
       btn.classList.toggle("is-active", isQueued);
       const circle = btn.querySelector("circle");
@@ -29761,6 +29775,7 @@ function nowPlayingQueueId() {
   if (k === "podcast") return podcastCurEpisode?.id || null;
   if (k === "tts") return listenArticle?.id || null;
   if (k === "nativeAudio") return listenSpeechSynth?.currentId || null;
+  if (k === "music") return musicQueueOwnerId; // an added album / song playing from the queue
   return null;
 }
 
@@ -29785,7 +29800,9 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
   const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === (state.podcastPlaylistWindow ?? "month")) || RECENT_WINDOW_OPTIONS[4];
   const cutoff = Date.now() - windowOpt.ms;
 
-  const skipped = new Set(state.podcastAutoSkipped || []);
+  // Kept out by hand: "Remove from list" (also hides it under Recent) and
+  // "Remove from queue" (queue only).
+  const skipped = new Set([...(state.podcastAutoSkipped || []), ...(state.mediaQueueRemoved || [])]);
   const held = getBundleHeldEpisodeIds();
   const episodes = (state.podcasts || []).flatMap(p =>
     (p.episodes || [])
@@ -29798,18 +29815,8 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
   if (forceIncludeArticles) {
     const readIds = new Set(state.readArticleIds || []);
     const articleItems = (state.savedArticles || [])
-      .filter(a => !readIds.has(a.id) && (a.url || a.text)) // email-converted articles have text but no url
-      .map(a => {
-        const pubInfo = getReadPublications().find(p => p.key === a.publication);
-        return {
-          ...a,
-          type: "article",
-          showId: a.publication,
-          showTitle: pubInfo?.label || a.publication || "Article",
-          showArt: articleArtUrl(a),
-          pubDate: getArticleSortDate(a),
-        };
-      });
+      .filter(a => !readIds.has(a.id) && articleHasListenableBody(a))
+      .map(articleQueueItem);
     items = [...items, ...articleItems];
   }
 
@@ -29825,10 +29832,35 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
     const dateA = new Date(a.pubDate), dateB = new Date(b.pubDate);
     return newestFirst ? dateB - dateA : dateA - dateB;
   });
+  // Episodes added by hand ("Add to queue") go last, whether or not the rules
+  // above also picked them. (getAllListenList places added articles and music.)
+  const addedEpisodes = queueAddedItems().filter((i) => i.type === "podcast");
+  const addedIds = new Set(addedEpisodes.map((i) => i.id));
+  const ordered = addedEpisodes.length ? [...sorted.filter((i) => !addedIds.has(i.id)), ...addedEpisodes] : sorted;
   // hoist:false keeps the natural sorted order (used by prev/next-episode
   // navigation, which needs a stable running order, not the now-playing-first
   // display order).
-  return hoist ? hoistResumeEpisode(sorted) : sorted;
+  return hoist ? hoistResumeEpisode(ordered) : ordered;
+}
+
+// Can this saved article be read aloud? It needs a source to fetch (url), an
+// inline body (text), or a body kept in the content store (bodyRef). An emailed
+// newsletter has no url, and its text leaves the synced row once the body is
+// stored — so checking only url/text dropped those from the queue after a reload.
+function articleHasListenableBody(a) {
+  return !!(a && (a.url || a.text || a.bodyRef));
+}
+// A saved article as a queue row.
+function articleQueueItem(a) {
+  const pubInfo = getReadPublications().find(p => p.key === a.publication);
+  return {
+    ...a,
+    type: "article",
+    showId: a.publication,
+    showTitle: pubInfo?.label || a.publication || "Article",
+    showArt: articleArtUrl(a),
+    pubDate: getArticleSortDate(a),
+  };
 }
 
 // ── "All" blended listen list ────────────────────────────────────────────────
@@ -29859,19 +29891,195 @@ function getAllListenList({ hoist = true } = {}) {
       pubDate: b.createdAt || ""
     }));
 
+  // Manual adds ("Add to queue") go last, in the order they were added — an
+  // item the automatic rules also include moves down to that spot.
+  const added = queueAddedItems();
+  const addedIds = new Set(added.map((i) => i.id));
+  const all = added.length ? [...items.filter((i) => !addedIds.has(i.id)), ...added] : items;
+
   const pinned = state.mediaAllPinnedOrder || [];
   let list;
   if (!pinned.length) {
-    list = items;
+    list = all;
   } else {
     const pos = new Map(pinned.map((id, i) => [id, i]));
-    const inPinned = items.filter((i) => pos.has(i.id)).sort((a, b) => pos.get(a.id) - pos.get(b.id));
-    const rest = items.filter((i) => !pos.has(i.id));
+    const inPinned = all.filter((i) => pos.has(i.id)).sort((a, b) => pos.get(a.id) - pos.get(b.id));
+    const rest = all.filter((i) => !pos.has(i.id));
     list = [...inPinned, ...rest];
   }
   // The resume episode wins the very top slot even over a manual pin order.
   // (hoist:false keeps natural order for prev/next-episode navigation.)
   return hoist ? hoistResumeEpisode(list) : list;
+}
+
+// ── Manual "Add to queue" ────────────────────────────────────────────────────
+// state.mediaQueueAdded (media-queue-added.js) forces items onto the end of the
+// queue: an episode or article the automatic rules leave out, a music album
+// (one row that plays all its tracks), or a single song.
+
+// Queue rows for the manual adds, skipping any whose item is gone or finished.
+function queueAddedItems() {
+  const entries = normalizeQueueAdded(state.mediaQueueAdded);
+  if (!entries.length) return [];
+  const progress = state.podcastProgress || {};
+  const readIds = new Set(state.readArticleIds || []);
+  const out = [];
+  for (const e of entries) {
+    if (e.kind === "episode") {
+      if (progress[e.itemId]?.played) continue;
+      const item = playlistItemForEpisodeId(e.itemId);
+      if (item) out.push({ ...item, providerId: "podcast", queueAdded: true });
+    } else if (e.kind === "article") {
+      const a = (state.savedArticles || []).find((x) => x.id === e.itemId);
+      if (a && !readIds.has(a.id)) out.push({ ...articleQueueItem(a), providerId: "tts", queueAdded: true });
+    } else {
+      out.push(queuedMusicRow(e));
+    }
+  }
+  return out;
+}
+// An added album / song as a queue row. Its id is the entry's id.
+function queuedMusicRow(entry) {
+  let art = entry.art || "";
+  if (!art && entry.source === "library") {
+    const tracks = entry.kind === "album" ? libraryAlbumTracks(musicLibrary, entry) : (musicLibrary || []).filter((t) => t.id === entry.mq?.id);
+    art = tracks.map(musicArtUrlFor).find(Boolean) || "";
+  }
+  const what = entry.kind === "album" ? (entry.collection === "playlist" ? "Playlist" : "Album") : "Song";
+  return {
+    id: entry.id, type: "music", providerId: "queue-music", queueAdded: true, musicKind: entry.kind,
+    title: entry.title || (entry.kind === "album" ? "Album" : "Song"),
+    showTitle: [entry.artist, what].filter(Boolean).join(" · "),
+    showArt: art, pubDate: "",
+  };
+}
+
+// Ids of everything in the queue right now. Rows ask this once each while a list
+// renders, so it is built once per task and dropped afterwards (and by every
+// add/remove below).
+let mediaQueueIdCache = null;
+function mediaQueueIds() {
+  if (!mediaQueueIdCache) {
+    mediaQueueIdCache = new Set(getAllListenList({ hoist: false }).map((i) => i.id));
+    queueMicrotask(() => { mediaQueueIdCache = null; });
+  }
+  return mediaQueueIdCache;
+}
+function isInMediaQueue(id) { return mediaQueueIds().has(id); }
+
+function addQueueAddedEntry(draft) {
+  const res = withQueueEntry(state.mediaQueueAdded, draft);
+  state.mediaQueueAdded = res.list;
+  mediaQueueIdCache = null;
+  return res;
+}
+function removeQueueAddedEntries(match) {
+  const res = withoutQueueEntries(state.mediaQueueAdded, match);
+  if (!res.removed.length) return false;
+  state.mediaQueueAdded = res.list;
+  res.removed.forEach((e) => recordDeletion("mediaQueueAdded", e.id)); // the list union-merges across devices
+  mediaQueueIdCache = null;
+  return true;
+}
+// Drop entries whose episode / article no longer exists or is finished, so the
+// list can't grow without bound. Run when something is added.
+function pruneQueueAddedEntries() {
+  const progress = state.podcastProgress || {};
+  const articleIds = new Set((state.savedArticles || []).map((a) => a.id));
+  removeQueueAddedEntries((e) =>
+    (e.kind === "episode" && (progress[e.itemId]?.played || !findPodcastEpisode(e.itemId).episode)) ||
+    (e.kind === "article" && !articleIds.has(e.itemId)));
+}
+function afterMediaQueueChange(message) {
+  persist();
+  if (message) showMailToast(message);
+  if (activeAppArea === "media" && activeMediaTab === "queue") renderMediaAllList();
+}
+
+// Add a podcast episode. Clears whatever kept it out (removed from the list
+// earlier, or already played); the entry puts it at the end.
+function addEpisodeToMediaQueue(episodeId) {
+  if (!findPodcastEpisode(episodeId).episode) return false;
+  if (isInMediaQueue(episodeId)) { showMailToast("Already in your queue"); return false; }
+  pruneQueueAddedEntries();
+  state.podcastAutoSkipped = (state.podcastAutoSkipped || []).filter((id) => id !== episodeId);
+  state.mediaQueueRemoved = (state.mediaQueueRemoved || []).filter((id) => id !== episodeId);
+  if ((state.podcastProgress || {})[episodeId]?.played) setPodcastEpisodePlayed(episodeId, false);
+  addQueueAddedEntry({ kind: "episode", ref: episodeRef(episodeId), itemId: episodeId });
+  afterMediaQueueChange("Added to queue");
+  return true;
+}
+// Take an episode out of the queue: drop its manual entry and keep the automatic
+// rules from putting it back. hide:true is the lists' "Remove" (X) button, which
+// also hides the episode under Recent, as it always has; without it the episode
+// only leaves the queue.
+function removeEpisodeFromMediaQueue(episodeId, { hide = false } = {}) {
+  removeQueueAddedEntries((e) => e.kind === "episode" && e.itemId === episodeId);
+  const key = hide ? "podcastAutoSkipped" : "mediaQueueRemoved";
+  if (!Array.isArray(state[key])) state[key] = [];
+  if (!state[key].includes(episodeId)) state[key].push(episodeId);
+  mediaQueueIdCache = null;
+  afterMediaQueueChange("");
+}
+function addArticleToMediaQueue(articleId) {
+  const a = (state.savedArticles || []).find((x) => x.id === articleId);
+  if (!a) return false;
+  if (isInMediaQueue(articleId)) { showMailToast("Already in your queue"); return false; }
+  if (!articleHasListenableBody(a)) { showMailToast("This article has no text to read aloud"); return false; }
+  pruneQueueAddedEntries();
+  addQueueAddedEntry({ kind: "article", ref: articleRef(articleId), itemId: articleId });
+  afterMediaQueueChange("Added to queue");
+  return true;
+}
+// draft: an album or song entry from musicQueueDraftFrom().
+function addMusicToMediaQueue(draft) {
+  if (!draft) return false;
+  if (queueAddedFindRef(state.mediaQueueAdded, draft.ref)) { showMailToast("Already in your queue"); return false; }
+  pruneQueueAddedEntries();
+  addQueueAddedEntry(draft);
+  afterMediaQueueChange("Added to queue");
+  return true;
+}
+
+// What an added album / song plays, as music-queue items (see playMusicQueueItem).
+async function queuedMusicItems(entry) {
+  if (entry.kind === "track") return entry.mq ? [entry.mq] : [];
+  if (entry.source === "library") {
+    const list = (musicLibrary || []).length ? musicLibrary : await refreshMusicLibrary();
+    return libraryAlbumTracks(list, entry).map((t) => ({ kind: "library", id: t.id }));
+  }
+  const album = entry.item;
+  if (!album) return [];
+  let detail = musicItemCache.get(album.id);
+  if (!detail) {
+    const provider = (await getMusicProviders()).get(album.provider);
+    detail = provider && provider.getItem ? await provider.getItem(album) : null;
+    if (detail) musicItemCache.set(album.id, detail);
+  }
+  return ((detail && detail.tracks) || []).map((track) => ({ kind: "stream", track }));
+}
+// Play an added album / song as the queue's current item. Its tracks run through
+// the music player's own up-next; onMusicEnded hands back to the queue after the last.
+async function startQueuedMusic(entryId) {
+  const entry = normalizeQueueAdded(state.mediaQueueAdded).find((e) => e.id === entryId);
+  let items = [];
+  try { if (entry) items = await queuedMusicItems(entry); }
+  catch (e) { console.warn("queued music failed to load", e); }
+  if (mediaAllQueueId !== entryId) return; // something else was started while this loaded
+  if (!items.length) {
+    showVoiceToast(`Couldn't play ${entry?.title || "that"} — skipping it`);
+    advanceMediaAllQueue(entryId);
+    return;
+  }
+  playMusicQueueItem(items[0], items.slice(1), { queueOwner: entryId });
+}
+// Open an added album / song where it lives in the Music tab.
+function openQueuedMusic(entryId) {
+  const entry = normalizeQueueAdded(state.mediaQueueAdded).find((e) => e.id === entryId);
+  if (!entry) return;
+  musicTabMode = entry.source === "library" ? "library" : "discover";
+  switchMediaTab("music");
+  if (entry.kind === "album" && entry.source === "catalog" && entry.item) openMusicItem(entry.item);
 }
 
 // Re-render the queue when the loaded (Now Playing) item changes, so its top
@@ -29908,16 +30116,17 @@ function renderMediaAllList() {
     const isPod = e.type === "podcast";
     const isArt = e.type === "article";
     const isBook = e.type === "book";
+    const isMusic = e.type === "music";      // an album / song added with "Add to queue"
     const isResume = e.id === nowId;        // the "Now Playing" row (hoisted to top)
     // Section headers: "Now Playing" over the loaded item, "Up Next" over the
     // rest. Nothing loaded → the list is just "Up Next" (empty play space).
     if (isResume) html += `<div class="playlist-section-head">Now Playing</div>`;
     else if (!upNextEmitted) { html += `<div class="playlist-section-head">Up Next</div>`; upNextEmitted = true; }
-    const dur = (!isArt && !isBook) ? (e.duration || progress[e.id]?.duration || 0) : 0;
+    const dur = (!isArt && !isBook && !isMusic) ? (e.duration || progress[e.id]?.duration || 0) : 0;
     const remain = (isResume && dur && progress[e.id]?.position) ? Math.max(0, dur - progress[e.id].position) : 0;
     const art = e.showArt
       ? `<img class="media-all-art" src="${escapeHtml(e.showArt)}" alt="" loading="lazy" onerror="this.style.display='none'">`
-      : `<span class="media-all-art media-all-art--icon">${isBook ? "📚" : isArt ? "📰" : "🎧"}</span>`;
+      : `<span class="media-all-art media-all-art--icon">${isBook ? "📚" : isArt ? "📰" : isMusic ? "🎵" : "🎧"}</span>`;
     const saved = isPod ? (state.podcastSaved || []).includes(e.id)
       : isArt ? !!(state.savedArticles || []).find((a) => a.id === e.id && a.pinned)
       : false;
@@ -29927,6 +30136,7 @@ function renderMediaAllList() {
       <div class="article-row-main">
         ${isResume
           ? `<div class="playlist-row-continue">Now Playing${remain ? ` · ${formatPodcastDuration(remain)} left` : ""}</div>`
+          : isMusic ? (e.showTitle ? `<div class="playlist-row-date">${escapeHtml(e.showTitle)}</div>` : "")
           : (e.pubDate ? `<div class="playlist-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</div>` : "")}
         <div class="article-row-title playlist-row-title">${escapeHtml(e.title || "")}</div>
         ${!isBook ? `<div class="playlist-play-row">
@@ -29939,13 +30149,13 @@ function renderMediaAllList() {
       <div class="article-row-actions">
         ${isBook
           ? `<button class="article-row-action-btn" type="button" title="Open" aria-label="Open" data-all-open="${escapeHtml(e.id)}">${ldeIcon("link", { size: 16 })}</button>`
-          : `
+          : `${isMusic ? "" : `
           <button class="article-row-action-btn" type="button" title="Mark as ${isArt ? "read" : "played"}" aria-label="Mark as ${isArt ? "read" : "played"}" data-all-played="${escapeHtml(e.id)}">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
           </button>
           <button class="article-row-action-btn${saved ? " is-active" : ""}" type="button" title="${saved ? "Saved" : "Save"}" aria-label="Save" data-all-save="${escapeHtml(e.id)}">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-          </button>
+          </button>`}
           <button class="article-row-action-btn" type="button" title="Remove from queue" aria-label="Remove from queue" data-all-remove="${escapeHtml(e.id)}">
             ${ldeIcon("close", { size: 16 })}
           </button>`}
@@ -29962,6 +30172,7 @@ function renderMediaAllList() {
     const id = row.dataset.allId;
     if (row.dataset.allType === "book") openMediaAllBook(id);
     else if (row.dataset.allType === "article") openArticle(id, "articleList");
+    else if (row.dataset.allType === "music") openQueuedMusic(id);
     else {
       // Open the episode as a tab-agnostic detail sheet so you STAY in the queue
       // tab instead of being teleported into Podcasts (the in-tab player panel
@@ -30016,6 +30227,7 @@ function renderMediaAllList() {
         if (showId) { activeMediaTab = "podcasts"; switchMediaTab("podcasts"); activePodcastTab = "shows"; renderPodcastPlaylistBar(); openPodcastShow(showId); }
         else openPodcastEpisode(id);
       } else if (type === "article") openArticle(id, "articleList");
+      else if (type === "music") openQueuedMusic(id);
       else openMediaAllBook(id);
     }));
   // Play control → start playing (stays on the playlist for articles).
@@ -30049,10 +30261,10 @@ function renderMediaAllList() {
       const id = b.dataset.allRemove;
       if (rowType(b) === "article") {
         markArticleRead(id);
+      } else if (rowType(b) === "music") {
+        if (removeQueueAddedEntries((e) => e.id === id)) persist();
       } else {
-        if (!state.podcastAutoSkipped) state.podcastAutoSkipped = [];
-        if (!state.podcastAutoSkipped.includes(id)) state.podcastAutoSkipped.push(id);
-        persist();
+        removeEpisodeFromMediaQueue(id, { hide: true });
       }
       renderMediaAllList();
     }));
@@ -30211,7 +30423,7 @@ function makeTouchReorder(listEl, { rowSelector, getId, onDrop, longPressMs = 28
       if (lastY < r.top + EDGE && cont.scrollTop > 0) { cont.scrollTop -= SPEED; scrolled = true; }
       else if (lastY > r.bottom - EDGE && cont.scrollTop + cont.clientHeight < cont.scrollHeight) { cont.scrollTop += SPEED; scrolled = true; }
     } else {
-      const h = window.innerHeight;
+      const h = usableViewportBottom();
       if (lastY < EDGE && window.scrollY > 0) { window.scrollBy(0, -SPEED); scrolled = true; }
       else if (lastY > h - EDGE) { window.scrollBy(0, SPEED); scrolled = true; }
     }
@@ -30351,6 +30563,14 @@ registerMediaProvider({
   isCurrent: (item) => !!musicCurTrack && musicCurTrack.id === item.id,
 });
 
+// An album / song added to the queue (Add to queue). item.id is the entry's id.
+registerMediaProvider({
+  id: "queue-music",
+  canPlay: () => true,
+  play: (item) => { startQueuedMusic(item.id); },
+  isCurrent: (item) => musicQueueOwnerId === item.id,
+});
+
 function playAllQueueFrom(id) {
   const items = getAllListenList();
   const start = items.findIndex((i) => i.id === id);
@@ -30459,8 +30679,7 @@ function initPodcastEpisodeListDelegation() {
     if (queueRemove) {
       e.stopPropagation();
       const episodeId = queueRemove.dataset.episodeQueueRemove;
-      state.podcastQueue = (state.podcastQueue || []).filter(eid => eid !== episodeId);
-      persist();
+      removeEpisodeFromMediaQueue(episodeId);
       renderPodcastQueueEpisodes();
       return;
     }
@@ -30473,9 +30692,7 @@ function initPodcastEpisodeListDelegation() {
     if (skipBtn) {
       e.stopPropagation();
       const episodeId = skipBtn.dataset.episodeSkip;
-      if (!state.podcastAutoSkipped) state.podcastAutoSkipped = [];
-      if (!state.podcastAutoSkipped.includes(episodeId)) state.podcastAutoSkipped.push(episodeId);
-      persist();
+      removeEpisodeFromMediaQueue(episodeId, { hide: true }); // also drops a manual "Add to queue" entry
       renderActiveMediaView();
       return;
     }
@@ -30781,7 +30998,7 @@ function openEpisodeDetailSheet(episodeId) {
   const art = episode.art || show?.art || "";
   const desc = episode.description || "";
   const willFetch = !desc && Boolean(show?.url);
-  const isQueued = () => (state.podcastQueue || []).includes(episodeId);
+  const isQueued = () => isInMediaQueue(episodeId);
   const isPlayed = () => !!(state.podcastProgress || {})[episodeId]?.played;
 
   overlay.innerHTML = `
@@ -30842,7 +31059,7 @@ function openEpisodeDetailSheet(episodeId) {
 function episodeArchiveDeleteActions(episodeId, deleteAttrs, deleteTitle = "Remove", { queue = false } = {}) {
   // Optional "add to / remove from playlist" toggle (browse lists — Recent, a
   // show's episodes — so you can queue an episode without the long-press menu).
-  const isQueued = (state.podcastQueue || []).includes(episodeId);
+  const isQueued = isInMediaQueue(episodeId);
   const queueBtn = queue ? `
         <button class="article-row-action-btn${isQueued ? " is-active" : ""}" type="button" title="${isQueued ? "Remove from queue" : "Add to queue"}" aria-label="${isQueued ? "Remove from queue" : "Add to queue"}" data-episode-queue="${escapeHtml(episodeId)}">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="15" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="11" y2="18"/><line x1="18" y1="9" x2="18" y2="15"/><line x1="15" y1="12" x2="21" y2="12"/></svg>
@@ -30869,7 +31086,7 @@ function showEpisodeContextMenu(episodeId, x, y) {
   if (!episode) return;
   const isSaved = (state.podcastSaved || []).includes(episodeId);
   const link = episode.link || episode.audioUrl || show?.url || "";
-  const isQueued = (state.podcastQueue || []).includes(episodeId);
+  const isQueued = isInMediaQueue(episodeId);
 
   const menu = document.createElement("div");
   menu.id = "episodeContextMenu";
@@ -30885,7 +31102,7 @@ function showEpisodeContextMenu(episodeId, x, y) {
   // Clamp within the viewport (menu is ~200px wide, height grows with options).
   const mw = 200, mh = menu.offsetHeight || 200;
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - mw - 8)) + "px";
-  menu.style.top = Math.max(8, Math.min(y, window.innerHeight - mh - 8)) + "px";
+  menu.style.top = Math.max(8, Math.min(y, usableViewportBottom() - mh - 8)) + "px";
 
   const close = () => closeEpisodeContextMenu();
   menu.addEventListener("click", (e) => {
@@ -30940,6 +31157,167 @@ function initEpisodeContextMenu() {
   document.addEventListener("touchcancel", endLp);
 }
 
+// ── Item menu: long-press / right-click on an article, album or song ─────────
+// A small dropdown at the pointer. For now its one new action is "Add to queue";
+// article rows also keep the two list actions their right-click menu had.
+function closeMediaItemMenu() {
+  document.getElementById("mediaItemMenu")?.remove();
+}
+// options: [{ label, run, disabled? }]
+function openMediaItemMenu(x, y, options) {
+  closeMediaItemMenu();
+  closeEpisodeContextMenu();
+  closeFolderMenu();
+  const opts = (options || []).filter(Boolean);
+  if (!opts.length) return;
+  const menu = document.createElement("div");
+  menu.id = "mediaItemMenu";
+  menu.className = "fin-txn-menu episode-context-menu media-item-menu";
+  menu.setAttribute("role", "menu");
+  for (const o of opts) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "fin-txn-menu-option";
+    b.setAttribute("role", "menuitem");
+    b.textContent = o.label;
+    b.disabled = !!o.disabled;
+    b.addEventListener("click", (e) => { e.stopPropagation(); closeMediaItemMenu(); o.run?.(); });
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+  const mw = menu.offsetWidth || 200, mh = menu.offsetHeight || 60;
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - mw - 8)) + "px";
+  menu.style.top = Math.max(8, Math.min(y, usableViewportBottom() - mh - 8)) + "px";
+  // Dismiss on any outside interaction.
+  setTimeout(() => {
+    const off = () => { document.removeEventListener("pointerdown", onDoc, true); window.removeEventListener("scroll", onScroll, true); };
+    const onDoc = (ev) => { if (!ev.target.closest?.("#mediaItemMenu")) { closeMediaItemMenu(); off(); } };
+    const onScroll = () => { closeMediaItemMenu(); off(); };
+    document.addEventListener("pointerdown", onDoc, true);
+    window.addEventListener("scroll", onScroll, true);
+  }, 0);
+}
+const queueMenuOption = (inQueue, run) => (inQueue ? { label: "Already in queue", disabled: true } : { label: "Add to queue", run });
+
+function openArticleRowMenu(articleId, x, y) {
+  if (!(state.savedArticles || []).some((a) => a.id === articleId)) return;
+  const inPersonal = sectionScope("media") === "personal";
+  openMediaItemMenu(x, y, [
+    queueMenuOption(isInMediaQueue(articleId), () => addArticleToMediaQueue(articleId)),
+    { label: inPersonal ? "Copy to household" : "Copy to my personal list", run: () => copyMediaItemToOtherScope("article", articleId) },
+    { label: "Remove from this list", run: () => deleteArticle(articleId) },
+  ]);
+}
+
+// What a press inside the Music tab would add to the queue: an album (one queue
+// row that plays every track) or a single song. null when the press isn't on one.
+function musicQueueDraftFrom(target) {
+  if (!target.closest("#mediaMusicPanel") || target.closest("button, input, a, summary")) return null;
+  const el = target.closest("[data-music-track], .music-album-head, [data-stream-play], [data-shelf-track], [data-music-open], .music-item-head, [data-play-recording], [data-pl-play]");
+  if (!el) return null;
+  const streamTrack = (t) => (t && t.id ? {
+    kind: "track", source: "stream", ref: trackRef("stream", t.id), title: t.title || "Song",
+    artist: t.artists?.[0]?.name || t.composer?.name || (typeof t.artist === "string" ? t.artist : "") || "",
+    art: t.artworkUrl || "", mq: { kind: "stream", track: t },
+  } : null);
+  const catalogAlbum = (it) => (it && it.id && it.kind !== "artist" ? {
+    kind: "album", source: "catalog", ref: catalogAlbumRef(it.id), title: it.title || "Album",
+    artist: (typeof it.artist === "string" ? it.artist : "") || (typeof it.composer === "string" ? it.composer : "") || "",
+    art: it.artworkUrl || "", collection: it.kind === "playlist" ? "playlist" : "album", item: slimCatalogItem(it),
+  } : null);
+  const recording = (r) => {
+    if (!r || !r.id) return null;
+    if (r.provider && r.entity && r.entity !== "track") return catalogAlbum(r); // a favourited album
+    return {
+      kind: "track", source: "recording", ref: trackRef("rec", r.id), title: r.title || r.workTitle || "Recording",
+      artist: r.performers?.[0]?.name || r.composer || "", art: r.artworkUrl || "", mq: { kind: "recording", recording: r },
+    };
+  };
+  if (el.matches("[data-music-track]")) {
+    const t = (musicLibrary || []).find((x) => x.id === el.dataset.musicTrack);
+    return t ? { kind: "track", source: "library", ref: trackRef("lib", t.id), title: t.title || "Untitled", artist: t.artist || "", mq: { kind: "library", id: t.id } } : null;
+  }
+  if (el.matches(".music-album-head")) {
+    const sec = el.closest(".music-album");
+    if (!sec || sec.dataset.musicAlbum == null) return null;
+    const album = sec.dataset.musicAlbum, artist = sec.dataset.musicAlbumArtist || "";
+    return { kind: "album", source: "library", ref: libraryAlbumRef(artist, album), title: album || "Singles", artist, album };
+  }
+  if (el.matches("[data-stream-play]")) return streamTrack(musicViewIndex.get(el.dataset.streamPlay));
+  if (el.matches("[data-shelf-track]")) return streamTrack(musicViewIndex.get(el.dataset.trackId));
+  if (el.matches(".music-item-head")) return catalogAlbum(musicOpenItem?.album);
+  if (el.matches("[data-music-open]")) {
+    const it = musicViewIndex.get(el.dataset.musicOpen);
+    return it?.entity === "track" ? streamTrack(it) : catalogAlbum(it);
+  }
+  if (el.matches("[data-pl-play]")) {
+    const [pid, idx] = el.dataset.plPlay.split(":");
+    const pl = (getMusicLibraryState().playlists || []).find((p) => p.id === pid);
+    return recording(pl && pl.items[+idx]);
+  }
+  return recording(musicViewIndex.get(el.dataset.playRecording));
+}
+
+// Wires the menus once, at the document: right-click, or press and hold (touch
+// or mouse) for half a second. Episode rows keep their own touch long-press
+// (initEpisodeContextMenu); a held mouse press opens that same menu from here.
+// The queue's own rows are left alone — a long-press there drags to reorder.
+let mediaLongPressAt = 0;
+function initMediaItemMenus() {
+  const HOLD_MS = 500, MOVE_PX = 10, TAP_GUARD_MS = 700, RELEASE_GUARD_MS = 250;
+  const targetFor = (t, pointerType) => {
+    if (!(t instanceof Element)) return null;
+    const art = t.closest(".article-row[data-article-id]");
+    if (art) return t.closest(".article-row-actions") ? null : { open: (x, y) => openArticleRowMenu(art.dataset.articleId, x, y) };
+    const draft = musicQueueDraftFrom(t);
+    if (draft) return { open: (x, y) => openMediaItemMenu(x, y, [queueMenuOption(!!queueAddedFindRef(state.mediaQueueAdded, draft.ref), () => addMusicToMediaQueue(draft))]) };
+    if (pointerType === "mouse") {
+      const ep = t.closest(".podcast-episode-row[data-episode-id]:not(.podcast-draggable-row)");
+      if (ep && !t.closest(".article-row-actions")) return { open: (x, y) => { podcastLongPressAt = Date.now(); showEpisodeContextMenu(ep.dataset.episodeId, x, y); } };
+    }
+    return null;
+  };
+  document.addEventListener("contextmenu", (e) => {
+    const tg = targetFor(e.target, "context");
+    if (!tg) return;
+    e.preventDefault();
+    if (Date.now() - mediaLongPressAt < TAP_GUARD_MS) return; // the hold already opened it (Android fires both)
+    tg.open(e.clientX, e.clientY);
+  });
+  let timer = null, start = null, heldOpen = false, suppressClickUntil = 0;
+  const cancel = () => { clearTimeout(timer); timer = null; start = null; };
+  document.addEventListener("pointerdown", (e) => {
+    cancel();
+    heldOpen = false; // a new press: any earlier hold is over
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const tg = targetFor(e.target, e.pointerType);
+    if (!tg) return;
+    start = { x: e.clientX, y: e.clientY };
+    timer = setTimeout(() => {
+      timer = null;
+      if (!start) return;
+      const at = start; start = null;
+      heldOpen = true; mediaLongPressAt = Date.now();
+      tg.open(at.x, at.y);
+    }, HOLD_MS);
+  }, true);
+  document.addEventListener("pointermove", (e) => {
+    if (start && (Math.abs(e.clientX - start.x) > MOVE_PX || Math.abs(e.clientY - start.y) > MOVE_PX)) cancel();
+  }, true);
+  // The click a release produces follows it at once, so the guard after it is short —
+  // a quick tap somewhere else straight afterwards still gets through.
+  const release = () => { cancel(); if (heldOpen) { heldOpen = false; suppressClickUntil = Date.now() + RELEASE_GUARD_MS; } };
+  document.addEventListener("pointerup", release, true);
+  document.addEventListener("pointercancel", release, true);
+  // The press that opened a menu must not also count as a tap on the row under it.
+  document.addEventListener("click", (e) => {
+    if (!heldOpen && Date.now() >= suppressClickUntil) return;
+    if (e.target.closest?.("#mediaItemMenu, #episodeContextMenu")) return;
+    heldOpen = false; // if the release never arrived, this click stands in for it
+    e.stopPropagation(); e.preventDefault();
+  }, true);
+}
+
 function renderPodcastSavedEpisodes() {
   const listEl = document.getElementById("podcastEpisodeList");
   if (!listEl) return;
@@ -30988,7 +31366,7 @@ function renderPodcastSavedEpisodes() {
       if (episode && show) episodes.push({ ...episode, showId: show.id, showTitle: show.title, showArt: show.art });
     }
     const progress = state.podcastProgress || {};
-    const isQueued = (id) => (state.podcastQueue || []).includes(id);
+    const isQueued = (id) => isInMediaQueue(id);
     contentHtml = episodes.map(e => {
       const ep = progress[e.id] || {};
       const played = !!ep.played;
@@ -32134,6 +32512,9 @@ async function playMusicQueueItem(item, rest, opts = {}) {
   // a stale track over the one the user just picked.
   const gen = ++musicStartGen;
   musicQueueRest = Array.isArray(rest) ? rest.slice() : [];
+  // Only a run started for a Media-queue entry (and its own track-to-track
+  // advance) carries an owner; any other music start is the listener's own pick.
+  musicQueueOwnerId = opts.queueOwner || null;
   let ok = false;
   if (item.kind === "stream") ok = await startStreamingTrack(item.track, gen);
   else if (item.kind === "recording") ok = await startRecordingResolved(item.recording, { queueMode: !opts.interactive, gen });
@@ -32163,7 +32544,15 @@ function onMusicEnded() {
   window.clearInterval(musicPositionSaveTimer);
   if (musicCurTrack?.id) { state.mediaProgress = clearMediaPosition(state.mediaProgress, musicCurTrack.id); persist(); }
   updateMiniPlayerPlayBtn();
-  if (musicQueueRest.length) { const next = musicQueueRest.shift(); playMusicQueueItem(next, musicQueueRest); return; }
+  if (musicQueueRest.length) { const next = musicQueueRest.shift(); playMusicQueueItem(next, musicQueueRest, { queueOwner: musicQueueOwnerId }); return; }
+  // The last track of an album / song added to the Media queue: it leaves the
+  // queue, and the queue moves on to its next item.
+  const owner = musicQueueOwnerId;
+  if (owner) {
+    musicQueueOwnerId = null;
+    if (removeQueueAddedEntries((e) => e.id === owner)) persist();
+    if (advanceMediaAllQueue(owner)) return; // the next item took over the player
+  }
   stopMusicPlayback({ save: false }); // queue drained — don't re-save the resume point we just cleared
 }
 
@@ -32179,6 +32568,7 @@ function stopMusicPlayback({ save = true } = {}) {
   if (musicCurUrl) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } musicCurUrl = null; }
   musicAudio = null;
   musicQueueRest = [];
+  musicQueueOwnerId = null;
   setMediaSessionPlaybackState("none");
   hideMiniPlayer();
   if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
@@ -32448,7 +32838,7 @@ function musicAlbumGroup(g) {
   const coverHtml = cover
     ? `<img class="music-album-cover" src="${escapeHtml(cover)}" alt="" loading="lazy" onerror="this.style.display='none'">`
     : `<span class="music-album-cover music-album-cover--ph" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`;
-  return `<section class="music-album">
+  return `<section class="music-album" data-music-album="${escapeHtml(g.album || "")}" data-music-album-artist="${escapeHtml(g.artist || "")}">
       <header class="music-album-head">
         ${coverHtml}
         <span class="music-album-meta">
@@ -34686,6 +35076,8 @@ function setPodcastEpisodePlayed(episodeId, played) {
   if (played && Array.isArray(state.podcastQueue)) {
     state.podcastQueue = state.podcastQueue.filter((qid) => qid !== episodeId);
   }
+  if (played) removeQueueAddedEntries((e) => e.kind === "episode" && e.itemId === episodeId);
+  mediaQueueIdCache = null;
   persist();
   document.querySelectorAll(`.podcast-episode-row[data-episode-id="${CSS.escape(episodeId)}"]`).forEach(row => {
     row.classList.toggle("article-row--read", played);
@@ -35195,7 +35587,6 @@ function wireArticleRows(listEl, containerId) {
   listEl.querySelectorAll(".article-row").forEach((row) => {
     const id = row.dataset.articleId;
     row.addEventListener("click", (e) => { if (e.target.closest(".article-row-actions")) return; openArticle(id, containerId); });
-    row.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "article", id));
     row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") openArticle(id, containerId); });
     row.querySelector(".article-row-actions")?.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -38396,7 +38787,7 @@ function openReadingItemMenu(event) {
   const rawX = event.clientX || 10;
   const rawY = event.clientY || 10;
   const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(rawY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -38630,7 +39021,7 @@ function openReadingArchiveItemMenu(event) {
 
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -40504,7 +40895,7 @@ function openExploreTripMenu(event, tripId) {
   document.body.append(menu);
 
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -41232,7 +41623,7 @@ function openItineraryStopMenu(event, stop, trip, rerender) {
     `<button type="button" role="menuitem" class="danger" data-act="delete">🗑 Remove from trip</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
   const act = a => {
@@ -41375,7 +41766,7 @@ function openDayAddMenu(anchorEl, trip, dateKey, rerender) {
   document.body.append(menu);
   const r = anchorEl.getBoundingClientRect();
   menu.style.left = `${Math.max(10, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 10))}px`;
-  menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 10)}px`;
+  menu.style.top = `${Math.min(r.bottom + 4, usableViewportBottom() - menu.offsetHeight - 10)}px`;
   menu.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
     const kind = b.dataset.add;
     closeFolderMenu();

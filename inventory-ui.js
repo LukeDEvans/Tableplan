@@ -26,6 +26,7 @@
 // them at boot from defaultState(), before this module's factory runs.
 
 import { makeSortable } from './sortable.js';
+import { usableViewportBottom } from './dock-space.js';
 
 // Default rooms every inventory starts with (also the visibility registry).
 const DEFAULT_INVENTORY_ROOMS = [
@@ -474,7 +475,7 @@ function openInventoryBoxMenu(event) {
 
   document.body.append(menu);
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY || 10, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -566,7 +567,7 @@ function openInventoryItemMenu(event) {
 
   document.body.append(menu);
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
+  const y = Math.min(event.clientY || 10, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
