@@ -39,6 +39,7 @@ import { saveFile } from './save-file.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
+import { SETTING_STAMP_KEYS, settingsSnapshot, stampSettingChanges, mergeTrackedSettings, localSettingsAhead } from './settings-sync.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
 import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnostics.js';
@@ -260,6 +261,16 @@ const seedRecipes = [
 // write can repopulate storage.
 const bootedWithEmptyStorage = !localStorage.getItem(STORAGE_KEY);
 const state = loadState();
+// Signatures of every tracked setting as last loaded/merged/saved — persist()
+// stamps whatever differs from this (see settings-sync.js). Re-adopted after any
+// change that did NOT come from the user (a cloud load or merge).
+let settingsBaseline = settingsSnapshot(state);
+// When a just-changed setting must be on its way to the cloud by (0 = none
+// pending). Settings jump the 30s write spacing: they're rare, deliberate, and
+// the first thing lost if the app is closed before the debounced save.
+let settingsFlushDueAt = 0;
+const SETTINGS_FLUSH_DEBOUNCE_MS = 1000;      // coalesce a burst of toggles
+const SETTINGS_FLUSH_MIN_INTERVAL_MS = 5000;  // never closer than this to the previous write
 let sharedStorageReady = false;
 let sharedStorageSaveTimer = null;
 let appHiddenAt = 0; // when the tab/PWA was last hidden (stale-resume reload check)
@@ -285,22 +296,22 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders", "grocerySettingStamps"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "mediaQueueAdded", "mediaQueueRemoved", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "mediaQueueAdded", "mediaQueueRemoved", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
+  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "recreateSettingStamps"],
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -407,6 +418,7 @@ async function setSectionScope(section, scope) {
   sectionScopes[section] = scope;
   try { localStorage.setItem(SCOPE_PREFS_KEY, JSON.stringify(sectionScopes)); } catch { /* full */ }
   applyStoredState(draft);
+  adoptSettingsBaseline(); // the other scope's settings swapped in — not a user change
   mirrorStateToLocalStorage();
 
   // 3. Refresh the newly-active row from the server (another device/member
@@ -505,7 +517,16 @@ function mergeRemoteSectionRow(section, keys, row) {
     ? mergeStates(localFrag, remoteFrag)
     : mergeStates(remoteFrag, localFrag);
   for (const key of keys) { if (merged[key] !== undefined) state[key] = merged[key]; }
-  if (lastWrittenSections && !hadUnsavedEdits) lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
+  adoptSettingsBaseline(); // merged-in values are not user changes
+  // A setting this device changed more recently than the server's copy (e.g. a
+  // stale client wrote the old value back) must be re-uploaded: leave the
+  // section dirty and book a save instead of marking it as already written.
+  if (localSettingsAhead(section, state, remoteData)) {
+    if (lastWrittenSections) lastWrittenSections[section] = "";
+    saveStateToSharedStorage();
+  } else if (lastWrittenSections && !hadUnsavedEdits) {
+    lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
+  }
 }
 
 // ── Resume refresh ────────────────────────────────────────────────────────────
@@ -4424,8 +4445,33 @@ function mirrorStateToLocalStorage() {
   }
 }
 
+// Stamp every tracked setting that changed since the last baseline with its own
+// "last changed" time, so the change wins any later merge no matter which device
+// has the newer whole-state timestamp. Runs inside persist(), so a settings
+// handler needs nothing beyond the persist() call it already makes. A change
+// also books a prompt cloud write (see saveStateToSharedStorage).
+function stampChangedSettings() {
+  // A device that booted with empty storage holds pure defaults until the cloud
+  // copy lands (the "Syncing…" cover is up): nothing it "changes" before then is
+  // a user's choice, so it must not be stamped as one.
+  if (bootedWithEmptyStorage && !sharedStorageReady) { adoptSettingsBaseline(); return []; }
+  const { baseline, changed } = stampSettingChanges(state, settingsBaseline, state.stateUpdatedAt);
+  settingsBaseline = baseline;
+  if (changed.length && !settingsFlushDueAt) {
+    settingsFlushDueAt = Date.now() + Math.max(SETTINGS_FLUSH_DEBOUNCE_MS, SETTINGS_FLUSH_MIN_INTERVAL_MS - (Date.now() - lastSharedStorageWriteAt));
+  }
+  return changed;
+}
+
+// Values that just arrived from the cloud (load / merge) are not user changes:
+// take them as the new baseline so the next persist() doesn't stamp them.
+function adoptSettingsBaseline() {
+  settingsBaseline = settingsSnapshot(state);
+}
+
 function persist() {
   state.stateUpdatedAt = new Date().toISOString();
+  stampChangedSettings();
   planRangeCache.clear(); // any state change can affect the calendar's merged events
   planAppDataIndex = null;
   // Decision #1 Phase 2: calendarSources is the read-model the Plan UI now reads;
@@ -4524,6 +4570,7 @@ function updateTabIndicator(stableParent) {
 
 async function persistImmediately(label = "saving") {
   state.stateUpdatedAt = new Date().toISOString();
+  stampChangedSettings();
   mirrorStateToLocalStorage();
   window.clearTimeout(sharedStorageSaveTimer);
   window.clearTimeout(localBackupTimer);
@@ -6339,6 +6386,14 @@ function mergeStates(newer, older) {
   // ── Email schedule: preserve configured schedule over fresh-device defaults
   merged.weeklyEmailSettings = mergeWeeklyEmailSettings(newer.weeklyEmailSettings, older.weeklyEmailSettings);
 
+  // ── Tracked settings: each one's OWN "last changed" stamp decides, not the
+  // whole-state timestamp (a device with a stale setting but a newer
+  // stateUpdatedAt used to put the old value back). Runs last so it overrides
+  // the rules above only where a stamp exists. Also merges the per-section
+  // stamp maps ("configSettingStamps", "mediaSettingStamps",
+  // "grocerySettingStamps", "recreateSettingStamps") — see settings-sync.js.
+  mergeTrackedSettings(merged, newer, older);
+
   // Preserve the actual data timestamp — only persist() (user-initiated changes) should advance it.
   // Stamping NOW here caused every sync to look "newer than both inputs", creating race conditions
   // where two devices alternating syncs would each overwrite the other regardless of real change order.
@@ -6610,6 +6665,7 @@ async function runHydrateStateFromSharedStorage() {
             await snapshotCloudStateBeforeOverwrite(sharedState);
           }
           applyStoredState(merged);
+          adoptSettingsBaseline(); // cloud-merged values are not user changes
           seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           await provider.write();
@@ -6619,12 +6675,16 @@ async function runHydrateStateFromSharedStorage() {
           const merged = mergeStates(sharedState, stateForMerge);
           guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated);
           applyStoredState(merged);
+          adoptSettingsBaseline(); // cloud-merged values are not user changes
           seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           // Only write back if local actually contributed something new (tombstones, additions).
           // Comparing signatures detects whether the merge changed anything vs the remote state —
           // a stale device with nothing new to offer produces an identical signature and is skipped.
-          if (localTs && recoverableStateSignature(merged) !== recoverableStateSignature(sharedState)) {
+          // …or when this device holds a more recent setting choice than the
+          // cloud copy (some settings aren't in the signature above).
+          const settingsAhead = Object.keys(SETTING_STAMP_KEYS).some((section) => localSettingsAhead(section, merged, sharedState));
+          if (settingsAhead || (localTs && recoverableStateSignature(merged) !== recoverableStateSignature(sharedState))) {
             await provider.write();
           }
         }
@@ -6661,7 +6721,10 @@ function saveStateToSharedStorage() {
   if (!sharedStorageReady || !activeSharedStorageProvider) return;
   window.clearTimeout(sharedStorageSaveTimer);
   const msSinceLastWrite = Date.now() - lastSharedStorageWriteAt;
-  const delay = Math.max(SHARED_STORAGE_DEBOUNCE_MS, SHARED_STORAGE_MIN_INTERVAL_MS - msSinceLastWrite);
+  let delay = Math.max(SHARED_STORAGE_DEBOUNCE_MS, SHARED_STORAGE_MIN_INTERVAL_MS - msSinceLastWrite);
+  // A changed setting doesn't wait out the 30s spacing (bounded: at most one
+  // early write per SETTINGS_FLUSH_MIN_INTERVAL_MS, and only dirty sections go).
+  if (settingsFlushDueAt) delay = Math.min(delay, Math.max(0, settingsFlushDueAt - Date.now()));
   sharedStorageSaveTimer = window.setTimeout(writeStateToSharedStorage, delay);
 }
 
@@ -6669,6 +6732,7 @@ async function writeStateToSharedStorage() {
   if (!activeSharedStorageProvider) return;
   window.clearTimeout(sharedStorageRetryTimer);
   lastSharedStorageWriteAt = Date.now();
+  settingsFlushDueAt = 0; // this write carries any pending setting change (a failure retries below)
   updateSyncStatus("saving");
   try {
     await activeSharedStorageProvider.write();
@@ -7290,6 +7354,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     for (const key of keys) {
       if (merged[key] !== undefined) state[key] = merged[key];
     }
+    adoptSettingsBaseline(); // merged-in values are not user changes
     mirrorStateToLocalStorage();
     lastSeenSectionStamp[rowId] = curRows[0].updated_at;
   } else {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { SETTING_STAMP_KEYS } from "../settings-sync.js";
 
 // SYNC MERGE COVERAGE (INF-5). mergeStates() starts from `{ ...newer }`, so any
 // STATE_SECTIONS key WITHOUT an explicit rule silently falls back to "newer side
@@ -30,6 +31,10 @@ function mergeStatesBody() {
 // reason; add here only when newer-wins is really the right semantics.
 const MERGE_NEWER_WINS_KEYS = {
   // Scalars / preferences / versions — newest choice is the answer.
+  // A reason starting "scalar preference" or "settings object" marks a user
+  // setting: test/settings-sync.test.js then requires it in TRACKED_SETTINGS
+  // (settings-sync.js), so it merges by its own stamp. Use those words for any
+  // new setting.
   groceryCatalogVersion: "scalar version stamp",
   dailyDozenTagSeedVersion: "scalar version stamp",
   foodHealthVersion: "scalar version stamp",
@@ -79,7 +84,11 @@ const MERGE_NEWER_WINS_KEYS = {
 describe("mergeStates covers every synced key (INF-5)", () => {
   const keys = stateSectionKeys();
   const body = mergeStatesBody();
-  const hasRule = (k) => body.includes(`"${k}"`) || new RegExp(`merged\\.${k}\\s*=`).test(body);
+  // The per-section setting-stamp maps are merged by mergeTrackedSettings()
+  // (settings-sync.js), which mergeStates must call.
+  const stampKeys = new Set(Object.values(SETTING_STAMP_KEYS));
+  const hasRule = (k) => body.includes(`"${k}"`) || new RegExp(`merged\\.${k}\\s*=`).test(body)
+    || (stampKeys.has(k) && body.includes("mergeTrackedSettings(merged, newer, older)"));
 
   it("finds the section keys and the merge body", () => {
     expect(keys.length).toBeGreaterThan(100);

@@ -279,6 +279,16 @@ client substrate; agents act through the typed tools above.
 - Any new synced **id-keyed list** must: give every record a stable `id`, be added
   to the `mergeStates` union list, and (for deletes) write a tombstone. Otherwise it
   will be clobbered or resurrected across devices.
+- **Settings merge by their own stamp, not the whole-state timestamp**
+  (`settings-sync.js`). Any edit anywhere advances `stateUpdatedAt`, so
+  "newer-wins" let a device with a stale setting put the old value back.
+  `persist()` stamps every tracked setting that changed (handlers only need their
+  usual `persist()`), the stamps live in the same section row
+  (`<section>SettingStamps`), and `mergeStates` lets the later stamp win. A
+  changed setting is also written within seconds instead of waiting out the 30 s
+  spacing. **A new synced preference or settings object must be added to
+  `TRACKED_SETTINGS`** (a test fails otherwise). Not covered: finance scalars
+  (need a `STATE_SCHEMA_VERSION` bump) and per-device `localStorage` prefs.
 - Never let a just-booted empty client overwrite cloud data (the finance
   deep-merge + DB `tp_protect_finance_merge` trigger exist because this happened).
 
