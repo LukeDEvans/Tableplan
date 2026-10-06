@@ -1,8 +1,11 @@
 -- News articles (NEWS_PAGE_DESIGN.md §10 — the expanded intake).
 --
--- ⚠️ NOT YET APPLIED. Apply in the Supabase SQL editor (or via the MCP at Luke's
--- request) BEFORE deploying the code that reads it — the News page and the mail
--- sweep both use this table once deployed. Idempotent: safe to re-run.
+-- ✅ APPLIED to production 2026-10-06 (project noyocjcltrenwdovqrql) via the Supabase
+-- MCP apply_migration ("news_articles"), at Luke's request. Verified after applying:
+-- RLS on, 0 policies, only service_role granted (anon/authenticated none), news_counts
+-- executable by service_role only; 496 rows, all hidden placeholders from the email
+-- seen record (the old newsPending list was empty); security advisor shows only the
+-- expected "RLS enabled, no policy" INFO. Idempotent: safe to re-run.
 --
 -- Why a table (ARCH §6 "promote to relational when large / list-queried"): News now
 -- takes every section of four papers' RSS feeds (~300 stories/day, ~1,000 live at the
