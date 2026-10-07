@@ -609,7 +609,8 @@ async function refreshChangedSectionsOnResume() {
 // The gateable app pages — the single source of truth for every page-access
 // list (household "Members can access", personal visibility, admin-wide).
 // Keep in sync with the home nav and the isPageEnabled() keys. Note: "read"
-// is the Media page's key (historical name).
+// is the Media page's key (historical name). Inventory has no entry: it is a
+// space of the Shop page, so its access follows Shop's (accessPageKey).
 const MANAGED_PAGES = [
   { key: "eat",       label: "Meal Plan" },
   { key: "mail",      label: "Mail" },
@@ -621,7 +622,6 @@ const MANAGED_PAGES = [
   { key: "recreate",  label: "Recreate" },
   { key: "explore",   label: "Explore" },
   { key: "plan",      label: "Calendar" },
-  { key: "inventory", label: "Inventory" },
   { key: "finance",   label: "Finance" },
   { key: "contacts",  label: "Contacts" },
   { key: "news",      label: "News" },
@@ -5788,7 +5788,15 @@ function normalizePageVisibility(visibility) {
   };
 }
 
+// Inventory is a space of the Shop page (Luke, 2026-10-06): whoever can open Shop
+// can open Inventory. An "inventory" entry left in a saved disabled-pages list
+// from before is ignored.
+function accessPageKey(page) {
+  return page === "inventory" ? "shop" : page;
+}
+
 function isPageEnabled(page) {
+  page = accessPageKey(page);
   if (userGroup?.role === "admin") return true;
   if (adminDisabledPages.includes(page)) return false;
   if ((userGroup?.disabled_pages || []).includes(page)) return false;
@@ -5797,6 +5805,7 @@ function isPageEnabled(page) {
 
 function isPagePersonallyEnabled(page) {
   if (userGroup?.role === "admin") return true;
+  page = accessPageKey(page);
   return isPageEnabled(page) && !personalDisabledPages.includes(page);
 }
 
