@@ -16,8 +16,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
-- [ ] **[P2] Dock blue: the mini-player was only looked at with nothing playing** (media · styles.css `.bottom-dock .mini-player-*` · 2026-10-06)
-      The time readout, skip-back button and progress fill were given the dock's white, but the browser check ran with no audio loaded, where they are hidden. → Play an episode and look at the bar. Also: an alert line on the weather slide is now amber (`#ffd166`) since tomato was unreadable on the blue; Luke hasn't seen that colour.
+- [ ] **[P3] Dock blue: the mini-player's playing state was seen with stand-in text, not real audio** (media · styles.css `.bottom-dock .mini-player-*` · 2026-10-06)
+      The time readout, title, show name and progress line were looked at in a browser by filling the bar's elements by hand (local dev has no audio loaded). → Play an episode and look at the bar. Also: an alert line on the weather slide is now amber (`#ffd166`) since tomato was unreadable on the blue; Luke hasn't seen that colour.
 - [ ] **[P2] Notifications-window standard: Mail and Finance auto-close not exercised with real data** (mail · app.js renderMailSuggestions / #mailSuggCheckNow · finance · finance-ui.js updateFinanceReviewProgress · 2026-10-06)
       Local dev has no mailbox and no transactions, so only Meal Plan, Explore and Recipe Box were driven in a browser. Mail (tap with nothing pending checks the inbox and opens only if it finds some; closes on the last item) and Finance (deck closes through its own close button when the last card goes) are by code reading. → Check both on a signed-in device: clear the last item and confirm the window closes and the page behind is current.
 - [ ] **[P3] Recipe Box bell gives no "all caught up" toast** (recipes · recipes-ui.js toggleRecipeReviewPanel · 2026-10-06)
