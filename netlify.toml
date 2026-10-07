@@ -49,6 +49,18 @@
 [functions."presynth-tts-background"]
   included_files = ["tts-article-text.mjs", "kokoro-core.mjs", "tts-cache-identity.js", "kokoro-store.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js", "article-body-backfill.mjs"]
 
+# These CommonJS functions import() shared ES-module files from the repo root
+# (receipt-domain.js, nutrition-domain.js, finance-transactions.js,
+# assistant-tools.js …). The default bundler ships those files as-is, and
+# Netlify's Node 22 runtime (AWS Lambda) turns off Node's ES-module detection,
+# so the import failed with "Unexpected token 'export'". esbuild bundles them
+# into the function instead. Same setting on simplefin and voice-command below.
+[functions."scan-receipt"]
+  node_bundler = "esbuild"
+
+[functions."estimate-nutrition"]
+  node_bundler = "esbuild"
+
 [functions."scheduled-email"]
   schedule = "*/15 * * * *"
 
@@ -59,6 +71,7 @@
   included_files = ["finance-transactions.js"]
 
 [functions."simplefin"]
+  node_bundler = "esbuild"
   included_files = ["finance-transactions.js"]
 
 [functions."gmail-watch-rearm"]
@@ -137,4 +150,5 @@
 # voice-command (Siri → the assistant) dynamically imports the shared tool
 # registry, grocery stamps and assistant memory from the repo root.
 [functions."voice-command"]
+  node_bundler = "esbuild"
   included_files = ["assistant-tools.js", "assistant-memory.js", "grocery-list-stamps.js"]
