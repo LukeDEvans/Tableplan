@@ -34685,7 +34685,6 @@ function setupMiniPlayerMarquee() {
 function wireMiniPlayer() {
   // Play with nothing loaded → resume / next in queue / the queue-ends pick.
   document.getElementById("miniPlayerPlayPause")?.addEventListener("click", () => (nowPlayingKind() ? nowPlayingToggle() : playFromIdle()));
-  document.getElementById("miniPlayerSkipBack")?.addEventListener("click", () => nowPlayingSkip(-10));
   document.getElementById("miniPlayerExpand")?.addEventListener("click", (e) => { e.stopPropagation(); if (nowPlayingKind()) openNowPlayingModal(); });
   const bar = document.getElementById("miniPlayer");
   // Tap the bar (not its controls) → the full Media page, on what's playing.
