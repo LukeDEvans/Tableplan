@@ -4812,6 +4812,8 @@ function addGroceryChecklistItem(name) {
 function removeGroceryChecklistItem(id) {
   const cl = groceryChecklistState();
   cl.config = cl.config.filter((e) => e.id !== id);
+  // The list merges by union, so a removal has to be recorded to stick.
+  recordDeletion(LiveGrocerySources.CHECKLIST_CONFIG_TOMBSTONES, id);
   persist();
 }
 

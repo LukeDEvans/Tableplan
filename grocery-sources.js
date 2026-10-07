@@ -163,7 +163,40 @@ function autoscrollVelocity(pointerY, rect, band = 64, maxSpeed = 18) {
   return 0;
 }
 
+// Merge two devices' checklist item lists (state.groceryChecklist.config).
+//
+// Why not "the newer list wins": a device that had never loaded the list (a fresh
+// install, an old tab, a boot before the cloud copy arrived) holds an empty one,
+// and the moment it saved anything at all its empty list counted as newer and
+// erased the household's checklist. That happened for real on 2026-10-01: 22
+// items, gone a few hours after they were entered (Luke, 2026-10-06).
+//
+// So an item leaves the list only by being removed (its id is tombstoned), never
+// by being absent from one copy. Order follows the newer copy; items only the
+// older copy has are appended. The same name under two ids (both devices seeded
+// from Inventory) is kept once.
+function mergeChecklistConfig(newerConfig, olderConfig, removedIds = null) {
+  const removed = removedIds instanceof Set ? removedIds : new Set(removedIds || []);
+  const seenIds = new Set();
+  const seenNames = new Set();
+  const out = [];
+  for (const entry of [...(Array.isArray(newerConfig) ? newerConfig : []), ...(Array.isArray(olderConfig) ? olderConfig : [])]) {
+    const id = entry && entry.id != null ? String(entry.id) : "";
+    const nameKey = String((entry && entry.name) || "").trim().toLowerCase();
+    if (!id || !nameKey || removed.has(id) || seenIds.has(id) || seenNames.has(nameKey)) continue;
+    seenIds.add(id);
+    seenNames.add(nameKey);
+    out.push(entry);
+  }
+  return out;
+}
+
+// Tombstone key for removed checklist items (state.tombstones[...]).
+const CHECKLIST_CONFIG_TOMBSTONES = "groceryChecklist.config";
+
 export {
+  mergeChecklistConfig,
+  CHECKLIST_CONFIG_TOMBSTONES,
   SOURCE,
   reconcileSources,
   isNeedActive,
