@@ -1859,6 +1859,7 @@ const {
   handleGroceryStoreSearchKeydown,
   handleReceiptImagePreviewAction,
   initGroceryRange,
+  tidyGroceriesOnShopOpen,
   navigateGroceryWeek,
   openGroceryChecklistDialog,
   openGroceryLibraryDialog,
@@ -8069,6 +8070,9 @@ function showShopApp(event) {
   setPageTitle("Shop");
   setPageHash("shop");
   initGroceryRange();
+  // Opening Shop sweeps checked items into "bought" and retires bought manual
+  // items from ended cycles (groceries-ui.js), so the list opens on what's left.
+  tidyGroceriesOnShopOpen();
   renderShopPage();
   closePageTitleMenu();
   closeAppMenu();

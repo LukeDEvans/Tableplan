@@ -13247,6 +13247,26 @@ body[data-theme="dark"] .watch-provider-link:hover {
   flex-shrink: 0;
 }
 
+/* Shop has no window frame (Luke, 2026-10-06): the navy border, its 10px buffer
+   and the drop shadow are gone and the list's own gutter is trimmed from 16px to
+   10px, so the list gets about 36px more width (and the height to match). The
+   store bar keeps running edge to edge, so its offsets follow the new gutter. */
+#shopMainPage.planner-column {
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+#shopMainPage .shop-list-panel { padding: 12px 10px; }
+#shopMainPage .shop-list-panel > #groceryStoreTabBar {
+  margin-left: -10px;
+  margin-right: -10px;
+}
+#shopMainPage .shop-list-panel > #groceryStoreTabBar .watch-category-tabs {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+#shopMainPage .shop-page-actions { padding: 10px; }
+
 .shop-receipts-page {
   padding: 20px;
   display: flex;
