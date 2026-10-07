@@ -5447,13 +5447,8 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   align-items: center;
   justify-content: center;
 }
-/* Explore's notification dot (e.g. trip suggestions) on the Travel card. */
-.workout-pool-card.has-notif-dot { position: relative; }
-.workout-pool-card.has-notif-dot::after {
-  content: ""; position: absolute; top: 10px; right: 10px;
-  width: 9px; height: 9px; border-radius: 50%;
-  background: #b3261e;
-}
+/* Explore's notifications (e.g. trip suggestions) underline the Travel card's
+   title — see "Pages with notifications" further down. */
 
 /* Recreate detail views get a back-button header. */
 .recreate-detail-head {
@@ -21819,17 +21814,19 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-cat-actual.is-over { color: #b3261e; }
 .fin-of { color: var(--muted); font-size: 0.72rem; font-weight: 650; padding: 0 1px; }
 
-/* Red dot on landing links / page-title menu entries with notifications */
-.home-links button.has-notif-dot::after,
-.page-title-menu button.has-notif-dot::after {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #b3261e;
-  margin-left: 7px;
-  vertical-align: 2px;
+/* Pages with notifications: a thin red underline under the page title, on the
+   landing links, the page-title menu and Recreate's Travel card. (The class is
+   still `has-notif-dot`; the Tasks bell and the mini-player art, which have no
+   title to underline, keep a dot.) Placed after the buttons' hover rules, which
+   reset text-decoration, so the underline stays on hover. */
+.home-links button.has-notif-dot,
+.page-title-menu button.has-notif-dot,
+.workout-pool-card.has-notif-dot .workout-pool-title {
+  text-decoration: underline;
+  text-decoration-color: #b3261e;
+  text-decoration-thickness: max(1px, 0.05em);
+  text-underline-offset: 0.22em;
+  text-decoration-skip-ink: none;
 }
 .fin-bal-manual { opacity: 0.75; font-style: italic; }
 .fin-manual-bal { width: 130px; }
