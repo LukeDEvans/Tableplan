@@ -21947,8 +21947,12 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 /* ── Transaction review: full-window swipe deck for labeling ─────────────────── */
 .fin-review-overlay { position: fixed; inset: 0; z-index: 120; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0.5); }
-.fin-review-modal { width: min(560px, 100%); height: min(92vh, 100%); display: flex; flex-direction: column; background: var(--window-bg); border-radius: 18px 18px 0 0; overflow: hidden; box-shadow: 0 -8px 40px rgba(0,0,0,0.25); }
-@media (min-width: 620px) { .fin-review-overlay { align-items: center; } .fin-review-modal { border-radius: 16px; height: min(760px, 92vh, 100%); } }
+/* The window is the standard notifications-window box — the same size and place
+   as Meal Plan's (.eat-notif-panel). openFinanceTxnReview() sets top/left/right/
+   bottom from notificationsWindowBox() (dock-space.js); the values here are the
+   fallback until it runs. Fixed to the screen, not to the overlay, so the close
+   button can never sit under the status bar or the corner buttons. */
+.fin-review-modal { position: fixed; top: 120px; left: 14px; right: 14px; bottom: calc(var(--dock-h) + var(--mini-player-gap)); display: flex; flex-direction: column; background: var(--window-bg); border: 2px solid var(--window-border); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
 .fin-review-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
 .fin-review-title { font-weight: 850; font-size: 1rem; color: var(--ink); }
 .fin-review-close { width: 34px; height: 34px; border-radius: 50%; border: none; background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); cursor: pointer; display: flex; align-items: center; justify-content: center; }
