@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { upNextOrder } from "../media-queue-order.js";
 
 // Behavioral test of the music start/stop/save/open control flow in app.js
 // (audit MED-4/5/8/11/12/13). app.js can't be imported (it boots the whole app),
@@ -20,6 +21,7 @@ const FNS = [
   "startLibraryTrack", "startOwnedMusicTrack", "startStreamingTrack", "playMusicQueueItem",
   "onMusicEnded", "stopMusicPlayback", "toggleMusicPlayPause", "skipMusic",
   "openMusicItem", "closeMusicItem", "advanceMediaAllQueue",
+  "mediaAllRunOrder", "syncMediaAllQueueRest", "setMediaAllQueueCurrent", "endMediaAllQueueRun",
 ];
 
 function deferred() { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j; }); return { promise, resolve, reject }; }
@@ -32,6 +34,9 @@ function makeSandbox(env = {}) {
     let musicPlaybackProvider = null, musicOwnedUnsub = null, musicOwnedNP = null;
     let musicOpenToken = 0, musicOpenItem = null, musicOpenItemLoading = false;
     let mediaAllQueueId = env.mediaAllQueueId ?? null, mediaAllQueueRest = env.mediaAllQueueRest ?? [];
+    let mediaAllQueueSkipped = [], mediaAllQueueTrail = [];
+    const mediaAllQueueDone = new Set();
+    const upNextOrder = env.upNextOrder;
     const { state, persist, mediaEngine, getMediaEngine, ensureMediaAudioEl, getMusicLib, getMusicProviders,
       musicStreamMod, showVoiceToast, stopPodcastAudio, stopListen, stopRadio, setMiniPlayer, hideMiniPlayer,
       setMusicMediaSession, pushMusicHistory, renderMusicPanel, updateMiniPlayerPlayBtn, updateMiniPlayerProgress,
@@ -67,7 +72,7 @@ function baseEnv(over = {}) {
     pruneMediaProgress: (m) => m, updateDiscoverResults() {}, playStreamingTrack() {}, musicItemCache: new Map(),
     musicStreamMod: { isPlaybackOwner: (p) => !!p.owns },
     getAllListenList: () => [], mediaItemPlayable: () => true, playMediaAllItem: vi.fn(), renderMediaAllList() {},
-    scheduleQueueFallback: vi.fn(),
+    scheduleQueueFallback: vi.fn(), upNextOrder,
     startRecordingResolved: async () => false,
     nativeMusicEnabled: () => false, startNativeMusicTrack: async () => false,
     ...over,
@@ -234,6 +239,21 @@ describe("MED-13 advanceMediaAllQueue", () => {
     expect(sb.advanceMediaAllQueue("x")).toBe(true);
     expect(env.playMediaAllItem).toHaveBeenCalled();
     expect(env.scheduleQueueFallback).not.toHaveBeenCalled();
+  });
+  it("takes the top of the list as it is now, not what was below the started row", () => {
+    // "c" was started from the middle; the old code would have gone on to "d".
+    const env = baseEnv({ mediaAllQueueId: "c", mediaAllQueueRest: ["d"], getAllListenList: () => [{ id: "a" }, { id: "b" }, { id: "d" }] });
+    const sb = makeSandbox(env);
+    expect(sb.advanceMediaAllQueue("c")).toBe(true);
+    expect(env.playMediaAllItem.mock.calls[0][0].id).toBe("a");
+    expect(sb.get().mediaAllQueueId).toBe("a");
+  });
+  it("an item that failed and is still listed is not picked again", () => {
+    const env = baseEnv({ mediaAllQueueId: "bad", getAllListenList: () => [{ id: "bad" }, { id: "ok" }] });
+    const sb = makeSandbox(env);
+    expect(sb.advanceMediaAllQueue("bad")).toBe(true);
+    expect(sb.get().mediaAllQueueId).toBe("ok");
+    expect(sb.advanceMediaAllQueue("ok")).toBe(false); // only "bad" is left → the run ends, no loop
   });
   it("an item that wasn't the queue's current one doesn't trigger the queue-ends pick", () => {
     const env = baseEnv({ mediaAllQueueId: "x", mediaAllQueueRest: [] });

@@ -5,6 +5,7 @@ import {
   normalizeQueueAdded, queueAddedFindRef, withQueueEntry, withoutQueueEntries,
   episodeRef, articleRef, libraryAlbumRef, slimCatalogItem, libraryAlbumTracks,
 } from "../media-queue-added.js";
+import { upNextOrder, withSkippedLast } from "../media-queue-order.js";
 
 // Manual "Add to queue" entries: the pure list helpers, then the REAL app.js
 // functions that place them in the queue and hand playback back after an album
@@ -64,6 +65,7 @@ describe("queue-added items in the Media queue (real app.js functions)", () => {
   function build(state) {
     const env = {
       state, normalizeQueueAdded, libraryAlbumTracks,
+      withSkippedLast, mediaAllQueueSkipped: [], nowPlayingQueueId: () => null,
       RECENT_WINDOW_OPTIONS: [{ value: "month", ms: 30 * 864e5 }, 0, 0, 0, { value: "month", ms: 30 * 864e5 }],
       getBundleHeldEpisodeIds: () => new Set(),
       getReadPublications: () => [], articleArtUrl: () => "", getArticleSortDate: (a) => a.savedAt,
@@ -190,42 +192,60 @@ describe("an added album hands the queue on when its last track ends", () => {
 // The queue plays from a snapshot of ids taken when playback started; the reader's
 // Play button belongs to the open article. Both run the real app.js functions.
 describe("adding while the queue plays, and the reader's Play button", () => {
-  function build(vars) {
+  // `listed`: the queue's automatic rows; manual adds follow them (as getAllListenList places them).
+  function build(vars, listed = []) {
     const env = {
-      state: { mediaQueueAdded: [], savedArticles: [{ id: "a1" }, { id: "a2" }] }, withQueueEntry,
+      state: { mediaQueueAdded: [], savedArticles: [{ id: "a1" }, { id: "a2" }] }, withQueueEntry, upNextOrder,
       mediaQueueIdCache: null, mediaAllQueueId: null, mediaAllQueueRest: [], prefetched: 0, nativeQueued: 0,
+      mediaAllQueueSkipped: [], mediaAllQueueDone: new Set(), mediaAllQueueSentOrder: "",
       listenSpeechSynth: null, listenAudio: null, listenArticle: null, listenLoading: false, openArticleId: null,
       started: [], toggled: 0, ...vars,
     };
     const body = `let { ${Object.keys(env).join(", ")} } = env;
+      const getAllListenList = () => [...env.listed, ...state.mediaQueueAdded.map((e) => ({ id: e.itemId || e.id }))];
       const prefetchNextQueueAudio = () => { prefetched++; };
       const queueNativeUpcoming = () => { nativeQueued++; };
       const unlockListenAudio = () => {};
       const startListenTTS = (a) => { started.push(a.id); };
       const toggleListenPlayPause = () => { toggled++; };
-      ${["addQueueAddedEntry", "listenSessionArticleId", "toggleReaderListen"].map(extract).join("\n")}
-      return { addQueueAddedEntry, listenSessionArticleId, toggleReaderListen, get: () => ({ mediaAllQueueRest, prefetched, nativeQueued, started, toggled }) };`;
+      ${["addQueueAddedEntry", "mediaAllRunOrder", "syncMediaAllQueueRest", "refreshRunningQueueOrder", "listenSessionArticleId", "toggleReaderListen"].map(extract).join("\n")}
+      return { addQueueAddedEntry, refreshRunningQueueOrder, listenSessionArticleId, toggleReaderListen, get: () => ({ mediaAllQueueRest, prefetched, nativeQueued, started, toggled }) };`;
+    env.listed = listed.map((id) => ({ id }));
     return new Function("env", body)(env); // eslint-disable-line no-new-func
   }
   const ep = (id) => ({ kind: "episode", ref: episodeRef(id), itemId: id });
 
   it("an add while the queue is playing joins the running order, once", () => {
-    const app = build({ mediaAllQueueId: "now", mediaAllQueueRest: ["next"] });
+    const app = build({ mediaAllQueueId: "now" }, ["now", "next"]);
     app.addQueueAddedEntry(ep("old"));
     app.addQueueAddedEntry(ep("old")); // already queued → no second copy
     expect(app.get().mediaAllQueueRest).toEqual(["next", "old"]);
-    expect(app.get().prefetched).toBe(1);
+    expect(app.get().prefetched).toBe(1); // the second add changed nothing → nothing re-sent
   });
   it("an added album joins under its entry id, and the iPhone app's up-next is refreshed", () => {
-    const app = build({ mediaAllQueueId: "now", listenSpeechSynth: { native: true, kind: "audio", currentId: "now" } });
+    const app = build({ mediaAllQueueId: "now", listenSpeechSynth: { native: true, kind: "audio", currentId: "now" } }, ["now"]);
     const { entry } = app.addQueueAddedEntry({ kind: "album", ref: libraryAlbumRef("A", "B"), title: "B" });
     expect(app.get().mediaAllQueueRest).toEqual([entry.id]);
     expect(app.get().nativeQueued).toBe(1);
   });
-  it("nothing playing from the queue → the snapshot is left alone", () => {
-    const app = build({});
+  it("nothing playing from the queue → there is no running order", () => {
+    const app = build({}, ["x"]);
     app.addQueueAddedEntry(ep("old"));
     expect(app.get().mediaAllQueueRest).toEqual([]);
+    expect(app.get().prefetched).toBe(0);
+  });
+  it("the running order is the list as it is now, not as it was when playback started", () => {
+    const listed = ["now", "b", "c"];
+    const app = build({ mediaAllQueueId: "now", listenSpeechSynth: { native: true, kind: "audio", currentId: "now" } }, listed);
+    app.refreshRunningQueueOrder();
+    expect(app.get().mediaAllQueueRest).toEqual(["b", "c"]);
+    // A new episode sorts to the top and the rest is dragged into a new order.
+    const again = build({ mediaAllQueueId: "now", mediaAllQueueRest: ["b", "c"], listenSpeechSynth: { native: true, kind: "audio", currentId: "now" } }, ["new", "now", "c", "b"]);
+    again.refreshRunningQueueOrder();
+    expect(again.get().mediaAllQueueRest).toEqual(["new", "c", "b"]);
+    expect(again.get().nativeQueued).toBe(1); // the iPhone app's own up-next list is replaced
+    again.refreshRunningQueueOrder();
+    expect(again.get().nativeQueued).toBe(1); // unchanged order → not sent again
   });
 
   it("reader Play starts the open article when another article is loaded", () => {
