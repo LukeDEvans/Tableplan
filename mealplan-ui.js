@@ -117,7 +117,7 @@ export function groceryMealSlotId(item, servings = 1) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createMealplanModule(deps) {
   const {
-    state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getOtherScopePlanEvents, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, escapeHtml, focusGroceryLibraryInput, folderName, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog, openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
+    state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getMealPlanCalendarEvents, getMealPlanMemberLabel, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, escapeHtml, focusGroceryLibraryInput, folderName, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog, openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
   } = deps;
   _appState = state;
 
@@ -1449,7 +1449,10 @@ function renderPlanner() {
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-event-id]").forEach((button) => {
-    button.addEventListener("click", () => openPlanEventDialog(button.dataset.mealEventDate || null, button.dataset.mealEventId));
+    button.addEventListener("click", () => {
+      if (button.dataset.mealEventAbout) showMailToast(`${button.dataset.mealEventAbout}.`);
+      else openPlanEventDialog(button.dataset.mealEventDate || null, button.dataset.mealEventId);
+    });
   });
 
   elements.plannerGrid.querySelectorAll("[data-link-restaurant]").forEach((btn) => {
@@ -1657,19 +1660,6 @@ function setMealNote(dayId, meal, text) {
   persist();
 }
 
-// The Calendar keeps a household list and a personal list and holds only the
-// one it is showing in `state`; the other sits in the shadow copy. The meal
-// plan is always shared, so it reads both — otherwise an event ticked "Meal
-// Plan" vanished from here whenever the Calendar was on its other view.
-function mealPlanSharedEvents() {
-  const seen = new Set();
-  return [...(state.planEvents || []), ...(getOtherScopePlanEvents() || [])].filter((event) => {
-    if (!event?.showInMealPlan || !event.id || seen.has(event.id)) return false;
-    seen.add(event.id);
-    return true;
-  });
-}
-
 function dayBeforeKey(dateKey) {
   return dateKeyFromDate(addDays(new Date(`${dateKey}T00:00:00`), -1));
 }
@@ -1722,7 +1712,10 @@ function mealEventTimeLabel(event, span) {
 function mealContextEvents(dateKey, meal) {
   const mealtime = mealtimeForLabel(mealColumnConfigs.map((column) => column.label), meal);
   if (!mealtime) return [];
-  return mealPlanSharedEvents()
+  // getMealPlanCalendarEvents (app.js) gathers them: events ticked "Meal Plan" and
+  // calendars switched to "Show on Meal Plan", from both of this device's Calendar
+  // views and from what other household members shared.
+  return (getMealPlanCalendarEvents() || [])
     .map((event) => {
       const span = mealEventSpansOn(event, dateKey).find((candidate) => spanCoversMealtime(candidate, mealtime));
       return span ? { event, span } : null;
@@ -1749,7 +1742,12 @@ function mealContextCardTemplate(day, column) {
   const chips = events.map(({ event: e, span }) => {
     const color = e.color || PLAN_COLORS[0];
     const time = mealEventTimeLabel(e, span);
-    return `<button type="button" class="meal-context-event" data-meal-event-id="${escapeHtml(e.id)}" data-meal-event-date="${escapeHtml(span.occurrenceDate || dateKey)}" title="Edit event">
+    // Only an event in the Calendar view on screen can be edited from here; a
+    // subscribed-feed event or one shared by someone else just says whose it is.
+    const editable = (state.planEvents || []).some((own) => own.id === e.id);
+    const owner = e.sharedBy ? getMealPlanMemberLabel(e.sharedBy) : "";
+    const about = editable ? "" : owner ? `From ${owner}'s calendar` : e.external ? `From the ${e.calendarName || "subscribed"} calendar` : "";
+    return `<button type="button" class="meal-context-event" data-meal-event-id="${escapeHtml(e.id)}" data-meal-event-date="${escapeHtml(span.occurrenceDate || dateKey)}"${about ? ` data-meal-event-about="${escapeHtml(about)}"` : ""} title="${escapeHtml(about || "Edit event")}">
         <span class="meal-context-event-dot" style="background:${escapeHtml(color)}"></span>
         <span class="meal-context-event-title">${escapeHtml(e.title)}</span>
         ${time ? `<span class="meal-context-event-time">${escapeHtml(time)}</span>` : ""}

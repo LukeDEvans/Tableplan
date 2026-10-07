@@ -20,3 +20,11 @@ _Last deploy: 2026-10-07 (PRs #59–#70)._
   - **After deploy:** on the phone, open Meal Plan on a workday and check "Work 8a–4p" is under
     Lunch only, with the Calendar on each of its two views. Merge two people's lunch by dragging
     (a real finger drag was not tested) and check only the Lunch cards show during the drag.
+- **Meal plan: per-calendar "Show on Meal Plan" switch; shared events reach the whole household** · PR #73
+  - Add/Edit Calendar has a "Show on Meal Plan" switch (works for subscribed feeds). Each member's
+    personal meal-plan events (title, times, repeat rule) are copied into the shared `eat` section
+    (`mealPlanSharedEvents`) so the other person's meal plan shows them.
+  - **After deploy / TestFlight:** Calendar → edit "MJ Work" → turn on "Show on Meal Plan"; her shifts
+    should appear under Events & Notes on the meals they cover. Then open the app once on Luke's
+    phone, and check Marijane's phone (also on the new build) shows "Work" under Lunch on a workday.
+    Both phones need the new build: an older one drops the shared events when it saves.

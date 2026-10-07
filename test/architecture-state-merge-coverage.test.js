@@ -59,6 +59,7 @@ const MERGE_NEWER_WINS_KEYS = {
   mediaServices: "settings object",
   appleMusic: "settings object",
   financeAlertPrefs: "settings object",
+  planMealPlanCalendars: "settings object (per-calendar \"Show on Meal Plan\" switches, each stamped on its own)",
   apiUsage: "usage counters; a per-device approximation is acceptable",
   // Ordered / authoritative lists where deletion + order matter and ids aren't
   // union-safe with today's permanent tombstones.

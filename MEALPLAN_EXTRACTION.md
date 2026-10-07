@@ -310,7 +310,16 @@ gap that let this through. Re-scanned all modules: `mealplan-ui.js`, `recipes-ui
   from the configured meal columns (the old `MEAL_TIME_WINDOWS` const is gone).
   *(2026-10-07: events no longer use these column windows. They land on a meal by its **mealtime**
   — `mealtimeForLabel` / `eventDaySpan` / `spanCoversMealtime`, same file — and the meal plan reads
-  "Meal Plan" events from both Calendar scopes through the injected `getOtherScopePlanEvents`.)*
+  calendar events through the injected `getMealPlanCalendarEvents` — see the next note.)*
+- **Calendar → Meal Plan sharing (2026-10-07).** Pure logic in `calendar/meal-plan-share.js` (tested in
+  `test/calendar-meal-plan-share.test.js`), wired in `app.js` (`mealPlanCalendarEvents`,
+  `syncOwnMealPlanShare`). An event shows on the meal plan when it is ticked "Meal Plan" **or** its
+  calendar is switched to "Show on Meal Plan" (`state.planMealPlanCalendars`, plan section, a tracked
+  setting stamped per calendar in `planSettingStamps`) — subscribed feeds included, read from the
+  device's feed cache. Each member's **personal** share is copied, slimmed to title / times / repeat
+  rule, into `state.mealPlanSharedEvents[userId]` (`eat` section) so the rest of the household sees it;
+  the entry is rewritten inside `persist()` only when it changed on that device, and merges per member
+  (later copy wins).
 - Dead code removed (zero repo references): the old HTML5 meal-entry drag handlers + pointer-delete
   gesture, `repeatMeal`, `applyDefaultMealEntry(ies)`, `mealPlanNutritionTotals`,
   `collapseAllPlannerDays`, `renderMealRestaurantArea`, `isWeekdayBreakfastSlot`,
