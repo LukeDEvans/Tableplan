@@ -5447,13 +5447,8 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   align-items: center;
   justify-content: center;
 }
-/* Explore's notification dot (e.g. trip suggestions) on the Travel card. */
-.workout-pool-card.has-notif-dot { position: relative; }
-.workout-pool-card.has-notif-dot::after {
-  content: ""; position: absolute; top: 10px; right: 10px;
-  width: 9px; height: 9px; border-radius: 50%;
-  background: #b3261e;
-}
+/* Explore's notifications (e.g. trip suggestions) underline the Travel card's
+   title — see "Pages with notifications" further down. */
 
 /* Recreate detail views get a back-button header. */
 .recreate-detail-head {
@@ -17343,23 +17338,6 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   flex-shrink: 0;
   padding: 0 12px 0 4px;
 }
-/* Rewind 10s — thin circular arrow with a centered "10". */
-.mini-player-skip-btn {
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  border: none;
-  background: none;
-  color: var(--window-border);   /* navy, matching play/pause */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.12s, transform 0.1s;
-}
-.mini-player-skip-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
-.mini-player-skip-btn:active { transform: scale(0.92); }
 .mini-player-play-btn {
   width: 60px;
   height: 60px;
@@ -17377,7 +17355,6 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .mini-player-play-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .mini-player-play-btn:active { transform: scale(0.93); }
 .mini-player-play-btn svg { display: block; width: 34px; height: 34px; }
-.mini-player-skip-btn svg { display: block; width: 32px; height: 32px; }
 
 /* While the bar is showing, the app shell stops just above it: every page
    window ends --mini-player-gap above the bar, with a strip of page background
@@ -17389,7 +17366,6 @@ body.has-mini-player .app-shell { padding-bottom: max(0px, calc(var(--mini-playe
   :root { --mini-player-h: 88px; }
   .mini-player-body { height: 84px; }   /* 1.5× the former 56px */
   .mini-player-play-btn { width: 56px; height: 56px; }
-  .mini-player-skip-btn { width: 52px; height: 52px; }
 }
 
 /* ── Now-Playing modal: full info about the current audio, over any page ──── */
@@ -21858,17 +21834,19 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-cat-actual.is-over { color: #b3261e; }
 .fin-of { color: var(--muted); font-size: 0.72rem; font-weight: 650; padding: 0 1px; }
 
-/* Red dot on landing links / page-title menu entries with notifications */
-.home-links button.has-notif-dot::after,
-.page-title-menu button.has-notif-dot::after {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #b3261e;
-  margin-left: 7px;
-  vertical-align: 2px;
+/* Pages with notifications: a thin red underline under the page title, on the
+   landing links, the page-title menu and Recreate's Travel card. (The class is
+   still `has-notif-dot`; the Tasks bell and the mini-player art, which have no
+   title to underline, keep a dot.) Placed after the buttons' hover rules, which
+   reset text-decoration, so the underline stays on hover. */
+.home-links button.has-notif-dot,
+.page-title-menu button.has-notif-dot,
+.workout-pool-card.has-notif-dot .workout-pool-title {
+  text-decoration: underline;
+  text-decoration-color: #b3261e;
+  text-decoration-thickness: max(1px, 0.05em);
+  text-underline-offset: 0.22em;
+  text-decoration-skip-ink: none;
 }
 .fin-bal-manual { opacity: 0.75; font-style: italic; }
 .fin-manual-bal { width: 130px; }
@@ -21967,8 +21945,12 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 /* ── Transaction review: full-window swipe deck for labeling ─────────────────── */
 .fin-review-overlay { position: fixed; inset: 0; z-index: 120; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0.5); }
-.fin-review-modal { width: min(560px, 100%); height: min(92vh, 100%); display: flex; flex-direction: column; background: var(--window-bg); border-radius: 18px 18px 0 0; overflow: hidden; box-shadow: 0 -8px 40px rgba(0,0,0,0.25); }
-@media (min-width: 620px) { .fin-review-overlay { align-items: center; } .fin-review-modal { border-radius: 16px; height: min(760px, 92vh, 100%); } }
+/* The window is the standard notifications-window box — the same size and place
+   as Meal Plan's (.eat-notif-panel). openFinanceTxnReview() sets top/left/right/
+   bottom from notificationsWindowBox() (dock-space.js); the values here are the
+   fallback until it runs. Fixed to the screen, not to the overlay, so the close
+   button can never sit under the status bar or the corner buttons. */
+.fin-review-modal { position: fixed; top: 120px; left: 14px; right: 14px; bottom: calc(var(--dock-h) + var(--mini-player-gap)); display: flex; flex-direction: column; background: var(--window-bg); border: 2px solid var(--window-border); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
 .fin-review-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
 .fin-review-title { font-weight: 850; font-size: 1rem; color: var(--ink); }
 .fin-review-close { width: 34px; height: 34px; border-radius: 50%; border: none; background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -23141,20 +23123,24 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 
 
 /* ══ Bottom dock: permanent, swipeable ticker (mini-player, weather, …) ═══════ */
-.weather-ticker {
-  --wx-sky1:#8ec5e8; --wx-sky2:#d3e6f3; --wx-sky-ink:#0e2233;
-  --wx-cloud1:#9fb2c2; --wx-cloud2:#c3d2de; --wx-cloud-ink:#1a2833;
-  --wx-night1:#2b3f63; --wx-night2:#436089; --wx-night-ink:#eaf1fb;
-  --wx-storm1:#5c6a76; --wx-storm2:#7f8d98; --wx-storm-ink:#f3f6f9;
-}
+/* The dock's standard colours (Luke, 2026-10-06): one blue behind every slide,
+   white text on it — the blue the weather slide wore at night. The same in the
+   light and dark themes. A new slide takes these; it sets no background of its
+   own (the blue is painted once, on the dock, so it stays put during a swipe). */
 .bottom-dock {
+  --dock-bg1: #436089;
+  --dock-bg2: #2b3f63;
+  --dock-ink: #ffffff;
+  --dock-ink-soft: color-mix(in srgb, var(--dock-ink) 78%, transparent);
+  --dock-hover: color-mix(in srgb, var(--dock-ink) 14%, transparent);
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 900;
-  background: var(--paper, #fffdf8);
-  border-top: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  color: var(--dock-ink);
+  background: linear-gradient(165deg, var(--dock-bg1), var(--dock-bg2));
+  border-top: 1px solid color-mix(in srgb, var(--dock-ink) 16%, transparent);
 }
 body:not(.app-authed) .bottom-dock { display: none; }
 /* Slides stack in one grid cell (the dock is as tall as its tallest slide);
@@ -23180,9 +23166,22 @@ body:not(.app-authed) .bottom-dock { display: none; }
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
+/* The mini-player in the dock's colours: white text and controls on the blue. */
+.bottom-dock .mini-player-title-inner,
+.bottom-dock .mini-player-play-btn { color: var(--dock-ink); }
+.bottom-dock .mini-player-time,
+.bottom-dock .mini-player-show,
+.bottom-dock .mini-player-expand-btn { color: var(--dock-ink-soft); }
+.bottom-dock .mini-player-progress { background: color-mix(in srgb, var(--dock-ink) 22%, transparent); }
+.bottom-dock .mini-player-progress-fill { background: var(--dock-ink); }
+.bottom-dock .mini-player-art-btn {
+  background: color-mix(in srgb, var(--dock-ink) 12%, transparent);
+  color: var(--dock-ink);
+}
+.bottom-dock .mini-player-art-btn.has-notif-dot::after { box-shadow: 0 0 0 2px var(--dock-bg2); }
+.bottom-dock .mini-player-play-btn:hover { background: var(--dock-hover); }
 
 /* Idle mini-player: nothing loaded — shows what play would start. */
-.mini-player.is-idle .mini-player-skip-btn,
 .mini-player.is-idle .mini-player-expand-btn,
 .mini-player.is-idle .mini-player-progress-fill { visibility: hidden; }
 .mini-player.is-idle .mini-player-title-inner { font-weight: 550; }
@@ -23205,6 +23204,7 @@ body:not(.app-authed) .bottom-dock { display: none; }
 }
 @media (hover: hover) and (pointer: fine) {
   .mini-player-expand-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+  .bottom-dock .mini-player-expand-btn:hover { background: var(--dock-hover); }
 }
 @media (hover: none), (pointer: coarse) {
   .mini-player-expand-btn { display: none; }
@@ -23221,13 +23221,11 @@ body:not(.app-authed) .bottom-dock { display: none; }
   font: inherit;
   text-align: left;
   cursor: pointer;
-  color: var(--wx-sky-ink);
-  background: linear-gradient(160deg, var(--wx-sky1), var(--wx-sky2));
+  /* The dock's standard blue shows through, whatever the weather. */
+  color: var(--dock-ink);
+  background: transparent;
   overflow: hidden;
 }
-.weather-ticker.mood-cloud { color: var(--wx-cloud-ink); background: linear-gradient(160deg, var(--wx-cloud1), var(--wx-cloud2)); }
-.weather-ticker.mood-night { color: var(--wx-night-ink); background: linear-gradient(165deg, var(--wx-night2), var(--wx-night1)); }
-.weather-ticker.mood-storm { color: var(--wx-storm-ink); background: linear-gradient(165deg, var(--wx-storm1), var(--wx-storm2)); }
 .weather-ticker.is-empty { padding-left: 6px; }
 .wxt-art { flex: 0 0 auto; width: 78px; height: 78px; display: flex; }
 .wxt-art .wx-art { width: 100%; height: 100%; }
@@ -23236,7 +23234,8 @@ body:not(.app-authed) .bottom-dock { display: none; }
 .wxt-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .wxt-cond { font-size: 1rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wxt-sub { font-size: 0.8rem; font-weight: 600; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wxt-alert { font-size: 0.74rem; font-weight: 700; color: var(--tomato, #c0392b); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wxt-stats { font-size: 0.8rem; font-weight: 600; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.wxt-alert { font-size: 0.74rem; font-weight: 700; color: #ffd166; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 640px) {
   .weather-ticker { height: 87px; }
   .wxt-art { width: 70px; height: 70px; }

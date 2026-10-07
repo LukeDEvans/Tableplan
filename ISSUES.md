@@ -16,10 +16,22 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
+<<<<<<< HEAD
 - [ ] **[P3] A manual item added by voice or chat while it is already checked off stays "bought"** (groceries · netlify voice/assistant add tools · groceries-ui.js addManualGroceryItem · 2026-10-06)
       Adding in the Shop UI (and Next Stop / Inventory) now clears the item's checked / bought marks, so it lists unchecked. The server-side adds (voice, chat `add_grocery_item`) only stamp the add; they don't touch `checkedGroceries` / `groceryCleared`. So "add milk" by voice on Wednesday, after milk was checked off on Tuesday, leaves it under "bought", and it is then retired with that cycle. Not new (the checked mark already hid it before), but the retire step makes the loss permanent. Inferred from code, not run. → Have the server add clear the marks for that item's key, or treat a mark as stale when the item's `added` stamp is later than the time it was checked (marks carry no time today).
 - [ ] **[P3] Inventory still has the window frame Shop lost** (groceries/inventory · styles.css #shopMainPage.planner-column · 2026-10-06)
       Luke asked for the Shop window's border to go. Checklist is the same page, so it lost it too; Inventory is its own page (`#inventoryMainPage`) and keeps the navy frame, so the frame appears and disappears when switching between the three tabs. → Luke's call whether Inventory should match.
+=======
+<<<<<<< HEAD
+- [ ] **[P3] Dock blue: the mini-player's playing state was seen with stand-in text, not real audio** (media · styles.css `.bottom-dock .mini-player-*` · 2026-10-06)
+      The time readout, title, show name and progress line were looked at in a browser by filling the bar's elements by hand (local dev has no audio loaded). → Play an episode and look at the bar. Also: an alert line on the weather slide is now amber (`#ffd166`) since tomato was unreadable on the blue; Luke hasn't seen that colour.
+=======
+- [ ] **[P2] Finance review card is taller than the standard notifications window on a phone** (finance · styles.css `.fin-review-body` · finance-ui.js renderFinanceReviewDeck · 2026-10-06)
+      At the Meal Plan window's size the card (amount, category, name, note, Sign/Split/Receipt, Approve, Edit details, Skip) doesn't fit: on 390×844 the Approve button is cut at the fold, on 360×640 everything below Category is. The card body scrolls and swipe-right still approves, so nothing is unreachable. → Tighten the card (smaller amount, name and note behind "Edit details…") or pin Approve/Skip as a footer. A layout call for Luke.
+- [ ] **[P2] Dock blue: the mini-player was only looked at with nothing playing** (media · styles.css `.bottom-dock .mini-player-*` · 2026-10-06)
+      The time readout, skip-back button and progress fill were given the dock's white, but the browser check ran with no audio loaded, where they are hidden. → Play an episode and look at the bar. Also: an alert line on the weather slide is now amber (`#ffd166`) since tomato was unreadable on the blue; Luke hasn't seen that colour.
+>>>>>>> origin/main
+>>>>>>> origin/main
 - [ ] **[P2] Notifications-window standard: Mail and Finance auto-close not exercised with real data** (mail · app.js renderMailSuggestions / #mailSuggCheckNow · finance · finance-ui.js updateFinanceReviewProgress · 2026-10-06)
       Local dev has no mailbox and no transactions, so only Meal Plan, Explore and Recipe Box were driven in a browser. Mail (tap with nothing pending checks the inbox and opens only if it finds some; closes on the last item) and Finance (deck closes through its own close button when the last card goes) are by code reading. → Check both on a signed-in device: clear the last item and confirm the window closes and the page behind is current.
 - [ ] **[P3] Recipe Box bell gives no "all caught up" toast** (recipes · recipes-ui.js toggleRecipeReviewPanel · 2026-10-06)

@@ -1630,10 +1630,12 @@ let mealPlanRecipes = null;
 let mealPlanNotifOpen = false;
 // Which recipe card is centered in swipe view (index into mealPlanRecipes).
 
-// ── Page notification dots ───────────────────────────────────────────────────
-// Landing links and the page-title menu show a red dot for pages with
-// unaddressed notifications (Mail: pending AI suggestions; Finance:
-// transactions awaiting a budget label). Warmed at app start.
+// ── Page notification marks ──────────────────────────────────────────────────
+// Landing links and the page-title menu underline a page's title in thin red
+// when it has unaddressed notifications (Mail: pending AI suggestions; Finance:
+// transactions awaiting a budget label). Warmed at app start. The class is
+// still `has-notif-dot`: the Tasks bell and the mini-player, which have no
+// title, show it as a dot (styles.css).
 const PAGE_NOTIF_BUTTONS = {
   mail: ["homeMailBtn", "titleMailBtn"],
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
@@ -34687,7 +34689,6 @@ function setupMiniPlayerMarquee() {
 function wireMiniPlayer() {
   // Play with nothing loaded → resume / next in queue / the queue-ends pick.
   document.getElementById("miniPlayerPlayPause")?.addEventListener("click", () => (nowPlayingKind() ? nowPlayingToggle() : playFromIdle()));
-  document.getElementById("miniPlayerSkipBack")?.addEventListener("click", () => nowPlayingSkip(-10));
   document.getElementById("miniPlayerExpand")?.addEventListener("click", (e) => { e.stopPropagation(); if (nowPlayingKind()) openNowPlayingModal(); });
   const bar = document.getElementById("miniPlayer");
   // Tap the bar (not its controls) → the full Media page, on what's playing.

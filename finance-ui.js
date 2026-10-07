@@ -6,7 +6,7 @@ import { saveFile } from './save-file.js';
 import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns, manualTxnToRow, mergeManualTxns, manualRowsToCopy, planAccountRemap, remapCandidateAccounts, suggestRemapTarget, carrySupersededAnnotations } from './finance-transactions.js';
 import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn-store.js';
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
-import { usableViewportBottom } from './dock-space.js';
+import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
 // commits (see FINANCE_EXTRACTION.md). This is COMMIT 1: the pure normalizers,
@@ -1719,7 +1719,20 @@ function openFinanceTxnReview() {
       <div class="fin-review-deck" data-fin-review-deck tabindex="0"></div>
     </div>`;
   document.body.appendChild(overlay);
-  const close = () => { commitAllFinanceReviewCards(overlay); overlay.remove(); if (getActiveAppArea() === "finance") renderFinancePage(); };
+  // Same box as every other notifications window (dock-space.js): inside the
+  // page window, clear of the status bar and the corner buttons above it and of
+  // the dock below, so the close button is always reachable.
+  const place = () => {
+    const modal = overlay.querySelector(".fin-review-modal");
+    const box = notificationsWindowBox();
+    modal.style.top = box.top + "px";
+    modal.style.left = box.left + "px";
+    modal.style.right = box.right + "px";
+    modal.style.bottom = box.bottom + "px";
+  };
+  place();
+  window.addEventListener("resize", place);
+  const close = () => { window.removeEventListener("resize", place); commitAllFinanceReviewCards(overlay); overlay.remove(); if (getActiveAppArea() === "finance") renderFinancePage(); };
   overlay.querySelector(".fin-review-close").addEventListener("click", close);
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) return close();
