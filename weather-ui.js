@@ -828,6 +828,22 @@ async function tickerLocation() {
   if (weatherWantsCurrentLocation()) return (await tickerQuietGeolocation()) || saved[0] || null;
   return saved.find((l) => l.id === state.weatherActiveLocationId) || saved[0] || null;
 }
+function tickerStats(c) {
+  const out = [];
+  if (c.windMph != null) {
+    const mph = Math.round(c.windMph);
+    const dir = mph > 0 && c.windDirectionCardinal ? ` ${c.windDirectionCardinal}` : "";
+    out.push(mph > 0
+      ? { text: `Wind ${mph} mph${dir}`, spoken: `wind ${mph} miles per hour${dir}` }
+      : { text: "Wind calm", spoken: "wind calm" });
+  }
+  if (c.uvIndex != null) {
+    const uv = Math.round(c.uvIndex);
+    const level = wxUvLabel(uv).split(" · ")[1];
+    out.push({ text: `UV ${uv} ${level}`, spoken: `UV index ${uv}, ${level.toLowerCase()}` });
+  }
+  return out;
+}
 async function renderWeatherTicker(el) {
   if (!el) return;
   const gen = ++tickerGen;
@@ -864,15 +880,18 @@ async function renderWeatherTicker(el) {
   const condLabel = c.description || today?.description || conditionLabel(cond.key, cond.isDay);
   const place = wxShortLoc(snap.location?.label || loc.label || "");
   const alert = (snap.alerts || [])[0];
+  // Wind and UV, each left out when the reading is missing (never a made-up value).
+  const stats = tickerStats(c);
   el.dataset.loaded = "1";
-  el.className = `dock-slide weather-ticker ${wxHeroMood(cond)}`;
-  el.setAttribute("aria-label", `Weather in ${place}: ${c.temperatureF != null ? Math.round(c.temperatureF) + "°, " : ""}${condLabel}. Open the weather page.`);
+  el.className = "dock-slide weather-ticker"; // one colour for every dock slide — no weather mood here
+  el.setAttribute("aria-label", `Weather in ${place}: ${c.temperatureF != null ? Math.round(c.temperatureF) + "°, " : ""}${condLabel}${stats.length ? `, ${stats.map((t) => t.spoken).join(", ")}` : ""}. Open the weather page.`);
   el.innerHTML = `
     <span class="wxt-art">${heroArtSvg(cond.key, cond.isDay)}</span>
     <span class="wxt-temp">${c.temperatureF != null ? Math.round(c.temperatureF) : "—"}<sup>°</sup></span>
     <span class="wxt-main">
       <span class="wxt-cond">${escapeHtml(condLabel)}</span>
       <span class="wxt-sub">${escapeHtml(place)}${hilo ? `  ·  ${escapeHtml(hilo)}` : ""}</span>
+      ${stats.length ? `<span class="wxt-stats">${escapeHtml(stats.map((t) => t.text).join("  ·  "))}</span>` : ""}
       ${alert ? `<span class="wxt-alert">⚠ ${escapeHtml(alert.event || alert.headline || "Weather alert")}</span>` : ""}
     </span>`;
 }
