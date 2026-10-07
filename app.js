@@ -23,6 +23,7 @@ import { normalizeContacts, normalizeContactGroups, createContactsModule, buildC
 import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
+import { SPEED_MIN, SPEED_MAX, snapPlaybackSpeed, stepPlaybackSpeed, formatSpeedLabel, speedStepperHtml } from './playback-speed.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
@@ -56,6 +57,8 @@ import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
 import { deriveMediaTierCount, publicationTierFor, collapsePublicationTiers, ALL_PUBLICATIONS_KEY } from './media-tier.js';
+import { upNextOrder, withSkippedLast, previousFromTrail } from './media-queue-order.js';
+import { keptEpisodeIds, pruneOldEpisodes, mergeFetchedEpisodes } from './podcast-retention.js';
 import { normalizeQueueAdded, queueAddedFindRef, withQueueEntry, withoutQueueEntries, episodeRef, articleRef, libraryAlbumRef, catalogAlbumRef, trackRef, slimCatalogItem, libraryAlbumTracks } from './media-queue-added.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -735,13 +738,11 @@ let lastMealDragPoint = null;
 
 // ── Shared media playback speed (persisted across sessions & players) ─────────
 const PLAYBACK_SPEED_KEY = "live-playback-speed-v1";
-const SPEED_SELECT_IDS = ["listenSpeedSelect", "podcastSpeedSelect", "exListenSpeedSelect", "exPodcastSpeedSelect"];
 let mediaPlaybackSpeed = (() => {
-  const v = parseFloat(localStorage.getItem(PLAYBACK_SPEED_KEY));
-  return (v && v >= 0.5 && v <= 3) ? v : 1;
+  try { return snapPlaybackSpeed(localStorage.getItem(PLAYBACK_SPEED_KEY)); } catch { return 1; }
 })();
 function setMediaPlaybackSpeed(v) {
-  const rate = (v && v >= 0.5 && v <= 3) ? v : 1;
+  const rate = snapPlaybackSpeed(v);
   mediaPlaybackSpeed = rate;
   try { localStorage.setItem(PLAYBACK_SPEED_KEY, String(rate)); } catch { /* private mode */ }
   // Route through the engine so its internal rate stays current — otherwise a
@@ -756,14 +757,26 @@ function setMediaPlaybackSpeed(v) {
       nativeTts()?.setRate({ rate }).catch(() => {});
     }
   } catch { /* not initialised yet */ }
-  syncSpeedSelectsUi();
+  syncSpeedSteppersUi();
 }
-function syncSpeedSelectsUi() {
-  for (const id of SPEED_SELECT_IDS) {
-    const el = document.getElementById(id);
-    if (el && parseFloat(el.value) !== mediaPlaybackSpeed) el.value = String(mediaPlaybackSpeed);
-  }
+// Every − value + speed control on the page (article reader, episode page,
+// Now-Playing window) shows the one shared speed.
+function syncSpeedSteppersUi() {
+  document.querySelectorAll(".speed-stepper").forEach((el) => {
+    const val = el.querySelector(".speed-step-val");
+    if (val) val.textContent = formatSpeedLabel(mediaPlaybackSpeed);
+    const slower = el.querySelector('[data-speed-step="-1"]'), faster = el.querySelector('[data-speed-step="1"]');
+    if (slower) slower.disabled = mediaPlaybackSpeed <= SPEED_MIN;
+    if (faster) faster.disabled = mediaPlaybackSpeed >= SPEED_MAX;
+  });
 }
+// One delegated handler for all of them: − is one 0.25 step slower, + one faster.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest?.("[data-speed-step]");
+  if (!btn) return;
+  e.stopPropagation();
+  setMediaPlaybackSpeed(stepPlaybackSpeed(mediaPlaybackSpeed, Number(btn.dataset.speedStep)));
+});
 
 // A single, gesture-blessed <audio> element for article read-aloud. iOS only
 // lets an element play() after it has once been started inside a user gesture;
@@ -4431,7 +4444,7 @@ function mirrorStateToLocalStorage() {
   // Drop per-episode show-notes here too (see extractSectionData) — they're
   // the biggest thing in state, re-fetchable, and keeping them risks blowing
   // the ~5 MB localStorage cap.
-  if (Array.isArray(base.podcasts)) base.podcasts = stripEpisodeDescriptions(base.podcasts);
+  if (Array.isArray(base.podcasts)) base.podcasts = storedPodcasts(base.podcasts, base);
   // Backstopped article bodies (in local IndexedDB + the reading-content bucket)
   // don't need to sit in the ~5 MB mirror; the reader re-reads them via the
   // content store. Bodies without a backstop keep their text so an offline cold
@@ -6831,7 +6844,7 @@ async function handleCameOnline() {
 // backup). Unbounded, unstripped snapshots grew this table to 1.4 GB.
 function snapshotPayload(src) {
   const out = { ...src };
-  if (Array.isArray(out.podcasts)) out.podcasts = stripEpisodeDescriptions(out.podcasts);
+  if (Array.isArray(out.podcasts)) out.podcasts = storedPodcasts(out.podcasts, src);
   if (Array.isArray(out.savedArticles)) out.savedArticles = out.savedArticles.map((a) => ({ ...a, text: null }));
   return out;
 }
@@ -7112,13 +7125,15 @@ function extractSectionData(keys, source = state) {
   for (const key of keys) {
     if (key in source) obj[key] = source[key];
   }
+  // Episodes older than 30 days that the user didn't keep are not stored at all
+  // (storedPodcasts). Of what is stored:
   // Per-episode show-notes are the single heaviest thing in the whole state
   // (~1 MB per subscribed show) and are re-fetchable from the feed on demand.
   // They're stripped from everything that gets persisted (Supabase + the
   // localStorage mirror) so a cold load isn't a multi-megabyte download; the
   // full text stays in memory during a session and is re-fetched via
   // ensureEpisodeDescription() when a user actually opens the notes.
-  if (Array.isArray(obj.podcasts)) obj.podcasts = stripEpisodeDescriptions(obj.podcasts);
+  if (Array.isArray(obj.podcasts)) obj.podcasts = storedPodcasts(obj.podcasts, source);
   // Article bodies whose bytes are safely in the content-store backstop no longer
   // ride the synced media section (the Disk-IO win — the section was rewritten
   // with full article text on every media interaction). The reader re-reads them
@@ -7134,6 +7149,15 @@ function stripEpisodeDescriptions(podcasts) {
   return podcasts.map((p) => (p && Array.isArray(p.episodes))
     ? { ...p, episodes: p.episodes.map((e) => (e && e.description) ? { ...e, description: "" } : e) }
     : p);
+}
+
+// The shows as they are stored (Supabase, the device mirror, history snapshots):
+// no show notes, and no episode older than 30 days unless the user kept it —
+// saved, added to the queue, in a playlist, or started recently
+// (podcast-retention.js). `source` is the state the shows sit in; the kept ids
+// are read from it. The in-memory copy keeps the full feed for browsing.
+function storedPodcasts(podcasts, source) {
+  return stripEpisodeDescriptions(pruneOldEpisodes(podcasts, { keepIds: keptEpisodeIds(source) }));
 }
 
 // JSON (in extractSectionData's persisted shape) of each section as the server
@@ -27662,7 +27686,10 @@ function removePublication(key) {
   if (activeMediaTab === key) switchMediaTab("all");
 }
 
-let activeMediaTab = "queue"; // "queue" is the sidebar's top "All" tab
+let activeMediaTab = "queue"; // "queue" is the sidebar's top "All" tab — Media's main page
+// The episode page was opened from the mini-player (not by browsing Podcasts),
+// so its Back button returns to the queue. Any tab switch clears it.
+let podcastPlayerBackToQueue = false;
 let mediaSearchQuery = "";     // top-bar search across podcasts + articles + books
 let openArticleId = null;
 let mediaTabsWired = false;
@@ -27685,6 +27712,43 @@ function initMediaPage() {
 const PODCAST_FEED_TTL_MS = 6 * 60 * 60 * 1000;
 let podcastFeedRefreshInFlight = null;
 
+// Shows whose full feed is in memory right now. What is stored holds only the
+// last 30 days plus kept episodes (podcast-retention.js), so a show's page
+// fetches the feed once to list everything. Keyed by the show object: when a
+// sync replaces state.podcasts with the stored copy, the page fetches again.
+const podcastFullFeedLoaded = new WeakSet();
+function applyFetchedFeed(p, fetched) {
+  // A kept episode (saved / queued / in a playlist) that has dropped off the end
+  // of the feed stays, instead of vanishing from Saved.
+  p.episodes = mergeFetchedEpisodes(fetched.episodes, p.episodes, keptEpisodeIds(state));
+  if (fetched.title) p.title = fetched.title;
+  if (fetched.art) p.art = fetched.art;
+  p.lastFetched = new Date().toISOString();
+  delete p.lastError;
+  podcastFullFeedLoaded.add(p);
+}
+// Opening a show: make sure its whole feed is listed, not just what was stored.
+// One fetch per show per load, started by the user opening that show.
+const podcastShowFeedInFlight = new Map(); // showId → Promise<boolean>
+function ensureShowFullFeed(show) {
+  if (!show || !show.url || podcastFullFeedLoaded.has(show)) return Promise.resolve(false);
+  if (podcastShowFeedInFlight.has(show.id)) return podcastShowFeedInFlight.get(show.id);
+  const p = (async () => {
+    try {
+      const fetched = await callNetlifyFunction("fetch-podcast", { url: show.url });
+      if (fetched?.error || !Array.isArray(fetched?.episodes)) { podcastFullFeedLoaded.add(show); return false; } // don't retry on every render
+      const live = (state.podcasts || []).find((x) => x.id === show.id) || show;
+      const before = live.episodes.length;
+      applyFetchedFeed(live, fetched);
+      podcastFullFeedLoaded.add(show);
+      return live.episodes.length !== before; // saved with the next change; no write just for opening a show
+    } catch { return false; }
+    finally { podcastShowFeedInFlight.delete(show.id); }
+  })();
+  podcastShowFeedInFlight.set(show.id, p);
+  return p;
+}
+
 function refreshStalePodcastFeeds() {
   if (podcastFeedRefreshInFlight) return podcastFeedRefreshInFlight;
   const stale = (state.podcasts || []).filter((p) =>
@@ -27706,11 +27770,7 @@ function refreshStalePodcastFeeds() {
             if (p.lastError !== msg) { p.lastError = msg; updated = true; }
             return;
           }
-          p.episodes = fetched.episodes;
-          if (fetched.title) p.title = fetched.title;
-          if (fetched.art) p.art = fetched.art;
-          p.lastFetched = new Date().toISOString();
-          delete p.lastError;
+          applyFetchedFeed(p, fetched);
           updated = true;
         } catch { /* network blip — keep the stale copy, retry next window */ }
       }));
@@ -27718,6 +27778,7 @@ function refreshStalePodcastFeeds() {
     podcastFeedRefreshInFlight = null;
     if (updated) {
       persist();
+      refreshRunningQueueOrder(); // a new episode may now be at the top of Up Next
       if (activeAppArea === "media") {
         if (activeMediaTab === "queue") renderMediaAllList();
         else if (activeMediaTab === "podcasts") {
@@ -27770,8 +27831,6 @@ function wireMediaTabs() {
   document.getElementById("articleSyncSettingsBtn")?.addEventListener("click", () => openSyncSettingsDialog("read"));
   document.getElementById("listenPlayPauseBtn")?.addEventListener("click", toggleReaderListen);
   document.getElementById("listenStopBtn")?.addEventListener("click", stopListen);
-  document.getElementById("listenSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
-  document.getElementById("exListenSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
   document.getElementById("closeArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
   document.getElementById("cancelArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
   document.getElementById("confirmArticleSaveBtn")?.addEventListener("click", confirmSaveArticle);
@@ -27799,6 +27858,7 @@ const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio", "watch"];
 
 function switchMediaTab(tab) {
   activeMediaTab = tab;
+  podcastPlayerBackToQueue = false;
   if (window.innerWidth <= 680) {
     document.getElementById("mediaSidebar")?.classList.remove("is-expanded");
   }
@@ -28641,9 +28701,7 @@ function wirePodcastPanel() {
   document.getElementById("podcastSkipBackBtn")?.addEventListener("click", () => skipPodcast(-15));
   document.getElementById("podcastSkipFwdBtn")?.addEventListener("click", () => skipPodcast(30));
   document.getElementById("podcastMarkPlayedBtn")?.addEventListener("click", toggleOpenEpisodePlayed);
-  document.getElementById("podcastSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
-  document.getElementById("exPodcastSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
-  syncSpeedSelectsUi();
+  syncSpeedSteppersUi();
   const skipAdsToggle = document.getElementById("podcastSkipAdsToggle");
   if (skipAdsToggle) {
     skipAdsToggle.checked = !!state.podcastSkipAds;
@@ -29901,7 +29959,13 @@ function articleQueueItem(a) {
 // pinned in state.mediaAllPinnedOrder and holds until items are played.
 
 let mediaAllQueueId = null;   // id of the item currently playing from the All queue
-let mediaAllQueueRest = [];   // ordered ids remaining after the current item
+// Ids that play after it, in order. Always re-derived from the queue as it is
+// listed now (syncMediaAllQueueRest / media-queue-order.js) — never a copy kept
+// from when playback started, which is how playback used to drift from "Up Next".
+let mediaAllQueueRest = [];
+let mediaAllQueueSkipped = [];        // passed with Next this run → back of the line
+const mediaAllQueueDone = new Set();  // finished or failed this run → not played again
+let mediaAllQueueTrail = [];          // what was current before (for Previous), oldest first
 let mediaAllSwipedRow = null; // playlist row currently revealing its swipe actions (touch)
 
 function getAllListenList({ hoist = true } = {}) {
@@ -29940,8 +30004,49 @@ function getAllListenList({ hoist = true } = {}) {
     list = [...inPinned, ...rest];
   }
   // The resume episode wins the very top slot even over a manual pin order.
-  // (hoist:false keeps natural order for prev/next-episode navigation.)
-  return hoist ? hoistResumeEpisode(list) : list;
+  // (hoist:false is the list before that move — what the running order is
+  // worked out from.) Items passed with Next are listed last, where they play.
+  if (!hoist) return list;
+  return withSkippedLast(hoistResumeEpisode(list), mediaAllQueueSkipped, nowPlayingQueueId());
+}
+
+// What plays after the current queue item: the queue as listed now, top first.
+function mediaAllRunOrder() {
+  return upNextOrder(getAllListenList({ hoist: false }).map((i) => i.id),
+    { currentId: mediaAllQueueId, skippedIds: mediaAllQueueSkipped, doneIds: [...mediaAllQueueDone] });
+}
+function syncMediaAllQueueRest() {
+  mediaAllQueueRest = mediaAllQueueId ? mediaAllRunOrder() : [];
+}
+// Make `id` the queue's current item (it is about to play).
+function setMediaAllQueueCurrent(id) {
+  if (mediaAllQueueId && mediaAllQueueId !== id) {
+    mediaAllQueueTrail = [...mediaAllQueueTrail.filter((x) => x !== mediaAllQueueId), mediaAllQueueId].slice(-50);
+  }
+  mediaAllQueueId = id;
+  mediaAllQueueSkipped = mediaAllQueueSkipped.filter((x) => x !== id);
+  mediaAllQueueDone.delete(id);
+  syncMediaAllQueueRest();
+}
+function endMediaAllQueueRun() {
+  mediaAllQueueId = null;
+  mediaAllQueueRest = [];
+  mediaAllQueueSkipped = [];
+  mediaAllQueueDone.clear();
+}
+// The queue's order may have changed while it plays (reorder, add, remove, a new
+// episode). The web player reads the order when an item ends, so it needs
+// nothing; the iPhone app's player was handed its next few items up front, so
+// send it the new ones. Does nothing when the order is the same as last time.
+let mediaAllQueueSentOrder = "";
+function refreshRunningQueueOrder() {
+  if (!mediaAllQueueId) { mediaAllQueueSentOrder = ""; return; }
+  syncMediaAllQueueRest();
+  const key = `${mediaAllQueueId}|${mediaAllQueueRest.slice(0, 12).join("|")}`;
+  if (key === mediaAllQueueSentOrder) return;
+  mediaAllQueueSentOrder = key;
+  prefetchNextQueueAudio();
+  if (listenSpeechSynth?.native) queueNativeUpcoming(listenSpeechSynth);
 }
 
 // ── Manual "Add to queue" ────────────────────────────────────────────────────
@@ -30003,15 +30108,7 @@ function addQueueAddedEntry(draft) {
   const res = withQueueEntry(state.mediaQueueAdded, draft);
   state.mediaQueueAdded = res.list;
   mediaQueueIdCache = null;
-  // The queue plays from a snapshot of what was listed when playback started
-  // (mediaAllQueueRest). Something added while it plays goes on the end of that
-  // too, or it would sit in the list and never be reached.
-  const rowId = res.entry ? (res.entry.itemId || res.entry.id) : null;
-  if (rowId && mediaAllQueueId && mediaAllQueueId !== rowId && !mediaAllQueueRest.includes(rowId)) {
-    mediaAllQueueRest.push(rowId);
-    prefetchNextQueueAudio();
-    if (listenSpeechSynth?.native) queueNativeUpcoming(listenSpeechSynth); // the iPhone app's own up-next list
-  }
+  refreshRunningQueueOrder(); // an add while the queue plays joins the running order
   return res;
 }
 function removeQueueAddedEntries(match) {
@@ -30032,6 +30129,7 @@ function pruneQueueAddedEntries() {
     (e.kind === "article" && !articleIds.has(e.itemId)));
 }
 function afterMediaQueueChange(message) {
+  refreshRunningQueueOrder();
   persist();
   if (message) showMailToast(message);
   if (activeAppArea === "media" && activeMediaTab === "queue") renderMediaAllList();
@@ -30136,6 +30234,7 @@ function syncQueueNowPlaying() {
 }
 
 function renderMediaAllList() {
+  refreshRunningQueueOrder(); // whatever changed the list may have changed what plays next
   _lastQueueNowId = nowPlayingQueueId();
   const listEl = document.getElementById("mediaAllList");
   if (!listEl) return;
@@ -30532,7 +30631,8 @@ function setupMediaAllDrag(listEl) {
   makeSortable(listEl, {
     rowSelector: "[data-all-id]",
     getId: (row) => row.dataset.allId,
-    onReorder: ({ order }) => { state.mediaAllPinnedOrder = order; persist(); renderMediaAllList(); },
+    // The dragged order is now the order: nothing stays parked at the back.
+    onReorder: ({ order }) => { state.mediaAllPinnedOrder = order; mediaAllQueueSkipped = []; persist(); renderMediaAllList(); },
     itemLabel: (row) => (row.querySelector(".podcast-episode-title, .article-row-title")?.textContent || row.textContent || "item").trim().slice(0, 40),
   });
 }
@@ -30617,8 +30717,9 @@ function playAllQueueFrom(id) {
   const start = items.findIndex((i) => i.id === id);
   for (let j = Math.max(start, 0); j < items.length; j++) {
     if (!mediaItemPlayable(items[j])) continue; // skip non-playable items (e.g. books)
-    mediaAllQueueId = items[j].id;
-    mediaAllQueueRest = items.slice(j + 1).map((i) => i.id);
+    // Only the current item is set. What follows is the rest of the queue from
+    // the top, as listed — not "everything below this row".
+    setMediaAllQueueCurrent(items[j].id);
     playMediaAllItem(items[j]);
     renderMediaAllList();
     return;
@@ -30631,17 +30732,20 @@ function playMediaAllItem(item, opts = {}) {
   prefetchNextQueueAudio();
 }
 
-// Called when a queue item finishes: step to the next playable item in the
-// order that was on screen when playback started (refreshed for availability).
+// Called when a queue item finishes: step to the top playable item of the queue
+// as it is listed now (see media-queue-order.js).
 function advanceMediaAllQueue(finishedId) {
   if (!mediaAllQueueId || mediaAllQueueId !== finishedId) return false;
-  const current = getAllListenList();
-  const byId = new Map(current.map((i) => [i.id, i]));
+  const byId = new Map(getAllListenList({ hoist: false }).map((i) => [i.id, i]));
+  // Finishing normally takes an item out of the list (played / read / removed).
+  // One that is still listed (it failed to load) must not be picked again.
+  if (byId.has(finishedId)) mediaAllQueueDone.add(finishedId);
+  syncMediaAllQueueRest();
   while (mediaAllQueueRest.length) {
     const nextId = mediaAllQueueRest.shift();
     const item = byId.get(nextId);
     if (item && mediaItemPlayable(item)) {
-      mediaAllQueueId = item.id;
+      setMediaAllQueueCurrent(item.id);
       // advance:true → replace the source WITHOUT pausing the engine first, so a
       // backgrounded hand-off keeps the iOS audio session active (a pause would
       // let iOS deactivate it and block the next play()). This is what fixes
@@ -30651,7 +30755,7 @@ function advanceMediaAllQueue(finishedId) {
       return true;
     }
   }
-  mediaAllQueueId = null;
+  endMediaAllQueueRun();
   if (activeMediaTab === "queue") renderMediaAllList();
   scheduleQueueFallback(); // the queue just played its last item → the "when the queue ends" pick
   return false; // nothing started — let the caller run its own end-of-queue path
@@ -31600,6 +31704,10 @@ function renderPodcastShowEpisodes(showId) {
   if (!listEl) return;
   const show = (state.podcasts || []).find(p => p.id === showId);
   if (!show) { activePodcastShowId = null; renderPodcastShowsGrid(); return; }
+  // Stored state holds only recent + kept episodes; list the whole feed here.
+  ensureShowFullFeed(show).then((changed) => {
+    if (changed && activeAppArea === "media" && activeMediaTab === "podcasts" && activePodcastShowId === showId) renderPodcastShowEpisodes(showId);
+  });
 
   const episodes = show.episodes.map(e => ({ ...e, showId: show.id, showTitle: show.title, showArt: show.art }));
   const hasPlaylists = (state.podcastPlaylists || []).length > 0;
@@ -31813,7 +31921,7 @@ const MEDIA_KINDS = {
     open: () => goToOpenEpisode(),
     // The CURRENTLY-PLAYING episode (not whatever episode's details happen to be
     // open) — so the mini-player + now-playing modal always track playback.
-    info: () => { const ep = podcastCurEpisode, sh = podcastCurShow; if (!ep) return null; return { art: ep.art || sh?.art || "", title: ep.title || "", show: sh?.title || "", date: ep.pubDate ? formatArticleDate(ep.pubDate) : "", desc: plainTextFromHtml(ep.description) }; },
+    info: () => { const ep = podcastCurEpisode, sh = podcastCurShow; if (!ep) return null; return { art: ep.art || sh?.art || "", title: ep.title || "", show: sh?.title || "", date: ep.pubDate ? formatArticleDate(ep.pubDate) : "", desc: plainTextFromHtml(ep.description), episodeId: ep.id }; },
   },
   radio: {
     live: true,
@@ -31851,8 +31959,8 @@ const MEDIA_KINDS = {
     el: () => null,
     toggle: () => toggleListenPlayPause(),
     skip: (sec) => listenSkip(sec),
-    open: () => { const id = listenSpeechSynth?.currentId; if (id) { showPodcastEpisodePanel(id); goToOpenEpisode(); } },
-    info: () => { const s = listenSpeechSynth, ep = s && s.episode, sh = s && s.show; if (!ep) return null; return { art: ep.art || sh?.art || "", title: ep.title || "", show: sh?.title || "", date: ep.pubDate ? formatArticleDate(ep.pubDate) : "", desc: plainTextFromHtml(ep.description) }; },
+    open: () => goToOpenEpisode(),
+    info: () => { const s = listenSpeechSynth, ep = s && s.episode, sh = s && s.show; if (!ep) return null; return { art: ep.art || sh?.art || "", title: ep.title || "", show: sh?.title || "", date: ep.pubDate ? formatArticleDate(ep.pubDate) : "", desc: plainTextFromHtml(ep.description), episodeId: ep.id }; },
   },
   tts: {
     active: () => !!(listenAudio || listenLoading || listenArticle),
@@ -31917,6 +32025,10 @@ function onPodcastEnded() {
 }
 
 function startPodcastPlayback(episode, show, { autoplay = true, advance = false, forceWeb = false } = {}) {
+  // An episode that is in the queue plays AS the queue's current item wherever
+  // it was started from (a show's page, Recent, the details sheet), so when it
+  // ends the queue carries on from the top of Up Next instead of stopping.
+  if (episode && mediaAllQueueId !== episode.id && isInMediaQueue(episode.id)) setMediaAllQueueCurrent(episode.id);
   // iPhone app: play on the native player (see nativeQueueHandlesPodcasts). A
   // paused load (autoplay:false) stays on the web element until play is tapped,
   // which hands it over (togglePodcastPlayPause).
@@ -34429,18 +34541,29 @@ function nowPlayingSkip(sec) { const k = nowPlayingKind(); MEDIA_KINDS[k]?.skip?
 // Is prev/next-episode navigation meaningful for what's playing? Only the
 // queue-based kinds (podcasts + article TTS) run off the shared listen list.
 function nowPlayingHasEpisodeNav() { const k = nowPlayingKind(); return k === "podcast" || k === "tts" || k === "nativeAudio"; }
-// Step to the previous (dir=-1) or next (dir=+1) playable item in the listen
-// playlist. Uses the natural (un-hoisted) order so both directions are stable,
-// then hands off to playAllQueueFrom so the queue's advance state stays correct.
+// Previous / next in the Now-Playing window. Next is the top of Up Next, and the
+// item being left goes to the back of the line (it wasn't finished). Previous
+// goes back to what was playing before, else to the item listed above.
 function nowPlayingEpisodeStep(dir) {
   if (!nowPlayingHasEpisodeNav()) return;
   const items = getAllListenList({ hoist: false }).filter(mediaItemPlayable);
   const curId = nowPlayingQueueId();
   const idx = items.findIndex((i) => i.id === curId);
   if (idx === -1) return;
-  const target = items[idx + dir];
-  if (!target) return; // already at an end
-  playAllQueueFrom(target.id);
+  const playable = items.map((i) => i.id);
+  let targetId = null;
+  if (dir > 0) {
+    if (mediaAllQueueId !== curId) setMediaAllQueueCurrent(curId);
+    const ok = new Set(playable);
+    targetId = mediaAllRunOrder().find((id) => ok.has(id)) || null;
+    if (targetId && !mediaAllQueueSkipped.includes(curId)) mediaAllQueueSkipped.push(curId);
+  } else {
+    targetId = previousFromTrail(mediaAllQueueTrail, playable, curId) || items[idx - 1]?.id || null;
+    if (targetId) mediaAllQueueTrail = mediaAllQueueTrail.filter((id) => id !== targetId);
+  }
+  if (!targetId) return; // nothing to step to
+  playAllQueueFrom(targetId);
+  if (dir < 0) mediaAllQueueTrail = mediaAllQueueTrail.filter((id) => id !== curId); // going back isn't "what played before"
   updateNowPlayingModal();
   refreshMiniPlayerFromNowPlaying();
 }
@@ -34550,12 +34673,12 @@ function idlePlaybackPlan() {
   const last = recentMediaHistory(state.mediaHistory || [], { limit: 1 })[0];
   if (last) {
     if (last.kind === "radio" && last.ref && (last.ref.streams || []).length) {
-      return { title: last.title, sub: "Radio · resume", art: last.artworkUrl, start: () => playRadioStation(last.ref) };
+      return { title: last.title, sub: "Radio · resume", art: last.artworkUrl, desc: last.ref.description || "", start: () => playRadioStation(last.ref) };
     }
     if (last.kind === "podcast" && !(state.podcastProgress || {})[last.id]?.played) {
       const inQueue = queue.some((i) => i.id === last.id);
       if (inQueue || findPodcastEpisode(last.id).episode) {
-        return { title: last.title, sub: `${last.subtitle ? `${last.subtitle} · ` : ""}resume`, art: last.artworkUrl,
+        return { title: last.title, sub: `${last.subtitle ? `${last.subtitle} · ` : ""}resume`, art: last.artworkUrl, episodeId: last.id,
           start: () => (inQueue ? playAllQueueFrom(last.id) : openPodcastEpisode(last.id, { autoplay: true })) };
       }
     }
@@ -34566,7 +34689,9 @@ function idlePlaybackPlan() {
   }
   if (queue[0]) {
     const item = queue[0];
-    return { title: item.title || "Up next", sub: "Up next in your queue", art: item.art || item.showArt || "", start: () => playAllQueueFrom(item.id) };
+    return { title: item.title || "Up next", sub: "Up next in your queue", art: item.art || item.showArt || "", show: item.showTitle || "",
+      episodeId: item.type === "podcast" ? item.id : undefined, desc: item.type === "article" ? (item.text || item.excerpt || "") : "",
+      start: () => playAllQueueFrom(item.id) };
   }
   return queueFallbackPlan();
 }
@@ -34697,7 +34822,7 @@ function setupMiniPlayerMarquee() {
 function wireMiniPlayer() {
   // Play with nothing loaded → resume / next in queue / the queue-ends pick.
   document.getElementById("miniPlayerPlayPause")?.addEventListener("click", () => (nowPlayingKind() ? nowPlayingToggle() : playFromIdle()));
-  document.getElementById("miniPlayerExpand")?.addEventListener("click", (e) => { e.stopPropagation(); if (nowPlayingKind()) openNowPlayingModal(); });
+  document.getElementById("miniPlayerExpand")?.addEventListener("click", (e) => { e.stopPropagation(); openNowPlayingModal(); });
   const bar = document.getElementById("miniPlayer");
   // Tap the bar (not its controls) → the full Media page, on what's playing.
   bar?.addEventListener("click", (e) => {
@@ -34706,7 +34831,8 @@ function wireMiniPlayer() {
     const k = nowPlayingKind();
     if (k && MEDIA_KINDS[k]?.open) MEDIA_KINDS[k].open(); else showMediaApp();
   });
-  // Swipe the bar up → the Now-Playing window (seek, speed, next/previous).
+  // Swipe the bar up → the Now-Playing window (seek, speed, next/previous). It
+  // opens with nothing loaded too, on what the play button would start.
   let sy = 0, sx = 0, tracking = false;
   bar?.addEventListener("touchstart", (e) => { const t = e.touches[0]; sy = t.clientY; sx = t.clientX; tracking = true; }, { passive: true });
   bar?.addEventListener("touchend", (e) => {
@@ -34714,7 +34840,7 @@ function wireMiniPlayer() {
     tracking = false;
     const t = e.changedTouches[0];
     const dy = t.clientY - sy, dx = t.clientX - sx;
-    if (dy < -36 && Math.abs(dy) > Math.abs(dx) * 1.4 && nowPlayingKind()) {
+    if (dy < -36 && Math.abs(dy) > Math.abs(dx) * 1.4) {
       dockSuppressClick = true; setTimeout(() => { dockSuppressClick = false; }, 400);
       openNowPlayingModal();
     }
@@ -34937,17 +35063,29 @@ function plainTextFromHtml(html) {
   return (ta.value || "").replace(/\s+/g, " ").trim();
 }
 function nowPlayingInfo() { const k = nowPlayingKind(); return (k && MEDIA_KINDS[k].info) ? MEDIA_KINDS[k].info() : null; }
+// With nothing loaded, the window shows what the play button would start
+// (idlePlaybackPlan: resume / the top of the queue / the queue-ends pick).
+function idleNowPlayingInfo() {
+  const plan = idlePlaybackPlan();
+  if (!plan) return { art: "", title: "Nothing playing", show: "", date: "", desc: "Nothing is queued. Press play to open Media and pick something.", idle: true };
+  const ep = plan.episodeId ? findPodcastEpisode(plan.episodeId).episode : null;
+  return { art: plan.art || "", title: plan.title || "", show: plan.show || "", date: plan.sub || "", idle: true,
+    episodeId: ep ? ep.id : null, desc: ep ? plainTextFromHtml(ep.description) : plainTextFromHtml(plan.desc).slice(0, 2000) };
+}
 
+// Always opens: on what is playing, or — with nothing loaded — on what's up next.
 function openNowPlayingModal() {
-  const info = nowPlayingInfo();
+  const idle = !nowPlayingKind();
+  const info = idle ? idleNowPlayingInfo() : nowPlayingInfo();
   if (!info) return;
-  const hasEpNav = nowPlayingHasEpisodeNav(); // prev/next-episode skip (podcasts + TTS)
+  const hasEpNav = !idle && nowPlayingHasEpisodeNav(); // prev/next-episode skip (podcasts + TTS)
   document.getElementById("nowPlayingOverlay")?.remove();
   const overlay = document.createElement("div");
   overlay.id = "nowPlayingOverlay";
   overlay.className = "np-overlay";
+  if (idle) overlay.dataset.idle = "1";
   overlay.innerHTML = `
-    <div class="np-modal" role="dialog" aria-modal="true" aria-label="Now playing">
+    <div class="np-modal${idle ? " np-modal--idle" : ""}" role="dialog" aria-modal="true" aria-label="${idle ? "Up next" : "Now playing"}">
       <div class="np-grabber" aria-hidden="true"></div>
       <button class="np-close" type="button" aria-label="Close">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -34983,8 +35121,7 @@ function openNowPlayingModal() {
       <div class="np-extra">
         <div class="np-speed-row">
           <span class="np-speed-label">Speed</span>
-          <input type="range" class="np-speed-slider" id="npSpeedSlider" min="0.5" max="3" step="0.05" aria-label="Playback speed">
-          <span class="np-speed-val" id="npSpeedVal">1×</span>
+          ${speedStepperHtml(mediaPlaybackSpeed)}
         </div>
       </div>
       <div class="np-desc${info.desc ? "" : " np-desc--empty"}">${info.desc ? escapeHtml(info.desc) : "No description available."}</div>
@@ -34997,23 +35134,27 @@ function openNowPlayingModal() {
   document.addEventListener("keydown", function onEsc(e) {
     if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); }
   });
-  overlay.querySelector("#npPlay").addEventListener("click", () => { nowPlayingToggle(); updateNowPlayingModal(); });
+  // Idle: play starts the plan; the window then redraws itself on the playing
+  // item (updateNowPlayingModal sees something loaded).
+  overlay.querySelector("#npPlay").addEventListener("click", () => {
+    if (!nowPlayingKind()) { const had = !!idlePlaybackPlan(); playFromIdle(); if (!had) close(); return; }
+    nowPlayingToggle(); updateNowPlayingModal();
+  });
+  // Show notes aren't kept in saved state — fetch them for this episode if they
+  // aren't in memory (one feed fetch, then cached for the session).
+  const descEpisodeId = info.episodeId || null;
+  if (descEpisodeId && !info.desc) {
+    overlay.dataset.descFor = descEpisodeId;
+    ensureEpisodeDescription(descEpisodeId).then((d) => {
+      const el = overlay.isConnected && overlay.dataset.descFor === descEpisodeId ? overlay.querySelector(".np-desc") : null;
+      const text = plainTextFromHtml(d);
+      if (el && text) { el.textContent = text; el.classList.remove("np-desc--empty"); }
+    });
+  }
   overlay.querySelector("#npBack").addEventListener("click", () => nowPlayingSkip(-10));
   overlay.querySelector("#npFwd").addEventListener("click", () => nowPlayingSkip(30));
   overlay.querySelector("#npPrevEp")?.addEventListener("click", () => nowPlayingEpisodeStep(-1));
   overlay.querySelector("#npNextEp")?.addEventListener("click", () => nowPlayingEpisodeStep(1));
-  // Playback speed: a continuous 0.5×–3.0× slider (0.05 steps). setMediaPlaybackSpeed
-  // applies it live to whichever audio is playing. The `speeding` flag stops
-  // updateNowPlayingModal from yanking the thumb back while it's being dragged.
-  const speedSlider = overlay.querySelector("#npSpeedSlider");
-  speedSlider.value = String(mediaPlaybackSpeed);
-  speedSlider.addEventListener("input", () => {
-    overlay.dataset.speeding = "1";
-    setMediaPlaybackSpeed(parseFloat(speedSlider.value));
-    const val = overlay.querySelector("#npSpeedVal");
-    if (val) val.textContent = formatSpeedLabel(mediaPlaybackSpeed);
-  });
-  speedSlider.addEventListener("change", () => { delete overlay.dataset.speeding; });
   const seek = overlay.querySelector("#npSeek");
   seek.addEventListener("input", () => { overlay.dataset.scrubbing = "1"; });
   seek.addEventListener("change", () => { nowPlayingSeekFraction(Number(seek.value) / 1000); delete overlay.dataset.scrubbing; updateNowPlayingModal(); });
@@ -35057,6 +35198,9 @@ function wireNowPlayingSwipeDown(overlay, close) {
 function updateNowPlayingModal() {
   const overlay = document.getElementById("nowPlayingOverlay");
   if (!overlay) return;
+  // Opened with nothing loaded and playback has started → redraw on that item.
+  // (And the reverse: it stopped while open → redraw on what's up next.)
+  if ((overlay.dataset.idle === "1") !== !nowPlayingKind()) { openNowPlayingModal(); return; }
   const cur = nowPlayingElapsed(), total = nowPlayingTotal();
   const seek = overlay.querySelector("#npSeek");
   if (seek && overlay.dataset.scrubbing !== "1") seek.value = total ? Math.round((cur / total) * 1000) : 0;
@@ -35071,35 +35215,32 @@ function updateNowPlayingModal() {
       ? `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/></svg>`
       : `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg>`;
   }
-  const speedSlider = overlay.querySelector("#npSpeedSlider");
-  const speedVal = overlay.querySelector("#npSpeedVal");
-  if (speedSlider && overlay.dataset.speeding !== "1") speedSlider.value = String(mediaPlaybackSpeed);
-  if (speedVal) speedVal.textContent = formatSpeedLabel(mediaPlaybackSpeed);
 }
 
-// "1×", "1.35×", "2.5×" — two decimals with trailing zeros trimmed.
-function formatSpeedLabel(v) { return `${Number(v).toFixed(2).replace(/\.?0+$/, "")}×`; }
-
+// The mini-player's tap: the page of the episode that is PLAYING (not whichever
+// episode page was last open — that may have been closed with Back since).
 function goToOpenEpisode() {
-  if (!openPodcastEpisodeId) return;
+  const id = podcastCurEpisode?.id || nativePodcastSession()?.currentId || openPodcastEpisodeId;
   showMediaApp();
+  if (!id || !findPodcastEpisode(id).episode) return; // nothing to show → the queue
   switchMediaTab("podcasts");
+  podcastPlayerBackToQueue = true;
   requestAnimationFrame(() => {
-    const panel = document.getElementById("podcastPlayerPanel");
-    if (panel) panel.hidden = false;
-    document.querySelectorAll(".podcast-episode-row").forEach(r => {
-      r.classList.toggle("article-row--active", r.dataset.episodeId === openPodcastEpisodeId);
-    });
+    if (!podcastPlayerBackToQueue) return; // moved on before the frame
+    showPodcastEpisodePanel(id);
   });
 }
 
 function closePodcastPlayer() {
-  // "Back" returns to the browse list WITHOUT stopping playback — the episode
-  // keeps playing and the mini-player carries it. (Pausing is done from the
+  // "Back" returns to the list WITHOUT stopping playback — the episode keeps
+  // playing and the mini-player carries it. (Pausing is done from the
   // mini-player / now-playing window; there is no hard stop here.)
   const panel = document.getElementById("podcastPlayerPanel");
   if (panel) panel.hidden = true;
   openPodcastEpisodeId = null;
+  // Reached from the mini-player → back to the queue (Media's main page), not
+  // the Podcasts shows it was never browsed from.
+  if (podcastPlayerBackToQueue) switchMediaTab("queue");
 }
 
 function setPodcastEpisodePlayed(episodeId, played) {
@@ -37216,6 +37357,7 @@ function clearArticleTtsCaches() {
 // While something is playing, generate the NEXT queue article's audio in the
 // background so the hand-off between items is gapless.
 function prefetchNextQueueAudio() {
+  syncMediaAllQueueRest();
   const byId = new Map(getAllListenList().map((i) => [i.id, i]));
   for (const id of mediaAllQueueRest) {
     const item = byId.get(id);
@@ -37295,6 +37437,7 @@ function prefetchListenArticles(articles) {
 // playing at this point — the article just ended).
 function beginNextResolvedArticleSync(finishedId) {
   if (!mediaAllQueueId || mediaAllQueueId !== finishedId) return false;
+  syncMediaAllQueueRest(); // the finished article is already marked read, so it is out of the list
   const byId = new Map(getAllListenList().map((i) => [i.id, i]));
   let nextIdx = -1, nextItem = null;
   for (let i = 0; i < mediaAllQueueRest.length; i++) {
@@ -37307,8 +37450,7 @@ function beginNextResolvedArticleSync(finishedId) {
   if (!data || !data.urls || !data.urls.length) return false; // not ready → async fallback
   const article = (state.savedArticles || []).find((a) => a.id === nextItem.id);
   if (!article) return false;
-  mediaAllQueueRest.splice(0, nextIdx + 1);
-  mediaAllQueueId = nextItem.id;
+  setMediaAllQueueCurrent(nextItem.id);
   ttsResolvedUrls.delete(nextKey);
   ttsPrefetchCache.delete(nextKey);
   const myGenId = ++listenGenId;
@@ -37670,6 +37812,7 @@ const NATIVE_TTS_LOOKAHEAD = 5;
 function nativeUpcomingItems(anchorId, listTab, n) {
   const byArticleId = new Map((state.savedArticles || []).map((a) => [a.id, a]));
   if (mediaAllQueueId && mediaAllQueueId === anchorId) {
+    syncMediaAllQueueRest();
     const byId = new Map(getAllListenList().map((i) => [i.id, i]));
     const out = [];
     for (const id of mediaAllQueueRest) {
@@ -37803,9 +37946,12 @@ function onNativeTtsItemStart(session, e) {
   session.currentId = e.id;
   session.kind = e.kind === "audio" ? "audio" : "speech";
   session.paused = false;
-  if (mediaAllQueueId) { // keep the All-queue cursor in step with what's playing
-    const qi = mediaAllQueueRest.indexOf(e.id);
-    if (qi !== -1) { mediaAllQueueRest.splice(0, qi + 1); mediaAllQueueId = e.id; }
+  if (mediaAllQueueId && mediaAllQueueId !== e.id && isInMediaQueue(e.id)) { // keep the All-queue cursor in step with what's playing
+    // The item it left either finished (already marked, so it's out of the
+    // list) or was passed with the lock-screen next button → back of the line.
+    const left = mediaAllQueueId;
+    if (isInMediaQueue(left) && !mediaAllQueueSkipped.includes(left)) mediaAllQueueSkipped.push(left);
+    setMediaAllQueueCurrent(e.id);
   }
   clearWordHighlight();
   if (episode) {
