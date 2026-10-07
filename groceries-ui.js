@@ -15,7 +15,8 @@ import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
 import * as LiveInstacart from './instacart.js';
 import { makeSortable } from './sortable.js';
-import { stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff } from './grocery-list-stamps.js';
+import { stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, groceryKey } from './grocery-list-stamps.js';
+import { boughtCyclesByKey, manualItemCarry, resetBoughtMarks } from './grocery-bought.js';
 import { usableViewportBottom } from './dock-space.js';
 
 // Module-scope copies of two tiny standalone helpers (identical to app.js) so the pure
@@ -2480,12 +2481,21 @@ function renderGroceries() {
   const rangeKey = groceryCycleKey();
   const isCheckedRow = (rowKey) => Boolean(state.checkedGroceries[groceryCheckedKey(rangeKey, rowKey)]);
 
-  const withFlags = (row) => ({
-    ...row,
-    checkedKey: groceryCheckedKey(rangeKey, row.key),
-    checked: isCheckedRow(row.key),
-    cleared: isGroceryCleared(row.key)
-  });
+  // A manual-only item checked off in another cycle is still bought (it would
+  // otherwise come back unchecked whenever the cycle changes) — grocery-bought.js.
+  const manualCarry = manualCarryByRowKey();
+  const isCarried = (row) => manualCarry.has(row.key) && row.sources?.length === 1 && row.sources[0] === "manual";
+
+  const withFlags = (row) => {
+    const carried = isCarried(row);
+    return {
+      ...row,
+      checkedKey: groceryCheckedKey(rangeKey, row.key),
+      checked: carried || isCheckedRow(row.key),
+      cleared: carried || isGroceryCleared(row.key),
+      carried
+    };
+  };
 
   // Shop is a dynamic projection of active household needs: Meal Plan + Checklist
   // + Manual reconciled into ONE row per item (source independence lives in
@@ -2628,8 +2638,12 @@ function renderGroceries() {
       // Unchecking a bought/cleared item (visible only while reviewing) brings
       // it back to the active list — the intuitive per-item "restore".
       if (!checkbox.checked) {
-        const rowKey = checkbox.closest("[data-grocery-row-key]")?.dataset.groceryRowKey;
+        const rowEl = checkbox.closest("[data-grocery-row-key]");
+        const rowKey = rowEl?.dataset.groceryRowKey;
         if (rowKey && isGroceryCleared(rowKey)) setGroceryCleared(rowKey, false);
+        // Bought in another cycle (a carried manual item): the marks that keep it
+        // bought live under that cycle's keys, so turn them off too.
+        if (rowKey && rowEl.hasAttribute("data-grocery-carried")) resetBoughtMarks(state.checkedGroceries, state.groceryCleared, rowKey);
       }
       // Auto-collapse a store's section the moment every item in it is
       // checked — persisted, so it's still collapsed next time the page
@@ -3019,7 +3033,7 @@ function groceryRowSourceLabel(row) {
 function groceryItemTemplate(row) {
   return `
     <div class="grocery-item-wrap" data-grocery-wrap-key="${escapeHtml(row.key)}">
-      <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag or long-press to organize; Alt+Arrow to reorder" aria-roledescription="Sortable item">
+      <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" data-grocery-row-key="${escapeHtml(row.key)}"${row.carried ? " data-grocery-carried" : ""} title="Drag or long-press to organize; Alt+Arrow to reorder" aria-roledescription="Sortable item">
         <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
         <span class="grocery-name">
           ${escapeHtml(row.displayName || row.item)}
@@ -3756,6 +3770,8 @@ function addManualGroceryItem(event) {
   }
   if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
   stampGroceryAdd(manualListStamps(), item, stampNow());
+  // Typing an item in means it is needed now: drop any bought marks it still carries.
+  resetBoughtMarks(state.checkedGroceries, state.groceryCleared, manualGroceryRow(item).key);
   const existingIndex = state.persistentManualGroceries.findIndex((existing) => normalize(existing) === normalize(item));
   if (existingIndex < 0) {
     state.persistentManualGroceries.push(item);
@@ -4242,6 +4258,60 @@ function setGroceryCleared(rowKey, cleared) {
   // trick the store-skip map uses, so a stale device's `true` can't resurrect a
   // clear the user has since undone (newer stateUpdatedAt wins the merge).
   state.groceryCleared[groceryClearedKey(rowKey)] = Boolean(cleared);
+}
+
+// rowKey → "retire" | "bought" for each manual item that was checked off in a
+// cycle other than the one on screen (grocery-bought.js has the rule and why).
+function manualCarryByRowKey() {
+  const out = new Map();
+  const items = manualGroceryItems();
+  if (!items.length) return out;
+  const index = boughtCyclesByKey(state.checkedGroceries, state.groceryCleared);
+  if (!index.size) return out;
+  const currentCycle = groceryCycleKey();
+  const today = dateKeyFromDate(new Date());
+  const stamps = manualListStamps();
+  items.forEach((value) => {
+    const rowKey = manualGroceryRow(value).key;
+    const cycles = index.get(rowKey);
+    if (!cycles) return;
+    const added = stamps[groceryKey(value)]?.added;
+    const carry = manualItemCarry(cycles, { currentCycle, today, addedDay: added ? dateKeyFromDate(new Date(added)) : "" });
+    if (carry) out.set(rowKey, carry);
+  });
+  return out;
+}
+
+// Runs each time the Shop page is opened (showShopApp), before it renders:
+//  1. Manual items bought in a cycle that has ended leave the manual list for good
+//     (a stamped removal), so they can't come back unchecked.
+//  2. Everything still checked is swept into "bought", as the broom would, and the
+//     "Show N bought" reveals are closed — the list opens showing only what's left
+//     to buy (Luke, 2026-10-06).
+// Saves only when something changed; opening the page with nothing to tidy writes nothing.
+function tidyGroceriesOnShopOpen() {
+  groceryBoughtShownStores.clear();
+  let changed = false;
+
+  const carry = manualCarryByRowKey();
+  if (carry.size) {
+    const before = manualGroceryItems().slice();
+    const kept = before.filter((value) => carry.get(manualGroceryRow(value).key) !== "retire");
+    if (kept.length !== before.length) {
+      state.persistentManualGroceries = kept;
+      stampGroceryListDiff(manualListStamps(), before, kept, stampNow());
+      changed = true;
+    }
+  }
+
+  const cycle = groceryCycleKey();
+  buildActiveNeedRows().forEach((row) => {
+    if (!state.checkedGroceries?.[groceryCheckedKey(cycle, row.key)] || isGroceryCleared(row.key)) return;
+    setGroceryCleared(row.key, true);
+    changed = true;
+  });
+
+  if (changed) persist();
 }
 
 function groceryBroomSvg() {
@@ -5034,6 +5104,7 @@ function shoppingListHas(name) {
 function addToShoppingList(name) {
   if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
   stampGroceryAdd(manualListStamps(), name, stampNow());
+  resetBoughtMarks(state.checkedGroceries, state.groceryCleared, manualGroceryRow(name).key);
   if (!shoppingListHas(name)) {
     state.persistentManualGroceries.push(name);
     state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
@@ -5181,6 +5252,7 @@ function renderShopReceipts() {
     handleGroceryStoreSearchKeydown,
     handleReceiptImagePreviewAction,
     initGroceryRange,
+    tidyGroceriesOnShopOpen,
     navigateGroceryWeek,
     openGroceryChecklistDialog,
     openGroceryLibraryDialog,
