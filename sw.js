@@ -1,7 +1,7 @@
 // v36: caching narrowed to same-origin static files (+ versioned CDN libs);
 // navigations keyed to "/" only when ok. Bumping the name also drops every
 // hashed /assets/ file the old worker accumulated across deploys.
-const CACHE = "live-v39";
+const CACHE = "live-v40";
 const PRECACHE = ["/", "/favicon.svg"];
 
 // Cross-origin hosts whose GET responses may be cached. Only versioned,
