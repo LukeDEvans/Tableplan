@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isFridayBeforeLastMeal, mealColumnIndexForTime, mealTimeWindowForLabel } from "../meal-plan-time.js";
+import {
+  eventDaySpan, eventRunsPastMidnight, isFridayBeforeLastMeal, mealColumnIndexForTime,
+  mealTimeWindowForLabel, mealtimeForLabel, spanCoversMealtime
+} from "../meal-plan-time.js";
 
 const at = (h, m = 0) => h * 60 + m;
 const standard = ["Breakfast", "Lunch", "Dinner"];
@@ -91,5 +94,86 @@ describe("mealTimeWindowForLabel", () => {
   it("returns null for a label that isn't a column", () => {
     expect(mealTimeWindowForLabel(standard, "Snack")).toBeNull();
     expect(mealTimeWindowForLabel(standard, "")).toBeNull();
+  });
+});
+
+describe("mealtimeForLabel", () => {
+  it("gives the standard meals their eating windows", () => {
+    expect(mealtimeForLabel(standard, "Breakfast")).toEqual([at(6), at(8)]);
+    expect(mealtimeForLabel(standard, "lunch")).toEqual([at(11, 30), at(13, 30)]);
+    expect(mealtimeForLabel(standard, "Dinner")).toEqual([at(17, 30), at(20)]);
+  });
+
+  it("gives custom meal types a mealtime inside their own slice of the day", () => {
+    const custom = ["Early", "Mid", "Late"];
+    expect(mealtimeForLabel(custom, "Early")).toEqual([at(6), at(8)]);
+    expect(mealtimeForLabel(custom, "Mid")).toEqual([at(11), at(13)]);
+    expect(mealtimeForLabel(custom, "Late")).toEqual([at(16), at(18)]);
+    // A custom column squeezed before a known meal stops where that meal starts.
+    const [start, end] = mealtimeForLabel(["Breakfast", "Snack", "Lunch", "Dinner"], "Snack");
+    expect(end).toBeLessThanOrEqual(at(11));
+    expect(end).toBeGreaterThan(start);
+  });
+
+  it("returns null for a label that isn't a column", () => {
+    expect(mealtimeForLabel(standard, "Snack")).toBeNull();
+    expect(mealtimeForLabel(standard, "")).toBeNull();
+  });
+});
+
+describe("which meals an event lands on", () => {
+  const timed = (startTime, endTime) => ({ allDay: false, startTime, endTime });
+  // Meals the given part of an event's day lands on, for a standard plan.
+  const mealsFor = (event, part) => standard.filter((meal) => (
+    spanCoversMealtime(eventDaySpan(event, part), mealtimeForLabel(standard, meal))
+  ));
+
+  it("puts an 8–4 workday on lunch only", () => {
+    expect(mealsFor(timed("08:00", "16:00"))).toEqual(["Lunch"]);
+  });
+
+  it("puts an evening shift on dinner only", () => {
+    expect(mealsFor(timed("15:00", "23:00"))).toEqual(["Dinner"]);
+    expect(mealsFor(timed("13:00", "21:00"))).toEqual(["Dinner"]);
+  });
+
+  it("puts an overnight shift on dinner, and on the next morning's breakfast only if it runs into it", () => {
+    const overnight = timed("19:00", "07:00");
+    expect(eventRunsPastMidnight(overnight)).toBe(true);
+    expect(mealsFor(overnight, "start")).toEqual(["Dinner"]);
+    expect(mealsFor(overnight, "end")).toEqual(["Breakfast"]);
+    expect(mealsFor(timed("18:00", "06:00"), "end")).toEqual([]);
+  });
+
+  it("puts an early shift on breakfast and lunch", () => {
+    expect(mealsFor(timed("06:00", "14:00"))).toEqual(["Breakfast", "Lunch"]);
+  });
+
+  it("keeps a workday that ends as dinner starts off dinner", () => {
+    expect(mealsFor(timed("09:00", "18:00"))).toEqual(["Lunch"]);
+  });
+
+  it("puts a short event on the meal it starts during", () => {
+    expect(mealsFor(timed("19:30", "21:00"))).toEqual(["Dinner"]);
+    expect(mealsFor(timed("12:00", "12:30"))).toEqual(["Lunch"]);
+    expect(mealsFor(timed("12:15", null))).toEqual(["Lunch"]);
+    expect(mealsFor(timed("10:00", "10:30"))).toEqual([]);
+    expect(mealsFor(timed("16:00", "17:15"))).toEqual([]);
+  });
+
+  it("puts all-day and untimed events on every meal", () => {
+    expect(mealsFor({ allDay: true })).toEqual(standard);
+    expect(mealsFor({ allDay: false, startTime: null })).toEqual(standard);
+    expect(mealsFor(timed("08:00", "16:00"), "mid")).toEqual(standard);
+  });
+
+  it("does not treat a same-day or open-ended event as running past midnight", () => {
+    expect(eventRunsPastMidnight(timed("08:00", "16:00"))).toBe(false);
+    expect(eventRunsPastMidnight(timed("08:00", null))).toBe(false);
+    expect(eventRunsPastMidnight({ allDay: true, startTime: "19:00", endTime: "07:00" })).toBe(false);
+  });
+
+  it("takes up none of the next day when the event ends at midnight", () => {
+    expect(eventDaySpan(timed("19:00", "00:00"), "end")).toBeNull();
   });
 });

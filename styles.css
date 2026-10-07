@@ -2530,7 +2530,7 @@ input.live-toggle:checked::before,
 }
 
 /* Header is a full-width toggle: title on the left, a quiet summary, a chevron.
-   The card defaults collapsed (body hidden) and expands on click. */
+   The card starts open; tapping the header closes it (body hidden) or reopens it. */
 .meal-context-toggle {
   display: flex;
   align-items: center;
@@ -2634,6 +2634,14 @@ input.live-toggle:checked::before,
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meal-context-event-time {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.7;
   white-space: nowrap;
 }
 
@@ -9063,9 +9071,15 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
     padding-bottom: 4px;
   }
 
+  /* Dragging one person's meal onto another's to merge them: only that meal's
+     column is a valid drop area, so it stays put and the other meals are hidden. */
   .day-slots-carousel.is-combining {
-    grid-template-columns: repeat(var(--meal-column-count, 4), minmax(0, 1fr));
+    overflow-x: hidden;
     scroll-snap-type: none;
+  }
+
+  .day-slots-carousel.is-combining > .meal-plan-column:not(.is-combine-column) {
+    display: none;
   }
 
   .meal-plan-page-actions {

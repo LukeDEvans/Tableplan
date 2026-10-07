@@ -13,7 +13,7 @@
 // the restore machinery, and the eat shell (activateEatShell). The legacy week.manualGroceries
 // field is untouched (Decision #2b).
 import * as LiveMealPlanServings from './meal-plan-servings.js';
-import { mealColumnIndexForTime, mealTimeWindowForLabel, minutesSinceMidnight } from './meal-plan-time.js';
+import { eventDaySpan, eventRunsPastMidnight, mealColumnIndexForTime, mealtimeForLabel, minutesSinceMidnight, spanCoversMealtime } from './meal-plan-time.js';
 import { hasMealAheadTask, restoreWeekPlan, snapshotWeekPlan } from './meal-plan-state.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { attachSwipeGesture } from './swipe-deck.js';
@@ -44,7 +44,8 @@ export const daySpecificDefaultMealEntries = [
   { dayId: "wednesday", meal: "MJ Dinner", index: 0, value: "leftovers" },
   { dayId: "wednesday", meal: "Luke Dinner", index: 0, value: "leftovers" }
 ];
-const expandedMealContext = new Set();
+// Events & Notes cards are open unless the user closed them (this session).
+const collapsedMealContext = new Set();
 
 // ── Pure normalizers (top-level exports; boot-safe) ───────────────────────
 export function defaultMealPlanConfig() {
@@ -116,7 +117,7 @@ export function groceryMealSlotId(item, servings = 1) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createMealplanModule(deps) {
   const {
-    state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, escapeHtml, focusGroceryLibraryInput, folderName, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog, openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
+    state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getOtherScopePlanEvents, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, escapeHtml, focusGroceryLibraryInput, folderName, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog, openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
   } = deps;
   _appState = state;
 
@@ -1656,26 +1657,78 @@ function setMealNote(dayId, meal, text) {
   persist();
 }
 
-function eventCoversMeal(event, meal) {
-  // Window derived from the configured meal columns (custom / any-case labels
-  // included) — see mealTimeWindowForLabel in meal-plan-time.js.
-  const win = mealTimeWindowForLabel(mealColumnConfigs.map((column) => column.label), meal);
-  if (!win) return false;
-  if (event.allDay || !event.startTime) return true;
-  const start = minutesOfDay(event.startTime);
-  if (start == null) return true;
-  const end = minutesOfDay(event.endTime);
-  const eEnd = (end != null && end > start) ? end : start;
-  // A point (no real end) covers the window containing it; a span overlaps any
-  // window it intersects.
-  if (eEnd === start) return start >= win[0] && start < win[1];
-  return start < win[1] && eEnd > win[0];
+// The Calendar keeps a household list and a personal list and holds only the
+// one it is showing in `state`; the other sits in the shadow copy. The meal
+// plan is always shared, so it reads both — otherwise an event ticked "Meal
+// Plan" vanished from here whenever the Calendar was on its other view.
+function mealPlanSharedEvents() {
+  const seen = new Set();
+  return [...(state.planEvents || []), ...(getOtherScopePlanEvents() || [])].filter((event) => {
+    if (!event?.showInMealPlan || !event.id || seen.has(event.id)) return false;
+    seen.add(event.id);
+    return true;
+  });
 }
 
+function dayBeforeKey(dateKey) {
+  return dateKeyFromDate(addDays(new Date(`${dateKey}T00:00:00`), -1));
+}
+
+// The stretches of `dateKey` this event takes up, as eventDaySpan() spans tagged
+// with the occurrence date they belong to. An event can contribute two: last
+// night's shift ending this morning and tonight's starting this evening.
+function mealEventSpansOn(event, dateKey) {
+  const spans = [];
+  const add = (part, occurrenceDate) => {
+    const span = eventDaySpan(event, part);
+    if (span) spans.push({ ...span, occurrenceDate });
+  };
+  // A one-off event with an end date covers every day it spans (as on the Calendar).
+  if (!event.recurrence && event.endDate && event.endDate > event.date) {
+    if (dateKey >= event.date && dateKey <= event.endDate && !(event.exceptions || []).includes(dateKey)) {
+      add(dateKey === event.date ? "start" : dateKey === event.endDate ? "end" : "mid", event.date);
+    }
+    return spans;
+  }
+  const pastMidnight = eventRunsPastMidnight(event);
+  if (pastMidnight) {
+    const dayBefore = dayBeforeKey(dateKey);
+    if (planEventOccursOn(event, dayBefore)) add("end", dayBefore);
+  }
+  if (planEventOccursOn(event, dateKey)) add(pastMidnight ? "start" : "single", dateKey);
+  return spans;
+}
+
+// "8a", "7:30p" — compact enough to sit inside an event chip.
+function mealEventClock(hhmm) {
+  const total = minutesOfDay(hhmm);
+  if (total == null) return "";
+  const hour = Math.floor(total / 60) % 24;
+  const minute = total % 60;
+  return `${hour % 12 || 12}${minute ? `:${String(minute).padStart(2, "0")}` : ""}${hour < 12 ? "a" : "p"}`;
+}
+
+function mealEventTimeLabel(event, span) {
+  if (span.allDay) return "";
+  const start = mealEventClock(event.startTime);
+  const end = mealEventClock(event.endTime);
+  if (!span.startsHere) return end ? `until ${end}` : "";
+  return end && end !== start ? `${start}–${end}` : start;
+}
+
+// Events shared with the meal plan that land on this meal: the event has to take
+// up the meal's mealtime (see meal-plan-time.js), so an 8–4 workday shows on
+// Lunch only and an evening or overnight shift shows on Dinner.
 function mealContextEvents(dateKey, meal) {
-  return (state.planEvents || [])
-    .filter((e) => e.showInMealPlan && planEventOccursOn(e, dateKey) && eventCoversMeal(e, meal))
-    .sort((a, b) => String(a.startTime || "").localeCompare(String(b.startTime || "")));
+  const mealtime = mealtimeForLabel(mealColumnConfigs.map((column) => column.label), meal);
+  if (!mealtime) return [];
+  return mealPlanSharedEvents()
+    .map((event) => {
+      const span = mealEventSpansOn(event, dateKey).find((candidate) => spanCoversMealtime(candidate, mealtime));
+      return span ? { event, span } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.span.allDay ? -1 : a.span.start) - (b.span.allDay ? -1 : b.span.start));
 }
 
 function autosizeMealNote(textarea) {
@@ -1689,15 +1742,17 @@ function mealContextCardTemplate(day, column) {
   // whole meal, independent of any per-person split.
   const key = column.label;
   const ctxKey = `${day.id}|${key}`;
-  const expanded = expandedMealContext.has(ctxKey);
+  const expanded = !collapsedMealContext.has(ctxKey);
   const dateKey = dateKeyFromDate(addDays(getCurrentWeek(), day.offset));
   const note = mealNoteValue(day.id, key);
   const events = mealContextEvents(dateKey, key);
-  const chips = events.map((e) => {
+  const chips = events.map(({ event: e, span }) => {
     const color = e.color || PLAN_COLORS[0];
-    return `<button type="button" class="meal-context-event" data-meal-event-id="${escapeHtml(e.id)}" data-meal-event-date="${escapeHtml(dateKey)}" title="Edit event">
+    const time = mealEventTimeLabel(e, span);
+    return `<button type="button" class="meal-context-event" data-meal-event-id="${escapeHtml(e.id)}" data-meal-event-date="${escapeHtml(span.occurrenceDate || dateKey)}" title="Edit event">
         <span class="meal-context-event-dot" style="background:${escapeHtml(color)}"></span>
         <span class="meal-context-event-title">${escapeHtml(e.title)}</span>
+        ${time ? `<span class="meal-context-event-time">${escapeHtml(time)}</span>` : ""}
       </button>`;
   }).join("");
   // A quiet summary on the collapsed header hints at what's inside.
@@ -1723,9 +1778,9 @@ function mealContextCardTemplate(day, column) {
 function toggleMealContext(dayId, key) {
   const ctxKey = `${dayId}|${key}`;
   const card = elements.plannerGrid.querySelector(`.meal-context-card[data-day="${CSS.escape(dayId)}"][data-meal="${CSS.escape(key)}"]`);
-  const expand = !expandedMealContext.has(ctxKey);
-  if (expand) expandedMealContext.add(ctxKey);
-  else expandedMealContext.delete(ctxKey);
+  const expand = collapsedMealContext.has(ctxKey);
+  if (expand) collapsedMealContext.delete(ctxKey);
+  else collapsedMealContext.add(ctxKey);
   if (!card) return;
   card.classList.toggle("is-expanded", expand);
   card.querySelector("[data-meal-context-toggle]")?.setAttribute("aria-expanded", String(expand));
@@ -2561,11 +2616,25 @@ function handleMealSectionDragStart(event) {
   event.stopPropagation();
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("text/plain", JSON.stringify(draggedMealSection));
-  const carousel = event.currentTarget.closest(".day-slots-carousel");
+  // Meals only merge within their own column (Luke Lunch + Sophia Lunch), so
+  // that column is the whole drop area. On a phone the carousel is pinned to it
+  // for the length of the drag — the other meals are hidden and can't scroll in.
+  const column = event.currentTarget.closest(".meal-plan-column");
+  const carousel = column?.closest(".day-slots-carousel");
   if (carousel) {
-    carousel.classList.add("is-combining");
-    carousel.scrollLeft = 0;
+    keepColumnInPlace(carousel, column, () => {
+      column.classList.add("is-combine-column");
+      carousel.classList.add("is-combining");
+    });
   }
+}
+
+// Run a layout change on the carousel without the given column moving on screen
+// (the card under the finger must not jump when its neighbours hide or return).
+function keepColumnInPlace(carousel, column, change) {
+  const before = column ? column.getBoundingClientRect().left : 0;
+  change();
+  if (column) carousel.scrollLeft += column.getBoundingClientRect().left - before;
 }
 
 function handleMealSectionDragOver(event) {
@@ -2583,14 +2652,23 @@ function handleMealSectionDrop(event) {
   target.classList.remove("section-drag-over");
   if (!canCombineMealSections(draggedMealSection.day, draggedMealSection.meal, target.dataset.day, target.dataset.meal)) return;
   event.preventDefault();
-  combineMealSections(draggedMealSection.day, draggedMealSection.meal, target.dataset.meal);
+  const { day, meal } = draggedMealSection;
+  // Un-pin the carousel first: the re-render below keeps whatever scroll position
+  // it finds, and that has to be this meal's column, not the pinned layout's.
   clearMealSectionDragState();
+  combineMealSections(day, meal, target.dataset.meal);
 }
 
 function clearMealSectionDragState() {
   draggedMealSection = null;
   elements.plannerGrid.querySelectorAll(".section-drag-over").forEach((slot) => slot.classList.remove("section-drag-over"));
-  elements.plannerGrid.querySelectorAll(".day-slots-carousel.is-combining").forEach((c) => c.classList.remove("is-combining"));
+  elements.plannerGrid.querySelectorAll(".day-slots-carousel.is-combining").forEach((carousel) => {
+    const column = carousel.querySelector(".meal-plan-column.is-combine-column");
+    keepColumnInPlace(carousel, column, () => {
+      carousel.classList.remove("is-combining");
+      column?.classList.remove("is-combine-column");
+    });
+  });
 }
 
 function handleMealTrashDragOver(event) {
