@@ -16,6 +16,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
+- [ ] **[P2] Finance review card is taller than the standard notifications window on a phone** (finance · styles.css `.fin-review-body` · finance-ui.js renderFinanceReviewDeck · 2026-10-06)
+      At the Meal Plan window's size the card (amount, category, name, note, Sign/Split/Receipt, Approve, Edit details, Skip) doesn't fit: on 390×844 the Approve button is cut at the fold, on 360×640 everything below Category is. The card body scrolls and swipe-right still approves, so nothing is unreachable. → Tighten the card (smaller amount, name and note behind "Edit details…") or pin Approve/Skip as a footer. A layout call for Luke.
 - [ ] **[P2] Dock blue: the mini-player was only looked at with nothing playing** (media · styles.css `.bottom-dock .mini-player-*` · 2026-10-06)
       The time readout, skip-back button and progress fill were given the dock's white, but the browser check ran with no audio loaded, where they are hidden. → Play an episode and look at the bar. Also: an alert line on the weather slide is now amber (`#ffd166`) since tomato was unreadable on the blue; Luke hasn't seen that colour.
 - [ ] **[P2] Notifications-window standard: Mail and Finance auto-close not exercised with real data** (mail · app.js renderMailSuggestions / #mailSuggCheckNow · finance · finance-ui.js updateFinanceReviewProgress · 2026-10-06)
