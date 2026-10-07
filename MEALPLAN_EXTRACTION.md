@@ -308,6 +308,9 @@ gap that let this through. Re-scanned all modules: `mealplan-ui.js`, `recipes-ui
   early return) and `hasMealAheadTask` (make/prep-ahead de-dupe across `doBacklog` + `doPlans`).
 - `meal-plan-time.js` gained `mealTimeWindowForLabel` — the meal-context event windows now derive
   from the configured meal columns (the old `MEAL_TIME_WINDOWS` const is gone).
+  *(2026-10-07: events no longer use these column windows. They land on a meal by its **mealtime**
+  — `mealtimeForLabel` / `eventDaySpan` / `spanCoversMealtime`, same file — and the meal plan reads
+  "Meal Plan" events from both Calendar scopes through the injected `getOtherScopePlanEvents`.)*
 - Dead code removed (zero repo references): the old HTML5 meal-entry drag handlers + pointer-delete
   gesture, `repeatMeal`, `applyDefaultMealEntry(ies)`, `mealPlanNutritionTotals`,
   `collapseAllPlannerDays`, `renderMealRestaurantArea`, `isWeekdayBreakfastSlot`,

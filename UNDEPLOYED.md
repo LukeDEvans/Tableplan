@@ -12,4 +12,11 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-07 (PRs #59–#70)._
 
-_(nothing waiting)_
+- **Meal plan: events land on the meal they take up; Events & Notes open by default** · PR #72
+  - A "Meal Plan" event shows whichever Calendar view (household / personal) is open; events show
+    only on the meals they take up (8–4 workday → Lunch; evening / overnight shift → Dinner);
+    Events & Notes cards start open; on a phone, dragging one person's meal onto another's shows
+    only that meal's column.
+  - **After deploy:** on the phone, open Meal Plan on a workday and check "Work 8a–4p" is under
+    Lunch only, with the Calendar on each of its two views. Merge two people's lunch by dragging
+    (a real finger drag was not tested) and check only the Lunch cards show during the drag.

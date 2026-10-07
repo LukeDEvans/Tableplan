@@ -2034,6 +2034,9 @@ const _mealplan = createMealplanModule({
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
   getCurrentWeek: () => currentWeek,
+  // The Calendar scope the user is NOT viewing (household vs personal) — the shared
+  // meal plan shows "Meal Plan" events from both.
+  getOtherScopePlanEvents: () => shadowSections.plan?.planEvents || [],
   getDraggedDoTask: () => draggedDoTask,
   getDraggedPlayTask: () => draggedPlayTask,
   getActivePlannerDayId: () => activePlannerDayId, setActivePlannerDayId: (v) => { activePlannerDayId = v; },
