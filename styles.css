@@ -13335,6 +13335,21 @@ body[data-theme="dark"] .watch-provider-link:hover {
 
 /* ── Inventory page ─────────────────────────────────────────────── */
 #inventoryMainPage { overflow-y: auto; }
+/* No window frame, to match Shop (Luke, 2026-10-06): Checklist · Shop · Inventory
+   are one set of tabs, so the frame must not come and go between them. */
+#inventoryMainPage.planner-column {
+  border: 0;
+  box-shadow: none;
+  padding: 4px 0 0; /* puts the tabs at the same height as Shop's */
+}
+#inventoryMainPage #inventorySpaceTabBar .watch-category-tabs {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+/* Same right inset Shop's bar has, so the three tabs don't shift between pages. */
+#inventoryMainPage #inventorySpaceTabBar { padding-right: 12px; }
+#inventoryMainPage .inventory-rooms-grid { padding: 12px 10px; }
+#inventoryMainPage .inventory-toolbar { padding: 6px 10px 0; }
 
 /* Inventory — Room Card Grid */
 .inventory-layout {

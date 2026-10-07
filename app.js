@@ -6349,15 +6349,17 @@ function mergeStates(newer, older) {
 
   // Grocery weekly checklist: per-cycle provisional answers and submissions are
   // keyed by cycle → union (newer wins per cycle), so a submission made on one
-  // device survives the other's sync. The item `config` list is authoritative
-  // as a whole (it carries deletions and order) → newer wins.
+  // device survives the other's sync. The item `config` list is a union by id:
+  // an item leaves only through a tombstoned removal, never by being absent from
+  // one copy — "newer wins" let a device holding an empty list erase the
+  // household's checklist (grocery-sources.js mergeChecklistConfig has the story).
   if (newer.groceryChecklist || older.groceryChecklist) {
     const nCl = newer.groceryChecklist || {};
     const oCl = older.groceryChecklist || {};
     merged.groceryChecklist = {
       ...oCl,
       ...nCl,
-      config: Array.isArray(nCl.config) ? nCl.config : (oCl.config || []),
+      config: LiveGrocerySources.mergeChecklistConfig(nCl.config, oCl.config, merged.tombstones?.[LiveGrocerySources.CHECKLIST_CONFIG_TOMBSTONES]),
       provisional: unionByKey(nCl.provisional, oCl.provisional),
       submissions: unionByKey(nCl.submissions, oCl.submissions),
       seeded: Boolean(nCl.seeded || oCl.seeded),
@@ -8068,9 +8070,13 @@ function showInventoryApp(event) {
   setShopSpaceValue("inventory");
   hideAllPages();
   elements.inventoryMainPage.hidden = false;
-  setWeekToolsMode("today");
+  // Inventory is a space of the Shop page, not a page of its own (Luke, 2026-10-06):
+  // it carries Shop's title and Shop's date header, so the header doesn't change
+  // when switching between Checklist · Shop · Inventory.
+  initGroceryRange();
+  setWeekToolsMode("shop");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Inventory");
+  setPageTitle("Shop");
   setPageHash("stock");
   renderInventoryPage();
   closePageTitleMenu();
@@ -8083,6 +8089,8 @@ function showShopApp(event) {
     showHomeApp();
     return;
   }
+  // Coming back from the Inventory space is a tab switch, not opening the page.
+  const openingShop = activeAppArea !== "shop" && activeAppArea !== "inventory";
   activeAppArea = "shop";
   // Arriving on the Shop page from elsewhere lands on the Shop space (not a
   // lingering Inventory selection). Checklist persists if that's where we were.
@@ -8096,7 +8104,7 @@ function showShopApp(event) {
   initGroceryRange();
   // Opening Shop sweeps checked items into "bought" and retires bought manual
   // items from ended cycles (groceries-ui.js), so the list opens on what's left.
-  tidyGroceriesOnShopOpen();
+  if (openingShop) tidyGroceriesOnShopOpen();
   renderShopPage();
   closePageTitleMenu();
   closeAppMenu();
@@ -11679,7 +11687,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "do") return "Tasks";
   if (activeAppArea === "play") return "Exercise";
   if (activeAppArea === "plan") return "Calendar";
-  if (activeAppArea === "inventory") return "Inventory";
+  if (activeAppArea === "inventory") return "Shop"; // a space of the Shop page
   if (activeAppArea === "watch") return "Watch";
   if (activeAppArea === "media") return "Media";
   if (activeAppArea === "shop") return "Shop";
@@ -16143,7 +16151,7 @@ function updatePageTitleMenu() {
   elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPagePersonallyEnabled("eat");
   elements.titleToDoListBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no top-level nav button
   elements.titleWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no top-level nav button
-  elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
+  elements.titleShopBtn.hidden = activeAppArea === "shop" || activeAppArea === "inventory" || !isPagePersonallyEnabled("shop");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !recreateHubEnabled(isPagePersonallyEnabled);
   if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
