@@ -30,6 +30,7 @@ import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
 import { normalizeExternalEvent } from './calendar/normalize.js';
+import { buildSharedSnapshot, mealPlanDisplayEvents, mealPlanEventsFromScope, mergeMealPlanSharedEvents, normalizeMealPlanCalendarFlags, normalizeMealPlanSharedEvents } from './calendar/meal-plan-share.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
@@ -268,6 +269,9 @@ const state = loadState();
 // stamps whatever differs from this (see settings-sync.js). Re-adopted after any
 // change that did NOT come from the user (a cloud load or merge).
 let settingsBaseline = settingsSnapshot(state);
+// What this member's shared meal-plan snapshot looked like when it was last known
+// not to have been changed HERE (see syncOwnMealPlanShare). null until first taken.
+let mealPlanShareBaseline = null;
 // When a just-changed setting must be on its way to the cloud by (0 = none
 // pending). Settings jump the 30s write spacing: they're rare, deliberate, and
 // the first thing lost if the app is closed before the debounced save.
@@ -298,13 +302,13 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
-  eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
+  eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking", "mealPlanSharedEvents"],
   grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders", "grocerySettingStamps"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
   media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "mediaQueueAdded", "mediaQueueRemoved", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps"],
-  plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
+  plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "recreateSettingStamps"],
@@ -934,9 +938,6 @@ function clearCalendarSourceCache(source) {
 }
 let editingPlanEventId = null;
 let editingPlanEventOccurrenceDate = null; // which occurrence of a recurring event was opened
-// Which meal-plan context cards are expanded, keyed "dayId|columnLabel". Transient
-// (defaults collapsed each load). Declared here — above the top-level render() —
-// so mealContextCardTemplate never hits it in its temporal dead zone.
 let suppressNextWeekLabelClick = false;
 let restaurantSearchTimer = null;
 let restaurantSearchSuggestions = [];
@@ -2034,9 +2035,10 @@ const _mealplan = createMealplanModule({
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
   getCurrentWeek: () => currentWeek,
-  // The Calendar scope the user is NOT viewing (household vs personal) — the shared
-  // meal plan shows "Meal Plan" events from both.
-  getOtherScopePlanEvents: () => shadowSections.plan?.planEvents || [],
+  // Every calendar event that belongs on the shared meal plan: both of this
+  // device's Calendar scopes plus what other household members shared.
+  getMealPlanCalendarEvents: () => mealPlanCalendarEvents(),
+  getMealPlanMemberLabel: (userId) => normalizeMealPlanConfig(state.mealPlanConfig).members.find((m) => m.linkedUserId === userId)?.label || "",
   getDraggedDoTask: () => draggedDoTask,
   getDraggedPlayTask: () => draggedPlayTask,
   getActivePlannerDayId: () => activePlannerDayId, setActivePlannerDayId: (v) => { activePlannerDayId = v; },
@@ -4496,11 +4498,69 @@ function stampChangedSettings() {
 // take them as the new baseline so the next persist() doesn't stamp them.
 function adoptSettingsBaseline() {
   settingsBaseline = settingsSnapshot(state);
+  adoptMealPlanShareBaseline();
+}
+
+// ── Calendar → Meal Plan sharing (logic in calendar/meal-plan-share.js) ──────
+// This device's fetched copy of a subscribed feed, or null if it has none.
+function planFeedCacheFor(cal) {
+  const cached = planCalendarCache[cal?.id];
+  return cached && Array.isArray(cached.events) ? cached.events : null;
+}
+
+// Everything the meal plan shows from calendars: both Calendar scopes this device
+// holds (the one on screen is in `state`, the other in the shadow copy), then
+// what other household members shared from their personal calendars.
+function mealPlanCalendarEvents() {
+  const live = [mealPlanEventsFromScope(state, planFeedCacheFor)];
+  if (shadowSections.plan) live.push(mealPlanEventsFromScope(shadowSections.plan, planFeedCacheFor));
+  return mealPlanDisplayEvents(live, state.mealPlanSharedEvents, authSession?.user?.id || "");
+}
+
+// The snapshot this member's PERSONAL calendar shares with the household (the
+// household calendar needs none — every member's devices load it already).
+function ownMealPlanShare() {
+  const userId = authSession?.user?.id;
+  if (!userId) return null;
+  const personal = sectionScope("plan") === "personal" ? state : shadowSections.plan;
+  if (!personal) return null;
+  return { userId, snapshot: buildSharedSnapshot(personal, { cacheFor: planFeedCacheFor, previous: state.mealPlanSharedEvents?.[userId] }) };
+}
+
+function adoptMealPlanShareBaseline() {
+  const own = ownMealPlanShare();
+  mealPlanShareBaseline = own ? JSON.stringify(own.snapshot.events) : null;
+}
+
+// Runs inside persist(). Rewrites this member's entry in the shared `eat`
+// section only when the snapshot changed ON THIS DEVICE since the baseline (an
+// event edit, a calendar switched on, a freshly fetched feed), when there is no
+// entry yet, or when the weekly window moved on. A device that merely holds an
+// older copy of the calendar never rewrites it — that would put stale events
+// back, and two devices would keep overwriting each other.
+function syncOwnMealPlanShare() {
+  if (bootedWithEmptyStorage && !sharedStorageReady) { adoptMealPlanShareBaseline(); return; }
+  const own = ownMealPlanShare();
+  if (!own) return;
+  const { userId, snapshot } = own;
+  const signature = JSON.stringify(snapshot.events);
+  const stored = state.mealPlanSharedEvents?.[userId];
+  const changedHere = mealPlanShareBaseline !== null && signature !== mealPlanShareBaseline;
+  const missing = !stored && snapshot.events.length > 0;
+  const windowMoved = Boolean(stored) && stored.windowStart !== snapshot.windowStart;
+  mealPlanShareBaseline = signature;
+  if (!changedHere && !missing && !windowMoved) return;
+  if (stored && stored.windowStart === snapshot.windowStart && JSON.stringify(stored.events) === signature) return;
+  state.mealPlanSharedEvents = {
+    ...(state.mealPlanSharedEvents || {}),
+    [userId]: { updatedAt: state.stateUpdatedAt, windowStart: snapshot.windowStart, events: snapshot.events }
+  };
 }
 
 function persist() {
   state.stateUpdatedAt = new Date().toISOString();
   stampChangedSettings();
+  syncOwnMealPlanShare();
   planRangeCache.clear(); // any state change can affect the calendar's merged events
   planAppDataIndex = null;
   // Decision #1 Phase 2: calendarSources is the read-model the Plan UI now reads;
@@ -4737,6 +4797,8 @@ function defaultState() {
     planHiddenSources: {},
     planExternalExclusions: [],
     planExternalOverrides: [],
+    planMealPlanCalendars: {},
+    mealPlanSharedEvents: {},
     contacts: [],
     contactGroups: [],
     weatherLocations: [],
@@ -5008,6 +5070,8 @@ function normalizeState(parsed) {
     planHiddenSources: (parsed?.planHiddenSources && typeof parsed.planHiddenSources === "object") ? parsed.planHiddenSources : {},
     planExternalExclusions: normalizePlanExternalExclusions(parsed?.planExternalExclusions),
     planExternalOverrides: normalizePlanExternalOverrides(parsed?.planExternalOverrides),
+    planMealPlanCalendars: normalizeMealPlanCalendarFlags(parsed?.planMealPlanCalendars),
+    mealPlanSharedEvents: normalizeMealPlanSharedEvents(parsed?.mealPlanSharedEvents),
     contacts: normalizeContacts(parsed?.contacts, createId),
     contactGroups: normalizeContactGroups(parsed?.contactGroups),
     weatherLocations: Array.isArray(parsed?.weatherLocations) ? parsed.weatherLocations.filter((l) => l && isFinite(l.latitude) && isFinite(l.longitude)) : [],
@@ -6413,6 +6477,10 @@ function mergeStates(newer, older) {
   // ── Meal plan config: union members, prefer customized labels ─────────────
   merged.mealPlanConfig = mergeMealPlanConfig(newer.mealPlanConfig, older.mealPlanConfig);
 
+  // ── Calendar events shared with the meal plan: one entry per member, each
+  // rewritten whole by its owner — the later copy wins per member.
+  merged.mealPlanSharedEvents = mergeMealPlanSharedEvents(newer.mealPlanSharedEvents, older.mealPlanSharedEvents);
+
   // ── Non-empty string fields: blank newer must never erase saved data ──────
   merged.emailPrefs = newer.emailPrefs || older.emailPrefs || "";
   merged.appName = newer.appName || older.appName || "";
@@ -6431,7 +6499,7 @@ function mergeStates(newer, older) {
   // stateUpdatedAt used to put the old value back). Runs last so it overrides
   // the rules above only where a stamp exists. Also merges the per-section
   // stamp maps ("configSettingStamps", "mediaSettingStamps",
-  // "grocerySettingStamps", "recreateSettingStamps") — see settings-sync.js.
+  // "grocerySettingStamps", "recreateSettingStamps", "planSettingStamps") — see settings-sync.js.
   mergeTrackedSettings(merged, newer, older);
 
   // Preserve the actual data timestamp — only persist() (user-initiated changes) should advance it.
@@ -27009,12 +27077,29 @@ function setPlanCalDialogMode(editing) {
   if (delBtn) delBtn.hidden = !editing;
 }
 
+// The "Show on Meal Plan" switch in the Add/Edit Calendar dialog.
+function setPlanCalMealPlanToggle(on, available) {
+  const row = document.getElementById("planCalMealPlanRow");
+  const input = document.getElementById("planCalMealPlan");
+  if (row) row.hidden = !available;
+  if (input) input.checked = Boolean(on);
+}
+
+// Record the switch for one calendar. A new object each time, so the change is
+// seen (and stamped) as this calendar's own setting — see settings-sync.js.
+function setCalendarOnMealPlan(id, on) {
+  const flags = normalizeMealPlanCalendarFlags(state.planMealPlanCalendars);
+  if (Boolean(flags[id]) === Boolean(on)) return;
+  state.planMealPlanCalendars = { ...flags, [id]: Boolean(on) };
+}
+
 function openAddPlanCalDialog() {
   planCalDialogEditId = null;
   const used = usedCalendarColors();
   elements.planNewCalName.value = "";
   elements.planNewCalUrl.value = "";
   renderCalendarColorPicker(elements.planNewCalColorPicker, firstUnusedPlanColor(used), "planNewCalColor", used);
+  setPlanCalMealPlanToggle(false, true);
   setPlanCalDialogMode(false);
   elements.planAddCalDialog.showModal();
   requestAnimationFrame(() => elements.planNewCalName.focus());
@@ -27028,6 +27113,9 @@ function openEditCalDialog(id) {
   elements.planNewCalName.value = cal.name || "";
   elements.planNewCalUrl.value = cal.url || "";
   renderCalendarColorPicker(elements.planNewCalColorPicker, cal.color, "planNewCalColor", usedCalendarColors(id));
+  // Google calendars already show on the meal plan's day strip, so the switch is
+  // for the calendars whose events carry times: your own and subscribed feeds.
+  setPlanCalMealPlanToggle(Boolean(state.planMealPlanCalendars?.[id]), store === "planCalendars");
   setPlanCalDialogMode(true);
   elements.planAddCalDialog.showModal();
   requestAnimationFrame(() => elements.planNewCalName.focus());
@@ -27507,6 +27595,7 @@ async function addPlanCalendar() {
   const url = elements.planNewCalUrl.value.trim();
   const color = elements.planNewCalColorPicker.querySelector("input:checked")?.value
     || firstUnusedPlanColor(usedCalendarColors(planCalDialogEditId));
+  const showOnMealPlan = Boolean(document.getElementById("planCalMealPlan")?.checked);
 
   // Edit mode: update the existing calendar's name / color / url in place.
   if (planCalDialogEditId) {
@@ -27518,6 +27607,7 @@ async function addPlanCalendar() {
     if (!existing) return;
     const urlChanged = (existing.url || "") !== url;
     state[store] = (state[store] || []).map((c) => c.id === id ? { ...c, name, color, url } : c);
+    if (store === "planCalendars") setCalendarOnMealPlan(id, showOnMealPlan);
     persist();
     maybeWriteCloudSnapshot({ force: true }).catch(() => {});
     renderPlanCalList();
@@ -27549,6 +27639,7 @@ async function addPlanCalendar() {
   // (and lands in the derived calendarSources) immediately, not only after a reload.
   // normalizePlanCalendars preserves ids, so newCal's id is unchanged.
   state.planCalendars = normalizePlanCalendars([...(state.planCalendars || []), newCal]);
+  if (showOnMealPlan) setCalendarOnMealPlan(newCal.id, true);
   persist();
   maybeWriteCloudSnapshot({ force: true }).catch(() => {});
   renderPlanCalList();

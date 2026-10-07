@@ -24,6 +24,7 @@ export const SETTING_STAMP_KEYS = Object.freeze({
   media: "mediaSettingStamps",
   grocery: "grocerySettingStamps",
   recreate: "recreateSettingStamps",
+  plan: "planSettingStamps",
 });
 
 // Section → { stateKey: mode }.
@@ -67,6 +68,9 @@ export const TRACKED_SETTINGS = Object.freeze({
   }),
   recreate: Object.freeze({
     recreateHobbies: "fields",
+  }),
+  plan: Object.freeze({
+    planMealPlanCalendars: "fields", // { calendarId: on } — "Show on Meal Plan" per calendar
   }),
 });
 

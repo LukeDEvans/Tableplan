@@ -12755,6 +12755,10 @@ body[data-theme="dark"] .watch-provider-link:hover {
 .plan-cal-dialog .plan-title-input::placeholder { color: var(--muted); font-weight: 500; }
 .plan-cal-dialog .plan-title-input:focus { border-bottom-color: var(--accent); }
 .plan-cal-dialog .plan-cal-url-input { font-size: 0.92rem; font-weight: 500; }
+/* "Show on Meal Plan": label left, house toggle right (sized back up from the
+   .plan-todo-toggle checkbox rule this row otherwise inherits). */
+.plan-cal-mealplan-toggle { justify-content: space-between; font-weight: 600; }
+.plan-cal-mealplan-toggle input.live-toggle { width: 36px; height: 20px; }
 .plan-cal-delete-btn {
   border: none; background: none; color: #c62828; font: inherit; font-weight: 600;
   cursor: pointer; padding: 8px 4px;
