@@ -15606,6 +15606,16 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   fill: none;
   flex-shrink: 0;
 }
+/* Media's menu: larger text and taller rows, so each tab is an easy target
+   (17px text in a 48px row; the shared rule above is 14px in about 34px). */
+#mediaSidebar .article-sidebar-tab {
+  font-size: 1.0625rem;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  gap: 14px;
+  min-height: 48px;
+}
+#mediaSidebar .article-sidebar-icon { width: 22px; height: 22px; }
 .article-sidebar-divider {
   height: 1px;
   background: color-mix(in srgb, var(--ink) 8%, transparent);
@@ -15850,14 +15860,42 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .listen-player-text p { margin: 0 0 1em; }
 .listen-play-btn { display: inline-flex; align-items: center; gap: 6px; }
 .listen-play-btn svg { flex-shrink: 0; }
-.listen-speed-select {
+/* Playback speed: − value + (playback-speed.js). One 0.25 step per tap. */
+.speed-stepper {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
   border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
-  border-radius: 6px;
-  padding: 4px 6px;
-  font-size: 0.82rem;
+  border-radius: 999px;
   background: var(--paper, #fff);
   color: var(--ink);
+}
+.speed-step-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 1.25rem;
+  line-height: 1;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation; /* quick repeat taps must not zoom the page */
+}
+.speed-step-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.speed-step-btn:active:not(:disabled) { transform: scale(0.9); }
+.speed-step-btn:disabled { opacity: 0.3; cursor: default; }
+.speed-step-val {
+  min-width: 3.1em;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Article save dialog */
@@ -17406,14 +17444,15 @@ body.has-mini-player .app-shell { padding-bottom: max(0px, calc(var(--mini-playe
 .np-desc--empty { color: var(--text-muted, #888); font-style: italic; }
 /* Drag-handle affordance + swipe-down-to-close (wireNowPlayingSwipeDown). */
 .np-grabber { width: 40px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 18%, transparent); margin: -8px auto 12px; }
-/* Playback-speed pill, cycles 0.75×–2×. */
+/* Opened with nothing loaded: what's up next, with just a play button (there is
+   no position to seek or skip within yet). */
+.np-modal--idle .np-seek-row, .np-modal--idle #npBack, .np-modal--idle #npFwd { display: none; }
+/* Playback speed in the Now-Playing window: label left, − value + right. */
 .np-extra { display: flex; justify-content: center; margin: 0 0 16px; }
-.np-speed-row { display: flex; align-items: center; gap: 12px; width: 100%; }
+.np-speed-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
 .np-speed-label { font-size: 0.8rem; font-weight: 700; color: color-mix(in srgb, var(--ink) 65%, transparent); text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0; }
-.np-speed-val { min-width: 3.2em; text-align: right; font-weight: 800; font-size: 0.9rem; color: var(--window-border); font-variant-numeric: tabular-nums; flex-shrink: 0; }
-.np-speed-slider { flex: 1; min-width: 0; height: 4px; -webkit-appearance: none; appearance: none; background: color-mix(in srgb, var(--ink) 15%, transparent); border-radius: 3px; cursor: pointer; }
-.np-speed-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--window-border); cursor: pointer; }
-.np-speed-slider::-moz-range-thumb { width: 18px; height: 18px; border: none; border-radius: 50%; background: var(--window-border); cursor: pointer; }
+.np-speed-row .speed-step-btn { width: 44px; height: 44px; font-size: 1.4rem; }
+.np-speed-row .speed-step-val { font-size: 1rem; color: var(--window-border); }
 
 /* ── AI Recipe Toolbar ────────────────────────────────────────────────────── */
 .recipe-ai-toolbar {
@@ -18183,12 +18222,9 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 /* Reading an article is a focused view — hide the Media search/menu/notifications
    top bar while the reader is open (the reader has its own Back button). */
 #mediaMainPage:has(#articleReaderPanel:not([hidden])) .media-topbar { display: none; }
-/* Icon-only play/pause + a clearly visible speed control (Stop, the text label,
-   and the trash button were removed to give the speed select room). */
+/* Icon-only play/pause beside the speed control (Stop, the text label and the
+   trash button were removed to give the speed control room). */
 #mediaMainPage .article-reader-actions .listen-play-btn { width: 40px; height: 40px; }
-#mediaMainPage .article-reader-actions .listen-speed-select {
-  min-width: 64px; height: 36px; padding: 0 8px; font-size: 0.9rem;
-}
 /* The old top-right scope toggle is now hidden (it moved to Settings → View),
    so the podcast tab bar no longer reserves room for it — let the search and
    archive buttons sit flush against the right edge of the window. */
@@ -23162,7 +23198,7 @@ body:not(.app-authed) .bottom-dock { display: none; }
 .bottom-dock .mini-player-play-btn:hover { background: var(--dock-hover); }
 
 /* Idle mini-player: nothing loaded — shows what play would start. */
-.mini-player.is-idle .mini-player-expand-btn,
+/* The expand button stays when idle: the Now-Playing window opens on what's up next. */
 .mini-player.is-idle .mini-player-progress-fill { visibility: hidden; }
 .mini-player.is-idle .mini-player-title-inner { font-weight: 550; }
 /* Mouse/trackpad stand-in for "swipe up" (touch devices swipe instead). */
