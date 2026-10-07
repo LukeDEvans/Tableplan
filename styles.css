@@ -23125,20 +23125,24 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 
 
 /* ══ Bottom dock: permanent, swipeable ticker (mini-player, weather, …) ═══════ */
-.weather-ticker {
-  --wx-sky1:#8ec5e8; --wx-sky2:#d3e6f3; --wx-sky-ink:#0e2233;
-  --wx-cloud1:#9fb2c2; --wx-cloud2:#c3d2de; --wx-cloud-ink:#1a2833;
-  --wx-night1:#2b3f63; --wx-night2:#436089; --wx-night-ink:#eaf1fb;
-  --wx-storm1:#5c6a76; --wx-storm2:#7f8d98; --wx-storm-ink:#f3f6f9;
-}
+/* The dock's standard colours (Luke, 2026-10-06): one blue behind every slide,
+   white text on it — the blue the weather slide wore at night. The same in the
+   light and dark themes. A new slide takes these; it sets no background of its
+   own (the blue is painted once, on the dock, so it stays put during a swipe). */
 .bottom-dock {
+  --dock-bg1: #436089;
+  --dock-bg2: #2b3f63;
+  --dock-ink: #ffffff;
+  --dock-ink-soft: color-mix(in srgb, var(--dock-ink) 78%, transparent);
+  --dock-hover: color-mix(in srgb, var(--dock-ink) 14%, transparent);
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 900;
-  background: var(--paper, #fffdf8);
-  border-top: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  color: var(--dock-ink);
+  background: linear-gradient(165deg, var(--dock-bg1), var(--dock-bg2));
+  border-top: 1px solid color-mix(in srgb, var(--dock-ink) 16%, transparent);
 }
 body:not(.app-authed) .bottom-dock { display: none; }
 /* Slides stack in one grid cell (the dock is as tall as its tallest slide);
@@ -23164,6 +23168,22 @@ body:not(.app-authed) .bottom-dock { display: none; }
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
+/* The mini-player in the dock's colours: white text and controls on the blue. */
+.bottom-dock .mini-player-title-inner,
+.bottom-dock .mini-player-skip-btn,
+.bottom-dock .mini-player-play-btn { color: var(--dock-ink); }
+.bottom-dock .mini-player-time,
+.bottom-dock .mini-player-show,
+.bottom-dock .mini-player-expand-btn { color: var(--dock-ink-soft); }
+.bottom-dock .mini-player-progress { background: color-mix(in srgb, var(--dock-ink) 22%, transparent); }
+.bottom-dock .mini-player-progress-fill { background: var(--dock-ink); }
+.bottom-dock .mini-player-art-btn {
+  background: color-mix(in srgb, var(--dock-ink) 12%, transparent);
+  color: var(--dock-ink);
+}
+.bottom-dock .mini-player-art-btn.has-notif-dot::after { box-shadow: 0 0 0 2px var(--dock-bg2); }
+.bottom-dock .mini-player-skip-btn:hover,
+.bottom-dock .mini-player-play-btn:hover { background: var(--dock-hover); }
 
 /* Idle mini-player: nothing loaded — shows what play would start. */
 .mini-player.is-idle .mini-player-skip-btn,
@@ -23189,6 +23209,7 @@ body:not(.app-authed) .bottom-dock { display: none; }
 }
 @media (hover: hover) and (pointer: fine) {
   .mini-player-expand-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+  .bottom-dock .mini-player-expand-btn:hover { background: var(--dock-hover); }
 }
 @media (hover: none), (pointer: coarse) {
   .mini-player-expand-btn { display: none; }
@@ -23205,13 +23226,11 @@ body:not(.app-authed) .bottom-dock { display: none; }
   font: inherit;
   text-align: left;
   cursor: pointer;
-  color: var(--wx-sky-ink);
-  background: linear-gradient(160deg, var(--wx-sky1), var(--wx-sky2));
+  /* The dock's standard blue shows through, whatever the weather. */
+  color: var(--dock-ink);
+  background: transparent;
   overflow: hidden;
 }
-.weather-ticker.mood-cloud { color: var(--wx-cloud-ink); background: linear-gradient(160deg, var(--wx-cloud1), var(--wx-cloud2)); }
-.weather-ticker.mood-night { color: var(--wx-night-ink); background: linear-gradient(165deg, var(--wx-night2), var(--wx-night1)); }
-.weather-ticker.mood-storm { color: var(--wx-storm-ink); background: linear-gradient(165deg, var(--wx-storm1), var(--wx-storm2)); }
 .weather-ticker.is-empty { padding-left: 6px; }
 .wxt-art { flex: 0 0 auto; width: 78px; height: 78px; display: flex; }
 .wxt-art .wx-art { width: 100%; height: 100%; }
@@ -23220,7 +23239,8 @@ body:not(.app-authed) .bottom-dock { display: none; }
 .wxt-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .wxt-cond { font-size: 1rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wxt-sub { font-size: 0.8rem; font-weight: 600; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wxt-alert { font-size: 0.74rem; font-weight: 700; color: var(--tomato, #c0392b); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wxt-stats { font-size: 0.8rem; font-weight: 600; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.wxt-alert { font-size: 0.74rem; font-weight: 700; color: #ffd166; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 640px) {
   .weather-ticker { height: 87px; }
   .wxt-art { width: 70px; height: 70px; }
