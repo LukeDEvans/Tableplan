@@ -89,8 +89,6 @@ _(none)_
 ## P2
 - [ ] **[P2] Media queue changes were run in a desktop browser at phone size, not on the iPhone** (media · app.js `advanceMediaAllQueue` / `onNativeTtsItemStart` / `refreshRunningQueueOrder` · 2026-10-06)
       The iPhone app plays podcasts on its own player, which is handed its next few items up front. The new code re-sends that list when the queue's order changes and puts an item passed with the lock-screen next button at the back of the line; both paths were read from code, not run on a device. → On the phone: start the queue, drag a different item to the top of Up Next, lock the phone and let the current one finish; the dragged item should play next.
-- [ ] **[P2] `ISSUES.md` has unresolved merge-conflict markers under "P1"** (docs · ISSUES.md:19-27 · 2026-10-06)
-      `<<<<<<< HEAD` / `=======` / `>>>>>>> origin/main` were committed in the PR #65 merge; both sides are entries about the dock's blue. Left as found. → Keep the entries that still apply and delete the markers.
 - [ ] **[P3] Queue window settings longer than a month no longer reach further back** (media · app.js `RECENT_WINDOW_OPTIONS` · podcast-retention.js · 2026-10-06)
       Stored state now drops subscription episodes older than 30 days, so "Past 2 months" / "Past 3 months" list more only until the next cold start. Both accounts are set to "Past month" / "Past week" today, so nothing changes for them. → Remove the two options, or leave them.
 - [ ] **[P3] Old unsectioned state row still holds 600 KB of show notes** (supabase · `tableplan_states` id `7aa1feaf-…` with no `:section` suffix, last written 2026-07-11 · 2026-10-06)
