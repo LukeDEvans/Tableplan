@@ -17323,23 +17323,6 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   flex-shrink: 0;
   padding: 0 12px 0 4px;
 }
-/* Rewind 10s — thin circular arrow with a centered "10". */
-.mini-player-skip-btn {
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  border: none;
-  background: none;
-  color: var(--window-border);   /* navy, matching play/pause */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.12s, transform 0.1s;
-}
-.mini-player-skip-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
-.mini-player-skip-btn:active { transform: scale(0.92); }
 .mini-player-play-btn {
   width: 60px;
   height: 60px;
@@ -17357,7 +17340,6 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .mini-player-play-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .mini-player-play-btn:active { transform: scale(0.93); }
 .mini-player-play-btn svg { display: block; width: 34px; height: 34px; }
-.mini-player-skip-btn svg { display: block; width: 32px; height: 32px; }
 
 /* While the bar is showing, the app shell stops just above it: every page
    window ends --mini-player-gap above the bar, with a strip of page background
@@ -17369,7 +17351,6 @@ body.has-mini-player .app-shell { padding-bottom: max(0px, calc(var(--mini-playe
   :root { --mini-player-h: 88px; }
   .mini-player-body { height: 84px; }   /* 1.5× the former 56px */
   .mini-player-play-btn { width: 56px; height: 56px; }
-  .mini-player-skip-btn { width: 52px; height: 52px; }
 }
 
 /* ── Now-Playing modal: full info about the current audio, over any page ──── */
@@ -23170,7 +23151,6 @@ body:not(.app-authed) .bottom-dock { display: none; }
 }
 /* The mini-player in the dock's colours: white text and controls on the blue. */
 .bottom-dock .mini-player-title-inner,
-.bottom-dock .mini-player-skip-btn,
 .bottom-dock .mini-player-play-btn { color: var(--dock-ink); }
 .bottom-dock .mini-player-time,
 .bottom-dock .mini-player-show,
@@ -23182,11 +23162,9 @@ body:not(.app-authed) .bottom-dock { display: none; }
   color: var(--dock-ink);
 }
 .bottom-dock .mini-player-art-btn.has-notif-dot::after { box-shadow: 0 0 0 2px var(--dock-bg2); }
-.bottom-dock .mini-player-skip-btn:hover,
 .bottom-dock .mini-player-play-btn:hover { background: var(--dock-hover); }
 
 /* Idle mini-player: nothing loaded — shows what play would start. */
-.mini-player.is-idle .mini-player-skip-btn,
 .mini-player.is-idle .mini-player-expand-btn,
 .mini-player.is-idle .mini-player-progress-fill { visibility: hidden; }
 .mini-player.is-idle .mini-player-title-inner { font-weight: 550; }
