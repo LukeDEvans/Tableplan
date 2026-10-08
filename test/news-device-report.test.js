@@ -41,6 +41,16 @@ describe("verifySignIns in the iPhone app", () => {
     expect(mod.deviceStatus()).toEqual({ nyt: "signed-in", startribune: "unverified" }); // what the phone found
   });
 
+  it("a sign-in sheet's steps go with the next check only", async () => {
+    const { mod, calls } = setup({ device: { check: async () => ({ nyt: "none" }) } });
+    mod.setDeviceTrail("nyt", ["1 main start myaccount.nytimes.com/auth/login"]);
+    await mod.verifySignIns();
+    await mod.verifySignIns();
+    expect(calls[0].deviceTrail).toEqual({ paper: "nyt", steps: ["1 main start myaccount.nytimes.com/auth/login"] });
+    expect(calls[1].deviceTrail).toBeUndefined();
+    expect(mod.signInStatus()).toEqual({});
+  });
+
   it("a browser (no phone check) sends exactly what it always did", async () => {
     const { mod, calls } = setup({ state: { articleSync: { nytCookie: "abc" } } });
     await mod.verifySignIns();

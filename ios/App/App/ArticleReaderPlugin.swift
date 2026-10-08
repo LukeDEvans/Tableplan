@@ -13,7 +13,9 @@ import Capacitor
 //   • login({ url, title }) — shows the paper's site in an in-app browser sheet.
 //     Luke signs in once; the cookies stay in the app's default website data
 //     store (on the phone only — nothing is sent to our server). Resolves when the
-//     sheet closes.
+//     sheet closes, with `trail`: the pages the sheet went through (host + path
+//     only, never a query, fragment or page content), so a sign-in that stalls
+//     can be diagnosed.
 //   • extract({ url, script, minChars, timeoutMs }) — loads the article in an
 //     invisible web view that shares those cookies, waits for it to render, and
 //     evaluates `script` (article-native-reader.js's extractor, which returns a
@@ -51,8 +53,8 @@ public class ArticleReaderPlugin: CAPPlugin, CAPBridgedPlugin {
                 call.reject("No view to present from.")
                 return
             }
-            let browser = ArticleLoginViewController(url: url, titleText: title) {
-                call.resolve(["closed": true])
+            let browser = ArticleLoginViewController(url: url, titleText: title) { trail in
+                call.resolve(["closed": true, "trail": trail])
             }
             let nav = UINavigationController(rootViewController: browser)
             nav.modalPresentationStyle = .pageSheet
@@ -248,15 +250,18 @@ final class ArticleExtractJob: NSObject, WKNavigationDelegate {
 final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     private let startUrl: URL
     private let titleText: String
-    private let onClose: () -> Void
+    private let onClose: ([String]) -> Void
     private var reported = false
+    // Steps the sheet went through ("main"/"popup" + event + host/path), capped.
+    private var trail: [String] = []
+    private static let trailCap = 80
     private var webView: WKWebView!
     // A sign-in provider's popup (Sign in with Apple), shown over the page.
     private var popupView: WKWebView?
     private let progress = UIProgressView(progressViewStyle: .bar)
     private var progressObservation: NSKeyValueObservation?
 
-    init(url: URL, titleText: String, onClose: @escaping () -> Void) {
+    init(url: URL, titleText: String, onClose: @escaping ([String]) -> Void) {
         self.startUrl = url
         self.titleText = titleText
         self.onClose = onClose
@@ -280,6 +285,10 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
         // A provider's popup may open a moment after the tap (after the page asks
         // its own server for the sign-in request), not directly inside it.
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        // Identify as Safari. A bare WKWebView user agent has no "Version/… Safari/…",
+        // and sign-in pages (Apple's included) treat it as an embedded browser and
+        // can take a path that never finishes.
+        config.applicationNameForUserAgent = "Version/18.0 Mobile/15E148 Safari/604.1"
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -304,6 +313,41 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
         webView.load(URLRequest(url: startUrl))
     }
 
+    // ── Sign-in trail (diagnostics) ──
+    private func where_(_ url: URL?) -> String {
+        guard let url = url else { return "-" }
+        let host = url.host ?? (url.scheme ?? "?")
+        let path = url.path.isEmpty ? "/" : url.path
+        return host + String(path.prefix(80))
+    }
+    private func note(_ wv: WKWebView?, _ event: String, _ url: URL? = nil) {
+        guard trail.count < Self.trailCap else { return }
+        let which = (wv != nil && wv === popupView) ? "popup" : "main"
+        let t = Int(Date().timeIntervalSince1970) % 100000
+        trail.append("\(t) \(which) \(event) \(url == nil ? "" : where_(url))")
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        note(webView, "start", webView.url)
+    }
+    func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+        note(webView, "redirect", webView.url)
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        note(webView, "loaded", webView.url)
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        let ns = error as NSError
+        note(webView, "failed \(ns.domain)#\(ns.code)", webView.url)
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        let ns = error as NSError
+        note(webView, "failed-early \(ns.domain)#\(ns.code)", webView.url)
+    }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        note(webView, "process-ended", webView.url)
+    }
+
     // Login pages open their provider (Sign in with Apple) in a popup and wait for
     // it to hand the result back to the page that opened it (window.opener). So
     // the popup must be a real second web view on top of the page: loading it in
@@ -313,6 +357,7 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard navigationAction.targetFrame == nil else { return nil }
+        note(webView, "opens-popup", navigationAction.request.url)
         // A popup opening another window: keep it in the popup.
         if let popup = popupView, webView === popup {
             popup.load(navigationAction.request)
@@ -337,6 +382,7 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
 
     // The popup closed itself (window.close()) once it handed its result back.
     func webViewDidClose(_ webView: WKWebView) {
+        note(webView, "closed-itself")
         if let popup = popupView, webView === popup { closePopup() }
     }
 
@@ -369,7 +415,9 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
         if dismissed && !reported {
             reported = true
             progressObservation = nil
-            onClose()
+            let last: WKWebView? = popupView ?? webView
+            note(last, "sheet-closed", last?.url)
+            onClose(trail)
         }
     }
 }

@@ -158,7 +158,9 @@ exports.handler = async (event) => {
       economistCookie: String(cookies.economistCookie || ""),
       stribCookie: String(cookies.stribCookie || "")
     }, { deviceStatus });
-    await NewsLinks.saveNewsSignIns(serviceKey, userId, signIns);
+    // The app's sign-in sheet steps for the paper just signed in to (diagnostics).
+    const trail = NewsLinks.cleanSignInTrail(body.deviceTrail);
+    await NewsLinks.saveNewsSignIns(serviceKey, userId, signIns, { trail });
     return json(200, { ok: true, signIns });
   }
 
