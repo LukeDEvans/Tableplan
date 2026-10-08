@@ -175,6 +175,34 @@ export function nativeLocation() {
 // The app's URL scheme the Gmail callback returns to (gmail-callback NATIVE_RETURN).
 export const APP_CALLBACK_SCHEME = "com.mrlukedevans.live";
 
+// Where the app's own Apple / Google sign-in (Supabase OAuth) returns to, inside
+// the WebAuth sheet. Must be listed in Supabase → Authentication → URL
+// Configuration → Redirect URLs (as com.mrlukedevans.live://**), or Supabase sends
+// the sheet to the website instead and the sign-in never comes back.
+export const APP_AUTH_CALLBACK_URL = `${APP_CALLBACK_SCHEME}://auth-callback`;
+
+// Reads the app-scheme URL Supabase's OAuth sign-in ends on. Returns one of
+//   { kind: "code", code }                         PKCE flow (?code=)
+//   { kind: "tokens", accessToken, refreshToken }  implicit flow (#access_token=)
+//   { kind: "error", message }                     the provider or Supabase refused
+//   { kind: "unknown" }                            anything else (not our scheme…)
+export function parseOAuthCallback(url) {
+  let u;
+  try { u = new URL(String(url || "")); } catch { return { kind: "unknown" }; }
+  if (u.protocol !== `${APP_CALLBACK_SCHEME}:`) return { kind: "unknown" };
+  const query = u.searchParams;
+  const hash = new URLSearchParams(String(u.hash || "").replace(/^#/, ""));
+  const pick = (k) => hash.get(k) || query.get(k) || "";
+  const error = pick("error");
+  if (error) return { kind: "error", message: pick("error_description") || error };
+  const code = query.get("code");
+  if (code) return { kind: "code", code };
+  const accessToken = hash.get("access_token");
+  const refreshToken = hash.get("refresh_token");
+  if (accessToken && refreshToken) return { kind: "tokens", accessToken, refreshToken };
+  return { kind: "unknown" };
+}
+
 // Reads the status the server put on the app-scheme return URL.
 export function parseAppCallback(url) {
   try {

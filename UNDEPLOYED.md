@@ -12,6 +12,15 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-07 (PRs #59–#70)._
 
+- **Sign in to Liv with Apple or Google in the app (iPhone and Mac)** · PR #76
+  - In the app, Apple / Google sign-in now opens in the system sign-in sheet and returns to the app
+    signed in. Before, the website's redirect flow left the app and signed in to the website in a
+    browser instead (Google), or failed (Apple). The browser sign-in is unchanged.
+  - Supabase redirect URL `com.mrlukedevans.live://**` added by Luke (2026-10-07).
+  - **Needs a TestFlight build; no Netlify deploy needed** (app code only).
+  - **After TestFlight:** sign out, then on the lock screen → Sign in → Continue with Apple →
+    the sheet signs you in and the app unlocks with your data. Repeat with Google. Try it on the
+    Mac app too. If the app says "didn't finish", the redirect URL above is missing.
 - **News: sign in to your papers in the iPhone app, no cookie pasting** · PR #75
   - The app's own newspaper sign-ins (Sync Settings → "Newspaper sign-ins on this device") now turn
     News on. When the sign-in sheet closes, the phone checks each paper itself and sends the server

@@ -35,7 +35,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, APP_CALLBACK_SCHEME, parseAppCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
@@ -4050,12 +4050,64 @@ async function signInWithOAuthProvider(provider, label) {
     return;
   }
 
+  // In the app (iPhone, or the iPhone app on a Mac) the website's redirect flow
+  // can't work: the provider page leaves the app's web view for the browser, the
+  // sign-in completes THERE, and nothing brings the session back. Run it in the
+  // system sign-in sheet instead, like Connect Gmail.
+  if (isNativeApp()) {
+    if (nativeWebAuth()) await signInWithOAuthInApp(provider, label);
+    else elements.authMessage.textContent = `${label} sign-in needs the latest app update. Use the email code for now.`;
+    return;
+  }
+
   elements.authMessage.textContent = `Opening ${label} sign-in...`;
   const { error } = await supabaseClient.auth.signInWithOAuth({
     provider,
     options: { redirectTo: window.location.href.split("#")[0] }
   });
   if (error) elements.authMessage.textContent = error.message;
+}
+
+// The app's Apple / Google sign-in: Supabase's provider page opens in the WebAuth
+// sheet (ASWebAuthenticationSession), which returns to APP_AUTH_CALLBACK_URL, and
+// the session is set from that URL. One attempt per tap: no retry loop.
+let oauthInAppBusy = false;
+async function signInWithOAuthInApp(provider, label) {
+  if (oauthInAppBusy) return;
+  oauthInAppBusy = true;
+  const setMsg = (t) => { elements.authMessage.textContent = t; };
+  try {
+    setMsg(`Opening ${label} sign-in...`);
+    const { data, error } = await supabaseClient.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: APP_AUTH_CALLBACK_URL, skipBrowserRedirect: true }
+    });
+    if (error || !data?.url) { setMsg(error?.message || `Couldn't start ${label} sign-in.`); return; }
+    const result = await nativeWebAuth().start({ url: data.url, callbackScheme: APP_CALLBACK_SCHEME });
+    if (result?.cancelled || !result?.url) { setMsg(""); return; }
+    const cb = parseOAuthCallback(result.url);
+    setMsg("Signing in...");
+    let failed = null;
+    if (cb.kind === "code") {
+      ({ error: failed } = await supabaseClient.auth.exchangeCodeForSession(cb.code));
+    } else if (cb.kind === "tokens") {
+      ({ error: failed } = await supabaseClient.auth.setSession({ access_token: cb.accessToken, refresh_token: cb.refreshToken }));
+    } else if (cb.kind === "error") {
+      setMsg(`${label} sign-in failed: ${cb.message}`);
+      return;
+    } else {
+      setMsg(`${label} sign-in didn't finish. Try again, or use the email code.`);
+      return;
+    }
+    if (failed) { setMsg(`${label} sign-in failed: ${failed.message}`); return; }
+    // onAuthStateChange takes it from here (unlocks the app, loads state).
+    setMsg("");
+    if (elements.authDialog?.open) elements.authDialog.close();
+  } catch (e) {
+    setMsg(`${label} sign-in failed: ${e?.message || e}`);
+  } finally {
+    oauthInAppBusy = false;
+  }
 }
 
 function handleInviteUrlParameter() {
