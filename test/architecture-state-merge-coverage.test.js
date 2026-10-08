@@ -54,6 +54,7 @@ const MERGE_NEWER_WINS_KEYS = {
   financeAnnualIncome: "finance scalar",
   // Settings objects — one coherent config blob, newest wins as a unit.
   mailAiSettings: "settings object",
+  mailReadingPrefs: "settings object (Settings → Mail Reading: remote images on/off)",
   aiSettings: "settings object",
   jellyfin: "settings object",
   mediaServices: "settings object",

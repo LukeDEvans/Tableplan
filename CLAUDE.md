@@ -125,6 +125,16 @@ found this way unless it's genuinely trivial.
 
 Every AI email-processing feature MUST have an on/off toggle in Settings → Mail AI. To add one: (1) add an entry to the `MAIL_AI_FEATURES` registry in app.js (key, label, description) — the toggle UI renders automatically; (2) the server-side function must check its flag in `state.mailAiSettings.<key>` (config section, row `personal:config`) and do nothing when off. **Features are on by default** (Luke, 2026-09-29): set `defaultOn: true` and have the server treat only an explicit `false` as off (`mailAiSettings?.<key> !== false`). **Exception — `assistantMailRead` (the chat assistant reading email on request) stays OFF by default** (Luke, 2026-09-29): server and client treat only an explicit `true` as on. Don't flip it to match the rule.
 
+## Mail reading frame
+
+An HTML email is read in a sandboxed frame built by **`mail-frame.js`** (sanitizing, image handling, fit/size); `app.js` only injects the mail app's wiring (`onReady`) and the embedded-image fetch. Three rules, each learned the hard way:
+
+- **Set the frame up when its markup is parsed, never on `load`.** `load` waits for every image, which is what made image-heavy email slow to open (12.5s in the check's 30-image email; the fix made it ~40ms). Images then fill in and each one re-fits the height.
+- **`loading="lazy"` does nothing in this frame** — the sandbox has scripting off, and browsers ignore lazy loading without scripting. Remote images are parked on `data-lz-src` and given their source from the parent as they near the screen. An image the email hides is never fetched.
+- **Remote images load by default with trackers stripped** (Luke, 2026-10-08): 1×1 images and known open-tracking URLs are removed before the frame is built. `state.mailReadingPrefs.blockRemoteImages` (Settings → Mail Reading, synced) blocks everything instead. Images never touch Supabase: remote ones go sender → device, embedded (`cid:`) ones go through the `attachment` action (Netlify → Gmail), capped per email and cached for the session.
+
+After changing the frame run **`npm run check:mail-frame`** (`scripts/check-mail-frame.mjs`): self-contained headless Chromium against the real module with deliberately slow images. It checks when the email becomes readable and exactly which images are requested. No iOS WebKit there, so a frame change still needs a look on the phone.
+
 ## Git / GitHub
 
 **Local commits are welcome — commit freely as work completes.** Luke likes reviewing changes locally before they go out.
