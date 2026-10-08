@@ -12,6 +12,7 @@
 //   GET ?action=scoreboard&date=YYYY-MM-DD&leagues=nfl,nba,…   a day's games
 //   GET ?action=teams&league=nfl                               a league's teams
 //   GET ?action=schedule&teams=nfl:espn:16,…                   last + next game
+//   GET ?action=health                                         does each provider answer?
 //
 // Env: SCORES_PROVIDERS (order, default "espn,thesportsdb"), THESPORTSDB_KEY
 // (switches the standby provider on), SCORES_USER_AGENT (optional).
@@ -30,6 +31,8 @@ const ALLOWED_ORIGINS = new Set([
 const MAX_LEAGUES = 40;
 const MAX_SCHEDULE_TEAMS = 12;
 const UPSTREAM_TIMEOUT_MS = 6000;
+const HEALTH_LEAGUES = ["nfl", "nba", "premier-league"];
+const BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
 
 export const handler = async (event, _context, deps = {}) => {
   const env = deps.env || process.env;
@@ -45,7 +48,7 @@ export const handler = async (event, _context, deps = {}) => {
 
   const q = event.queryStringParameters || {};
   const action = String(q.action || "scoreboard");
-  const ctx = { chain: providerChain(env), env, fetchJson: deps.fetchJson || makeFetchJson(env) };
+  const ctx = { chain: providerChain(env), env, fetchJson: deps.fetchJson || makeFetchJson(env, action === "health" ? String(q.ua || "") : "") };
   const started = Date.now();
   const log = (fields) => console.log(JSON.stringify({ fn: "scores", action, ms: Date.now() - started, ...fields }));
 
@@ -97,6 +100,27 @@ export const handler = async (event, _context, deps = {}) => {
       return respond(200, { v: SCORES_MODEL_VERSION, generatedAt: new Date(nowMs).toISOString(), teams }, ok === results.length ? 900 : 60);
     }
 
+    // One small request to each provider in the chain, with the reason when it
+    // fails. For checking a deploy and for telling "ESPN is down" from "ESPN
+    // refuses us"; never cached. `ua` (app | browser | none) tries another
+    // User-Agent without a redeploy.
+    if (action === "health") {
+      const date = new Date(nowMs).toISOString().slice(0, 10);
+      const providers = await Promise.all(ctx.chain.map(async (p) => {
+        const league = HEALTH_LEAGUES.find((k) => p.supports(k));
+        const t0 = Date.now();
+        if (!league) return { id: p.id, ok: false, error: "No probe league." };
+        try {
+          const games = await p.scoreboard(league, date, ctx);
+          return { id: p.id, ok: true, league, games: games.length, ms: Date.now() - t0 };
+        } catch (e) {
+          return { id: p.id, ok: false, league, error: String(e?.message || e).slice(0, 200), ms: Date.now() - t0 };
+        }
+      }));
+      log({ providers: providers.map((p) => `${p.id}:${p.ok ? "ok" : p.error}`) });
+      return respond(200, { v: SCORES_MODEL_VERSION, checkedAt: new Date(nowMs).toISOString(), providers });
+    }
+
     return respond(400, { error: "Unknown action." });
   } catch (err) {
     log({ error: String(err?.message || err).slice(0, 160) });
@@ -125,17 +149,19 @@ export function parseScheduleTeams(param) {
 
 // One bounded upstream GET. No retry: a provider that fails is skipped for this
 // request and the chain moves on.
-function makeFetchJson(env) {
-  const userAgent = String(env.SCORES_USER_AGENT || "").trim() || "LDE Personal App (https://effervescent-malabi-e0af55.netlify.app)";
+function makeFetchJson(env, uaMode = "") {
+  const configured = String(env.SCORES_USER_AGENT || "").trim() || "LDE Personal App (https://effervescent-malabi-e0af55.netlify.app)";
+  const userAgent = uaMode === "browser" ? BROWSER_UA : uaMode === "none" ? "" : configured;
   return async (url) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
     try {
-      const res = await fetch(url, { headers: { accept: "application/json", "user-agent": userAgent }, signal: controller.signal });
+      const res = await fetch(url, { headers: { accept: "application/json", ...(userAgent ? { "user-agent": userAgent } : {}) }, signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status} from ${new URL(url).hostname}`);
       return await res.json();
     } catch (e) {
-      throw new Error(e?.name === "AbortError" ? `Timed out reaching ${new URL(url).hostname}` : String(e?.message || e));
+      const why = e?.cause?.code || e?.cause?.message; // "fetch failed" hides the reason in `cause`
+      throw new Error(e?.name === "AbortError" ? `Timed out reaching ${new URL(url).hostname}` : `${String(e?.message || e)}${why ? ` (${why})` : ""}`);
     } finally {
       clearTimeout(timer);
     }

@@ -258,6 +258,14 @@ describe("scores function", () => {
     expect((await call({ action: "odds" }, espnFetch)).statusCode).toBe(400);
     expect((await handler({ httpMethod: "POST", headers: {} }, null, { fetchJson: espnFetch, env: {} })).statusCode).toBe(405);
   });
+  it("health: says whether each provider answers, and why not; never cached", async () => {
+    const ok = JSON.parse((await call({ action: "health" }, espnFetch)).body);
+    expect(ok.providers).toMatchObject([{ id: "espn", ok: true, league: "nfl", games: 0 }]);
+    const res = await call({ action: "health" }, async () => { throw new Error("HTTP 403 from site.api.espn.com"); }, { THESPORTSDB_KEY: "k" });
+    expect(JSON.parse(res.body).providers.map((p) => [p.id, p.ok, p.error])).toEqual([["espn", false, "HTTP 403 from site.api.espn.com"], ["thesportsdb", false, "HTTP 403 from site.api.espn.com"]]);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
+  });
   it("teams: a league's list, cached for a day", async () => {
     const res = await call({ action: "teams", league: "nfl" }, espnFetch);
     const body = JSON.parse(res.body);
