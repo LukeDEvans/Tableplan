@@ -15,7 +15,7 @@
 //   GET ?action=health                                         does each provider answer?
 //
 // Env: SCORES_PROVIDERS (order, default "espn,thesportsdb"), THESPORTSDB_KEY
-// (switches the standby provider on), SCORES_USER_AGENT (optional).
+// (switches the standby provider on), SCORES_USER_AGENT (optional; unset = send none).
 import { LEAGUES, LEAGUE_BY_KEY, SCORES_MODEL_VERSION, isDateKey, scoreboardCacheSeconds } from "../../sports-model.js";
 import { providerChain, leagueScoreboard, leagueTeams, teamLastNext } from "./_scores-providers.mjs";
 
@@ -32,6 +32,7 @@ const MAX_LEAGUES = 40;
 const MAX_SCHEDULE_TEAMS = 12;
 const UPSTREAM_TIMEOUT_MS = 6000;
 const HEALTH_LEAGUES = ["nfl", "nba", "premier-league"];
+const APP_UA = "LDE Personal App (https://effervescent-malabi-e0af55.netlify.app)";
 const BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
 
 export const handler = async (event, _context, deps = {}) => {
@@ -150,8 +151,11 @@ export function parseScheduleTeams(param) {
 // One bounded upstream GET. No retry: a provider that fails is skipped for this
 // request and the chain moves on.
 function makeFetchJson(env, uaMode = "") {
-  const configured = String(env.SCORES_USER_AGENT || "").trim() || "LDE Personal App (https://effervescent-malabi-e0af55.netlify.app)";
-  const userAgent = uaMode === "browser" ? BROWSER_UA : uaMode === "none" ? "" : configured;
+  // No User-Agent of our own by default: ESPN answers the runtime's default and a
+  // browser's, but returned 403 to a custom app string (seen 2026-10-07 on a
+  // deploy preview). SCORES_USER_AGENT overrides if a provider ever wants one.
+  const configured = String(env.SCORES_USER_AGENT || "").trim();
+  const userAgent = uaMode === "browser" ? BROWSER_UA : uaMode === "none" ? "" : uaMode === "app" ? APP_UA : configured;
   return async (url) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);

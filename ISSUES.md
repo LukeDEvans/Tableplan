@@ -16,8 +16,10 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
-- [ ] **[P1] Scores: ESPN did not answer from Netlify on the first deploy preview** (scores · netlify/functions/scores.mjs · _scores-espn.mjs · 2026-10-07)
-      Observed on PR #78's preview (commit 56e8e81): `?action=bogus` returned 400, so the function loads and runs, but `scoreboard`, `teams` and `schedule` all returned 502, which the function sends only when every provider call fails. The same ESPN URLs answer from elsewhere, so ESPN is refusing or timing out for Netlify's servers or for this User-Agent. The reason wasn't readable from outside. → Open `?action=health` on a deploy that includes it (commit 0c28dbf onward) and read `error`; try `&ua=browser` and `&ua=none`. If a User-Agent fixes it, set `SCORES_USER_AGENT`. If ESPN refuses Netlify outright, the options are the TheSportsDB key (no live clocks) or another provider adapter (SPORTS_SCORES_DESIGN.md §4). **Do not deploy Scores to production until health reads ok.** Also still unrun: the view on a phone.
+- [x] **[P1] Scores: ESPN did not answer from Netlify on the first deploy preview** (scores · netlify/functions/scores.mjs · 2026-10-07)
+      Every ESPN call returned 502 on PR #78's first preview. `?action=health` showed why: ESPN returns 403 to the custom User-Agent the function sent ("LDE Personal App (…)") and answers a browser's or none. → Fixed: no User-Agent is sent unless `SCORES_USER_AGENT` is set. `?action=health` stays as the check.
+- [ ] **[P2] Scores: not yet opened on a phone or in the iPhone app** (scores · scores-ui.js · 2026-10-07)
+      Checked in a headless browser at 360 px and against the live function on a deploy preview, not on a device. → Open News → Sports after the deploy; follow a team; check the footer names no failed leagues.
 - [ ] **[P3] Scores: TheSportsDB league ids are unverified except NFL** (scores · netlify/functions/_scores-thesportsdb.mjs LEAGUE_IDS · 2026-10-07)
       The standby provider is off until `THESPORTSDB_KEY` is set. Only 4391 (NFL) was checked against a live response. It also has no ids for college hockey, friendlies, the qualifiers or the other international cups, so those leagues have no standby. → Check the ids the first time the key is set.
 - [ ] **[P2] In-app Apple / Google sign-in to Liv: not run on a device, and needs a Supabase setting** (auth · app.js signInWithOAuthInApp · native-bridge.js parseOAuthCallback · 2026-10-07)

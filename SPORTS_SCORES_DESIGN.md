@@ -78,8 +78,8 @@ next on any error. Order: `SCORES_PROVIDERS` (default `espn,thesportsdb`).
 
 Open `/.netlify/functions/scores?action=health` first. It says whether each
 provider answers from Netlify and, if not, why (`HTTP 403`, a timeout, …). Add
-`&ua=browser` or `&ua=none` to try another User-Agent without a redeploy; the one
-in use is `SCORES_USER_AGENT`.
+`&ua=browser`, `&ua=app` or `&ua=none` to try another User-Agent without a redeploy.
+None is sent by default (ESPN refused a custom one); `SCORES_USER_AGENT` sets one.
 
 1. Set `THESPORTSDB_KEY` in Netlify. Leagues ESPN refuses fail over on their own;
    to skip ESPN entirely set `SCORES_PROVIDERS=thesportsdb`. No code change.
@@ -123,10 +123,8 @@ in use is `SCORES_USER_AGENT`.
   cannot reach ESPN): follow from a game and from team lists, reorder and switch
   leagues, college show-all, another day and back, Stories and back, at 360 px
   (light) and 1280 px (dark), with no sideways scroll and no console errors.
-- **Open (2026-10-07):** on PR #78's first deploy preview the function ran (a bad
-  action returned 400) but every action that calls ESPN returned 502, so ESPN did
-  not answer Netlify there. The reason was not visible; `action=health` was added
-  to show it. Until that reads `ok`, treat the ESPN path as not working in
-  production. See ISSUES.md.
+- **Live from Netlify (PR #78's deploy preview, 2026-10-07):** `action=health`
+  showed ESPN returning 403 to the app's own User-Agent string and answering with
+  a browser's or with none. The function now sends none by default.
 - **Not verified:** the iPhone app. ESPN's endpoints and field shapes were read
   from live responses while building.
