@@ -12,7 +12,7 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-07 (PRs #59–#70)._
 
-- **News: sign in to your papers in the iPhone app, no cookie pasting** · PR #PRNUM
+- **News: sign in to your papers in the iPhone app, no cookie pasting** · PR #75
   - The app's own newspaper sign-ins (Sync Settings → "Newspaper sign-ins on this device") now turn
     News on. When the sign-in sheet closes, the phone checks each paper itself and sends the server
     only "signed in / not signed in" per paper; the sign-in cookies stay on the phone. The sheet now
