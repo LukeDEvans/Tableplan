@@ -12,7 +12,7 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-08 (PRs #72–#76)._
 
-- **News: Sync Settings moved to News; one Sign in or Sign out per paper; NYT sign-in diagnostics** · PR #PRNUM
+- **News: Sync Settings moved to News; one Sign in or Sign out per paper; NYT sign-in diagnostics** · PR #80
   - Sync Settings (newspaper sign-ins and subscriber cookies) opens from a new ⚙ button on the News
     page and from the app menu on News. It's gone from Media: Podcast Ad-Block moved to Media →
     Podcasts settings, and the publications list is in Media → Publications (unchanged). The Media
