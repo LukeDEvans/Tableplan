@@ -12,6 +12,8 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-07 (PRs #59–#70)._
 
+- **Media queue: an item paused mid-play keeps the Now Playing slot** · PR #74 · With nothing loaded in the player (the app was closed or reloaded after a pause), the queue had no Now Playing row, so a new episode from a higher-tier show listed above the one you were part-way through. The episode or article that was last in the player now stays at the top under "Now Playing", marked "Paused", until it is finished or removed; new episodes list under it. An episode paused on another device holds the slot through the synced listening history; an article only on the device it was played on. Playing radio or music releases the slot. Reaches the phone **only via a TestFlight build**. **After deploy:** play a lower-tier episode for a minute, pause, fully close the app, reopen once a higher-tier show has a new episode: the paused one is still on top, and the mini-player's play button resumes it. Do the same with an article (articles were covered by unit tests only).
+
 - **Meal plan: events land on the meal they take up; Events & Notes open by default** · PR #72
   - A "Meal Plan" event shows whichever Calendar view (household / personal) is open; events show
     only on the meals they take up (8–4 workday → Lunch; evening / overnight shift → Dinner);

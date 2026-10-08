@@ -49,3 +49,22 @@ export function previousFromTrail(trail, playableIds, currentId = null) {
   }
   return null;
 }
+
+// The item that holds the "Now Playing" slot while nothing is loaded: what was
+// in the player when it was last used (paused, then the app was closed or
+// reloaded). It keeps the slot until it is finished or removed, so a newer
+// episode from a higher tier lists under it, not over it.
+//   localId      the item this device last had loaded (episode or article)
+//   lastHistory  the newest entry of the synced listening history — covers an
+//                episode paused on another device
+//   progress     state.podcastProgress
+// An item that is no longer in the queue (played, read, removed) holds nothing.
+export function heldQueueId({ localId = null, lastHistory = null, progress = {}, listIds = [] } = {}) {
+  const listed = new Set(listIds);
+  if (localId && listed.has(localId)) return localId;
+  if (lastHistory && lastHistory.kind === "podcast" && listed.has(lastHistory.id)) {
+    const p = (progress || {})[lastHistory.id];
+    if (p && !p.played && p.position > 0) return lastHistory.id;
+  }
+  return null;
+}
