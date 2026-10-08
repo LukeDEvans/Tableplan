@@ -12,7 +12,7 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-07 (PRs #59–#70)._
 
-- **Sign in to Liv with Apple or Google in the app (iPhone and Mac)** · PR #PRNUM
+- **Sign in to Liv with Apple or Google in the app (iPhone and Mac)** · PR #76
   - In the app, Apple / Google sign-in now opens in the system sign-in sheet and returns to the app
     signed in. Before, the website's redirect flow left the app and signed in to the website in a
     browser instead (Google), or failed (Apple). The browser sign-in is unchanged.
