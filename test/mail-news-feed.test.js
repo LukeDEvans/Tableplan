@@ -130,6 +130,52 @@ describe("sign-in checks", () => {
     const fresh = await N.verifySignIns({}, {}, { check: async () => null, nowMs: NOW });
     expect(fresh.nyt.status).toBe("unverified"); // saved but never checked
   });
+  // The iPhone app reports what it found for its own in-app sign-ins (a status
+  // per paper, never a cookie). No cookie pasted → the check answers "none".
+  const noCookie = async () => "none";
+  it("verifySignIns: a phone-reported sign-in counts with no cookie pasted", async () => {
+    const out = await N.verifySignIns({}, {}, { check: noCookie, nowMs: NOW, deviceStatus: { nyt: "signed-in", economist: "none", startribune: "unverified" } });
+    expect(out.nyt).toMatchObject({ status: "signed-in", via: "device" });
+    expect(out.economist).toMatchObject({ status: "none", via: "device" });
+    expect(out.startribune).toMatchObject({ status: "unverified", via: "device" });
+    expect(Date.parse(out.nyt.deviceAt)).toBe(NOW);
+    expect(N.paperSignedIn(out, "nyt")).toBe(true);
+    expect(N.paperSignedIn(out, "athletic")).toBe(true); // follows the NYT sign-in
+    expect(N.paperSignedIn(out, "economist")).toBe(false);
+  });
+  it("verifySignIns: a call that says nothing about a paper leaves the phone's answer", async () => {
+    const prev = { nyt: { status: "signed-in", via: "device", deviceAt: "2026-10-01T00:00:00.000Z", checkedAt: "2026-10-01T00:00:00.000Z" } };
+    // A browser saving only a Star Tribune cookie: NYT has no cookie and no report.
+    const out = await N.verifySignIns(prev, {}, { check: async (p) => (p === "startribune" ? "unverified" : "none"), nowMs: NOW });
+    expect(out.nyt).toMatchObject({ status: "signed-in", via: "device", deviceAt: "2026-10-01T00:00:00.000Z" });
+    expect(out.startribune.status).toBe("unverified");
+    expect(out.startribune.via).toBeUndefined();
+    expect(out.economist).toEqual({ status: "none", checkedAt: new Date(NOW).toISOString() });
+  });
+  it("verifySignIns: a phone that was signed in and now isn't reads as expired", async () => {
+    const prev = { nyt: { status: "signed-in", via: "device", deviceAt: "2026-10-01T00:00:00.000Z" } };
+    const out = await N.verifySignIns(prev, {}, { check: noCookie, nowMs: NOW, deviceStatus: { nyt: "none" } });
+    expect(out.nyt).toMatchObject({ status: "expired", via: "device" });
+    const again = await N.verifySignIns(out, {}, { check: noCookie, nowMs: NOW, deviceStatus: { nyt: "none" } });
+    expect(again.nyt.status).toBe("expired");
+    const back = await N.verifySignIns(again, {}, { check: noCookie, nowMs: NOW, deviceStatus: { nyt: "signed-in" } });
+    expect(back.nyt.status).toBe("signed-in");
+  });
+  it("verifySignIns: either a good cookie or the phone is enough; junk reports are ignored", async () => {
+    const cookieGood = await N.verifySignIns({}, {}, { check: async () => "signed-in", nowMs: NOW, deviceStatus: { nyt: "none" } });
+    expect(cookieGood.nyt.status).toBe("signed-in");
+    expect(cookieGood.nyt.via).toBeUndefined();
+    const cookieBad = await N.verifySignIns({}, {}, { check: async () => "expired", nowMs: NOW, deviceStatus: { nyt: "signed-in" } });
+    expect(cookieBad.nyt).toMatchObject({ status: "signed-in", via: "device" });
+    const bothBad = await N.verifySignIns({}, {}, { check: async () => "expired", nowMs: NOW, deviceStatus: { nyt: "none" } });
+    expect(bothBad.nyt.status).toBe("expired");
+    const junk = await N.verifySignIns({}, {}, { check: noCookie, nowMs: NOW, deviceStatus: { nyt: "expired", economist: true, startribune: "SIGNED-IN" } });
+    expect(junk).toEqual({
+      nyt: { status: "none", checkedAt: new Date(NOW).toISOString() },
+      economist: { status: "none", checkedAt: new Date(NOW).toISOString() },
+      startribune: { status: "none", checkedAt: new Date(NOW).toISOString() }
+    });
+  });
   it("the gate: only signed-in or unverified papers feed News", () => {
     const s = { nyt: { status: "signed-in" }, economist: { status: "expired" }, startribune: { status: "unverified" } };
     expect(N.newsLinkSourceForSender("x@nytimes.com", {}, { signIns: s })?.paper).toBe("nyt");

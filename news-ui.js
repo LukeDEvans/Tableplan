@@ -16,6 +16,7 @@ const DAY_MS = 86_400_000;
 const KEEP_DAYS = 3;          // matches the server's FRESH_DAYS
 const LEAD_WINDOW_MS = 36 * 3_600_000;
 const SIGNIN_RECHECK_MS = DAY_MS;
+const DEVICE_AUTO_CHECK_MS = 6 * 3_600_000;
 
 export const NEWS_SECTIONS = [
   { key: "world", label: "World" },
@@ -95,6 +96,19 @@ export function signInsNeedCheck(signIns, nowMs = Date.now()) {
   });
 }
 
+// Which sign-in banner the Front page shows: "" (none), "expired" (a paper's
+// sign-in lapsed) or "prompt" (no paper is signed in — say where to sign in).
+// Before the first status arrives (`loaded` false) and while a check is running
+// nothing is shown. A paper that has never been checked counts as not signed in:
+// a device with no sign-in saved never runs a check, so "unknown" stays forever.
+export function signInBannerKind(signIns, { loaded = false, verifying = false } = {}) {
+  if (!loaded) return "";
+  const statuses = ["nyt", "economist", "startribune"].map((p) => signIns?.[p]?.status || "unknown");
+  if (statuses.some((s) => s === "signed-in" || s === "unverified")) return statuses.includes("expired") ? "expired" : "";
+  if (statuses.includes("expired")) return "expired";
+  return verifying ? "" : "prompt";
+}
+
 // "signed-in" | "unverified" | "expired" | "none" | "unknown" for a paper.
 export function paperStatus(signIns, paper) {
   return signIns?.[signInPaperFor(paper)]?.status || "unknown";
@@ -172,12 +186,20 @@ const ICONS = {
 export function createNewsModule(deps) {
   const {
     callGmailApi, escapeHtml: esc, showToast, isSignedIn, getState, onSentToMedia,
-    openInMedia, listenInMedia, openSignInSettings, getActiveAppArea, setDotCount
+    openInMedia, listenInMedia, openSignInSettings, getActiveAppArea, setDotCount,
+    // iPhone app only (app.js): returns { check(): Promise<{ nyt?, economist?,
+    // startribune? }>, needsCheck(signIns): boolean } — the phone's own in-app
+    // newspaper sign-ins (news-device-signin.js) — or null in a browser.
+    getDeviceSignIn
   } = deps;
+  const deviceSignIn = () => getDeviceSignIn?.() || null;
 
   const pages = new Map(); // viewKey → { articles, nextBefore, loadedAt }
   let counts = null;       // server sidebar counts (unreadCounts shape + sections)
   let signIns = {};
+  let signInsLoaded = false;   // the server's status has arrived at least once
+  let lastDeviceCheckAt = 0;   // bounds the phone's automatic re-check (per app run)
+  let lastDeviceStatus = null; // what the phone itself last found, per paper
   let loadingKey = null;
   let loadError = "";
   let seeded = null;       // local-dev seed (window.__liveQA.newsSetFeed)
@@ -267,12 +289,16 @@ export function createNewsModule(deps) {
       loadedAt: more ? page.loadedAt : Date.now()
     });
     if (d.counts) counts = d.counts;
-    if (d.signIns) signIns = d.signIns;
+    if (d.signIns) { signIns = d.signIns; signInsLoaded = true; }
     updateDot();
     if (isActive()) { if (viewKey() === key) render(); else renderSidebar(); }
     // Auto-recheck only from a device that has sign-ins saved: one whose synced
     // settings haven't arrived yet would otherwise record every paper as "none".
     if (d.signIns && signInsNeedCheck(signIns) && hasSavedSignIn()) verifySignIns();
+    // The iPhone app re-reports its own sign-ins when its last report is over a
+    // day old — at most once per DEVICE_AUTO_CHECK_MS per app run, so a server
+    // that doesn't record the report can't make every feed load start a check.
+    else if (d.signIns && deviceSignIn()?.needsCheck?.(signIns) && Date.now() - lastDeviceCheckAt > DEVICE_AUTO_CHECK_MS) verifySignIns();
   }
 
   function hasSavedSignIn() {
@@ -280,27 +306,43 @@ export function createNewsModule(deps) {
     return !!(sync.nytCookie || sync.economistCookie || sync.stribCookie);
   }
 
-  // Re-check every paper's sign-in with the cookies saved in Settings → Sync.
-  // A call during a check runs once more afterward, with the latest cookies
-  // (saving NYT then Economist in quick succession must check both).
+  // Re-check every paper's sign-in with the cookies saved in Settings → Sync and,
+  // in the iPhone app, with what the phone finds for its own in-app sign-ins (a
+  // status per paper; the phone's cookies are never sent). A call during a check
+  // runs once more afterward, with the latest state (saving NYT then Economist in
+  // quick succession must check both). Resolves to the latest status map.
   let verifyAgain = false;
-  async function verifySignIns() {
-    if (!isSignedIn?.()) return;
-    if (verifying) { verifyAgain = true; return; }
+  let verifyPromise = null;
+  function verifySignIns() {
+    if (!isSignedIn?.()) return Promise.resolve(signIns);
+    if (verifying) { verifyAgain = true; return verifyPromise; }
     verifying = true;
-    try {
-      do {
-        verifyAgain = false;
-        const sync = getState()?.articleSync || {};
-        const d = await callGmailApi({
-          action: "verifyNewsSignIns",
-          cookies: { nytCookie: sync.nytCookie || "", economistCookie: sync.economistCookie || "", stribCookie: sync.stribCookie || "" }
-        });
-        if (d?.signIns) { signIns = d.signIns; if (isActive()) render(); }
-      } while (verifyAgain);
-    } finally {
-      verifying = false;
-    }
+    verifyPromise = (async () => {
+      try {
+        do {
+          verifyAgain = false;
+          const sync = getState()?.articleSync || {};
+          let deviceStatus;
+          const device = deviceSignIn();
+          if (device?.check) {
+            lastDeviceCheckAt = Date.now();
+            try { deviceStatus = await device.check(); } catch { deviceStatus = undefined; }
+            lastDeviceStatus = deviceStatus || null;
+          }
+          const d = await callGmailApi({
+            action: "verifyNewsSignIns",
+            cookies: { nytCookie: sync.nytCookie || "", economistCookie: sync.economistCookie || "", stribCookie: sync.stribCookie || "" },
+            ...(deviceStatus && Object.keys(deviceStatus).length ? { deviceStatus } : {})
+          });
+          if (d?.signIns) { signIns = d.signIns; signInsLoaded = true; }
+        } while (verifyAgain);
+      } finally {
+        verifying = false;
+        if (isActive()) render();
+      }
+      return signIns;
+    })();
+    return verifyPromise;
   }
 
   function cardFor(id) { for (const a of allCards()) if (a.id === id) return a; return null; }
@@ -402,7 +444,7 @@ export function createNewsModule(deps) {
     h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Papers</div>`;
     for (const p of NEWS_PAPERS) {
       const st = paperStatus(signIns, p.key);
-      const note = st === "expired" ? "Sign in again" : st === "none" ? "Not signed in" : "";
+      const note = st === "expired" ? "Sign in again" : (st === "none" || (st === "unknown" && signInsLoaded && !verifying)) ? "Not signed in" : "";
       h += sideTab("paper", p.key, `<i class="news-side-mark article-sidebar-icon" aria-hidden="true">${p.mark}</i><span class="news-side-paper"><span>${esc(p.label)}</span>${note ? `<small class="news-side-warn">${note}</small>` : ""}</span>`, c.paper[p.key]);
     }
     el.innerHTML = h;
@@ -463,13 +505,16 @@ export function createNewsModule(deps) {
   }
 
   function signInBanner() {
-    const statuses = NEWS_PAPERS.map((p) => paperStatus(signIns, p.key));
-    if (statuses.some((s) => s === "signed-in" || s === "unverified" || s === "unknown")) {
+    const kind = signInBannerKind(signIns, { loaded: signInsLoaded, verifying });
+    if (kind === "expired") {
       const expired = NEWS_PAPERS.filter((p) => paperStatus(signIns, p.key) === "expired" && p.key !== "athletic").map((p) => p.label);
-      if (!expired.length) return "";
       return `<div class="news-banner">${esc(expired.join(", "))}: sign-in expired, so new articles from ${expired.length > 1 ? "them" : "it"} are paused. <button class="news-banner-btn" type="button" data-news-signin>Update sign-in</button></div>`;
     }
-    return `<div class="news-banner">News collects articles only from papers you're signed in to. Add your subscriber sign-ins in Sync Settings. <button class="news-banner-btn" type="button" data-news-signin>Open Sync Settings</button></div>`;
+    if (kind !== "prompt") return "";
+    // In the iPhone app the sign-ins are made in the app itself (Sync Settings →
+    // the Sign in buttons); in a browser they are pasted subscriber cookies.
+    const how = deviceSignIn() ? "Sign in to your papers in Sync Settings." : "Add your subscriber sign-ins in Sync Settings.";
+    return `<div class="news-banner">News collects articles only from papers you're signed in to. ${how} <button class="news-banner-btn" type="button" data-news-signin>Open Sync Settings</button></div>`;
   }
 
   function renderContent() {
@@ -614,6 +659,7 @@ export function createNewsModule(deps) {
   function seed(list, status) {
     seeded = Array.isArray(list) ? list : [];
     signIns = status || {};
+    signInsLoaded = true;
     counts = countsFor(seeded);
     pages.clear();
     updateDot();
@@ -621,5 +667,5 @@ export function createNewsModule(deps) {
     return seeded.length;
   }
 
-  return { enter, leave: flush, load, verifySignIns, render, seed };
+  return { enter, leave: flush, load, verifySignIns, render, seed, deviceStatus: () => lastDeviceStatus };
 }

@@ -37,6 +37,7 @@ import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './financ
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
+import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
@@ -1739,9 +1740,21 @@ const _news = createNewsModule({
   onSentToMedia: (...a) => addAcceptedNewsArticle(...a),
   openInMedia: (id) => { showMediaApp(); switchMediaTab("all"); openArticle(id, "articleList"); },
   listenInMedia: (id) => listenToArticle(id),
-  openSignInSettings: () => openSyncSettingsDialog("read"),
+  // The iPhone app signs in to papers in the app itself (Sync Settings → Sign in);
+  // a browser pastes subscriber cookies in the Sync Settings dialog.
+  openSignInSettings: () => (nativeArticleReader() ? openContextSettingsDialog("read-sync") : openSyncSettingsDialog("read")),
+  // The phone's own newspaper sign-ins (news-device-signin.js), or null in a
+  // browser. Deferred: the plugin is looked up when News needs it, not at load.
+  getDeviceSignIn: () => {
+    const reader = nativeArticleReader();
+    if (!reader || typeof reader.cookieNames !== "function") return null;
+    return {
+      check: () => checkDeviceSignIns(reader, { isMarked: paperSignInMarked }),
+      needsCheck: (signIns) => deviceSignInsNeedCheck(signIns)
+    };
+  },
 });
-const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed } = _news;
+const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus } = _news;
 
 // ── Inventory domain (extracted to inventory-ui.js) ────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
@@ -17870,7 +17883,9 @@ function handleContextSettingsAction(event) {
       const reader = nativeArticleReader();
       if (!paper || !reader) return;
       try { await reader.logout({ domain: paper.cookieDomain }); showMailToast(`Signed out of ${paper.name} on this phone.`); }
-      catch (err) { showMailToast(err?.message || "Couldn't sign out."); }
+      catch (err) { showMailToast(err?.message || "Couldn't sign out."); return; }
+      markPaperSignIn(paper.key, false);
+      verifyNewsSignIns(); // News stops collecting a paper this phone signed out of
     },
     "save-nyt-cookie": () => {
       const input = document.getElementById("ctxNytCookieInput");
@@ -36556,10 +36571,42 @@ async function refetchArticleWithLogin(id) {
   if (openArticleId === id) openArticle(id, "articleList");
 }
 
+// "This phone has been through <paper>'s sign-in sheet" — a per-device note (not
+// synced state), used only for papers whose sign-in can't be checked (Star
+// Tribune; news-device-signin.js statusFromSignals). Cleared by Sign out.
+const PAPER_SIGNIN_MARK_PREFIX = "live-paper-signin:";
+function paperSignInMarked(key) {
+  try { return window.localStorage.getItem(PAPER_SIGNIN_MARK_PREFIX + key) === "1"; } catch { return false; }
+}
+function markPaperSignIn(key, on) {
+  try {
+    if (on) window.localStorage.setItem(PAPER_SIGNIN_MARK_PREFIX + key, "1");
+    else window.localStorage.removeItem(PAPER_SIGNIN_MARK_PREFIX + key);
+  } catch { /* storage unavailable: the paper just stays unchecked */ }
+}
+
 async function signInToArticlePaper(paper) {
   const reader = nativeArticleReader();
   if (!reader || !paper) return;
-  try { await reader.login({ url: paper.loginUrl, title: paper.name }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); }
+  try { await reader.login({ url: paper.loginUrl, title: paper.name }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); return; }
+  // The sheet has closed. Tell News what this phone now finds for each paper (a
+  // status only — the sign-in cookies stay on the phone), and say how it went.
+  markPaperSignIn(paper.key, true);
+  await reportPaperSignInsToNews(paper);
+}
+
+// After a sign-in in the app: re-check the phone's newspaper sign-ins, report
+// them to News, and toast how it went for `paper`. The toast goes by what the
+// PHONE found; "News will collect…" is added only once the server has it too (a
+// server from before this feature ignores the report).
+async function reportPaperSignInsToNews(paper) {
+  let signIns = null;
+  try { signIns = await verifyNewsSignIns(); } catch { signIns = null; }
+  const onPhone = newsDeviceStatus()?.[paper.key];
+  const onServer = signIns?.[paper.key]?.status;
+  const isIn = (s) => s === "signed-in" || s === "unverified";
+  if (isIn(onPhone)) showMailToast(`Signed in to ${paper.name}.${isIn(onServer) ? " News will collect its articles." : ""}`);
+  else if (onPhone === "none") showMailToast(`Not signed in to ${paper.name} on this phone.`);
 }
 
 // Sign-in / reload buttons for an article from a subscriber paper (iPhone app
@@ -36586,8 +36633,8 @@ function articlePaperLoginsSettingsHtml() {
           </div>
         </div>`).join("");
   return `
-        <p class="sync-context-label">Full articles on this iPhone</p>
-        <p class="sync-context-hint">Sign in to each paper once. Its articles then load in full, read on this phone with your subscription. Use email and password: Google sign-in doesn't work inside apps.</p>${rows}
+        <p class="sync-context-label">Newspaper sign-ins on this device</p>
+        <p class="sync-context-hint">Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with Apple or with email and password: Google sign-in doesn't work inside apps.</p>${rows}
         <div class="sync-context-divider"></div>`;
 }
 

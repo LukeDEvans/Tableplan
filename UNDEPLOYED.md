@@ -16,12 +16,29 @@ _Last deploy: 2026-10-07 (PRs #59–#70)._
   - In the app, Apple / Google sign-in now opens in the system sign-in sheet and returns to the app
     signed in. Before, the website's redirect flow left the app and signed in to the website in a
     browser instead (Google), or failed (Apple). The browser sign-in is unchanged.
-  - **Before testing, add the redirect URL (one-time):** Supabase dashboard → Authentication → URL
-    Configuration → Redirect URLs → add `com.mrlukedevans.live://**`.
+  - Supabase redirect URL `com.mrlukedevans.live://**` added by Luke (2026-10-07).
   - **Needs a TestFlight build; no Netlify deploy needed** (app code only).
   - **After TestFlight:** sign out, then on the lock screen → Sign in → Continue with Apple →
     the sheet signs you in and the app unlocks with your data. Repeat with Google. Try it on the
     Mac app too. If the app says "didn't finish", the redirect URL above is missing.
+- **News: sign in to your papers in the iPhone app, no cookie pasting** · PR #75
+  - The app's own newspaper sign-ins (Sync Settings → "Newspaper sign-ins on this device") now turn
+    News on. When the sign-in sheet closes, the phone checks each paper itself and sends the server
+    only "signed in / not signed in" per paper; the sign-in cookies stay on the phone. The sheet now
+    opens sign-in popups properly, which is what Sign in with Apple needs. The News page shows its
+    "Open Sync Settings" prompt whenever no paper is signed in (it used to stay hidden until a
+    sign-in had been saved, so there was no way to find it). Pasting cookies in a browser still works.
+  - **Needs both a deploy and a TestFlight build.** The server change is in the `gmail` function; an
+    app on the new build against the old server signs in fine but News stays empty.
+  - **After deploy + TestFlight (none of this has run on a phone; the Swift compiles in CI):**
+    - News shows "News collects articles only from papers you're signed in to" → Open Sync Settings
+    - Sync Settings → New York Times → Sign in → Sign in with Apple completes and the sheet shows you
+      signed in; tap Done → toast "Signed in to The New York Times. News will collect its articles." (without the second sentence, the server has not been deployed yet)
+    - repeat for The Economist. If the toast says "Not signed in" after a good sign-in, the Economist
+      check is wrong, not the sign-in (ISSUES.md)
+    - at the next :07 past the hour, read `newsfeeds_status` in `tableplan_states`: `users` should be 1
+      and `feeds` non-empty; remove feed URLs that failed (`_news-feeds.js` FEEDS)
+    - News fills with stories; Sign out of a paper → its sidebar row shows "Sign in again"
 
 - **Media queue: an item paused mid-play keeps the Now Playing slot** · PR #74 · With nothing loaded in the player (the app was closed or reloaded after a pause), the queue had no Now Playing row, so a new episode from a higher-tier show listed above the one you were part-way through. The episode or article that was last in the player now stays at the top under "Now Playing", marked "Paused", until it is finished or removed; new episodes list under it. An episode paused on another device holds the slot through the synced listening history; an article only on the device it was played on. Playing radio or music releases the slot. Reaches the phone **only via a TestFlight build**. **After deploy:** play a lower-tier episode for a minute, pause, fully close the app, reopen once a higher-tier show has a new episode: the paused one is still on top, and the mini-player's play button resumes it. Do the same with an article (articles were covered by unit tests only).
 
