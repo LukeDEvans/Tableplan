@@ -153,14 +153,19 @@ run into the next song; use the lock-screen play/pause and next buttons.
 
 The server fetch reads article pages anonymously from a cloud IP, so paywalled
 papers give it a teaser. In the app, `ArticleReaderPlugin.swift` reads them on the
-phone instead: Media → menu → Sync Settings → **Full articles on this iPhone** →
+phone instead: Media → menu → Sync Settings → **Newspaper sign-ins on this device** →
 Sign in opens the paper's site in an in-app browser; the login cookies stay in the
-app's website data (never sent to our server). Opening an article from one of the
+app's website data (never sent to our server). The same sign-in turns News on for
+that paper: when the sheet closes, the phone checks which papers are signed in and
+sends the server only that answer (NEWS_PAGE_DESIGN.md §4). Opening an article from one of the
 three papers then loads it in an invisible web view with that login and runs the
 extractor from `article-native-reader.js` in the rendered page. If the result still
 looks cut off, the server is tried too and the longer body wins; the reader shows
-"Sign in" / "Reload full article" under a cut-off body. Google sign-in doesn't work
-in an in-app browser, so sign in with email + password. The browser/PWA is unchanged.
+"Sign in" / "Reload full article" under a cut-off body. The sheet opens a sign-in
+provider's popup as a second web view over the page, which Sign in with Apple needs
+(it hands its result back to the page that opened it); **not yet confirmed on a
+phone**. Google refuses in-app browsers, so use Apple or email + password. The
+browser/PWA is unchanged.
 
 **Check on the phone after a TestFlight build:** sign in to The Economist there, then
 open an Economist article saved from a news email; it should load in full. Repeat for

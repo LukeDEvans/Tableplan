@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   articlesForView, arrangeFront, unreadCounts, briefingsFrom, signInsNeedCheck,
-  paperStatus, sentArticleRecord, applyLocalDecisions, timeAgo, NEWS_SECTIONS, mergeArticles
+  paperStatus, sentArticleRecord, applyLocalDecisions, timeAgo, NEWS_SECTIONS, mergeArticles, signInBannerKind
 } from "../news-ui.js";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
@@ -75,6 +75,18 @@ describe("sign-in status", () => {
   it("The Athletic shows the NYT's status", () => {
     expect(paperStatus({ nyt: { status: "expired" } }, "athletic")).toBe("expired");
     expect(paperStatus({}, "economist")).toBe("unknown");
+  });
+  it("the sign-in banner: a device with nothing saved is told where to sign in", () => {
+    // Never checked (no status row): this used to show no banner at all.
+    expect(signInBannerKind({}, { loaded: true })).toBe("prompt");
+    expect(signInBannerKind({}, { loaded: false })).toBe("");               // nothing loaded yet
+    expect(signInBannerKind({}, { loaded: true, verifying: true })).toBe(""); // a check is running
+    const none = { nyt: { status: "none" }, economist: { status: "none" }, startribune: { status: "none" } };
+    expect(signInBannerKind(none, { loaded: true })).toBe("prompt");
+    expect(signInBannerKind({ ...none, nyt: { status: "signed-in" } }, { loaded: true })).toBe("");
+    expect(signInBannerKind({ ...none, startribune: { status: "unverified" } }, { loaded: true })).toBe("");
+    expect(signInBannerKind({ ...none, nyt: { status: "signed-in" }, economist: { status: "expired" } }, { loaded: true })).toBe("expired");
+    expect(signInBannerKind({ ...none, economist: { status: "expired" } }, { loaded: true })).toBe("expired");
   });
 });
 

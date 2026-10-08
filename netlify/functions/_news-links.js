@@ -451,13 +451,45 @@ async function checkPaperSignIn(paper, cookie, { fetchImpl = fetch } = {}) {
 // Check every paper against the cookies the client sent (its articleSync).
 // Returns the new status map. An inconclusive check keeps a previous answer, or
 // falls to "unverified" when a cookie is saved but has never been checked.
-async function verifySignIns(prev, cookies, { check = checkPaperSignIn, nowMs = Date.now() } = {}) {
+//
+// `deviceStatus` (optional, the iPhone app): what the phone itself found for each
+// paper — "signed-in" | "unverified" | "none" — after checking its own in-app
+// sign-in (news-device-signin.js). The phone's cookies never leave it; only this
+// answer is sent. A paper counts as signed in when EITHER the pasted cookie or
+// the phone says so. A phone-reported entry carries `via: "device"` and
+// `deviceAt`, and a later call that says nothing about that paper (a browser
+// saving another paper's cookie) leaves it as it was.
+const DEVICE_STATUSES = new Set(["signed-in", "unverified", "none"]);
+const statusIsIn = (s) => s === "signed-in" || s === "unverified";
+
+async function verifySignIns(prev, cookies, { check = checkPaperSignIn, nowMs = Date.now(), deviceStatus } = {}) {
   const out = {};
+  const nowIso = new Date(nowMs).toISOString();
   await Promise.all(SIGNIN_PAPERS.map(async (paper) => {
     const result = await check(paper, cookies?.[SIGNIN_COOKIE_FIELDS[paper]]);
-    const before = prev?.[paper]?.status;
-    const status = result || (before && before !== "none" ? before : "unverified");
-    out[paper] = { status, checkedAt: new Date(nowMs).toISOString() };
+    const prior = prev?.[paper] || {};
+    const before = prior.status;
+    // The pasted-cookie answer ("none" = no cookie pasted).
+    const cookieStatus = result || (before && before !== "none" ? before : "unverified");
+
+    // The phone's answer: fresh if this call reports it, else what it last said.
+    const reported = deviceStatus && DEVICE_STATUSES.has(deviceStatus[paper]) ? deviceStatus[paper] : undefined;
+    let device = null;
+    if (reported !== undefined) {
+      // A phone that was signed in and now isn't: the sign-in lapsed.
+      const wasIn = prior.via === "device" && (statusIsIn(before) || before === "expired");
+      device = { status: statusIsIn(reported) ? reported : (wasIn ? "expired" : "none"), deviceAt: nowIso };
+    } else if (prior.via === "device" && before) {
+      device = { status: before, deviceAt: prior.deviceAt };
+    }
+    const deviceAt = device?.deviceAt || prior.deviceAt;
+    const stamp = deviceAt ? { deviceAt } : {};
+
+    if (result !== "none" && statusIsIn(cookieStatus)) out[paper] = { status: cookieStatus, checkedAt: nowIso, ...stamp };
+    else if (device && statusIsIn(device.status)) out[paper] = { status: device.status, checkedAt: nowIso, via: "device", ...stamp };
+    else if (result !== "none") out[paper] = { status: cookieStatus, checkedAt: nowIso, ...stamp };
+    else if (device) out[paper] = { status: device.status, checkedAt: nowIso, via: "device", ...stamp };
+    else out[paper] = { status: "none", checkedAt: nowIso };
   }));
   return out;
 }
