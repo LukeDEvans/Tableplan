@@ -65,7 +65,7 @@ describe("queue-added items in the Media queue (real app.js functions)", () => {
   function build(state) {
     const env = {
       state, normalizeQueueAdded, libraryAlbumTracks,
-      withSkippedLast, mediaAllQueueSkipped: [], nowPlayingQueueId: () => null,
+      withSkippedLast, mediaAllQueueSkipped: [], nowPlayingQueueId: () => null, queueNowId: () => null,
       RECENT_WINDOW_OPTIONS: [{ value: "month", ms: 30 * 864e5 }, 0, 0, 0, { value: "month", ms: 30 * 864e5 }],
       getBundleHeldEpisodeIds: () => new Set(),
       getReadPublications: () => [], articleArtUrl: () => "", getArticleSortDate: (a) => a.savedAt,

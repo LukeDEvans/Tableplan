@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { upNextOrder, withSkippedLast, previousFromTrail } from "../media-queue-order.js";
+import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId } from "../media-queue-order.js";
 
 describe("the queue plays in the order Up Next lists", () => {
   it("after the current item, the top of the list is next", () => {
@@ -57,4 +57,22 @@ describe("Previous goes back to what was playing before", () => {
     expect(previousFromTrail(["a", "b", "gone"], ["a", "b", "c"], "c")).toBe("b");
   });
   it("is null with no trail", () => { expect(previousFromTrail([], ["a"], "a")).toBe(null); });
+});
+
+describe("a paused item keeps the Now Playing slot when nothing is loaded", () => {
+  const list = ["newHighTier", "paused", "other"];
+  it("the item this device last had loaded holds the slot, episode or article", () => {
+    expect(heldQueueId({ localId: "paused", listIds: list })).toBe("paused");
+  });
+  it("an episode paused on another device holds it through the synced history", () => {
+    expect(heldQueueId({ lastHistory: { kind: "podcast", id: "paused" }, progress: { paused: { position: 300 } }, listIds: list })).toBe("paused");
+  });
+  it("nothing holds the slot once the item is finished or out of the queue", () => {
+    expect(heldQueueId({ localId: "gone", listIds: list })).toBe(null);
+    expect(heldQueueId({ lastHistory: { kind: "podcast", id: "paused" }, progress: { paused: { position: 300, played: true } }, listIds: list })).toBe(null);
+  });
+  it("an episode that was never started, or radio played last, holds nothing", () => {
+    expect(heldQueueId({ lastHistory: { kind: "podcast", id: "paused" }, progress: {}, listIds: list })).toBe(null);
+    expect(heldQueueId({ lastHistory: { kind: "radio", id: "mpr" }, listIds: list })).toBe(null);
+  });
 });
