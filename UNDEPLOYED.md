@@ -12,6 +12,17 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-07 (PRs #59–#70)._
 
+- **Sign in to Liv with Apple or Google in the app (iPhone and Mac)** · PR #PRNUM
+  - In the app, Apple / Google sign-in now opens in the system sign-in sheet and returns to the app
+    signed in. Before, the website's redirect flow left the app and signed in to the website in a
+    browser instead (Google), or failed (Apple). The browser sign-in is unchanged.
+  - **Before testing, add the redirect URL (one-time):** Supabase dashboard → Authentication → URL
+    Configuration → Redirect URLs → add `com.mrlukedevans.live://**`.
+  - **Needs a TestFlight build; no Netlify deploy needed** (app code only).
+  - **After TestFlight:** sign out, then on the lock screen → Sign in → Continue with Apple →
+    the sheet signs you in and the app unlocks with your data. Repeat with Google. Try it on the
+    Mac app too. If the app says "didn't finish", the redirect URL above is missing.
+
 - **Media queue: an item paused mid-play keeps the Now Playing slot** · PR #74 · With nothing loaded in the player (the app was closed or reloaded after a pause), the queue had no Now Playing row, so a new episode from a higher-tier show listed above the one you were part-way through. The episode or article that was last in the player now stays at the top under "Now Playing", marked "Paused", until it is finished or removed; new episodes list under it. An episode paused on another device holds the slot through the synced listening history; an article only on the device it was played on. Playing radio or music releases the slot. Reaches the phone **only via a TestFlight build**. **After deploy:** play a lower-tier episode for a minute, pause, fully close the app, reopen once a higher-tier show has a new episode: the paused one is still on top, and the mini-player's play button resumes it. Do the same with an article (articles were covered by unit tests only).
 
 - **Meal plan: events land on the meal they take up; Events & Notes open by default** · PR #72

@@ -149,6 +149,18 @@ Save. Without it the Apple Music API calls fail with an authorization error.
 → Sign in (Apple's prompt appears) → play a Discover song; lock the phone and let it
 run into the next song; use the lock-screen play/pause and next buttons.
 
+## Signing in to Liv with Apple or Google
+
+The website's sign-in is a redirect flow: the browser leaves for the provider and
+comes back to the site. In the app that can't come back, so in the app
+(`isNativeApp()`) Apple / Google sign-in runs in the WebAuth sheet
+(`ASWebAuthenticationSession`, `signInWithOAuthInApp` in app.js):
+`signInWithOAuth({ skipBrowserRedirect: true, redirectTo: com.mrlukedevans.live://auth-callback })`,
+the sheet returns that URL, and the session is set from it (`parseOAuthCallback`:
+a PKCE `?code=` or implicit-flow `#access_token=…&refresh_token=…`).
+**One-time setup:** Supabase → Authentication → URL Configuration → Redirect URLs →
+`com.mrlukedevans.live://**`. The email code works everywhere without it.
+
 ## Full subscriber articles (NYT, Economist, Star Tribune)
 
 The server fetch reads article pages anonymously from a cloud IP, so paywalled

@@ -30,3 +30,27 @@ describe("in-app sign-in bridge", () => {
     expect(parseAppCallback("not a url").status).toBe("unknown");
   });
 });
+
+import { parseOAuthCallback, APP_AUTH_CALLBACK_URL } from "../native-bridge.js";
+describe("the app's own Apple / Google sign-in callback", () => {
+  it("returns to the app's scheme", () => {
+    expect(APP_AUTH_CALLBACK_URL).toBe(`${APP_CALLBACK_SCHEME}://auth-callback`);
+  });
+  it("reads a PKCE code", () => {
+    expect(parseOAuthCallback(`${APP_AUTH_CALLBACK_URL}?code=abc-123`)).toEqual({ kind: "code", code: "abc-123" });
+  });
+  it("reads implicit-flow tokens from the fragment", () => {
+    expect(parseOAuthCallback(`${APP_AUTH_CALLBACK_URL}#access_token=at&expires_in=3600&refresh_token=rt&token_type=bearer`))
+      .toEqual({ kind: "tokens", accessToken: "at", refreshToken: "rt" });
+  });
+  it("reads a refusal from the query or the fragment", () => {
+    expect(parseOAuthCallback(`${APP_AUTH_CALLBACK_URL}?error=access_denied&error_description=User+cancelled+the+request`))
+      .toEqual({ kind: "error", message: "User cancelled the request" });
+    expect(parseOAuthCallback(`${APP_AUTH_CALLBACK_URL}#error=server_error`)).toEqual({ kind: "error", message: "server_error" });
+  });
+  it("ignores anything that isn't the app's scheme or carries no session", () => {
+    expect(parseOAuthCallback("https://effervescent-malabi-e0af55.netlify.app/#access_token=at&refresh_token=rt").kind).toBe("unknown");
+    expect(parseOAuthCallback(`${APP_AUTH_CALLBACK_URL}#access_token=at`).kind).toBe("unknown");
+    expect(parseOAuthCallback("nope").kind).toBe("unknown");
+  });
+});
