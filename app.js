@@ -1,5 +1,6 @@
 import * as LiveGroceryCatalog from './grocery-catalog.js';
 import { safeUrl, isSafeHref, isSafeSrc, parseInertHtml, scrubActiveAttributes, sanitizeUntrustedHtml } from './html-sanitize.js';
+import { buildMailBodyFrame as buildMailFrame, sanitizeMailFrameHtml } from './mail-frame.js';
 import { createMealplanModule, autoRule, defaultMealPlanConfig, groceryMealSlotId, mealEntryList, minimumMealEntryCount, normalizeMealPlanConfig, defaultMealEntries, weekdayDefaultDayIds, daySpecificDefaultMealEntries } from './mealplan-ui.js';
 import { createRecipesModule, combinedRecipeTime, defaultRecipeTags, migrateRecipeFoldersToTags, normalizeActiveCooking, normalizeCookLog, normalizeInstructionSteps, normalizeNutritionCandidate, normalizeNutritionFacts, normalizeRecipe, normalizeRecipeTagSelection, normalizeRecipeTags, normalizeTrashedRecipe, seedFolders } from './recipes-ui.js';
 import { createGroceriesModule, baseGroceryItemKey, defaultGroceryBaseItems, defaultGroceryDailyDozenTags, ensureGroceryCatalog, mergeGroceryStoreItemSections, normalizeGroceryAliases, normalizeGroceryBaseItems, normalizeGroceryChecklist, normalizeGroceryDailyDozenTags, normalizeGroceryItemLocations, normalizeGroceryPriceObservations, normalizeGroceryPricingSettings, normalizeGrocerySplitPreferences, normalizeGroceryStoreItemSections, normalizeGroceryStoreSections, normalizeGroceryStores, normalizePriceHistory, normalizeReceipts } from './groceries-ui.js';
@@ -319,7 +320,7 @@ const STATE_SECTIONS = {
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -4872,6 +4873,7 @@ function defaultState() {
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
     mailAiSettings: {},
+    mailReadingPrefs: {},
     financeAlertPrefs: {},
     mailMoveMemory: { threads: {}, senders: {} },
     financePeople: [],
@@ -5064,6 +5066,7 @@ function normalizeState(parsed) {
     activeCooking: normalizeActiveCooking(parsed?.activeCooking),
     weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
     mailAiSettings: (parsed?.mailAiSettings && typeof parsed.mailAiSettings === "object") ? parsed.mailAiSettings : {},
+    mailReadingPrefs: (parsed?.mailReadingPrefs && typeof parsed.mailReadingPrefs === "object") ? parsed.mailReadingPrefs : {},
     financeAlertPrefs: (parsed?.financeAlertPrefs && typeof parsed.financeAlertPrefs === "object") ? parsed.financeAlertPrefs : {},
     mailMoveMemory: (parsed?.mailMoveMemory && typeof parsed.mailMoveMemory === "object") ? parsed.mailMoveMemory : { threads: {}, senders: {} },
     financePeople: normalizeFinancePeople(parsed?.financePeople, createId),
@@ -8636,8 +8639,8 @@ const mailThreadCache = new Map(); // threadId → { thread, at }
 // Lightweight row data (subject/from) kept from the list so opening a thread can
 // paint its header INSTANTLY while the full body loads — see openMailThread.
 const mailRowSummary = new Map(); // threadId → { subject, from }
-// Message ids the user has opted to load remote images for this session.
-// Remote images are blocked by default (speed + tracking-pixel privacy).
+// Message ids the user has opted to load remote images for this session —
+// only matters while remote images are blocked in Settings → Mail Reading.
 const mailShownImages = new Set();
 let mailPrefetchGen = 0;
 const MAIL_LIST_PRELOAD_TTL = 2 * 60 * 1000;
@@ -11330,11 +11333,31 @@ function mountMailMessageFrames(container, messages) {
 
 function mountMailMessageBody(holder, msg) {
   if (msg.body?.includes("<")) {
-    const showImages = mailShownImages.has(msg.id);
-    // Remote images are blocked by default (privacy + speed); the reader turns
-    // them on via the "…" menu's Display images (see showMailMoreMenu /
-    // displayAllMailImages), which re-renders the thread with src restored.
-    const frame = buildMailBodyFrame(msg.body, { showImages });
+    // Remote images load by default, with tracking images stripped (Settings →
+    // Mail Reading turns that off). When they're blocked, the reader can still
+    // turn them on for the open thread via the "…" menu's Display images (see
+    // showMailMoreMenu / displayAllMailImages).
+    const showImages = mailImagesOn() || mailShownImages.has(msg.id);
+    const frame = buildMailFrame(msg.body, {
+      showImages,
+      onReady: (iframe, doc) => {
+        linkifyMailDocument(doc);
+        wireMailFrameAddressLinks(iframe);
+        // The email body fills most of the reader; the iframe swallows touches
+        // over it, so drive the swipe-between-emails pager from here too. Touch
+        // coords are frame-relative and the frame moves with the drag, so add
+        // the frame's live offset to get the finger's true viewport position.
+        wireMailPager(doc, (t) => {
+          const r = iframe.getBoundingClientRect();
+          return [r.left + t.clientX, r.top + t.clientY];
+        });
+      },
+      // Images embedded in the email itself ship as attachments of the message.
+      inlineImages: {
+        attachments: (msg.attachments || []).filter((a) => a.inline && a.contentId),
+        load: (att) => loadMailEmbeddedImage(msg.id, att)
+      }
+    });
     holder.appendChild(frame);
   } else {
     const pre = document.createElement("pre");
@@ -11343,6 +11366,28 @@ function mountMailMessageBody(holder, msg) {
     wireMailAddressLinks(pre);
     holder.appendChild(pre);
   }
+}
+
+// Remote images in emails: on unless switched off in Settings → Mail Reading
+// (state.mailReadingPrefs.blockRemoteImages, synced).
+function mailImagesOn() {
+  return state.mailReadingPrefs?.blockRemoteImages !== true;
+}
+
+// One embedded image, as base64url, through the existing attachment action
+// (Netlify → Gmail). Cached for the session so re-rendering a thread, or
+// reopening it, never fetches the same image twice; failures are not cached.
+const mailEmbeddedImageCache = new Map(); // "messageId:attachmentId" → Promise<string>
+function loadMailEmbeddedImage(messageId, att) {
+  const key = `${messageId}:${att.attachmentId}`;
+  if (mailEmbeddedImageCache.has(key)) return mailEmbeddedImageCache.get(key);
+  const p = callGmailApi({ action: "attachment", messageId, attachmentId: att.attachmentId })
+    .then((res) => res?.data || "")
+    .catch(() => "");
+  mailEmbeddedImageCache.set(key, p);
+  p.then((data) => { if (!data) mailEmbeddedImageCache.delete(key); });
+  while (mailEmbeddedImageCache.size > 80) mailEmbeddedImageCache.delete(mailEmbeddedImageCache.keys().next().value);
+  return p;
 }
 
 // Turn on remote images for the whole open thread (the "…" → Display images
@@ -11358,252 +11403,7 @@ function displayAllMailImages() {
   });
 }
 
-function buildMailBodyFrame(html, { showImages = false } = {}) {
-  let bodyHtml = sanitizeMailFrameHtml(html);
-  let blocked = 0;
-  if (!showImages) {
-    const r = blockRemoteMailImages(bodyHtml);
-    bodyHtml = r.html;
-    blocked = r.blocked;
-  }
-  const iframe = document.createElement("iframe");
-  iframe.className = "mail-msg-frame";
-  iframe.dataset.blockedImages = String(blocked);
-  // No allow-scripts: any scripting in the email is inert. allow-same-origin
-  // lets the app measure the content height for auto-sizing.
-  iframe.setAttribute("sandbox", "allow-same-origin allow-popups allow-popups-to-escape-sandbox");
-  iframe.setAttribute("referrerpolicy", "no-referrer");
-  // The frame must never scroll internally — a mis-measured height would
-  // otherwise produce a phantom nested scrollbar that swallows wheel/touch
-  // scrolling. The thread panel is the only scroller.
-  iframe.setAttribute("scrolling", "no");
-  iframe.srcdoc =
-    '<!doctype html><html><head><meta charset="utf-8"><base target="_blank">' +
-    // Force light rendering: the pane background is white, so let the OS/UA
-    // darken nothing (and pair with the dark-media-query neutralizing in
-    // sanitizeMailFrameHtml so email text never turns white-on-white).
-    '<meta name="color-scheme" content="light">' +
-    // text-size-adjust: iOS inflates paragraph text in a block it considers too
-    // wide (any email the fit below zooms down) but leaves the email's fixed
-    // pixel line-heights alone, so lines printed on top of each other.
-    '<style>:root{color-scheme:light}html{-webkit-text-size-adjust:100%;text-size-adjust:100%}html,body{margin:0;padding:0}' +
-    'body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#202124;background:#fff;word-break:break-word}' +
-    'img{max-width:100%;height:auto}table{max-width:100%}' +
-    // A blocked/broken remote image has no src — browsers draw an ugly alt-text
-    // box for it ("Article Image"). Collapse those so the email reads cleanly;
-    // they reappear when the reader taps Display images (which re-renders with
-    // src restored). figure captions that belong to a hidden image go too.
-    'img:not([src]){display:none!important}figure:has(> img:not([src])) figcaption,figure:has(> a > img:not([src])) figcaption{display:none}</style></head><body>' +
-    bodyHtml +
-    "</body></html>";
-
-  // Scale the email to fill the pane: fixed-width designs (newsletters are
-  // typically ~600px) zoom up to the available width; overflowing ones zoom
-  // down to fit. Height then tracks the scaled content.
-  const fitAndSize = () => {
-    try {
-      const doc = iframe.contentDocument;
-      const b = doc?.body;
-      if (!b) return;
-      b.style.zoom = "";
-      const avail = iframe.clientWidth || 1;
-      let z = 1;
-      let design = 0;
-      doc.querySelectorAll("table[width],td[width],table[style*='width'],div[style*='width']").forEach((el) => {
-        const r = el.getBoundingClientRect().width;
-        if (r >= 280 && r <= avail + 40) design = Math.max(design, r);
-      });
-      // Absolutely-positioned content overflows html, not body — check both.
-      const wide = Math.max(b.scrollWidth, doc.documentElement.scrollWidth);
-      if (wide > avail + 4) z = avail / wide;
-      else if (design && design < avail - 8) z = Math.min(avail / design, 1.75);
-      if (Math.abs(z - 1) > 0.03) b.style.zoom = z;
-      // zoom is approximate on nested fixed-width layouts: if the doc still
-      // spills past the pane it would be clipped (scrolling="no"), so tighten.
-      // Read the root's width only: body.scrollWidth is in body's own unzoomed
-      // units in current Chromium, so it always "still overflowed" and the
-      // email was zoomed down twice.
-      if (z < 1) {
-        const still = doc.documentElement.scrollWidth;
-        if (still > avail + 4) b.style.zoom = z * (avail / still);
-      }
-      // Measure the VISUAL height: with zoom applied, scrollHeight alone can
-      // undershoot by a few px, which used to leave a nested scrollbar.
-      const visual = Math.ceil(b.getBoundingClientRect().bottom + (doc.defaultView?.scrollY || 0));
-      const h = Math.max(doc.documentElement.scrollHeight, visual) + 4;
-      iframe.style.height = Math.min(Math.max(h, 40), 30000) + "px";
-    } catch {}
-  };
-  // Coalesce refit bursts into one measure per frame. Deferring to the next
-  // animation frame also breaks any synchronous ResizeObserver feedback (the
-  // zoom fitAndSize applies changes body size, which would otherwise re-notify).
-  let fitPending = false;
-  const scheduleFit = () => {
-    if (fitPending) return;
-    fitPending = true;
-    requestAnimationFrame(() => { fitPending = false; fitAndSize(); });
-  };
-  iframe.addEventListener("load", () => {
-    try {
-      linkifyMailDocument(iframe.contentDocument);
-      wireMailFrameAddressLinks(iframe);
-    } catch {}
-    fitAndSize();
-    try {
-      const doc = iframe.contentDocument;
-      // The email body fills most of the reader; the iframe swallows touches
-      // over it, so drive the swipe-between-emails pager from here too. Touch
-      // coords are frame-relative and the frame moves with the drag, so add
-      // the frame's live offset to get the finger's true viewport position.
-      wireMailPager(doc, (t) => {
-        const r = iframe.getBoundingClientRect();
-        return [r.left + t.clientX, r.top + t.clientY];
-      });
-      // Re-fit whenever an image settles — load AND error both finalize layout,
-      // so a blocked or broken remote image (common under no-referrer) can no
-      // longer leave the frame stuck at a too-short height.
-      doc.querySelectorAll("img").forEach((img) => {
-        img.addEventListener("load", scheduleFit);
-        img.addEventListener("error", scheduleFit);
-      });
-      // Event-driven height tracking: any change in the rendered body size —
-      // late remote images, web-font swaps, reflow — re-fits immediately, with
-      // no fixed time window that can expire before slow content finishes
-      // (the old 4s poll was why slow/blocked images left a half-height frame).
-      if (doc.body && typeof ResizeObserver !== "undefined") {
-        new ResizeObserver(scheduleFit).observe(doc.body);
-      }
-    } catch {}
-    // A few early re-measures cover the first layout settle even when the body
-    // size doesn't change (e.g. same-metrics font swaps).
-    let n = 0;
-    const t = setInterval(() => { fitAndSize(); if (++n >= 6) clearInterval(t); }, 400);
-    // Refit when the pane width changes (sidebar toggle, window resize)
-    let lastW = iframe.clientWidth;
-    new ResizeObserver(() => {
-      if (iframe.clientWidth !== lastW) { lastW = iframe.clientWidth; fitAndSize(); }
-    }).observe(iframe);
-  });
-  return iframe;
-}
-
-// Lighter sanitizer for iframe rendering: keeps <style> (email layouts depend
-// on it) and strips active content. Scripts are additionally blocked by the
-// iframe sandbox.
-function sanitizeMailFrameHtml(html) {
-  // Inert parse (DOMParser): nothing executes or loads while we scrub.
-  const div = parseInertHtml(html, { keepHeadStyles: true });
-  div.querySelectorAll("script,iframe,frame,object,embed,applet,form,link,meta,base").forEach((el) => el.remove());
-  // All on* handlers go; href/src/etc. survive only with an allowlisted scheme
-  // (http(s)/mailto/tel/#frag for links; http(s)/cid:/data:image for images).
-  scrubActiveAttributes(div);
-  // Neutralize the email's own dark-mode rules. Marketing emails (Audible,
-  // Amazon, …) ship `@media (prefers-color-scheme: dark){ … color:#FFF … }`
-  // assuming the client also darkens the background. This reader always renders
-  // on white, so on a dark-mode phone those rules turned every text node white
-  // → invisible (only images showed). Rename the feature to an unknown one so
-  // the dark query can never match; the email's default light styling remains.
-  div.querySelectorAll("style").forEach((styleEl) => {
-    if (/prefers-color-scheme\s*:\s*dark/i.test(styleEl.textContent)) {
-      styleEl.textContent = styleEl.textContent.replace(/prefers-color-scheme(\s*:\s*dark)/gi, "x-disabled-color-scheme$1");
-    }
-  });
-  stripLabeledEmailAds(div);
-  return div.innerHTML;
-}
-
-// Strip remote image loads from a sanitized email body so it renders instantly
-// (marketing blasts pull dozens of images from the sender's servers) and no
-// tracking pixels fire. Only http(s) URLs are neutralized — inline data:/cid:
-// images already ship with the message, so they stay. Returns the rewritten
-// HTML plus a count so the caller can offer a "Display images" button.
-function blockRemoteMailImages(html) {
-  // inert: parsing must not itself fetch the images. keepHeadStyles: the input
-  // is sanitizeMailFrameHtml's output, which leads with the email's <style>
-  // blocks — a re-parse files those under <head>, so without this the body
-  // came back with the email's whole stylesheet gone (no mobile media queries →
-  // fixed 600–700px tables → the frame zoomed the email down to fit).
-  const div = parseInertHtml(html, { keepHeadStyles: true });
-
-  let blocked = 0;
-  const isRemote = (u) => /^\s*https?:\/\//i.test(u || "");
-  const cssHasRemote = /url\(\s*['"]?\s*https?:\/\//i;                 // non-global: stateless test
-  const cssRemoteAll = /url\(\s*['"]?\s*https?:\/\/[^)]*\)/gi;         // global: replace every occurrence
-
-  div.querySelectorAll("img").forEach((img) => {
-    if (isRemote(img.getAttribute("src"))) { img.setAttribute("data-blk-src", img.getAttribute("src")); img.removeAttribute("src"); blocked++; }
-    const ss = img.getAttribute("srcset");
-    if (ss && /https?:\/\//i.test(ss)) { img.setAttribute("data-blk-srcset", ss); img.removeAttribute("srcset"); }
-  });
-  // Legacy table/cell background images (<td background="…">).
-  div.querySelectorAll("[background]").forEach((el) => {
-    if (isRemote(el.getAttribute("background"))) { el.setAttribute("data-blk-background", el.getAttribute("background")); el.removeAttribute("background"); blocked++; }
-  });
-  // Inline style background images.
-  div.querySelectorAll("[style]").forEach((el) => {
-    const s = el.getAttribute("style") || "";
-    if (cssHasRemote.test(s)) { el.setAttribute("style", s.replace(cssRemoteAll, "none")); blocked++; }
-  });
-  // <style> block background images.
-  div.querySelectorAll("style").forEach((st) => {
-    const t = st.textContent || "";
-    if (cssHasRemote.test(t)) { st.textContent = t.replace(cssRemoteAll, "none"); blocked++; }
-  });
-  return { html: div.innerHTML, blocked };
-}
-
-// Clips ad units from newsletters (NYT etc.). Publishers label every ad with
-// a standalone "ADVERTISEMENT" marker; from that marker we climb to the
-// smallest enclosing block that is still essentially just the ad (bounded by
-// how much text it contains) and remove it. Deliberately conservative: a
-// block with substantial text is never removed, so at worst an ad survives —
-// article content is never clipped.
-function stripLabeledEmailAds(root) {
-  // Pass 1 — ad IMAGES. LiveIntent-served newsletters (NYT, Star Tribune's
-  // Hot Dish, …) deliver every ad creative/chip/tracker as images from an
-  // "/imp?" impression endpoint (liveintent.<pub>.com, sli.<pub>.com), often
-  // alt="Ad", never with real content. Remove each one's enclosing block,
-  // climbing only through wrappers with no meaningful text of their own.
-  root.querySelectorAll('img[alt="Ad" i], img[src*="liveintent." i], img[src*="/imp?" i]').forEach((img) => {
-    if (!root.contains(img)) return; // removed along with an earlier unit
-    let el = img.closest("a") || img;
-    while (el.parentElement && el.parentElement !== root) {
-      const text = el.parentElement.textContent.replace(/\s+/g, " ").trim();
-      if (text.length > 40) break;
-      el = el.parentElement;
-    }
-    el.remove();
-  });
-
-  // Pass 2 — text-labeled ad units ("ADVERTISEMENT" and friends).
-  const AD_LABELS = /^(advertisement|paid post|sponsored|sponsored content|paid for and posted by .{0,80})$/i;
-  const MAX_AD_TEXT = 320; // an ad unit's total text (label + short ad copy)
-  const markers = [];
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  while (walker.nextNode()) {
-    if (AD_LABELS.test(walker.currentNode.textContent.replace(/\s+/g, " ").trim())) {
-      markers.push(walker.currentNode);
-    }
-  }
-  markers.forEach((marker) => {
-    if (!root.contains(marker)) return; // already inside a removed unit
-    let unit = marker.parentElement;
-    if (!unit) return;
-    while (unit.parentElement && unit.parentElement !== root) {
-      const parentText = unit.parentElement.textContent.replace(/\s+/g, " ").trim();
-      if (parentText.length > MAX_AD_TEXT) break;
-      unit = unit.parentElement;
-    }
-    // The creative often sits in a sibling block right after the label unit:
-    // remove it only when it's clearly just a linked image with no real text.
-    const next = unit.nextElementSibling;
-    if (next && next.querySelector("img") && next.querySelector("a") &&
-        next.textContent.replace(/\s+/g, " ").trim().length < 120) {
-      next.remove();
-    }
-    unit.remove();
-  });
-}
+// The frame itself (sanitizing, image handling, fit/size) lives in mail-frame.js.
 
 async function generateAiDraft(thread) {
   const btn = document.getElementById("mailAiGenerateBtn");
@@ -16703,6 +16503,7 @@ function renderContextSettingsDialog(kind) {
     "api-usage": "API Usage",
     "ai-notes": "AI Notes",
     "mail-ai": "Mail AI",
+    "mail-reading": "Mail Reading",
     "voice": "Voice",
     "podcasts": "Podcasts",
     "apple-music": "Apple Music"
@@ -16717,6 +16518,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="pages">Pages</button>
         <button type="button" data-context-settings-action="location-services">Location Services</button>
         <button type="button" data-context-settings-action="weekly-email">Email</button>
+        <button type="button" data-context-settings-action="mail-reading">Mail Reading</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
         <button type="button" data-context-settings-action="apple-music">Apple Music</button>
@@ -16845,6 +16647,25 @@ function renderContextSettingsDialog(kind) {
         persist();
         if (activeAppArea === "finance") renderFinancePage();
       });
+    });
+    return;
+  }
+
+  if (kind === "mail-reading") {
+    elements.contextSettingsBody.innerHTML = `
+      <div class="mail-ai-feature-list">
+        <div class="mail-ai-feature-row">
+          <div class="mail-ai-feature-text">
+            <span class="mail-ai-feature-label">Load images in emails</span>
+            <span class="mail-ai-feature-desc">Shows an email's pictures as it opens, with tracking pixels removed. A sender can still tell you opened an email from its other pictures. When off, “Display images” in an email's … menu loads them for that conversation.</span>
+          </div>
+          <input type="checkbox" class="live-toggle" aria-label="Load images in emails" id="mailLoadImagesToggle" ${mailImagesOn() ? "checked" : ""}>
+        </div>
+      </div>`;
+    elements.contextSettingsBody.querySelector("#mailLoadImagesToggle").addEventListener("change", (e) => {
+      if (!state.mailReadingPrefs || typeof state.mailReadingPrefs !== "object") state.mailReadingPrefs = {};
+      state.mailReadingPrefs.blockRemoteImages = !e.target.checked;
+      persist();
     });
     return;
   }
@@ -17846,6 +17667,7 @@ function handleContextSettingsAction(event) {
     "calendars": () => closeAndRun(openPlanCalDialog),
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
+    "mail-reading": () => renderContextSettingsDialog("mail-reading"),
     "voice": () => renderContextSettingsDialog("voice"),
     "apple-music": () => renderContextSettingsDialog("apple-music"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
