@@ -95,6 +95,7 @@ reach into another domain's internals. Cross-domain needs go through a shared mo
 | Finance transactions (bank/CSV/manual) | `finance_transactions` (relational, group-scoped) | durable ledger — SimpleFIN pulls ingested server-side (bank rows service-role-only), CSV + manual rows client-written; soft-delete; annotations (labels/splits/notes) stay in the finance JSONB keyed by the same txn id. Read via `finance-txn-store.js` behind `financeTxnSource` ("feed" default). See FINANCE_TRANSACTIONS_DESIGN.md |
 | Mail processing | `mail_accounts`/`mail_sweep_state`/`mail_processed` | service-role only, hardened |
 | News articles | `news_articles` (relational, per-user, service-role only) | the News page's stories from email + hourly RSS (`_news-store.js`, `_news-feeds.js`); read/written only through gmail.js actions and the sweep/feed job; 3-day window pruned hourly. Sign-in status `mailnewssubs_*` and email dedup `mailnewsseen_*` stay JSONB rows. See NEWS_PAGE_DESIGN.md §10 |
+| Sports scores | not stored: fetched through `netlify/functions/scores.mjs` in the app's own model (`sports-model.js`) | provider adapters (`_scores-*.mjs`, ESPN first) are the only vendor-aware code; per-user favorites and league choices are `state.sportsPrefs` in the personal `recreate` section. See SPORTS_SCORES_DESIGN.md |
 | Sharing | `live_groups`/`live_group_members`/`live_group_invites` | family/group model |
 | Push | `live_push_subscriptions` | web-push endpoints |
 | History/backup | `tableplan_state_history` | periodic snapshots |

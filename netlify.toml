@@ -29,6 +29,11 @@
 [functions."instacart-list"]
   included_files = ["instacart.js"]
 
+# scores imports the app's sports model (league catalog + canonical game shape),
+# shared with the browser (SPORTS_SCORES_DESIGN.md).
+[functions."scores"]
+  included_files = ["sports-model.js"]
+
 # kokoro-tts imports the shared pure core (validation/chunking/voices/errors).
 [functions."kokoro-tts"]
   included_files = ["kokoro-core.mjs"]

@@ -17,8 +17,8 @@ section like a newspaper.
 - Each article has a **⋯ menu**. **Send to Media** saves it to Media → Publications,
   as Mail's ⋯ → Send to Media does for an email.
 - In Media's Playlist settings, the per-paper tiles become **one Publications tile**.
-- **Sports** gets an ESPN-style scores build later (spec TBD). For now it is a
-  section like the others, with room left for a scores strip.
+- **Sports** has an ESPN-style **Scores** tab beside its stories (built
+  2026-10-07: [SPORTS_SCORES_DESIGN.md](SPORTS_SCORES_DESIGN.md)).
 
 ## 2. Decisions (2026-10-06)
 
@@ -174,7 +174,7 @@ So "signed in" is checked with the saved-list pages the sync already uses:
 2. **News page:** `news-ui.js`, nav area, Home alphabetical, 360 px.
 3. **Media:** bell placeholder, remove `news-notif-ui.js`, Publications tile,
    Star Tribune sign-in.
-4. **Sports scores:** spec first.
+4. **Sports scores:** done — SPORTS_SCORES_DESIGN.md.
 
 Each phase: `npm test`, `npm run check:boot`, browser check. Deploy gated on Luke.
 

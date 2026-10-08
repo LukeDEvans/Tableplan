@@ -16,6 +16,8 @@ import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule } from './news-ui.js';
+import { createScoresModule } from './scores-ui.js';
+import { normalizeSportsPrefs } from './sports-model.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
@@ -312,7 +314,7 @@ const STATE_SECTIONS = {
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "recreateSettingStamps"],
+  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "sportsPrefs", "recreateSettingStamps"],
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
@@ -1725,6 +1727,21 @@ const _weather = createWeatherModule({
 });
 const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent } = _weather;
 
+// ── Scores (scores-ui.js, SPORTS_SCORES_DESIGN.md) ─────────────────────
+// The Scores view inside News → Sports. Reads only the app's own scores function;
+// favorites and league choices are this user's state.sportsPrefs. News mounts it
+// through the deferred interface below.
+const _scores = createScoresModule({
+  escapeHtml: (...a) => escapeHtml(...a),
+  showToast: (...a) => showMailToast(...a),
+  getState: () => state,
+  persist: (...a) => persist(...a),
+  canUseLocalBackend: () => canUseLocalBackend(),
+  isNativeApp: () => isNativeApp(),
+  getActiveAppArea: () => activeAppArea,
+});
+const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed: seedScores } = _scores;
+
 // ── News domain (news-ui.js, NEWS_PAGE_DESIGN.md) ──────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showNewsApp stays in
 // app.js. Cross-domain (all deferred): a sent article is added to Media →
@@ -1740,6 +1757,7 @@ const _news = createNewsModule({
   onSentToMedia: (...a) => addAcceptedNewsArticle(...a),
   openInMedia: (id) => { showMediaApp(); switchMediaTab("all"); openArticle(id, "articleList"); },
   listenInMedia: (id) => listenToArticle(id),
+  scores: { mount: (...a) => mountScores(...a), unmount: (...a) => unmountScores(...a), refresh: (...a) => refreshScores(...a) },
   // The iPhone app signs in to papers in the app itself (Sync Settings → Sign in);
   // a browser pastes subscriber cookies in the Sync Settings dialog.
   openSignInSettings: () => (nativeArticleReader() ? openContextSettingsDialog("read-sync") : openSyncSettingsDialog("read")),
@@ -3677,6 +3695,12 @@ function setupDiagnostics() {
       if (!localDevMode) return null;
       return seedNewsFeed(articles, signIns);
     },
+    // The Scores view (scores-ui.js) — normally the scores function; seeds a day's
+    // games directly so the view can be exercised locally.
+    scoresSetBoard: (board) => {
+      if (!localDevMode) return null;
+      return seedScores(board);
+    },
     mpSetSuggestions: (recipes) => {
       if (!localDevMode) return null;
       mealPlanRecipes = recipes;
@@ -4809,6 +4833,9 @@ function defaultState() {
     sailingBoats: [],
     pianoLog: [],
     recreateHobbies: { sailing: true, piano: true },
+    // Scores (News → Sports): this person's favorite teams and league choices.
+    // In `recreate` because that section is always per user (SPORTS_SCORES_DESIGN.md §5).
+    sportsPrefs: normalizeSportsPrefs(),
     pianoSongs: [],
     // Cadence canonical metadata (bytes live in the cadence-blobs bucket).
     cadenceWorks: [],
@@ -4994,6 +5021,7 @@ function normalizeState(parsed) {
     sailingBoats: normalizeSailingBoats(parsed?.sailingBoats),
     pianoLog: normalizePianoLog(parsed?.pianoLog),
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
+    sportsPrefs: normalizeSportsPrefs(parsed?.sportsPrefs),
     pianoSongs: normalizePianoSongs(parsed?.pianoSongs),
     // Cadence records are re-normalized by the music/* domain factories when the
     // subsystem loads; here we only guard the container shape (keep it dumb/sync).
@@ -6509,6 +6537,7 @@ function mergeStates(newer, older) {
 
   // ── Shallow object merges: older provides base, newer keys win ────────────
   merged.recreateHobbies = { ...(older.recreateHobbies || {}), ...(newer.recreateHobbies || {}) };
+  merged.sportsPrefs = { ...(older.sportsPrefs || {}), ...(newer.sportsPrefs || {}) }; // each field then goes by its own stamp
   merged.articleSync = { ...(older.articleSync || {}), ...(newer.articleSync || {}) };
   merged.groceryPricingSettings = { ...(older.groceryPricingSettings || {}), ...(newer.groceryPricingSettings || {}) };
   merged.collapsedSections = { ...(older.collapsedSections || {}), ...(newer.collapsedSections || {}) };
