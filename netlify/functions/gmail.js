@@ -145,16 +145,19 @@ exports.handler = async (event) => {
 
   // Check each paper's sign-in against its subscriber page. The client sends
   // its own saved cookies (state.articleSync), so the large media row is never
-  // read here. Called when a sign-in is saved and when News opens on a stale
-  // (>24 h) status — never on a timer.
+  // read here. Called when a sign-in is saved (or made / removed in the iPhone
+  // app) and when News opens on a stale (>24 h) status — never on a timer.
   if (action === "verifyNewsSignIns") {
     const cookies = body.cookies && typeof body.cookies === "object" ? body.cookies : {};
     const prev = await NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}));
+    // The iPhone app also reports what it found for its own in-app sign-ins
+    // (a status per paper, never a cookie) — verifySignIns validates the values.
+    const deviceStatus = body.deviceStatus && typeof body.deviceStatus === "object" ? body.deviceStatus : undefined;
     const signIns = await NewsLinks.verifySignIns(prev, {
       nytCookie: String(cookies.nytCookie || ""),
       economistCookie: String(cookies.economistCookie || ""),
       stribCookie: String(cookies.stribCookie || "")
-    });
+    }, { deviceStatus });
     await NewsLinks.saveNewsSignIns(serviceKey, userId, signIns);
     return json(200, { ok: true, signIns });
   }

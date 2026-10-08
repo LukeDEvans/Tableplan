@@ -92,6 +92,23 @@ So "signed in" is checked with the saved-list pages the sync already uses:
 - **When checked:** when a sign-in is saved or cleared in Settings, and when News
   opens if the last check is over 24 h old. Never on a timer. A network error keeps
   the previous status; only an explicit logged-out answer marks it **expired**.
+- **iPhone app (2026-10-07):** the reader signs in to each paper inside the app
+  (Sync Settings → Sign in; `ArticleReaderPlugin` login sheet), and the phone works
+  out the status itself (`news-device-signin.js`): the paper's session cookie is
+  present (`NYT-S`, `blaize_session`; the plugin returns cookie **names** only), or,
+  without it, the same subscriber page loads without landing on a login page. Star
+  Tribune is **unverified** once its sheet has been used. The app sends
+  `verifyNewsSignIns { deviceStatus: { nyt, economist, startribune } }`: a status,
+  never a cookie. The server (`verifySignIns`) counts a paper as signed in when
+  either the pasted cookie or the phone says so; a phone-reported entry carries
+  `via: "device"` and `deviceAt`, and a call that says nothing about a paper (a
+  browser saving another paper's cookie) leaves it alone. A phone that was signed in
+  and now isn't reads **expired**. Checked when a sheet closes, on Sign out, and when
+  News opens with a phone report over 24 h old (at most once per 6 h per app run).
+  The server takes the phone's word (ISSUES.md).
+- **Banner:** the Front page prompt shows whenever no paper is signed in, including
+  when nothing has ever been checked (it used to hide for "unknown", which is the
+  permanent state of a device with no sign-in saved).
 - **Gate:** the mail sweep collects a paper's links only if its Mail AI toggle is on
   **and** its status is `signed-in` or `unverified`. It reads the tiny status row once
   per sweep. A paper that lapses stops adding articles; what's on News stays until it

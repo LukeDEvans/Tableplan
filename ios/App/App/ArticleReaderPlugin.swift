@@ -21,6 +21,10 @@ import Capacitor
 //     scripts hydrate late). Resolves { json, finalUrl }; json is "null" when
 //     nothing was found.
 //   • logout({ domain }) — deletes the stored website data for that domain.
+//   • cookieNames({ domain }) — the NAMES (never the values) of that domain's
+//     unexpired cookies in the app's website data. The web app uses them to tell
+//     whether a paper is signed in on this phone (news-device-signin.js) and
+//     reports only that answer to the server, so News can collect the paper.
 @objc(ArticleReaderPlugin)
 public class ArticleReaderPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "ArticleReaderPlugin"
@@ -28,7 +32,8 @@ public class ArticleReaderPlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "login", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "extract", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "logout", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "logout", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cookieNames", returnType: CAPPluginReturnPromise)
     ]
 
     // Running extractions, kept alive until they finish.
@@ -104,6 +109,28 @@ public class ArticleReaderPlugin: CAPPlugin, CAPBridgedPlugin {
                 store.removeData(ofTypes: types, for: matching) {
                     call.resolve(["removed": matching.count])
                 }
+            }
+        }
+    }
+
+    @objc func cookieNames(_ call: CAPPluginCall) {
+        guard let domain = call.getString("domain")?.lowercased(), !domain.isEmpty else {
+            call.reject("A domain is required.")
+            return
+        }
+        DispatchQueue.main.async {
+            WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+                let now = Date()
+                var names = Set<String>()
+                for cookie in cookies {
+                    var host = cookie.domain.lowercased()
+                    if host.hasPrefix(".") { host.removeFirst() }
+                    guard host == domain || host.hasSuffix("." + domain) else { continue }
+                    if let expires = cookie.expiresDate, expires < now { continue }
+                    if cookie.value.isEmpty { continue }
+                    names.insert(cookie.name)
+                }
+                call.resolve(["names": Array(names).sorted()])
             }
         }
     }
@@ -224,6 +251,8 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
     private let onClose: () -> Void
     private var reported = false
     private var webView: WKWebView!
+    // A sign-in provider's popup (Sign in with Apple), shown over the page.
+    private var popupView: WKWebView?
     private let progress = UIProgressView(progressViewStyle: .bar)
     private var progressObservation: NSKeyValueObservation?
 
@@ -248,6 +277,9 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
 
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
+        // A provider's popup may open a moment after the tap (after the page asks
+        // its own server for the sign-in request), not directly inside it.
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -272,16 +304,63 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
         webView.load(URLRequest(url: startUrl))
     }
 
-    // Login pages often open their provider in a popup; keep it in this view.
+    // Login pages open their provider (Sign in with Apple) in a popup and wait for
+    // it to hand the result back to the page that opened it (window.opener). So
+    // the popup must be a real second web view on top of the page: loading it in
+    // place of the page loses the opener, and the sign-in then ends at Apple's
+    // checkmark with nothing to receive it. WebKit requires the popup to be built
+    // from the configuration it passes in (that is what links it to its opener).
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if navigationAction.targetFrame == nil { webView.load(navigationAction.request) }
-        return nil
+        guard navigationAction.targetFrame == nil else { return nil }
+        // A popup opening another window: keep it in the popup.
+        if let popup = popupView, webView === popup {
+            popup.load(navigationAction.request)
+            return nil
+        }
+        closePopup()
+        let popup = WKWebView(frame: .zero, configuration: configuration)
+        popup.navigationDelegate = self
+        popup.uiDelegate = self
+        popup.allowsBackForwardNavigationGestures = true
+        popup.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(popup, belowSubview: progress)
+        NSLayoutConstraint.activate([
+            popup.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            popup.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            popup.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            popup.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        popupView = popup
+        return popup
+    }
+
+    // The popup closed itself (window.close()) once it handed its result back.
+    func webViewDidClose(_ webView: WKWebView) {
+        if let popup = popupView, webView === popup { closePopup() }
+    }
+
+    private func closePopup() {
+        guard let popup = popupView else { return }
+        popupView = nil
+        popup.stopLoading()
+        popup.navigationDelegate = nil
+        popup.uiDelegate = nil
+        popup.removeFromSuperview()
     }
 
     @objc private func done() { dismiss(animated: true) }
-    @objc private func goBack() { if webView.canGoBack { webView.goBack() } }
-    @objc private func reload() { webView.reload() }
+    // Back steps the popup back, or closes it; otherwise it steps the page back.
+    @objc private func goBack() {
+        if let popup = popupView {
+            if popup.canGoBack { popup.goBack() } else { closePopup() }
+            return
+        }
+        if webView.canGoBack { webView.goBack() }
+    }
+    @objc private func reload() {
+        if let popup = popupView { popup.reload() } else { webView.reload() }
+    }
 
     // Fires for Done and for a swipe-down dismiss alike.
     override func viewDidDisappear(_ animated: Bool) {
