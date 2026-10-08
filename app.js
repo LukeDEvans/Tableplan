@@ -1740,9 +1740,8 @@ const _news = createNewsModule({
   onSentToMedia: (...a) => addAcceptedNewsArticle(...a),
   openInMedia: (id) => { showMediaApp(); switchMediaTab("all"); openArticle(id, "articleList"); },
   listenInMedia: (id) => listenToArticle(id),
-  // The iPhone app signs in to papers in the app itself (Sync Settings → Sign in);
-  // a browser pastes subscriber cookies in the Sync Settings dialog.
-  openSignInSettings: () => (nativeArticleReader() ? openContextSettingsDialog("read-sync") : openSyncSettingsDialog("read")),
+  // News → Sync Settings: the app's own paper sign-ins, and pasted cookies.
+  openSignInSettings: () => openContextSettingsDialog("read-sync"),
   // The phone's own newspaper sign-ins (news-device-signin.js), or null in a
   // browser. Deferred: the plugin is looked up when News needs it, not at load.
   getDeviceSignIn: () => {
@@ -1754,7 +1753,7 @@ const _news = createNewsModule({
     };
   },
 });
-const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus } = _news;
+const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus, signInStatus: newsSignInStatus, setDeviceTrail: setNewsDeviceTrail } = _news;
 
 // ── Inventory domain (extracted to inventory-ui.js) ────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
@@ -16439,7 +16438,7 @@ function updateSettingsMenuOptions() {
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
-  elements.menuReadSyncBtn.hidden = !["read", "listen", "media"].includes(activeAppArea);
+  elements.menuReadSyncBtn.hidden = activeAppArea !== "news"; // newspaper sign-ins: News, not Media
   elements.menuPodcastSettingsBtn.hidden = activeAppArea !== "media";
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
   elements.menuPublicationsBtn.hidden = activeAppArea !== "media";
@@ -16460,6 +16459,8 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
+  paperSignInCheckStarted = false;
+  paperSignInCheckDone = false;
   const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
@@ -17077,7 +17078,25 @@ function renderContextSettingsDialog(kind) {
         </select>
         <p class="settings-hint settings-hint--small">Controls the time range shown on the podcasts Recent tab.</p>
       </div>
+      <div class="sync-context-field">
+        <div class="sync-context-field-header">
+          <span class="sync-context-label">Podcast Ad-Block</span>
+          <label class="toggle-switch" aria-label="Podcast Ad-Block">
+            <input type="checkbox" id="ctxPodcastAdBlock" ${state.podcastSkipAds ? "checked" : ""}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <p class="sync-context-hint" style="margin:6px 0 0">Automatically skips sponsor segments in podcast episodes when chapter data is available.</p>
+      </div>
     `;
+    document.getElementById("ctxPodcastAdBlock")?.addEventListener("change", (e) => {
+      state.podcastSkipAds = e.target.checked;
+      persist();
+      const playerToggle = document.getElementById("podcastSkipAdsToggle");
+      if (playerToggle) playerToggle.checked = e.target.checked;
+      if (e.target.checked) scheduleAdSkips(podcastCurrentChapters, podcastAudio);
+      else clearAdSkipTimers();
+    });
     return;
   }
 
@@ -17380,112 +17399,53 @@ function renderContextSettingsDialog(kind) {
   }
 
   if (kind === "read-sync") {
-    const nytConnected = !!(state.articleSync?.nytCookie);
-    const econConnected = !!(state.articleSync?.economistCookie);
-    const lastSync = state.articleSync?.lastSyncedAt
-      ? new Date(state.articleSync.lastSyncedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+    // News → Sync Settings: the newspaper sign-ins News collects from. In the
+    // iPhone app, the papers' own sign-in pages (one Sign in OR Sign out per paper,
+    // by what this phone finds); everywhere, the subscriber cookies a browser pastes
+    // (also used to sync saved articles into Media).
+    const sync = state.articleSync || {};
+    const lastSync = sync.lastSyncedAt
+      ? new Date(sync.lastSyncedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
       : null;
-    const pubs = getReadPublications();
+    const cookieRow = (key, label, field, placeholder) => {
+      const connected = !!sync[field];
+      return `
+        <div class="sync-context-field">
+          <div class="sync-context-field-header">
+            <span class="sync-context-label">${label}</span>
+            <span class="sync-context-status ${connected ? "sync-status-ok" : "sync-status-off"}">${connected ? "Saved" : "Not saved"}</span>
+          </div>
+          <div class="sync-context-input-row">
+            <input type="password" id="ctxCookieInput-${key}" class="sync-context-input" placeholder="${connected ? "Paste to update" : placeholder}" autocomplete="off" spellcheck="false" />
+            <button type="button" class="primary-btn compact-btn" data-context-settings-action="save-paper-cookie" data-paper="${key}">Save</button>
+          </div>
+        </div>`;
+    };
     elements.contextSettingsBody.innerHTML = `
       <div class="sync-context-settings">
-        <div class="sync-context-field">
-          <div class="sync-context-field-header">
-            <span class="sync-context-label">Podcast Ad-Block</span>
-            <label class="toggle-switch" aria-label="Podcast Ad-Block">
-              <input type="checkbox" id="ctxPodcastAdBlock" ${state.podcastSkipAds ? "checked" : ""}>
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <p class="sync-context-hint" style="margin:6px 0 0">Automatically skips sponsor segments in podcast episodes when chapter data is available.</p>
-        </div>
-        <div class="sync-context-divider"></div>
         ${articlePaperLoginsSettingsHtml()}
-        <p class="sync-context-hint">Connect your accounts to sync saved articles automatically. The easiest way is to use the <strong>Live Chrome Extension</strong> — open it while signed in to the publication and click the connect button.</p>
-        <div class="sync-context-field">
-          <div class="sync-context-field-header">
-            <span class="sync-context-label">New York Times</span>
-            <span class="sync-context-status ${nytConnected ? "sync-status-ok" : "sync-status-off"}">${nytConnected ? "Connected" : "Not connected"}</span>
-          </div>
-          <div class="sync-context-input-row">
-            <input type="password" id="ctxNytCookieInput" class="sync-context-input" placeholder="${nytConnected ? "Paste to update NYT-S cookie" : "Paste NYT-S cookie value"}" autocomplete="off" spellcheck="false" />
-            <button type="button" class="primary-btn compact-btn" data-context-settings-action="save-nyt-cookie">Save</button>
-          </div>
-        </div>
-        <div class="sync-context-field">
-          <div class="sync-context-field-header">
-            <span class="sync-context-label">The Economist</span>
-            <span class="sync-context-status ${econConnected ? "sync-status-ok" : "sync-status-off"}">${econConnected ? "Connected" : "Not connected"}</span>
-          </div>
-          <div class="sync-context-input-row">
-            <input type="password" id="ctxEconomistCookieInput" class="sync-context-input" placeholder="${econConnected ? "Paste to update blaize_session cookie" : "Paste blaize_session cookie value"}" autocomplete="off" spellcheck="false" />
-            <button type="button" class="primary-btn compact-btn" data-context-settings-action="save-economist-cookie">Save</button>
-          </div>
-        </div>
-        ${(nytConnected || econConnected) ? `
+        <p class="sync-context-label">Subscriber cookies</p>
+        <p class="sync-context-hint">For a browser: sign in to the paper there, then paste its session cookie (DevTools → Application → Cookies → copy the <em>Value</em>). ${nativeArticleReader() ? "News collects a paper when either this or the sign-in above works." : "News collects a paper once its cookie is saved and works."}</p>
+        ${cookieRow("nyt", "New York Times", "nytCookie", "Paste NYT-S cookie value")}
+        ${cookieRow("economist", "The Economist", "economistCookie", "Paste blaize_session cookie value")}
+        ${cookieRow("startribune", "Star Tribune", "stribCookie", "Paste your Star Tribune session cookie")}
+        ${(sync.nytCookie || sync.economistCookie) ? `
           <div class="sync-context-actions">
-            <button type="button" class="primary-btn" data-context-settings-action="sync-now-context">Sync now</button>
+            <button type="button" class="primary-btn" data-context-settings-action="sync-now-context">Sync saved articles</button>
             ${lastSync ? `<span class="sync-context-last">Last synced ${lastSync}</span>` : ""}
           </div>
         ` : ""}
-        <div class="sync-context-divider"></div>
-        <div class="sync-context-field">
-          <div class="sync-context-field-header">
-            <span class="sync-context-label">Publications</span>
-          </div>
-          <div class="sync-pub-list">
-            ${pubs.map(p => `
-              <div class="sync-pub-item">
-                <div class="sync-pub-info">
-                  <span class="sync-pub-name">${escapeHtml(p.label)}</span>
-                  <span class="sync-pub-domain">${escapeHtml(p.domain)}</span>
-                </div>
-                <button type="button" class="icon-btn sync-pub-remove" data-remove-pub="${escapeHtml(p.key)}" title="Remove ${escapeHtml(p.label)}" aria-label="Remove ${escapeHtml(p.label)}">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-              </div>
-            `).join("")}
-          </div>
-          <form class="sync-pub-add-form" id="ctxAddPubForm">
-            <div class="sync-pub-add-row">
-              <input type="text" id="ctxPubNameInput" class="sync-context-input" placeholder="Name (e.g. The Atlantic)" autocomplete="off" />
-              <input type="text" id="ctxPubDomainInput" class="sync-context-input" placeholder="Domain (e.g. theatlantic.com)" autocomplete="off" />
-              <button type="submit" class="primary-btn compact-btn">Add</button>
-            </div>
-          </form>
-        </div>
       </div>
     `;
-    document.getElementById("ctxPodcastAdBlock")?.addEventListener("change", (e) => {
-      state.podcastSkipAds = e.target.checked;
-      persist();
-      const playerToggle = document.getElementById("podcastSkipAdsToggle");
-      if (playerToggle) playerToggle.checked = e.target.checked;
-      if (e.target.checked) scheduleAdSkips(podcastCurrentChapters, podcastAudio);
-      else clearAdSkipTimers();
-    });
-    elements.contextSettingsBody.querySelectorAll("[data-remove-pub]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        removePublication(btn.dataset.removePub);
-        renderContextSettingsDialog("read-sync");
+    // In the app, find out which papers this phone is signed in to (once per
+    // opening), then show each row's one button.
+    if (nativeArticleReader() && !paperSignInCheckStarted && SUBSCRIBER_PAPERS.some((p) => paperSignInStateOnPhone(p.key) === null)) {
+      paperSignInCheckStarted = true;
+      verifyNewsSignIns().catch(() => null).finally(() => {
+        paperSignInCheckDone = true;
+        if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
       });
-    });
-    document.getElementById("ctxAddPubForm")?.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const name = document.getElementById("ctxPubNameInput")?.value.trim();
-      const rawDomain = document.getElementById("ctxPubDomainInput")?.value.trim();
-      const domain = rawDomain ? rawDomain.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase() : "";
-      if (!name || !domain) return;
-      const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-      if (!key) return;
-      const existing = getReadPublications();
-      if (!existing.find(p => p.key === key || p.domain === domain)) {
-        if (!Array.isArray(state.readPublications)) state.readPublications = defaultReadPublications();
-        state.readPublications.push({ key, label: name, domain });
-        persist();
-        renderMediaPubTabs();
-      }
-      renderContextSettingsDialog("read-sync");
-    });
+    }
     return;
   }
 
@@ -17885,29 +17845,22 @@ function handleContextSettingsAction(event) {
       try { await reader.logout({ domain: paper.cookieDomain }); showMailToast(`Signed out of ${paper.name} on this phone.`); }
       catch (err) { showMailToast(err?.message || "Couldn't sign out."); return; }
       markPaperSignIn(paper.key, false);
-      verifyNewsSignIns(); // News stops collecting a paper this phone signed out of
+      // News stops collecting a paper this phone signed out of; the row flips to Sign in.
+      await verifyNewsSignIns().catch(() => null);
+      if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
     },
-    "save-nyt-cookie": () => {
-      const input = document.getElementById("ctxNytCookieInput");
-      const val = input?.value?.trim();
-      if (!val) return;
+    "save-paper-cookie": () => {
+      const key = button.dataset.paper;
+      const field = { nyt: "nytCookie", economist: "economistCookie", startribune: "stribCookie" }[key];
+      const val = document.getElementById(`ctxCookieInput-${key}`)?.value?.trim();
+      if (!field || !val) return;
       if (!state.articleSync) state.articleSync = {};
-      state.articleSync.nytCookie = val;
+      state.articleSync[field] = val;
       persist();
       updateSyncButtons("read");
       updateSyncButtons("listen");
       renderContextSettingsDialog("read-sync");
-    },
-    "save-economist-cookie": () => {
-      const input = document.getElementById("ctxEconomistCookieInput");
-      const val = input?.value?.trim();
-      if (!val) return;
-      if (!state.articleSync) state.articleSync = {};
-      state.articleSync.economistCookie = val;
-      persist();
-      updateSyncButtons("read");
-      updateSyncButtons("listen");
-      renderContextSettingsDialog("read-sync");
+      verifyNewsSignIns(); // News only collects from papers you're signed in to
     },
     "sync-now-context": () => {
       elements.contextSettingsDialog.close();
@@ -28096,7 +28049,7 @@ function switchMediaTab(tab) {
     const isArticleTab = getReadPublications().some(p => p.key === tab);
     if (listPanel) listPanel.hidden = false;
     if (syncBtn) syncBtn.hidden = !isArticleTab || !hasSyncCookies();
-    if (syncSettingsBtn) syncSettingsBtn.hidden = !isArticleTab;
+    if (syncSettingsBtn) syncSettingsBtn.hidden = true; // Sync Settings moved to News (newspaper sign-ins)
     // Switching publication tabs exits search/archive back to the normal list.
     articleSearchActive = false;
     articleViewMode = "unread";
@@ -36588,11 +36541,16 @@ function markPaperSignIn(key, on) {
 async function signInToArticlePaper(paper) {
   const reader = nativeArticleReader();
   if (!reader || !paper) return;
-  try { await reader.login({ url: paper.loginUrl, title: paper.name }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); return; }
+  let res = null;
+  try { res = await reader.login({ url: paper.loginUrl, title: paper.name }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); return; }
   // The sheet has closed. Tell News what this phone now finds for each paper (a
   // status only — the sign-in cookies stay on the phone), and say how it went.
+  // The sheet's steps (host + path only) go along so a stalled sign-in can be
+  // diagnosed from the server.
   markPaperSignIn(paper.key, true);
+  if (Array.isArray(res?.trail)) setNewsDeviceTrail(paper.key, res.trail);
   await reportPaperSignInsToNews(paper);
+  if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
 }
 
 // After a sign-in in the app: re-check the phone's newspaper sign-ins, report
@@ -36618,20 +36576,44 @@ function articlePaperLoginActionsHtml(article, { teaser }) {
   return `${lead}<div class="article-paper-login-actions"><button class="secondary-btn" type="button" data-article-paper-login="${escapeHtml(paper.key)}">Sign in to ${escapeHtml(paper.name)}</button><button class="primary-btn" type="button" data-article-paper-reload="${escapeHtml(article.id)}">Reload full article</button></div>`;
 }
 
-// Media → Sync Settings, iPhone app only: per-paper Sign in / Sign out for the
-// on-phone article reader. "" elsewhere.
+// Whether this phone is signed in to a paper: what its last check found, else the
+// server's record of a phone report; null when not known yet.
+let paperSignInCheckStarted = false;
+let paperSignInCheckDone = false;
+function paperSignInStateOnPhone(key) {
+  const found = newsDeviceStatus()?.[key];
+  if (found) return found;
+  const rec = newsSignInStatus()?.[key];
+  if (rec?.via === "device" && rec.status) return rec.status;
+  return null;
+}
+
+// News → Sync Settings, iPhone app only: each paper's sign-in on this phone, with
+// one button — Sign in when signed out, Sign out when signed in. "" elsewhere.
 function articlePaperLoginsSettingsHtml() {
   if (!nativeArticleReader()) return "";
-  const rows = SUBSCRIBER_PAPERS.map((p) => `
+  const rows = SUBSCRIBER_PAPERS.map((p) => {
+    // Still unknown once the check has run (offline, or it couldn't tell): offer Sign in.
+    const known = paperSignInStateOnPhone(p.key);
+    const st = known === null && paperSignInCheckDone ? "none" : known;
+    const signedIn = st === "signed-in" || st === "unverified";
+    const label = st === null ? "Checking…" : signedIn ? "Signed in" : st === "expired" ? "Signed out" : "Not signed in";
+    const btn = st === null
+      ? `<button type="button" class="secondary-btn compact-btn" disabled>Sign in</button>`
+      : signedIn
+        ? `<button type="button" class="secondary-btn compact-btn" data-context-settings-action="paper-signout" data-paper="${escapeHtml(p.key)}">Sign out</button>`
+        : `<button type="button" class="primary-btn compact-btn" data-context-settings-action="paper-signin" data-paper="${escapeHtml(p.key)}">Sign in</button>`;
+    return `
         <div class="sync-context-field">
           <div class="sync-context-field-header">
             <span class="sync-context-label">${escapeHtml(p.name)}</span>
             <span class="article-paper-login-actions">
-              <button type="button" class="secondary-btn compact-btn" data-context-settings-action="paper-signout" data-paper="${escapeHtml(p.key)}">Sign out</button>
-              <button type="button" class="primary-btn compact-btn" data-context-settings-action="paper-signin" data-paper="${escapeHtml(p.key)}">Sign in</button>
+              <span class="sync-context-status ${signedIn ? "sync-status-ok" : "sync-status-off"}">${label}</span>
+              ${btn}
             </span>
           </div>
-        </div>`).join("");
+        </div>`;
+  }).join("");
   return `
         <p class="sync-context-label">Newspaper sign-ins on this device</p>
         <p class="sync-context-hint">Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with Apple or with email and password: Google sign-in doesn't work inside apps.</p>${rows}

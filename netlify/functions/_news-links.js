@@ -589,8 +589,27 @@ async function loadNewsSeen(serviceKey, userId) {
 async function loadNewsSignIns(serviceKey, userId) {
   return (await loadRowState(serviceKey, `mailnewssubs_${userId}`)).papers || {};
 }
-async function saveNewsSignIns(serviceKey, userId, papers) {
-  await saveRowState(serviceKey, `mailnewssubs_${userId}`, { papers });
+// `trail` (optional): the iPhone app's last sign-in sheet steps for one paper
+// ({ paper, at, steps }), kept so a sign-in that stalls can be diagnosed. A save
+// without one keeps the previous trail.
+async function saveNewsSignIns(serviceKey, userId, papers, { trail } = {}) {
+  const id = `mailnewssubs_${userId}`;
+  let lastTrail = trail || null;
+  if (!lastTrail) {
+    try { lastTrail = (await loadRowState(serviceKey, id)).lastTrail || null; } catch { lastTrail = null; }
+  }
+  await saveRowState(serviceKey, id, { papers, ...(lastTrail ? { lastTrail } : {}) });
+}
+
+// The app's sign-in sheet steps, cleaned: a known paper, at most 80 short lines
+// of plain text. They are host + path only (the app strips queries), but trim
+// anything that looks like a query or fragment anyway.
+function cleanSignInTrail(raw, nowMs = Date.now()) {
+  if (!raw || typeof raw !== "object") return null;
+  const paper = SIGNIN_PAPERS.includes(raw.paper) ? raw.paper : null;
+  if (!paper || !Array.isArray(raw.steps)) return null;
+  const steps = raw.steps.slice(0, 80).map((x) => String(x ?? "").replace(/[?#].*$/, "").replace(/[^\x20-\x7e]/g, "").slice(0, 200)).filter(Boolean);
+  return { paper, at: new Date(nowMs).toISOString(), steps };
 }
 
 // The sweep's batch write (NEWS_PAGE_DESIGN.md §10): the batch's cards go into
@@ -632,6 +651,7 @@ module.exports = {
   mergeNewsResults,
   prunePending,
   paperSignedIn,
+  cleanSignInTrail,
   checkPaperSignIn,
   verifySignIns,
   acceptedArticleRecord,

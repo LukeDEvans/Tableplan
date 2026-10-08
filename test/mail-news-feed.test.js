@@ -176,6 +176,16 @@ describe("sign-in checks", () => {
       startribune: { status: "none", checkedAt: new Date(NOW).toISOString() }
     });
   });
+  it("cleanSignInTrail keeps a known paper's steps as short plain lines, never a query", () => {
+    const out = N.cleanSignInTrail({ paper: "nyt", steps: ["1 main start myaccount.nytimes.com/auth/login?redirect=x", "2 popup loaded appleid.apple.com/auth/authorize#frag", "x".repeat(500), 7] }, NOW);
+    expect(out.paper).toBe("nyt");
+    expect(out.at).toBe(new Date(NOW).toISOString());
+    expect(out.steps).toEqual(["1 main start myaccount.nytimes.com/auth/login", "2 popup loaded appleid.apple.com/auth/authorize", "x".repeat(200), "7"]);
+    expect(N.cleanSignInTrail({ paper: "evil", steps: ["a"] })).toBeNull();
+    expect(N.cleanSignInTrail({ paper: "nyt" })).toBeNull();
+    expect(N.cleanSignInTrail(null)).toBeNull();
+    expect(N.cleanSignInTrail({ paper: "nyt", steps: Array.from({ length: 200 }, (_, i) => `s${i}`) }).steps.length).toBe(80);
+  });
   it("the gate: only signed-in or unverified papers feed News", () => {
     const s = { nyt: { status: "signed-in" }, economist: { status: "expired" }, startribune: { status: "unverified" } };
     expect(N.newsLinkSourceForSender("x@nytimes.com", {}, { signIns: s })?.paper).toBe("nyt");
