@@ -21,8 +21,7 @@ _Last deploy: 2026-10-07 (PRs #59–#70)._
     sign-in had been saved, so there was no way to find it). Pasting cookies in a browser still works.
   - **Needs both a deploy and a TestFlight build.** The server change is in the `gmail` function; an
     app on the new build against the old server signs in fine but News stays empty.
-  - **After deploy + TestFlight (none of this has run on a phone; the Swift was not compiled):**
-    - the TestFlight build succeeds (first compile of the new Swift)
+  - **After deploy + TestFlight (none of this has run on a phone; the Swift compiles in CI):**
     - News shows "News collects articles only from papers you're signed in to" → Open Sync Settings
     - Sync Settings → New York Times → Sign in → Sign in with Apple completes and the sheet shows you
       signed in; tap Done → toast "Signed in to The New York Times. News will collect its articles." (without the second sentence, the server has not been deployed yet)
