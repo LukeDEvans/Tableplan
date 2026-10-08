@@ -126,5 +126,11 @@ None is sent by default (ESPN refused a custom one); `SCORES_USER_AGENT` sets on
 - **Live from Netlify (PR #78's deploy preview, 2026-10-07):** `action=health`
   showed ESPN returning 403 to the app's own User-Agent string and answering with
   a browser's or with none. The function now sends none by default.
+  With that fix, on the preview: the default 17-league scoreboard returned every
+  league ok (NHL and NBA finals with scores, records and TV; a college Saturday
+  with 54 football and 15 hockey games, ranks included), `schedule` returned last
+  and next games for the Vikings, Wild, Ajax and the Netherlands, and `teams`
+  returned the college list. One 502 on the very first combined request was not
+  reproduced (ISSUES.md).
 - **Not verified:** the iPhone app. ESPN's endpoints and field shapes were read
   from live responses while building.

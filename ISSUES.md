@@ -18,6 +18,8 @@ _(none)_
 ## P1
 - [x] **[P1] Scores: ESPN did not answer from Netlify on the first deploy preview** (scores · netlify/functions/scores.mjs · 2026-10-07)
       Every ESPN call returned 502 on PR #78's first preview. `?action=health` showed why: ESPN returns 403 to the custom User-Agent the function sent ("LDE Personal App (…)") and answers a browser's or none. → Fixed: no User-Agent is sent unless `SCORES_USER_AGENT` is set. `?action=health` stays as the check.
+- [ ] **[P3] Scores: one 502 on the first combined request after a deploy** (scores · netlify/functions/scores.mjs · 2026-10-07)
+      On PR #78's preview (commit 8ce0016) the first 17-league scoreboard request returned 502; the same request seconds later, and each group of leagues on its own, returned 200 with every league ok. Not reproduced. Likely a cold start plus 17 upstream calls running past the function's time limit. The view keeps what it has and tries again. → If it recurs, read the `fn: "scores"` log line (`ms`, `failed`); the fix would be splitting the request or a shorter upstream timeout.
 - [ ] **[P2] Scores: not yet opened on a phone or in the iPhone app** (scores · scores-ui.js · 2026-10-07)
       Checked in a headless browser at 360 px and against the live function on a deploy preview, not on a device. → Open News → Sports after the deploy; follow a team; check the footer names no failed leagues.
 - [ ] **[P3] Scores: TheSportsDB league ids are unverified except NFL** (scores · netlify/functions/_scores-thesportsdb.mjs LEAGUE_IDS · 2026-10-07)
