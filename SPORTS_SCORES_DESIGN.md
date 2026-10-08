@@ -54,6 +54,7 @@ Like `weather.js`: no user data, no database, origin-restricted, CDN-cacheable.
 | `scoreboard&date&leagues` | `{ games, leagues: { key: { ok, provider, live, count } } }` | 20 s live · 60 s near a start · 5 min · 6 h for settled days |
 | `teams&league` | a league's teams | 24 h |
 | `schedule&teams=league:provider:id,…` | last + next game per team (≤ 12) | 15 min |
+| `health` | one small request to each provider: `{ id, ok, error, ms }` | never |
 
 One upstream GET per league, in parallel, 6 s timeout, no retries. A league that
 fails is reported in `leagues` and the rest still return; if every league fails the
@@ -74,6 +75,11 @@ next on any error. Order: `SCORES_PROVIDERS` (default `espn,thesportsdb`).
   schedules. The view shows a note when a league is served without live clocks.
 
 ### If ESPN stops working
+
+Open `/.netlify/functions/scores?action=health` first. It says whether each
+provider answers from Netlify and, if not, why (`HTTP 403`, a timeout, …). Add
+`&ua=browser` or `&ua=none` to try another User-Agent without a redeploy; the one
+in use is `SCORES_USER_AGENT`.
 
 1. Set `THESPORTSDB_KEY` in Netlify. Leagues ESPN refuses fail over on their own;
    to skip ESPN entirely set `SCORES_PROVIDERS=thesportsdb`. No code change.
@@ -117,5 +123,10 @@ next on any error. Order: `SCORES_PROVIDERS` (default `espn,thesportsdb`).
   cannot reach ESPN): follow from a game and from team lists, reorder and switch
   leagues, college show-all, another day and back, Stories and back, at 360 px
   (light) and 1280 px (dark), with no sideways scroll and no console errors.
-- **Not verified here:** a live call from Netlify to ESPN, and the iPhone app.
-  ESPN's endpoints and field shapes were read from live responses while building.
+- **Open (2026-10-07):** on PR #78's first deploy preview the function ran (a bad
+  action returned 400) but every action that calls ESPN returned 502, so ESPN did
+  not answer Netlify there. The reason was not visible; `action=health` was added
+  to show it. Until that reads `ok`, treat the ESPN path as not working in
+  production. See ISSUES.md.
+- **Not verified:** the iPhone app. ESPN's endpoints and field shapes were read
+  from live responses while building.
