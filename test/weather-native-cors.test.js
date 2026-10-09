@@ -11,6 +11,7 @@ const fns = {
   weather: require("../netlify/functions/weather.js"),
   "google-places": require("../netlify/functions/google-places.js"),
   "instacart-list": await import("../netlify/functions/instacart-list.mjs"),
+  scores: await import("../netlify/functions/scores.mjs"),
 };
 
 const preflight = (fn, origin) => fn.handler({ httpMethod: "OPTIONS", headers: origin ? { origin } : {} });
