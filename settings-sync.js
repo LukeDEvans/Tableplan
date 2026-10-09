@@ -46,6 +46,7 @@ export const TRACKED_SETTINGS = Object.freeze({
     jellyfin: "value",
     mediaServices: "value",
     mailAiSettings: "fields",
+    mailReadingPrefs: "fields", // { blockRemoteImages } — Settings → Mail Reading
     aiSettings: "fields",
     appleMusic: "fields",
     financeAlertPrefs: "fields",

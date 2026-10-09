@@ -1,5 +1,6 @@
 import * as LiveGroceryCatalog from './grocery-catalog.js';
 import { safeUrl, isSafeHref, isSafeSrc, parseInertHtml, scrubActiveAttributes, sanitizeUntrustedHtml } from './html-sanitize.js';
+import { buildMailBodyFrame as buildMailFrame, sanitizeMailFrameHtml } from './mail-frame.js';
 import { createMealplanModule, autoRule, defaultMealPlanConfig, groceryMealSlotId, mealEntryList, minimumMealEntryCount, normalizeMealPlanConfig, defaultMealEntries, weekdayDefaultDayIds, daySpecificDefaultMealEntries } from './mealplan-ui.js';
 import { createRecipesModule, combinedRecipeTime, defaultRecipeTags, migrateRecipeFoldersToTags, normalizeActiveCooking, normalizeCookLog, normalizeInstructionSteps, normalizeNutritionCandidate, normalizeNutritionFacts, normalizeRecipe, normalizeRecipeTagSelection, normalizeRecipeTags, normalizeTrashedRecipe, seedFolders } from './recipes-ui.js';
 import { createGroceriesModule, baseGroceryItemKey, defaultGroceryBaseItems, defaultGroceryDailyDozenTags, ensureGroceryCatalog, mergeGroceryStoreItemSections, normalizeGroceryAliases, normalizeGroceryBaseItems, normalizeGroceryChecklist, normalizeGroceryDailyDozenTags, normalizeGroceryItemLocations, normalizeGroceryPriceObservations, normalizeGroceryPricingSettings, normalizeGrocerySplitPreferences, normalizeGroceryStoreItemSections, normalizeGroceryStoreSections, normalizeGroceryStores, normalizePriceHistory, normalizeReceipts } from './groceries-ui.js';
@@ -321,7 +322,7 @@ const STATE_SECTIONS = {
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -1758,9 +1759,8 @@ const _news = createNewsModule({
   openInMedia: (id) => { showMediaApp(); switchMediaTab("all"); openArticle(id, "articleList"); },
   listenInMedia: (id) => listenToArticle(id),
   scores: { mount: (...a) => mountScores(...a), unmount: (...a) => unmountScores(...a), refresh: (...a) => refreshScores(...a) },
-  // The iPhone app signs in to papers in the app itself (Sync Settings → Sign in);
-  // a browser pastes subscriber cookies in the Sync Settings dialog.
-  openSignInSettings: () => (nativeArticleReader() ? openContextSettingsDialog("read-sync") : openSyncSettingsDialog("read")),
+  // News → Sync Settings: the app's own paper sign-ins, and pasted cookies.
+  openSignInSettings: () => openContextSettingsDialog("read-sync"),
   // The phone's own newspaper sign-ins (news-device-signin.js), or null in a
   // browser. Deferred: the plugin is looked up when News needs it, not at load.
   getDeviceSignIn: () => {
@@ -1772,7 +1772,7 @@ const _news = createNewsModule({
     };
   },
 });
-const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus } = _news;
+const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus, signInStatus: newsSignInStatus, setDeviceTrail: setNewsDeviceTrail } = _news;
 
 // ── Inventory domain (extracted to inventory-ui.js) ────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
@@ -4899,6 +4899,7 @@ function defaultState() {
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
     mailAiSettings: {},
+    mailReadingPrefs: {},
     financeAlertPrefs: {},
     mailMoveMemory: { threads: {}, senders: {} },
     financePeople: [],
@@ -5092,6 +5093,7 @@ function normalizeState(parsed) {
     activeCooking: normalizeActiveCooking(parsed?.activeCooking),
     weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
     mailAiSettings: (parsed?.mailAiSettings && typeof parsed.mailAiSettings === "object") ? parsed.mailAiSettings : {},
+    mailReadingPrefs: (parsed?.mailReadingPrefs && typeof parsed.mailReadingPrefs === "object") ? parsed.mailReadingPrefs : {},
     financeAlertPrefs: (parsed?.financeAlertPrefs && typeof parsed.financeAlertPrefs === "object") ? parsed.financeAlertPrefs : {},
     mailMoveMemory: (parsed?.mailMoveMemory && typeof parsed.mailMoveMemory === "object") ? parsed.mailMoveMemory : { threads: {}, senders: {} },
     financePeople: normalizeFinancePeople(parsed?.financePeople, createId),
@@ -8665,8 +8667,8 @@ const mailThreadCache = new Map(); // threadId → { thread, at }
 // Lightweight row data (subject/from) kept from the list so opening a thread can
 // paint its header INSTANTLY while the full body loads — see openMailThread.
 const mailRowSummary = new Map(); // threadId → { subject, from }
-// Message ids the user has opted to load remote images for this session.
-// Remote images are blocked by default (speed + tracking-pixel privacy).
+// Message ids the user has opted to load remote images for this session —
+// only matters while remote images are blocked in Settings → Mail Reading.
 const mailShownImages = new Set();
 let mailPrefetchGen = 0;
 const MAIL_LIST_PRELOAD_TTL = 2 * 60 * 1000;
@@ -11359,11 +11361,31 @@ function mountMailMessageFrames(container, messages) {
 
 function mountMailMessageBody(holder, msg) {
   if (msg.body?.includes("<")) {
-    const showImages = mailShownImages.has(msg.id);
-    // Remote images are blocked by default (privacy + speed); the reader turns
-    // them on via the "…" menu's Display images (see showMailMoreMenu /
-    // displayAllMailImages), which re-renders the thread with src restored.
-    const frame = buildMailBodyFrame(msg.body, { showImages });
+    // Remote images load by default, with tracking images stripped (Settings →
+    // Mail Reading turns that off). When they're blocked, the reader can still
+    // turn them on for the open thread via the "…" menu's Display images (see
+    // showMailMoreMenu / displayAllMailImages).
+    const showImages = mailImagesOn() || mailShownImages.has(msg.id);
+    const frame = buildMailFrame(msg.body, {
+      showImages,
+      onReady: (iframe, doc) => {
+        linkifyMailDocument(doc);
+        wireMailFrameAddressLinks(iframe);
+        // The email body fills most of the reader; the iframe swallows touches
+        // over it, so drive the swipe-between-emails pager from here too. Touch
+        // coords are frame-relative and the frame moves with the drag, so add
+        // the frame's live offset to get the finger's true viewport position.
+        wireMailPager(doc, (t) => {
+          const r = iframe.getBoundingClientRect();
+          return [r.left + t.clientX, r.top + t.clientY];
+        });
+      },
+      // Images embedded in the email itself ship as attachments of the message.
+      inlineImages: {
+        attachments: (msg.attachments || []).filter((a) => a.inline && a.contentId),
+        load: (att) => loadMailEmbeddedImage(msg.id, att)
+      }
+    });
     holder.appendChild(frame);
   } else {
     const pre = document.createElement("pre");
@@ -11372,6 +11394,28 @@ function mountMailMessageBody(holder, msg) {
     wireMailAddressLinks(pre);
     holder.appendChild(pre);
   }
+}
+
+// Remote images in emails: on unless switched off in Settings → Mail Reading
+// (state.mailReadingPrefs.blockRemoteImages, synced).
+function mailImagesOn() {
+  return state.mailReadingPrefs?.blockRemoteImages !== true;
+}
+
+// One embedded image, as base64url, through the existing attachment action
+// (Netlify → Gmail). Cached for the session so re-rendering a thread, or
+// reopening it, never fetches the same image twice; failures are not cached.
+const mailEmbeddedImageCache = new Map(); // "messageId:attachmentId" → Promise<string>
+function loadMailEmbeddedImage(messageId, att) {
+  const key = `${messageId}:${att.attachmentId}`;
+  if (mailEmbeddedImageCache.has(key)) return mailEmbeddedImageCache.get(key);
+  const p = callGmailApi({ action: "attachment", messageId, attachmentId: att.attachmentId })
+    .then((res) => res?.data || "")
+    .catch(() => "");
+  mailEmbeddedImageCache.set(key, p);
+  p.then((data) => { if (!data) mailEmbeddedImageCache.delete(key); });
+  while (mailEmbeddedImageCache.size > 80) mailEmbeddedImageCache.delete(mailEmbeddedImageCache.keys().next().value);
+  return p;
 }
 
 // Turn on remote images for the whole open thread (the "…" → Display images
@@ -11387,252 +11431,7 @@ function displayAllMailImages() {
   });
 }
 
-function buildMailBodyFrame(html, { showImages = false } = {}) {
-  let bodyHtml = sanitizeMailFrameHtml(html);
-  let blocked = 0;
-  if (!showImages) {
-    const r = blockRemoteMailImages(bodyHtml);
-    bodyHtml = r.html;
-    blocked = r.blocked;
-  }
-  const iframe = document.createElement("iframe");
-  iframe.className = "mail-msg-frame";
-  iframe.dataset.blockedImages = String(blocked);
-  // No allow-scripts: any scripting in the email is inert. allow-same-origin
-  // lets the app measure the content height for auto-sizing.
-  iframe.setAttribute("sandbox", "allow-same-origin allow-popups allow-popups-to-escape-sandbox");
-  iframe.setAttribute("referrerpolicy", "no-referrer");
-  // The frame must never scroll internally — a mis-measured height would
-  // otherwise produce a phantom nested scrollbar that swallows wheel/touch
-  // scrolling. The thread panel is the only scroller.
-  iframe.setAttribute("scrolling", "no");
-  iframe.srcdoc =
-    '<!doctype html><html><head><meta charset="utf-8"><base target="_blank">' +
-    // Force light rendering: the pane background is white, so let the OS/UA
-    // darken nothing (and pair with the dark-media-query neutralizing in
-    // sanitizeMailFrameHtml so email text never turns white-on-white).
-    '<meta name="color-scheme" content="light">' +
-    // text-size-adjust: iOS inflates paragraph text in a block it considers too
-    // wide (any email the fit below zooms down) but leaves the email's fixed
-    // pixel line-heights alone, so lines printed on top of each other.
-    '<style>:root{color-scheme:light}html{-webkit-text-size-adjust:100%;text-size-adjust:100%}html,body{margin:0;padding:0}' +
-    'body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#202124;background:#fff;word-break:break-word}' +
-    'img{max-width:100%;height:auto}table{max-width:100%}' +
-    // A blocked/broken remote image has no src — browsers draw an ugly alt-text
-    // box for it ("Article Image"). Collapse those so the email reads cleanly;
-    // they reappear when the reader taps Display images (which re-renders with
-    // src restored). figure captions that belong to a hidden image go too.
-    'img:not([src]){display:none!important}figure:has(> img:not([src])) figcaption,figure:has(> a > img:not([src])) figcaption{display:none}</style></head><body>' +
-    bodyHtml +
-    "</body></html>";
-
-  // Scale the email to fill the pane: fixed-width designs (newsletters are
-  // typically ~600px) zoom up to the available width; overflowing ones zoom
-  // down to fit. Height then tracks the scaled content.
-  const fitAndSize = () => {
-    try {
-      const doc = iframe.contentDocument;
-      const b = doc?.body;
-      if (!b) return;
-      b.style.zoom = "";
-      const avail = iframe.clientWidth || 1;
-      let z = 1;
-      let design = 0;
-      doc.querySelectorAll("table[width],td[width],table[style*='width'],div[style*='width']").forEach((el) => {
-        const r = el.getBoundingClientRect().width;
-        if (r >= 280 && r <= avail + 40) design = Math.max(design, r);
-      });
-      // Absolutely-positioned content overflows html, not body — check both.
-      const wide = Math.max(b.scrollWidth, doc.documentElement.scrollWidth);
-      if (wide > avail + 4) z = avail / wide;
-      else if (design && design < avail - 8) z = Math.min(avail / design, 1.75);
-      if (Math.abs(z - 1) > 0.03) b.style.zoom = z;
-      // zoom is approximate on nested fixed-width layouts: if the doc still
-      // spills past the pane it would be clipped (scrolling="no"), so tighten.
-      // Read the root's width only: body.scrollWidth is in body's own unzoomed
-      // units in current Chromium, so it always "still overflowed" and the
-      // email was zoomed down twice.
-      if (z < 1) {
-        const still = doc.documentElement.scrollWidth;
-        if (still > avail + 4) b.style.zoom = z * (avail / still);
-      }
-      // Measure the VISUAL height: with zoom applied, scrollHeight alone can
-      // undershoot by a few px, which used to leave a nested scrollbar.
-      const visual = Math.ceil(b.getBoundingClientRect().bottom + (doc.defaultView?.scrollY || 0));
-      const h = Math.max(doc.documentElement.scrollHeight, visual) + 4;
-      iframe.style.height = Math.min(Math.max(h, 40), 30000) + "px";
-    } catch {}
-  };
-  // Coalesce refit bursts into one measure per frame. Deferring to the next
-  // animation frame also breaks any synchronous ResizeObserver feedback (the
-  // zoom fitAndSize applies changes body size, which would otherwise re-notify).
-  let fitPending = false;
-  const scheduleFit = () => {
-    if (fitPending) return;
-    fitPending = true;
-    requestAnimationFrame(() => { fitPending = false; fitAndSize(); });
-  };
-  iframe.addEventListener("load", () => {
-    try {
-      linkifyMailDocument(iframe.contentDocument);
-      wireMailFrameAddressLinks(iframe);
-    } catch {}
-    fitAndSize();
-    try {
-      const doc = iframe.contentDocument;
-      // The email body fills most of the reader; the iframe swallows touches
-      // over it, so drive the swipe-between-emails pager from here too. Touch
-      // coords are frame-relative and the frame moves with the drag, so add
-      // the frame's live offset to get the finger's true viewport position.
-      wireMailPager(doc, (t) => {
-        const r = iframe.getBoundingClientRect();
-        return [r.left + t.clientX, r.top + t.clientY];
-      });
-      // Re-fit whenever an image settles — load AND error both finalize layout,
-      // so a blocked or broken remote image (common under no-referrer) can no
-      // longer leave the frame stuck at a too-short height.
-      doc.querySelectorAll("img").forEach((img) => {
-        img.addEventListener("load", scheduleFit);
-        img.addEventListener("error", scheduleFit);
-      });
-      // Event-driven height tracking: any change in the rendered body size —
-      // late remote images, web-font swaps, reflow — re-fits immediately, with
-      // no fixed time window that can expire before slow content finishes
-      // (the old 4s poll was why slow/blocked images left a half-height frame).
-      if (doc.body && typeof ResizeObserver !== "undefined") {
-        new ResizeObserver(scheduleFit).observe(doc.body);
-      }
-    } catch {}
-    // A few early re-measures cover the first layout settle even when the body
-    // size doesn't change (e.g. same-metrics font swaps).
-    let n = 0;
-    const t = setInterval(() => { fitAndSize(); if (++n >= 6) clearInterval(t); }, 400);
-    // Refit when the pane width changes (sidebar toggle, window resize)
-    let lastW = iframe.clientWidth;
-    new ResizeObserver(() => {
-      if (iframe.clientWidth !== lastW) { lastW = iframe.clientWidth; fitAndSize(); }
-    }).observe(iframe);
-  });
-  return iframe;
-}
-
-// Lighter sanitizer for iframe rendering: keeps <style> (email layouts depend
-// on it) and strips active content. Scripts are additionally blocked by the
-// iframe sandbox.
-function sanitizeMailFrameHtml(html) {
-  // Inert parse (DOMParser): nothing executes or loads while we scrub.
-  const div = parseInertHtml(html, { keepHeadStyles: true });
-  div.querySelectorAll("script,iframe,frame,object,embed,applet,form,link,meta,base").forEach((el) => el.remove());
-  // All on* handlers go; href/src/etc. survive only with an allowlisted scheme
-  // (http(s)/mailto/tel/#frag for links; http(s)/cid:/data:image for images).
-  scrubActiveAttributes(div);
-  // Neutralize the email's own dark-mode rules. Marketing emails (Audible,
-  // Amazon, …) ship `@media (prefers-color-scheme: dark){ … color:#FFF … }`
-  // assuming the client also darkens the background. This reader always renders
-  // on white, so on a dark-mode phone those rules turned every text node white
-  // → invisible (only images showed). Rename the feature to an unknown one so
-  // the dark query can never match; the email's default light styling remains.
-  div.querySelectorAll("style").forEach((styleEl) => {
-    if (/prefers-color-scheme\s*:\s*dark/i.test(styleEl.textContent)) {
-      styleEl.textContent = styleEl.textContent.replace(/prefers-color-scheme(\s*:\s*dark)/gi, "x-disabled-color-scheme$1");
-    }
-  });
-  stripLabeledEmailAds(div);
-  return div.innerHTML;
-}
-
-// Strip remote image loads from a sanitized email body so it renders instantly
-// (marketing blasts pull dozens of images from the sender's servers) and no
-// tracking pixels fire. Only http(s) URLs are neutralized — inline data:/cid:
-// images already ship with the message, so they stay. Returns the rewritten
-// HTML plus a count so the caller can offer a "Display images" button.
-function blockRemoteMailImages(html) {
-  // inert: parsing must not itself fetch the images. keepHeadStyles: the input
-  // is sanitizeMailFrameHtml's output, which leads with the email's <style>
-  // blocks — a re-parse files those under <head>, so without this the body
-  // came back with the email's whole stylesheet gone (no mobile media queries →
-  // fixed 600–700px tables → the frame zoomed the email down to fit).
-  const div = parseInertHtml(html, { keepHeadStyles: true });
-
-  let blocked = 0;
-  const isRemote = (u) => /^\s*https?:\/\//i.test(u || "");
-  const cssHasRemote = /url\(\s*['"]?\s*https?:\/\//i;                 // non-global: stateless test
-  const cssRemoteAll = /url\(\s*['"]?\s*https?:\/\/[^)]*\)/gi;         // global: replace every occurrence
-
-  div.querySelectorAll("img").forEach((img) => {
-    if (isRemote(img.getAttribute("src"))) { img.setAttribute("data-blk-src", img.getAttribute("src")); img.removeAttribute("src"); blocked++; }
-    const ss = img.getAttribute("srcset");
-    if (ss && /https?:\/\//i.test(ss)) { img.setAttribute("data-blk-srcset", ss); img.removeAttribute("srcset"); }
-  });
-  // Legacy table/cell background images (<td background="…">).
-  div.querySelectorAll("[background]").forEach((el) => {
-    if (isRemote(el.getAttribute("background"))) { el.setAttribute("data-blk-background", el.getAttribute("background")); el.removeAttribute("background"); blocked++; }
-  });
-  // Inline style background images.
-  div.querySelectorAll("[style]").forEach((el) => {
-    const s = el.getAttribute("style") || "";
-    if (cssHasRemote.test(s)) { el.setAttribute("style", s.replace(cssRemoteAll, "none")); blocked++; }
-  });
-  // <style> block background images.
-  div.querySelectorAll("style").forEach((st) => {
-    const t = st.textContent || "";
-    if (cssHasRemote.test(t)) { st.textContent = t.replace(cssRemoteAll, "none"); blocked++; }
-  });
-  return { html: div.innerHTML, blocked };
-}
-
-// Clips ad units from newsletters (NYT etc.). Publishers label every ad with
-// a standalone "ADVERTISEMENT" marker; from that marker we climb to the
-// smallest enclosing block that is still essentially just the ad (bounded by
-// how much text it contains) and remove it. Deliberately conservative: a
-// block with substantial text is never removed, so at worst an ad survives —
-// article content is never clipped.
-function stripLabeledEmailAds(root) {
-  // Pass 1 — ad IMAGES. LiveIntent-served newsletters (NYT, Star Tribune's
-  // Hot Dish, …) deliver every ad creative/chip/tracker as images from an
-  // "/imp?" impression endpoint (liveintent.<pub>.com, sli.<pub>.com), often
-  // alt="Ad", never with real content. Remove each one's enclosing block,
-  // climbing only through wrappers with no meaningful text of their own.
-  root.querySelectorAll('img[alt="Ad" i], img[src*="liveintent." i], img[src*="/imp?" i]').forEach((img) => {
-    if (!root.contains(img)) return; // removed along with an earlier unit
-    let el = img.closest("a") || img;
-    while (el.parentElement && el.parentElement !== root) {
-      const text = el.parentElement.textContent.replace(/\s+/g, " ").trim();
-      if (text.length > 40) break;
-      el = el.parentElement;
-    }
-    el.remove();
-  });
-
-  // Pass 2 — text-labeled ad units ("ADVERTISEMENT" and friends).
-  const AD_LABELS = /^(advertisement|paid post|sponsored|sponsored content|paid for and posted by .{0,80})$/i;
-  const MAX_AD_TEXT = 320; // an ad unit's total text (label + short ad copy)
-  const markers = [];
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  while (walker.nextNode()) {
-    if (AD_LABELS.test(walker.currentNode.textContent.replace(/\s+/g, " ").trim())) {
-      markers.push(walker.currentNode);
-    }
-  }
-  markers.forEach((marker) => {
-    if (!root.contains(marker)) return; // already inside a removed unit
-    let unit = marker.parentElement;
-    if (!unit) return;
-    while (unit.parentElement && unit.parentElement !== root) {
-      const parentText = unit.parentElement.textContent.replace(/\s+/g, " ").trim();
-      if (parentText.length > MAX_AD_TEXT) break;
-      unit = unit.parentElement;
-    }
-    // The creative often sits in a sibling block right after the label unit:
-    // remove it only when it's clearly just a linked image with no real text.
-    const next = unit.nextElementSibling;
-    if (next && next.querySelector("img") && next.querySelector("a") &&
-        next.textContent.replace(/\s+/g, " ").trim().length < 120) {
-      next.remove();
-    }
-    unit.remove();
-  });
-}
+// The frame itself (sanitizing, image handling, fit/size) lives in mail-frame.js.
 
 async function generateAiDraft(thread) {
   const btn = document.getElementById("mailAiGenerateBtn");
@@ -16468,7 +16267,7 @@ function updateSettingsMenuOptions() {
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
-  elements.menuReadSyncBtn.hidden = !["read", "listen", "media"].includes(activeAppArea);
+  elements.menuReadSyncBtn.hidden = activeAppArea !== "news"; // newspaper sign-ins: News, not Media
   elements.menuPodcastSettingsBtn.hidden = activeAppArea !== "media";
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
   elements.menuPublicationsBtn.hidden = activeAppArea !== "media";
@@ -16489,6 +16288,8 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
+  paperSignInCheckStarted = false;
+  paperSignInCheckDone = false;
   const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
@@ -16732,6 +16533,7 @@ function renderContextSettingsDialog(kind) {
     "api-usage": "API Usage",
     "ai-notes": "AI Notes",
     "mail-ai": "Mail AI",
+    "mail-reading": "Mail Reading",
     "voice": "Voice",
     "podcasts": "Podcasts",
     "apple-music": "Apple Music"
@@ -16746,6 +16548,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="pages">Pages</button>
         <button type="button" data-context-settings-action="location-services">Location Services</button>
         <button type="button" data-context-settings-action="weekly-email">Email</button>
+        <button type="button" data-context-settings-action="mail-reading">Mail Reading</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
         <button type="button" data-context-settings-action="apple-music">Apple Music</button>
@@ -16874,6 +16677,25 @@ function renderContextSettingsDialog(kind) {
         persist();
         if (activeAppArea === "finance") renderFinancePage();
       });
+    });
+    return;
+  }
+
+  if (kind === "mail-reading") {
+    elements.contextSettingsBody.innerHTML = `
+      <div class="mail-ai-feature-list">
+        <div class="mail-ai-feature-row">
+          <div class="mail-ai-feature-text">
+            <span class="mail-ai-feature-label">Load images in emails</span>
+            <span class="mail-ai-feature-desc">Shows an email's pictures as it opens, with tracking pixels removed. A sender can still tell you opened an email from its other pictures. When off, “Display images” in an email's … menu loads them for that conversation.</span>
+          </div>
+          <input type="checkbox" class="live-toggle" aria-label="Load images in emails" id="mailLoadImagesToggle" ${mailImagesOn() ? "checked" : ""}>
+        </div>
+      </div>`;
+    elements.contextSettingsBody.querySelector("#mailLoadImagesToggle").addEventListener("change", (e) => {
+      if (!state.mailReadingPrefs || typeof state.mailReadingPrefs !== "object") state.mailReadingPrefs = {};
+      state.mailReadingPrefs.blockRemoteImages = !e.target.checked;
+      persist();
     });
     return;
   }
@@ -17106,7 +16928,25 @@ function renderContextSettingsDialog(kind) {
         </select>
         <p class="settings-hint settings-hint--small">Controls the time range shown on the podcasts Recent tab.</p>
       </div>
+      <div class="sync-context-field">
+        <div class="sync-context-field-header">
+          <span class="sync-context-label">Podcast Ad-Block</span>
+          <label class="toggle-switch" aria-label="Podcast Ad-Block">
+            <input type="checkbox" id="ctxPodcastAdBlock" ${state.podcastSkipAds ? "checked" : ""}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <p class="sync-context-hint" style="margin:6px 0 0">Automatically skips sponsor segments in podcast episodes when chapter data is available.</p>
+      </div>
     `;
+    document.getElementById("ctxPodcastAdBlock")?.addEventListener("change", (e) => {
+      state.podcastSkipAds = e.target.checked;
+      persist();
+      const playerToggle = document.getElementById("podcastSkipAdsToggle");
+      if (playerToggle) playerToggle.checked = e.target.checked;
+      if (e.target.checked) scheduleAdSkips(podcastCurrentChapters, podcastAudio);
+      else clearAdSkipTimers();
+    });
     return;
   }
 
@@ -17409,112 +17249,53 @@ function renderContextSettingsDialog(kind) {
   }
 
   if (kind === "read-sync") {
-    const nytConnected = !!(state.articleSync?.nytCookie);
-    const econConnected = !!(state.articleSync?.economistCookie);
-    const lastSync = state.articleSync?.lastSyncedAt
-      ? new Date(state.articleSync.lastSyncedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+    // News → Sync Settings: the newspaper sign-ins News collects from. In the
+    // iPhone app, the papers' own sign-in pages (one Sign in OR Sign out per paper,
+    // by what this phone finds); everywhere, the subscriber cookies a browser pastes
+    // (also used to sync saved articles into Media).
+    const sync = state.articleSync || {};
+    const lastSync = sync.lastSyncedAt
+      ? new Date(sync.lastSyncedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
       : null;
-    const pubs = getReadPublications();
+    const cookieRow = (key, label, field, placeholder) => {
+      const connected = !!sync[field];
+      return `
+        <div class="sync-context-field">
+          <div class="sync-context-field-header">
+            <span class="sync-context-label">${label}</span>
+            <span class="sync-context-status ${connected ? "sync-status-ok" : "sync-status-off"}">${connected ? "Saved" : "Not saved"}</span>
+          </div>
+          <div class="sync-context-input-row">
+            <input type="password" id="ctxCookieInput-${key}" class="sync-context-input" placeholder="${connected ? "Paste to update" : placeholder}" autocomplete="off" spellcheck="false" />
+            <button type="button" class="primary-btn compact-btn" data-context-settings-action="save-paper-cookie" data-paper="${key}">Save</button>
+          </div>
+        </div>`;
+    };
     elements.contextSettingsBody.innerHTML = `
       <div class="sync-context-settings">
-        <div class="sync-context-field">
-          <div class="sync-context-field-header">
-            <span class="sync-context-label">Podcast Ad-Block</span>
-            <label class="toggle-switch" aria-label="Podcast Ad-Block">
-              <input type="checkbox" id="ctxPodcastAdBlock" ${state.podcastSkipAds ? "checked" : ""}>
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <p class="sync-context-hint" style="margin:6px 0 0">Automatically skips sponsor segments in podcast episodes when chapter data is available.</p>
-        </div>
-        <div class="sync-context-divider"></div>
         ${articlePaperLoginsSettingsHtml()}
-        <p class="sync-context-hint">Connect your accounts to sync saved articles automatically. The easiest way is to use the <strong>Live Chrome Extension</strong> — open it while signed in to the publication and click the connect button.</p>
-        <div class="sync-context-field">
-          <div class="sync-context-field-header">
-            <span class="sync-context-label">New York Times</span>
-            <span class="sync-context-status ${nytConnected ? "sync-status-ok" : "sync-status-off"}">${nytConnected ? "Connected" : "Not connected"}</span>
-          </div>
-          <div class="sync-context-input-row">
-            <input type="password" id="ctxNytCookieInput" class="sync-context-input" placeholder="${nytConnected ? "Paste to update NYT-S cookie" : "Paste NYT-S cookie value"}" autocomplete="off" spellcheck="false" />
-            <button type="button" class="primary-btn compact-btn" data-context-settings-action="save-nyt-cookie">Save</button>
-          </div>
-        </div>
-        <div class="sync-context-field">
-          <div class="sync-context-field-header">
-            <span class="sync-context-label">The Economist</span>
-            <span class="sync-context-status ${econConnected ? "sync-status-ok" : "sync-status-off"}">${econConnected ? "Connected" : "Not connected"}</span>
-          </div>
-          <div class="sync-context-input-row">
-            <input type="password" id="ctxEconomistCookieInput" class="sync-context-input" placeholder="${econConnected ? "Paste to update blaize_session cookie" : "Paste blaize_session cookie value"}" autocomplete="off" spellcheck="false" />
-            <button type="button" class="primary-btn compact-btn" data-context-settings-action="save-economist-cookie">Save</button>
-          </div>
-        </div>
-        ${(nytConnected || econConnected) ? `
+        <p class="sync-context-label">Subscriber cookies</p>
+        <p class="sync-context-hint">For a browser: sign in to the paper there, then paste its session cookie (DevTools → Application → Cookies → copy the <em>Value</em>). ${nativeArticleReader() ? "News collects a paper when either this or the sign-in above works." : "News collects a paper once its cookie is saved and works."}</p>
+        ${cookieRow("nyt", "New York Times", "nytCookie", "Paste NYT-S cookie value")}
+        ${cookieRow("economist", "The Economist", "economistCookie", "Paste blaize_session cookie value")}
+        ${cookieRow("startribune", "Star Tribune", "stribCookie", "Paste your Star Tribune session cookie")}
+        ${(sync.nytCookie || sync.economistCookie) ? `
           <div class="sync-context-actions">
-            <button type="button" class="primary-btn" data-context-settings-action="sync-now-context">Sync now</button>
+            <button type="button" class="primary-btn" data-context-settings-action="sync-now-context">Sync saved articles</button>
             ${lastSync ? `<span class="sync-context-last">Last synced ${lastSync}</span>` : ""}
           </div>
         ` : ""}
-        <div class="sync-context-divider"></div>
-        <div class="sync-context-field">
-          <div class="sync-context-field-header">
-            <span class="sync-context-label">Publications</span>
-          </div>
-          <div class="sync-pub-list">
-            ${pubs.map(p => `
-              <div class="sync-pub-item">
-                <div class="sync-pub-info">
-                  <span class="sync-pub-name">${escapeHtml(p.label)}</span>
-                  <span class="sync-pub-domain">${escapeHtml(p.domain)}</span>
-                </div>
-                <button type="button" class="icon-btn sync-pub-remove" data-remove-pub="${escapeHtml(p.key)}" title="Remove ${escapeHtml(p.label)}" aria-label="Remove ${escapeHtml(p.label)}">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-              </div>
-            `).join("")}
-          </div>
-          <form class="sync-pub-add-form" id="ctxAddPubForm">
-            <div class="sync-pub-add-row">
-              <input type="text" id="ctxPubNameInput" class="sync-context-input" placeholder="Name (e.g. The Atlantic)" autocomplete="off" />
-              <input type="text" id="ctxPubDomainInput" class="sync-context-input" placeholder="Domain (e.g. theatlantic.com)" autocomplete="off" />
-              <button type="submit" class="primary-btn compact-btn">Add</button>
-            </div>
-          </form>
-        </div>
       </div>
     `;
-    document.getElementById("ctxPodcastAdBlock")?.addEventListener("change", (e) => {
-      state.podcastSkipAds = e.target.checked;
-      persist();
-      const playerToggle = document.getElementById("podcastSkipAdsToggle");
-      if (playerToggle) playerToggle.checked = e.target.checked;
-      if (e.target.checked) scheduleAdSkips(podcastCurrentChapters, podcastAudio);
-      else clearAdSkipTimers();
-    });
-    elements.contextSettingsBody.querySelectorAll("[data-remove-pub]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        removePublication(btn.dataset.removePub);
-        renderContextSettingsDialog("read-sync");
+    // In the app, find out which papers this phone is signed in to (once per
+    // opening), then show each row's one button.
+    if (nativeArticleReader() && !paperSignInCheckStarted && SUBSCRIBER_PAPERS.some((p) => paperSignInStateOnPhone(p.key) === null)) {
+      paperSignInCheckStarted = true;
+      verifyNewsSignIns().catch(() => null).finally(() => {
+        paperSignInCheckDone = true;
+        if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
       });
-    });
-    document.getElementById("ctxAddPubForm")?.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const name = document.getElementById("ctxPubNameInput")?.value.trim();
-      const rawDomain = document.getElementById("ctxPubDomainInput")?.value.trim();
-      const domain = rawDomain ? rawDomain.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase() : "";
-      if (!name || !domain) return;
-      const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-      if (!key) return;
-      const existing = getReadPublications();
-      if (!existing.find(p => p.key === key || p.domain === domain)) {
-        if (!Array.isArray(state.readPublications)) state.readPublications = defaultReadPublications();
-        state.readPublications.push({ key, label: name, domain });
-        persist();
-        renderMediaPubTabs();
-      }
-      renderContextSettingsDialog("read-sync");
-    });
+    }
     return;
   }
 
@@ -17875,6 +17656,7 @@ function handleContextSettingsAction(event) {
     "calendars": () => closeAndRun(openPlanCalDialog),
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
+    "mail-reading": () => renderContextSettingsDialog("mail-reading"),
     "voice": () => renderContextSettingsDialog("voice"),
     "apple-music": () => renderContextSettingsDialog("apple-music"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
@@ -17914,29 +17696,22 @@ function handleContextSettingsAction(event) {
       try { await reader.logout({ domain: paper.cookieDomain }); showMailToast(`Signed out of ${paper.name} on this phone.`); }
       catch (err) { showMailToast(err?.message || "Couldn't sign out."); return; }
       markPaperSignIn(paper.key, false);
-      verifyNewsSignIns(); // News stops collecting a paper this phone signed out of
+      // News stops collecting a paper this phone signed out of; the row flips to Sign in.
+      await verifyNewsSignIns().catch(() => null);
+      if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
     },
-    "save-nyt-cookie": () => {
-      const input = document.getElementById("ctxNytCookieInput");
-      const val = input?.value?.trim();
-      if (!val) return;
+    "save-paper-cookie": () => {
+      const key = button.dataset.paper;
+      const field = { nyt: "nytCookie", economist: "economistCookie", startribune: "stribCookie" }[key];
+      const val = document.getElementById(`ctxCookieInput-${key}`)?.value?.trim();
+      if (!field || !val) return;
       if (!state.articleSync) state.articleSync = {};
-      state.articleSync.nytCookie = val;
+      state.articleSync[field] = val;
       persist();
       updateSyncButtons("read");
       updateSyncButtons("listen");
       renderContextSettingsDialog("read-sync");
-    },
-    "save-economist-cookie": () => {
-      const input = document.getElementById("ctxEconomistCookieInput");
-      const val = input?.value?.trim();
-      if (!val) return;
-      if (!state.articleSync) state.articleSync = {};
-      state.articleSync.economistCookie = val;
-      persist();
-      updateSyncButtons("read");
-      updateSyncButtons("listen");
-      renderContextSettingsDialog("read-sync");
+      verifyNewsSignIns(); // News only collects from papers you're signed in to
     },
     "sync-now-context": () => {
       elements.contextSettingsDialog.close();
@@ -28125,7 +27900,7 @@ function switchMediaTab(tab) {
     const isArticleTab = getReadPublications().some(p => p.key === tab);
     if (listPanel) listPanel.hidden = false;
     if (syncBtn) syncBtn.hidden = !isArticleTab || !hasSyncCookies();
-    if (syncSettingsBtn) syncSettingsBtn.hidden = !isArticleTab;
+    if (syncSettingsBtn) syncSettingsBtn.hidden = true; // Sync Settings moved to News (newspaper sign-ins)
     // Switching publication tabs exits search/archive back to the normal list.
     articleSearchActive = false;
     articleViewMode = "unread";
@@ -36617,11 +36392,16 @@ function markPaperSignIn(key, on) {
 async function signInToArticlePaper(paper) {
   const reader = nativeArticleReader();
   if (!reader || !paper) return;
-  try { await reader.login({ url: paper.loginUrl, title: paper.name }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); return; }
+  let res = null;
+  try { res = await reader.login({ url: paper.loginUrl, title: paper.name }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); return; }
   // The sheet has closed. Tell News what this phone now finds for each paper (a
   // status only — the sign-in cookies stay on the phone), and say how it went.
+  // The sheet's steps (host + path only) go along so a stalled sign-in can be
+  // diagnosed from the server.
   markPaperSignIn(paper.key, true);
+  if (Array.isArray(res?.trail)) setNewsDeviceTrail(paper.key, res.trail);
   await reportPaperSignInsToNews(paper);
+  if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
 }
 
 // After a sign-in in the app: re-check the phone's newspaper sign-ins, report
@@ -36647,20 +36427,44 @@ function articlePaperLoginActionsHtml(article, { teaser }) {
   return `${lead}<div class="article-paper-login-actions"><button class="secondary-btn" type="button" data-article-paper-login="${escapeHtml(paper.key)}">Sign in to ${escapeHtml(paper.name)}</button><button class="primary-btn" type="button" data-article-paper-reload="${escapeHtml(article.id)}">Reload full article</button></div>`;
 }
 
-// Media → Sync Settings, iPhone app only: per-paper Sign in / Sign out for the
-// on-phone article reader. "" elsewhere.
+// Whether this phone is signed in to a paper: what its last check found, else the
+// server's record of a phone report; null when not known yet.
+let paperSignInCheckStarted = false;
+let paperSignInCheckDone = false;
+function paperSignInStateOnPhone(key) {
+  const found = newsDeviceStatus()?.[key];
+  if (found) return found;
+  const rec = newsSignInStatus()?.[key];
+  if (rec?.via === "device" && rec.status) return rec.status;
+  return null;
+}
+
+// News → Sync Settings, iPhone app only: each paper's sign-in on this phone, with
+// one button — Sign in when signed out, Sign out when signed in. "" elsewhere.
 function articlePaperLoginsSettingsHtml() {
   if (!nativeArticleReader()) return "";
-  const rows = SUBSCRIBER_PAPERS.map((p) => `
+  const rows = SUBSCRIBER_PAPERS.map((p) => {
+    // Still unknown once the check has run (offline, or it couldn't tell): offer Sign in.
+    const known = paperSignInStateOnPhone(p.key);
+    const st = known === null && paperSignInCheckDone ? "none" : known;
+    const signedIn = st === "signed-in" || st === "unverified";
+    const label = st === null ? "Checking…" : signedIn ? "Signed in" : st === "expired" ? "Signed out" : "Not signed in";
+    const btn = st === null
+      ? `<button type="button" class="secondary-btn compact-btn" disabled>Sign in</button>`
+      : signedIn
+        ? `<button type="button" class="secondary-btn compact-btn" data-context-settings-action="paper-signout" data-paper="${escapeHtml(p.key)}">Sign out</button>`
+        : `<button type="button" class="primary-btn compact-btn" data-context-settings-action="paper-signin" data-paper="${escapeHtml(p.key)}">Sign in</button>`;
+    return `
         <div class="sync-context-field">
           <div class="sync-context-field-header">
             <span class="sync-context-label">${escapeHtml(p.name)}</span>
             <span class="article-paper-login-actions">
-              <button type="button" class="secondary-btn compact-btn" data-context-settings-action="paper-signout" data-paper="${escapeHtml(p.key)}">Sign out</button>
-              <button type="button" class="primary-btn compact-btn" data-context-settings-action="paper-signin" data-paper="${escapeHtml(p.key)}">Sign in</button>
+              <span class="sync-context-status ${signedIn ? "sync-status-ok" : "sync-status-off"}">${label}</span>
+              ${btn}
             </span>
           </div>
-        </div>`).join("");
+        </div>`;
+  }).join("");
   return `
         <p class="sync-context-label">Newspaper sign-ins on this device</p>
         <p class="sync-context-hint">Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with Apple or with email and password: Google sign-in doesn't work inside apps.</p>${rows}

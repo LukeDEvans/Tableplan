@@ -207,6 +207,7 @@ export function createNewsModule(deps) {
   let signInsLoaded = false;   // the server's status has arrived at least once
   let lastDeviceCheckAt = 0;   // bounds the phone's automatic re-check (per app run)
   let lastDeviceStatus = null; // what the phone itself last found, per paper
+  let pendingTrail = null;     // the sign-in sheet's steps, sent with the next check
   let loadingKey = null;
   let loadError = "";
   let seeded = null;       // local-dev seed (window.__liveQA.newsSetFeed)
@@ -340,10 +341,13 @@ export function createNewsModule(deps) {
             try { deviceStatus = await device.check(); } catch { deviceStatus = undefined; }
             lastDeviceStatus = deviceStatus || null;
           }
+          const deviceTrail = pendingTrail;
+          pendingTrail = null;
           const d = await callGmailApi({
             action: "verifyNewsSignIns",
             cookies: { nytCookie: sync.nytCookie || "", economistCookie: sync.economistCookie || "", stribCookie: sync.stribCookie || "" },
-            ...(deviceStatus && Object.keys(deviceStatus).length ? { deviceStatus } : {})
+            ...(deviceStatus && Object.keys(deviceStatus).length ? { deviceStatus } : {}),
+            ...(deviceTrail ? { deviceTrail } : {})
           });
           if (d?.signIns) { signIns = d.signIns; signInsLoaded = true; }
         } while (verifyAgain);
@@ -620,6 +624,7 @@ export function createNewsModule(deps) {
       if (isNarrow()) sb.classList.toggle("is-expanded");
       else sb.classList.toggle("is-collapsed");
     });
+    $("newsSettingsBtn")?.addEventListener("click", () => openSignInSettings?.());
     $("newsRefreshBtn")?.addEventListener("click", () => {
       if (onScores()) scores.refresh();
       flush();
@@ -709,5 +714,15 @@ export function createNewsModule(deps) {
     scores?.unmount();
   }
 
-  return { enter, leave, load, verifySignIns, render, seed, deviceStatus: () => lastDeviceStatus };
+  // The iPhone app's sign-in sheet steps for `paper` (diagnostics), sent with the
+  // next verifySignIns call.
+  function setDeviceTrail(paper, steps) {
+    if (paper && Array.isArray(steps) && steps.length) pendingTrail = { paper, steps: steps.slice(0, 80).map(String) };
+  }
+
+  return {
+    enter, leave, load, verifySignIns, render, seed, setDeviceTrail,
+    deviceStatus: () => lastDeviceStatus,
+    signInStatus: () => (signInsLoaded ? signIns : null)
+  };
 }

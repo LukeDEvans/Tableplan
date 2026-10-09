@@ -16,6 +16,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
+- [ ] **[P1] NYT sign-in with Apple in the app stalls after Face ID** (news · ios/App/App/ArticleReaderPlugin.swift ArticleLoginViewController · 2026-10-08)
+      Luke, on the 2026-10-08 build: Face ID completes, then nothing happens and the NYT doesn't sign in. The Economist signs in fine in the same sheet. Cause not known: the cloud session can't load the NYT or Apple pages. Shipped with PR #80: the sheet now identifies as Safari (a bare WKWebView user agent can make sign-in pages take an embedded-browser path) and records each step (host + path), sent with the status report and kept as `lastTrail` in the `mailnewssubs_<user>` row. **Next:** after Luke's next NYT attempt, read that row's `lastTrail` to see where it stops. Workaround meanwhile: paste the NYT-S cookie from Chrome on the laptop (News → Sync Settings), or give the NYT account a password and sign in with email. Verdict: OBSERVED by Luke; cause INFERRED at best.
 - [x] **[P1] Scores: ESPN did not answer from Netlify on the first deploy preview** (scores · netlify/functions/scores.mjs · 2026-10-07)
       Every ESPN call returned 502 on PR #78's first preview. `?action=health` showed why: ESPN returns 403 to the custom User-Agent the function sent ("LDE Personal App (…)") and answers a browser's or none. → Fixed: no User-Agent is sent unless `SCORES_USER_AGENT` is set. `?action=health` stays as the check.
 - [ ] **[P3] Scores: one 502 on the first combined request after a deploy** (scores · netlify/functions/scores.mjs · 2026-10-07)
