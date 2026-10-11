@@ -12,6 +12,8 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-08 (PRs #72–#76)._
 
+- **Receipt scan: no more "Unexpected token 'export'"** · branch `fix/receipt-scan-esm-bundle` (merged without a PR: the session's GitHub CLI was not signed in) · **Fix:** `scan-receipt` loads `receipt-domain.js`, an ES module. Netlify's default bundler shipped it as-is, and the Node 22 runtime (AWS Lambda) turns off Node's ES-module detection, so Read receipt failed every time. `netlify.toml` now uses esbuild for the four CommonJS functions with this pattern: `scan-receipt`, `estimate-nutrition`, `simplefin`, `voice-command`. Reproduced and verified locally by bundling with Netlify's bundler and running under Lambda's Node flags; `scan-receipt` ran end to end with a mocked AI reply, the other three were only checked to bundle and load. No state changes. **After deploy:** (1) Shop → scan a receipt → Read receipt: the review opens with line items; (2) estimate nutrition on one recipe; (3) Finance → refresh bank accounts and check the daily-briefing / simplefin function log shows `[fin-ingest] … upserted=N`, not `[fin-ingest] failed`; (4) one Siri voice command.
+
 - **News → Sports: Scores view with per-user favorite teams** · PR #78
   - Sports opens on a **Scores** tab (Stories is the second tab): a day's games across the leagues
     you follow, favorites pinned in My Teams, a day strip, collapsible leagues, and a Teams & leagues
