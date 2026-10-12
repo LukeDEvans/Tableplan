@@ -10,6 +10,4 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Last deploy: 2026-10-11 (PRs #78–#80 + receipt-scan fix)._
-
-- **News: Sports always shows, so Scores can be reached** · direct to `main` · **Fix:** the Sports section only appeared in the News sidebar once a sports article had arrived, and none had, so the Scores view (PR #78) couldn't be opened. Sports now always shows when Scores is available. Client only. Verified in the browser at 1280px and 390px with no sports articles: Sports shows and opens on Scores. **After deploy + TestFlight:** News → sidebar → Sports → Scores loads today's games.
+_Last deploy: 2026-10-11 #2 (News: Sports always shows)._

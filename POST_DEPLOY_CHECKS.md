@@ -5,6 +5,11 @@ shipped yet is listed in [UNDEPLOYED.md](UNDEPLOYED.md).) When deploying, move e
 UNDEPLOYED.md entry's "After deploying" steps here under a heading for that deploy.
 Tick items off as they're done; delete a deploy's section once it's all ticked.
 
+## 2026-10-11 deploy #2 (News: Sports always shows)
+Web deploy plus a TestFlight build from `main`. Service worker cache bumped to v43.
+
+- **News: Sports always shows, so Scores can be reached** · direct to `main` · **Fix:** the Sports section only appeared in the News sidebar once a sports article had arrived, and none had, so the Scores view (PR #78) couldn't be opened. Sports now always shows when Scores is available. Client only. Verified in the browser at 1280px and 390px with no sports articles: Sports shows and opens on Scores. **After deploy + TestFlight:** News → sidebar → Sports → Scores loads today's games.
+
 ## 2026-10-11 deploy (PRs #78–#80 + receipt-scan fix)
 Web deploy plus a TestFlight build from `main`. Service worker cache bumped to v42 — hard-refresh once. The iPhone app bundles its web code, so the client side of every item reaches the phone only through the TestFlight build.
 
