@@ -5,7 +5,7 @@
 // To change the time, update: [functions."daily-briefing"] schedule = "0 <hour> * * *"
 
 import webpush from "web-push";
-import { ingestFeed, storeNeedsBackfill, trimAccountsToDays } from "./_finance-ingest.js";
+import { ingestFeed, storeNeedsBackfill, trimAccountsToDays, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } from "./_finance-ingest.js";
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"]; // NOTE: "finance" is intentionally excluded — never feed financial data into AI prompts
@@ -243,7 +243,7 @@ async function snapshotFinanceBalances(serviceKey) {
       // the store starts with as much as the bank will give. null = table not
       // reachable (migration not applied) → skip ingest, keep the 45-day pull.
       const needsBackfill = await storeNeedsBackfill({ serviceKey, groupId });
-      const pullDays = needsBackfill === true ? 90 : 45;
+      const pullDays = needsBackfill === true ? 90 : SIMPLEFIN_PULL_DAYS;
       const start = Math.floor(Date.now() / 1000) - pullDays * 86400;
       const bridge = await fetch(`${url}/accounts?start-date=${start}`, {
         headers: { accept: "application/json", ...(auth ? { authorization: `Basic ${auth}` } : {}) }
@@ -273,7 +273,7 @@ async function snapshotFinanceBalances(serviceKey) {
             pending: Boolean(t.pending)
           }))
         }));
-        const errors = Array.isArray(data.errors) ? data.errors.map(String).slice(0, 5) : [];
+        const errors = bridgeErrorsForDisplay(data.errors);
         // Cache keeps the 45-day shape even on the 90-day backfill pull, so the
         // client's feed (and its month-actuals coverage) is unchanged.
         const cached = trimAccountsToDays(normalized, 45);

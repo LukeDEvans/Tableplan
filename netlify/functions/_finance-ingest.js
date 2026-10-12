@@ -161,4 +161,22 @@ function trimAccountsToDays(accounts, days, now = Date.now()) {
   }));
 }
 
-module.exports = { ingestFeed, storeNeedsBackfill, trimAccountsToDays, remapAccount, MAX_ROWS };
+// SimpleFIN's recommended maximum window is 45 days, and a request for exactly 45
+// is flagged ("Requested date range exceeds recommended range of 45 days") —
+// the bridge's clock has moved on by the time it checks. Ask for 44 so the
+// routine daily pull stays inside the limit. (The one-time 90-day backfill
+// deliberately goes over; its advisory is filtered by bridgeErrorsForDisplay.)
+const SIMPLEFIN_PULL_DAYS = 44;
+
+// SimpleFIN's `errors` mixes real connection problems ("Connection to X may need
+// attention") with advisories about the request itself. The client shows every
+// entry as "Couldn't load some transactions", so drop the date-range advisory —
+// the transactions did load.
+function bridgeErrorsForDisplay(errors) {
+  return (Array.isArray(errors) ? errors : [])
+    .map(String)
+    .filter((e) => !/recommended range of \d+ days/i.test(e))
+    .slice(0, 5);
+}
+
+module.exports = { ingestFeed, storeNeedsBackfill, trimAccountsToDays, remapAccount, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS, MAX_ROWS };

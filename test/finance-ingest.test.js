@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const { ingestFeed, storeNeedsBackfill, trimAccountsToDays, remapAccount } = require("../netlify/functions/_finance-ingest.js");
+const { ingestFeed, storeNeedsBackfill, trimAccountsToDays, remapAccount, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } = require("../netlify/functions/_finance-ingest.js");
 
 const NOW = Date.parse("2026-09-26T12:00:00Z");
 const day = (d) => new Date(NOW - d * 86400000).toISOString();
@@ -212,5 +212,24 @@ describe("remapAccount (SimpleFIN reconnect, design §12)", () => {
       accounts: [{ id: "NEW", transactions: [{ id: "n-dup", posted: day(9), amount: -40, description: "Target" }] }] });
     expect(db.rows.get("g1|o-dup")).toMatchObject({ status: "superseded", superseded_by: "n-dup" });
     expect(db.rows.get("g1|o-old")).toMatchObject({ status: "active", account_id: "NEW" });
+  });
+});
+
+describe("SimpleFIN request window + displayed errors", () => {
+  it("routine pull stays under SimpleFIN's 45-day recommended range", () => {
+    expect(SIMPLEFIN_PULL_DAYS).toBeLessThan(45);
+    // still covers any whole calendar month for month actuals
+    expect(SIMPLEFIN_PULL_DAYS).toBeGreaterThanOrEqual(31);
+  });
+  it("drops the date-range advisory but keeps real connection errors", () => {
+    const out = bridgeErrorsForDisplay([
+      "Requested date range exceeds recommended range of 45 days. In the future, this may be capped.",
+      "Connection to Apple Card (Updated Monthly)  may need attention. Auth required",
+    ]);
+    expect(out).toEqual(["Connection to Apple Card (Updated Monthly)  may need attention. Auth required"]);
+  });
+  it("tolerates missing / non-array input", () => {
+    expect(bridgeErrorsForDisplay(undefined)).toEqual([]);
+    expect(bridgeErrorsForDisplay(null)).toEqual([]);
   });
 });
