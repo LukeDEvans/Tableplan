@@ -3430,12 +3430,6 @@ function renderFinancePage() {
   // line items), drawn in the app's stroke-icon style (currentColor, no fill)
   // to match the bell/other icons rather than a raw 📷 emoji.
   const scanReceiptSvg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="1.5" width="14" height="21" rx="2.5"/><path d="M9 4h4"/><path d="M10 20h2"/><path d="M7.5 7H14.5V15l-1 1-1-1-1 1-1-1-1 1-1-1-1 1V7Z"/><circle cx="9.4" cy="9.3" r="1.1"/><path d="M11.4 9.3h3M8 11.7h3.2M12.3 11.7h2M8 13.4h3.2M12.3 13.4h2"/></svg>`;
-  // Quick-label chips: the user's most-used budget categories, so an unlabeled
-  // spend can be filed in one tap without opening the detail dropdown.
-  const quickLabelFreq = new Map();
-  for (const t of allTxns) { if (t.label && t.label.startsWith("cat:")) quickLabelFreq.set(t.label, (quickLabelFreq.get(t.label) || 0) + 1); }
-  const quickLabels = [...quickLabelFreq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label]) => ({ label, name: financeTxnLabelName(label) }));
-
   const txnSelect = (t) => {
     const isSplit = t.label === "split";
     const placeholder = isSplit ? `Split (${(t.split || []).length})` : t.labelSource === "auto" ? `auto: ${escapeHtml(financeTxnLabelName(t.label))}` : "label…";
@@ -3526,8 +3520,6 @@ function renderFinancePage() {
     const labelPill = t.label && t.label !== "split"
       ? `<span class="fin-txn-label-pill${t.labelSource === "auto" ? " is-auto" : ""}" title="${t.labelSource === "auto" ? "Auto-labeled — tap to change" : "Labeled"}">${escapeHtml(financeTxnLabelName(t.label))}</span>`
       : (t.label === "split" ? `<span class="fin-txn-label-pill is-split" title="Split across categories">Split</span>` : "");
-    // Inline quick-labels for an unlabeled SPEND — one tap to file it.
-    const showQuick = !t.label && (t.amount || 0) < 0 && quickLabels.length > 0;
     return `
     <div class="fin-txn-row fin-txn-row--clickable${statusClass}${financeDetailTxnId === t.id ? " is-open" : ""}" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}" data-fin-txn-id="${escapeHtml(t.id)}" role="button" tabindex="0" aria-expanded="${financeDetailTxnId === t.id}">
       ${grouped ? "" : `<span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>`}
@@ -3539,11 +3531,7 @@ function renderFinancePage() {
       ${t.pending ? `<span class="fin-txn-flag fin-txn-flag--pending" title="Pending — the amount may still change">pending</span>` : ""}
       ${labelPill}
       <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
-    </div>
-    ${showQuick ? `<div class="fin-txn-quick">
-      ${quickLabels.map((q) => `<button class="fin-quick-chip" type="button" data-fin-action="quick-label" data-id="${escapeHtml(t.id)}" data-label="${escapeHtml(q.label)}" data-desc="${escapeHtml(t.description)}">${escapeHtml(q.name)}</button>`).join("")}
-      <button class="fin-quick-chip fin-quick-more" type="button" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}">More…</button>
-    </div>` : ""}`;
+    </div>`;
   };
   const returnLinkHtml = (t) => {
     if (t.linkedPurchaseId) {
@@ -4400,7 +4388,6 @@ function onFinanceGridClick(e) {
     return;
   }
   if (action === "confirm-txn") { financeConfirmTxn(btn.dataset.id); renderFinancePage(); return; }
-  if (action === "quick-label") { recordFinanceTxnLabel(btn.dataset.id, btn.dataset.label, btn.dataset.desc || ""); renderFinancePage(); return; }
   if (action === "add-goal") {
     if (!Array.isArray(state.financeGoals)) state.financeGoals = [];
     const id = createId("fin-goal");
