@@ -83,6 +83,7 @@ import * as TravelGeo from './travel-geo.js';
 import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
 import { usableViewportBottom } from './dock-space.js';
+import { makeReaderOrigin, readerReturnTarget, captureScroll, restoreScroll } from './reader-return.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
 // so every RELATIVE backend call (`/.netlify/functions/…`, `/api/…`) would resolve
@@ -1756,7 +1757,7 @@ const _news = createNewsModule({
   getState: () => state,
   getActiveAppArea: () => activeAppArea,
   onSentToMedia: (...a) => addAcceptedNewsArticle(...a),
-  openInMedia: (id) => { showMediaApp(); switchMediaTab("all"); openArticle(id, "articleList"); },
+  openInMedia: (id) => openArticleFrom(id, { tab: "all" }),
   listenInMedia: (id) => listenToArticle(id),
   scores: { mount: (...a) => mountScores(...a), unmount: (...a) => unmountScores(...a), refresh: (...a) => refreshScores(...a) },
   // News → Sync Settings: the app's own paper sign-ins, and pasted cookies.
@@ -3836,9 +3837,7 @@ async function saveArticleScan() {
     date: elements.articleScanDate.value || new Date().toISOString().slice(0, 10),
   }, bodyHtml);
   elements.articleScanDialog?.close();
-  if (activeAppArea !== "media") showMediaApp();
-  switchMediaTab(article.publication);
-  openArticle(article.id, "articleList");
+  openArticleFrom(article.id, { tab: article.publication });
 }
 
 // The typed publication name → a Media → Publications key ("nyt", "economist", …)
@@ -8223,6 +8222,7 @@ function showMediaApp(event) {
   event?.stopPropagation();
   if (!isPageEnabled("read")) { showHomeApp(); return; }
   activeAppArea = "media";
+  readerReturn = null; // arriving here some other way: nothing to go back to
   hideAllPages();
   elements.mediaMainPage.hidden = false;
   // No date bar on Media (like Mail/Explore) — hide the week-tools row.
@@ -27666,6 +27666,10 @@ let activeMediaTab = "queue"; // "queue" is the sidebar's top "All" tab — Medi
 let podcastPlayerBackToQueue = false;
 let mediaSearchQuery = "";     // top-bar search across podcasts + articles + books
 let openArticleId = null;
+// Reader return-to-origin: the page that hosts the reader, and where the open
+// reader should go back to when closed (see openArticleFrom).
+const READER_HOST_AREA = "media";
+let readerReturn = null;
 let mediaTabsWired = false;
 let articleViewMode = "unread"; // "unread" | "archive" (toggled by the Archive button)
 let articleSearchActive = false; // Search button toggles a search box over the list
@@ -27877,6 +27881,7 @@ function switchMediaTab(tab) {
   if (syncBtn) syncBtn.hidden = true;
   if (syncSettingsBtn) syncSettingsBtn.hidden = true;
   openArticleId = null;
+  readerReturn = null;
 
   if (tab === "queue") {
     // Top "All" tab: the blended listen queue (podcasts + articles + books)
@@ -31976,7 +31981,7 @@ const MEDIA_KINDS = {
     onError: () => { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); },
     toggle: () => toggleListenPlayPause(),
     skip: (sec) => listenSkip(sec),
-    open: () => { if (listenArticle) { showMediaApp(); openArticle(listenArticle.id, "articleList"); } },
+    open: () => { if (listenArticle) openArticleFrom(listenArticle.id); },
     info: () => { const a = listenArticle; return { art: a ? articleArtUrl(a) : "", title: a?.title || "Now playing", show: a?.author || a?.publication || "", date: a?.pubDate ? formatArticleDate(a.pubDate) : "", desc: plainTextFromHtml(a?.text || a?.excerpt).slice(0, 2000) }; },
   },
 };
@@ -36040,6 +36045,49 @@ function showArticleTeaserActions(textEl, article, html) {
   textEl.insertAdjacentElement("afterend", row);
 }
 
+// ── Reader return-to-origin (reader-return.js, MEDIA_SPLIT_DESIGN.md) ─────────
+// The reader is hosted on one page. Opening it from anywhere else records where
+// you were; closing it takes you back there (page, tab, scroll). In-page opens
+// (a row in the list under the reader) leave nothing to return to.
+function snapshotReaderOrigin() {
+  const page = document.querySelector('[id$="MainPage"]:not([hidden])');
+  return makeReaderOrigin({
+    area: activeAppArea,
+    tab: activeAppArea === "media" ? activeMediaTab : null,
+    scroll: captureScroll(page),
+    windowY: window.scrollY,
+  });
+}
+
+// Open an article from outside the reader's own list: News, the now-playing bar,
+// a scan. `tab` picks the host page's tab to show under the reader.
+function openArticleFrom(id, { tab = null } = {}) {
+  if (!(state.savedArticles || []).some((a) => a.id === id)) return false;
+  const origin = snapshotReaderOrigin();
+  if (activeAppArea !== READER_HOST_AREA) showMediaApp();
+  if (tab && tab !== activeMediaTab) switchMediaTab(tab);
+  openArticle(id, "articleList");
+  readerReturn = origin; // after navigating: switching pages/tabs clears it
+  return true;
+}
+
+function returnToReaderOrigin(origin) {
+  const show = {
+    news: showNewsApp, media: showMediaApp, plan: showPlanApp, eat: showEatApp,
+    mail: () => showMailApp(), shop: showShopApp, inventory: showInventoryApp,
+    finance: showFinanceApp, recreate: showRecreateApp, explore: showExploreApp,
+    play: showPlayApp, weather: showWeatherApp, contacts: showContactsApp,
+    settings: showSettingsApp, home: showHomeApp, watch: showWatchApp,
+  }[origin.area];
+  if (!show) return;
+  if (origin.area !== activeAppArea) show();
+  if (origin.area === "media" && origin.tab && origin.tab !== activeMediaTab) switchMediaTab(origin.tab);
+  // Pages re-render on entry; put the scroll back once they have, and again a
+  // moment later in case the list filled in from cache after the first frame.
+  requestAnimationFrame(() => restoreScroll(origin, document, window));
+  setTimeout(() => restoreScroll(origin, document, window), 300);
+}
+
 function openArticle(id, fromListId) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
@@ -36084,6 +36132,9 @@ function closeArticleReader() {
   // while you browse elsewhere. Explicit Stop (listenStopBtn) still ends it.
   openArticleId = null;
   document.querySelectorAll(".article-row--active").forEach((r) => r.classList.remove("article-row--active"));
+  const target = readerReturnTarget(readerReturn, { hostArea: activeAppArea, hostTab: activeAppArea === "media" ? activeMediaTab : null });
+  readerReturn = null;
+  if (target) returnToReaderOrigin(target);
 }
 
 function deleteArticle(id) {
@@ -37174,9 +37225,8 @@ async function listenToArticle(id) {
   unlockListenAudio(); // still inside the tap — bless audio before any await
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
-  if (activeAppArea !== "media") showMediaApp();
   stopListen();
-  openArticle(id, "articleList");
+  openArticleFrom(id);
   if (!article.text) {
     // Auto-fetch rather than refusing to play (item 4). openArticle already
     // shows a "Fetching…"/failure state.
