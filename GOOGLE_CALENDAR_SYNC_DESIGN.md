@@ -88,7 +88,7 @@ Device-local (localStorage, alongside the existing linked-source cache): event c
 
 | Function | Purpose |
 |---|---|
-| `gcal-auth` | Builds the consent URL. Scopes: `calendar.events` + `calendar.calendarlist.readonly` (or `calendar` if creating calendars, see Phase 4). Uses `access_type=offline`, `include_granted_scopes=true`. **Sign `state`** with an HMAC + nonce. The Gmail flow's `state` is plain base64 `{userId}`, which is forgeable; fix it there too. |
+| `gcal-auth` | Builds the consent URL. Scope: `https://www.googleapis.com/auth/calendar` (the one configured in Phase 0; needed for creating calendars in Phase 2). Uses `access_type=offline`, `include_granted_scopes=true`. **Sign `state`** with an HMAC + nonce. The Gmail flow's `state` is plain base64 `{userId}`, which is forgeable; fix it there too. |
 | `gcal-callback` | Exchanges the code and upserts `gcal_accounts`. Redirects to `/#plan?gcal_connected=1`. |
 | `gcal-calendars` | `calendarList.list` → returns calendars with id, summary, color, accessRole. |
 | `gcal-events` | `events.list` per calendar with `singleEvents=true` over a window (e.g. −60d…+400d). Delta mode uses `updatedMin=<lastSyncedAt>&showDeleted=true`. Returns normalized events (see mapping). Authorizes that the caller owns the token **or** the calendar is household-visible (`showOnMealPlan`) and the caller is in the same `live_group`. |
@@ -131,9 +131,9 @@ Real start/end times also fix meal-plan placement for Google events.
 
 ## 6. Phases
 
-**Phase 0: Google Cloud console (Luke, ~10 min)**
-- Enable the Google Calendar API on the existing OAuth project.
-- Add the calendar scopes to the consent screen.
+**Phase 0: Google Cloud console — ✅ DONE (Luke, 2026-10-12)**
+- ✅ Google Calendar API enabled on the existing OAuth project.
+- ✅ Scope `https://www.googleapis.com/auth/calendar` added to the consent screen. This single full scope covers Phases 1–2 (events, calendar list, and creating calendars for the automatic move). `gcal-auth` should request exactly this scope.
 - ✅ Publishing status confirmed **In production** (Luke, 2026-10-12). Keep it there: in *Testing*, refresh tokens for sensitive scopes expire after 7 days.
 
 **Phase 1: Read via API (biggest immediate win)**
