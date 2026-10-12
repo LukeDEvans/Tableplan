@@ -146,7 +146,7 @@ Real start/end times also fix meal-plan placement for Google events.
   - Connecting happens in a browser, not the iOS app: Google blocks sign-in in embedded webviews, same as Gmail. Tokens are server-side, so the app picks it up.
 - QA: `test/calendar-google.test.js`, `test/calendar-gcal-server.test.js`, and `scripts/qa-gcal.mjs` (headless, 18 checks against the real client paths with mocked functions; run on a fresh local state).
 - **Before it works in production (Luke):**
-  1. Run `migrations/2026-10-12-gcal-accounts.sql` in the Supabase SQL editor.
+  1. ✅ Migration applied to prod (2026-10-12, via the Supabase MCP). Verified: both tables exist, RLS on, no policies, only `postgres`/`service_role` hold privileges.
   2. Add `https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/gcal-callback` to the OAuth client's **Authorized redirect URIs** (Google Cloud → Google Auth Platform → Clients).
   3. Deploy. No new env vars: the state signature falls back to `GOOGLE_CLIENT_SECRET` (set `OAUTH_STATE_SECRET` to separate them).
 - Original Phase 1 scope:
