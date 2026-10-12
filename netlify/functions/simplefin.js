@@ -11,7 +11,7 @@
 // - The token is read-only by protocol: it can list balances/transactions,
 //   nothing else. Revocable any time at beta-bridge.simplefin.org.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
-const { ingestFeed, remapAccount } = require("./_finance-ingest.js");
+const { ingestFeed, remapAccount, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } = require("./_finance-ingest.js");
 const { loadFinanceCategories } = require("./_finance-categories.js");
 
 exports.handler = async (event) => {
@@ -183,18 +183,20 @@ exports.handler = async (event) => {
       // calls this so it can show real (cron-warmed) balances without a bridge
       // fetch leaving from the home IP and burning the bank's request budget.
       if (body.cacheOnly) {
-        if (cache) return cors(json(200, { accounts: cache.accounts, errors: cache.errors || [], cached: true, fetchedAt: cache.fetchedAt }));
+        if (cache) return cors(json(200, { accounts: cache.accounts, errors: bridgeErrorsForDisplay(cache.errors), cached: true, fetchedAt: cache.fetchedAt }));
         return cors(json(200, { accounts: [], errors: ["No cached bank data yet — open the app in production once to warm the cache."], cached: true, fetchedAt: null }));
       }
       const wantsFresh = !cache || age >= ACCOUNTS_CACHE_TTL_MS || (body.force && age >= ACCOUNTS_MIN_INTERVAL_MS);
       if (!wantsFresh) {
-        return cors(json(200, { accounts: cache.accounts, errors: cache.errors || [], cached: true, fetchedAt: cache.fetchedAt }));
+        return cors(json(200, { accounts: cache.accounts, errors: bridgeErrorsForDisplay(cache.errors), cached: true, fetchedAt: cache.fetchedAt }));
       }
 
       const row = await loadSecretRow(serviceKey, groupId);
       const accessUrl = row?.state?.accessUrl;
       if (!accessUrl) return cors(json(409, { error: "SimpleFIN is not connected yet." }));
-      const days = Math.min(Math.max(Number(body.days) || 30, 1), 90);
+      // Capped at SimpleFIN's recommended window (the client asks for 45); the
+      // 90-day backfill only ever runs from the daily cron.
+      const days = Math.min(Math.max(Number(body.days) || 30, 1), SIMPLEFIN_PULL_DAYS);
       const start = Math.floor(Date.now() / 1000) - days * 86400;
       // SimpleFIN access URLs embed basic-auth credentials; Node's fetch
       // rejects such URLs, so split them into an Authorization header.
@@ -204,7 +206,7 @@ exports.handler = async (event) => {
       });
       if (!res.ok) {
         // Bridge hiccup: serve stale cache rather than a hard error if we have one.
-        if (cache) return cors(json(200, { accounts: cache.accounts, errors: cache.errors || [], cached: true, fetchedAt: cache.fetchedAt }));
+        if (cache) return cors(json(200, { accounts: cache.accounts, errors: bridgeErrorsForDisplay(cache.errors), cached: true, fetchedAt: cache.fetchedAt }));
         return cors(json(502, { error: `Bridge fetch failed (${res.status}).` }));
       }
       const data = await res.json().catch(() => null);
@@ -226,7 +228,7 @@ exports.handler = async (event) => {
           pending: Boolean(t.pending)
         }))
       }));
-      const errors = Array.isArray(data.errors) ? data.errors.map(String).slice(0, 5) : [];
+      const errors = bridgeErrorsForDisplay(data.errors);
       const fetchedAt = new Date().toISOString();
       await saveRawCache(serviceKey, cacheId, { accounts, errors, fetchedAt });
       // Durable transaction store (FINANCE_TRANSACTIONS_DESIGN.md §3): keep every
