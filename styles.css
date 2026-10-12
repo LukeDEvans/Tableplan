@@ -13265,12 +13265,12 @@ body[data-theme="dark"] .watch-provider-link:hover {
   flex-shrink: 0;
 }
 
-/* Shop has no window frame (Luke, 2026-10-06): the navy border, its 10px buffer
-   and the drop shadow are gone and the list's own gutter is trimmed from 16px to
-   10px, so the list gets about 36px more width (and the height to match). The
+/* Shop's window is slimmed (Luke, 2026-10-06): the 10px buffer and the drop
+   shadow are gone and the list's own gutter is trimmed from 16px to 10px, so the
+   list gets about 36px more width. The blue window border stays (Luke,
+   2026-10-11: it came back after briefly being removed with the rest). The
    store bar keeps running edge to edge, so its offsets follow the new gutter. */
 #shopMainPage.planner-column {
-  border: 0;
   box-shadow: none;
   padding: 0;
 }
