@@ -16,6 +16,9 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
+- [ ] **[P1] Google OAuth `state` is unsigned — a forged callback can attach someone's Google tokens to another user** (mail · netlify/functions/gmail-auth.js:21, gmail-callback.js:9-15 · 2026-10-12)
+      `state` is plain base64 `{userId}` with no signature or nonce, and the callback trusts it after only checking the user exists. Anyone who knows a user id can complete Google consent with their own account and have those tokens saved under the victim's `gmail_<userId>` row (mail from the attacker's inbox flows into the victim's app). Suggested: HMAC-sign `state` with a server secret + short-lived nonce and verify it in the callback; the planned `gcal-auth`/`gcal-callback` (GOOGLE_CALENDAR_SYNC_DESIGN.md §4) must do this from the start, so share one helper. Auth change, so needs Luke's OK per Decision boundaries. Verdict: CONFIRMED by reading.
+
 - [ ] **[P1] Months backfilled by the OLD CSV import show $0 per category in the Budget view** (finance · finance-ui.js applyCsvMonthBackfill · 2026-09-26)
       `aggregateCsvBackfill` keys `cats` by the full label (`"cat:<gid>:<cid>"`), but every reader — the budget month view (`catActual` → `` `${g.id}:${c.id}` ``), last-month compare, draft-from-history per-category lookups — and the live snapshotter use `"<gid>:<cid>"`. So a CSV-backfilled month's per-category actuals never matched a category (its grand total, summed via `Object.values`, was right). **Fixed going forward** in the CSV-import rewrite (keys normalized on write; test in finance-store-mode.test.js). **Not repaired:** months already backfilled before this fix still hold `"cat:…"` keys in `state.financeMonthActuals`. Suggested: a one-time, idempotent normalizer (strip the `cat:` prefix, summing any collision) — a finance-state data repair, so it needs Luke's OK. Verdict: CONFIRMED by reading + test.
 
