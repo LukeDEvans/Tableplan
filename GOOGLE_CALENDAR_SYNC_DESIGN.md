@@ -136,19 +136,22 @@ Real start/end times also fix meal-plan placement for Google events.
 - ✅ Scope `https://www.googleapis.com/auth/calendar` added to the consent screen. This single full scope covers Phases 1–2 (events, calendar list, and creating calendars for the automatic move). `gcal-auth` should request exactly this scope.
 - ✅ Publishing status confirmed **In production** (Luke, 2026-10-12). Keep it there: in *Testing*, refresh tokens for sensitive scopes expire after 7 days.
 
-**Phase 1: Read via API (biggest immediate win) — ✅ BUILT on `integration` (2026-10-12), not deployed**
+**Phase 1: Read via API (biggest immediate win) — ✅ BUILT on branch `claude/gcal-sync` off `main` (2026-10-12), not deployed**
 - As built: `migrations/2026-10-12-gcal-accounts.sql` (`gcal_accounts` + `gcal_links`), `netlify/functions/_gcal.js` + `gcal-auth` / `gcal-callback` / `gcal-calendars` / `gcal-events`, `calendar/google.js` (pure mapping + severance converter), `calendar/google-client.js` (device cache + link reconciliation), app.js glue (search "Google Calendar API sync"), panel in Settings → Calendars and the sidebar's Add Calendar dialog.
 - Deviations from §3–5, on purpose:
   - The app↔Google mapping is authoritative in **`gcal_links`** (server), not only on the `state.calendars` entry. Older deployed clients strip unknown fields from `state.calendars` when they re-save the plan row, so the entry's `googleCalendarId` is just a cache that every status sync re-applies.
   - A removed calendar is a `gcal_links` row with `enabled=false`, so discovery never re-adds it. Re-adding mints a fresh app id, because the old one is tombstoned.
   - Plan-calendar event ids stay `gcal:<cal>:<date>:<title>`, so hides and renames made before the switch keep working. A second same-titled event that day gets `#<googleId>` appended. Stable Google-id-based ids are a Phase 2 item (needed for editing anyway).
   - The 5-minute refresh touches only API calendars, never the legacy iCal feeds.
-  - Connecting happens in a browser, not the iOS app: Google blocks sign-in in embedded webviews, same as Gmail. Tokens are server-side, so the app picks it up.
-- QA: `test/calendar-google.test.js`, `test/calendar-gcal-server.test.js`, and `scripts/qa-gcal.mjs` (headless, 18 checks against the real client paths with mocked functions; run on a fresh local state).
+  - The iPhone app connects in Apple's sign-in sheet (WebAuth plugin, `?client=ios`), exactly like Gmail; `gcal-callback` sends the sheet back to `com.mrlukedevans.live://gcal`. Older app builds without the plugin are told to connect from a browser. The signed state reuses `_oauth-state.js` with its own purpose (`gcal-oauth-state-v1`).
+  - Google API calendars can be switched to **Show on Meal Plan** (Edit Calendar dialog). Their timed events flow through `calendar/meal-plan-share.js` like subscribed feeds, read from the device's Google cache. After a refresh, the share is re-saved only if its snapshot actually changed.
+  - Originally built on `integration`, which turned out to be far behind `main`. It was ported onto `main` the same day; `main` is the real base.
+- QA: `test/calendar-google.test.js`, `test/calendar-gcal-server.test.js`, and `scripts/qa-gcal.mjs` (headless, 20 checks against the real client paths with mocked functions; run on a fresh local state).
 - **Before it works in production (Luke):**
   1. ✅ Migration applied to prod (2026-10-12, via the Supabase MCP). Verified: both tables exist, RLS on, no policies, only `postgres`/`service_role` hold privileges.
-  2. Add `https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/gcal-callback` to the OAuth client's **Authorized redirect URIs** (Google Cloud → Google Auth Platform → Clients).
-  3. Deploy. No new env vars: the state signature falls back to `GOOGLE_CLIENT_SECRET` (set `OAUTH_STATE_SECRET` to separate them).
+  2. Redirect URI `https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/gcal-callback` (see 3).
+  3. ✅ Redirect URI added to the OAuth client (Luke, 2026-10-12).
+  4. Merge `claude/gcal-sync` → `main` and deploy (needs Luke's OK). No new env vars.
 - Original Phase 1 scope:
 - Ship: `gcal_accounts` migration, `gcal-auth/callback/calendars/events`, connect UI, in-place migration, timed events, auto-discovered new calendars.
 - Also ship the **severance converter + dry-run report** (§9) now, not at the end.

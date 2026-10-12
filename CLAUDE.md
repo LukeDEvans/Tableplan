@@ -204,7 +204,7 @@ is HELD** — the read-compat shim has a delete-resurrection gap that needs a sc
 `mergeStates` tombstone-routing fix first, and there is **no** `STATE_SCHEMA_VERSION`
 bump (it's finance-only). Full record + the prerequisite fix: **[CALENDAR_AUTHORITY_FLIP.md](CALENDAR_AUTHORITY_FLIP.md)**.
 
-**Google Calendar two-way sync (approved direction, 2026-10-12, not yet built):** Google is the
+**Google Calendar two-way sync (approved direction, 2026-10-12; Phase 1 built on `claude/gcal-sync`):** Google is the
 authority for Google-backed calendars through the transition, fetched per device and never written
 into synced state (so it does **not** touch the held authority flip). The app becomes the master copy
 later via a planned severance. Plan, decisions, and readiness criteria:
