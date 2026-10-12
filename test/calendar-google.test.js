@@ -5,8 +5,11 @@ import {
   googleEventToCacheEntries, applyGoogleEvents, storeToCacheEntries,
   toGooglePrivateProps, fromGooglePrivateProps,
   parseRrule, exdatesFromRecurrence, googleRecurrenceToApp,
-  convertGoogleCalendar, buildSeveranceReport
+  convertGoogleCalendar, buildSeveranceReport,
+  googleEventToFeedEvent
 } from "../calendar/google.js";
+import { feedEventsFor } from "../calendar/google-client.js";
+import { mealPlanEventsFromScope, buildSharedSnapshot } from "../calendar/meal-plan-share.js";
 
 const CAL = { id: "cal-1", name: "Family", color: "#3366ff" };
 
@@ -173,5 +176,37 @@ describe("severance conversion + dry-run report", () => {
     expect(report.clean).toBe(false);
     expect(report.totals).toMatchObject({ singles: 2, series: 1, meetLinks: 1, guests: 1, events: 4 });
     expect(report.perCalendar.map((c) => [c.name, c.events, c.issues])).toEqual([["Family", 3, 1], ["Work", 1, 0]]);
+  });
+});
+
+describe("Google calendars on the meal plan (Show on Meal Plan)", () => {
+  const cache = { "gcal-1": { events: {
+    shift: { id: "shift", summary: "Work shift", start: { dateTime: "2026-10-13T08:00:00-05:00" }, end: { dateTime: "2026-10-13T16:00:00-05:00" } },
+    trip: { id: "trip", summary: "Trip", start: { date: "2026-10-16" }, end: { date: "2026-10-19" } },
+    gone: { id: "gone", status: "cancelled" }
+  } } };
+  const cal = { id: "gcal-1", name: "Luke", color: "#9fe1e7", enabled: true, googleCalendarId: "luke@gmail.com", url: "" };
+
+  it("keeps multi-day events whole with an inclusive end date", () => {
+    expect(googleEventToFeedEvent(cache["gcal-1"].events.trip)).toEqual({ uid: "trip", title: "Trip", date: "2026-10-16", allDay: true, startTime: null, endTime: null, endDate: "2026-10-18" });
+    expect(feedEventsFor(cal, cache)).toHaveLength(2);
+    expect(feedEventsFor({ id: "other" }, cache)).toBeNull();
+  });
+
+  it("a switched-on Google calendar puts timed events on the meal plan; switched-off or iCal-only ones don't", () => {
+    const scope = { calendars: [cal, { id: "ical-only", url: "https://x", enabled: true }], planCalendars: [], planEvents: [], planMealPlanCalendars: { "gcal-1": true, "ical-only": true } };
+    const { events, uncachedCalendarIds } = mealPlanEventsFromScope(scope, (c) => feedEventsFor(c, cache));
+    expect(uncachedCalendarIds).toEqual([]);
+    const shift = events.find((e) => e.title === "Work shift");
+    expect(shift).toMatchObject({ id: "gcal-1:shift", date: "2026-10-13", startTime: "08:00", endTime: "16:00", allDay: false, external: true, color: "#9fe1e7" });
+    expect(events.some((e) => e.calendarId === "ical-only")).toBe(false);
+    expect(mealPlanEventsFromScope({ ...scope, planMealPlanCalendars: {} }, (c) => feedEventsFor(c, cache)).events).toEqual([]);
+  });
+
+  it("a switched-on Google calendar this device hasn't fetched keeps the previous shared copy", () => {
+    const scope = { calendars: [cal], planCalendars: [], planEvents: [], planMealPlanCalendars: { "gcal-1": true } };
+    const previous = { events: [{ id: "gcal-1:shift", title: "Work shift", date: "2026-10-13", allDay: false, startTime: "08:00", endTime: "16:00", external: true, calendarId: "gcal-1" }] };
+    const snap = buildSharedSnapshot(scope, { cacheFor: () => null, previous, now: new Date("2026-10-12T12:00:00") });
+    expect(snap.events.map((e) => e.id)).toEqual(["gcal-1:shift"]);
   });
 });

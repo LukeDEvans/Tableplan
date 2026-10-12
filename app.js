@@ -37,7 +37,7 @@ import { buildSharedSnapshot, mealPlanDisplayEvents, mealPlanEventsFromScope, me
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
 import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport } from './calendar/google.js';
-import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows } from './calendar/google-client.js';
+import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
@@ -832,6 +832,27 @@ let pendingMealIngredientSelection = null;
 let pendingAutoRuleRecipeSelection = null;
 let pendingAutoRuleIngredientSelection = null;
 let calendarEvents = loadCachedCalendarEvents();
+// Google Calendar API sync state (declared up here, before anything at module top
+// can reach persist() → planFeedCacheFor, so none of it is in its TDZ).
+let gcalStatus = null;        // last gcal-calendars result: { connected, email, calendars, links } | { connected:false, reconnect? }
+let gcalStatusAt = 0;
+let gcalSyncInFlight = null;
+let gcalEventsAt = 0;
+let gcalBusy = "";            // panel status line while an action runs
+let gcalReport = null;        // last severance dry-run result (rendered in the panel)
+let gcalCacheMem = null;      // in-memory copy of the device cache (persist() reads it for the meal-plan share)
+function gcalCacheSnapshot() {
+  if (!gcalCacheMem) gcalCacheMem = loadGcalCache();
+  return gcalCacheMem;
+}
+function gcalSaveCache(cache) {
+  gcalCacheMem = cache;
+  saveGcalCache(cache);
+}
+const GCAL_STATUS_TTL_MS = 60 * 60 * 1000;      // calendar-list / discovery check: hourly
+const GCAL_EVENTS_INTERVAL_MS = 5 * 60 * 1000;  // event refresh: every 5 min, only while visible
+
+let gcalQaForce = false; // dev-only (window.__liveQA.gcalForce), never true off localhost
 // The Shop page's three spaces (spec: Checklist · Shop · Inventory). Shop is the
 // default/opening view; the existing header/date bar sits above this nav.
 // Per-store session toggle: which stores are currently showing their bought
@@ -3554,6 +3575,7 @@ function setupDiagnostics() {
         events: calendarEvents.map(({ summary, date, startTime, endTime, allDay, calendarId, source }) => ({ summary, date, startTime, endTime, allDay, calendarId, source }))
       };
     },
+    gcalMealPlanEvents: () => (localDevMode ? mealPlanCalendarEvents().filter((e) => e.external).map(({ id, title, date, startTime, endTime, allDay, calendarId }) => ({ id, title, date, startTime, endTime, allDay, calendarId })) : null),
     gcalPlanEvents: (dateKey) => (localDevMode ? getPlanEventsForRange(dateKey, dateKey).filter((e) => e.provider === "google").map(({ id, title, date, allDay, startTime, endTime, externalId }) => ({ id, title, date, allDay, startTime, endTime, externalId })) : null),
     // Force a synchronous write to the local backend (bypasses the debounce) so a
     // second context's stale/empty write can be sequenced deterministically. Uses
@@ -4610,6 +4632,7 @@ function adoptSettingsBaseline() {
 // ── Calendar → Meal Plan sharing (logic in calendar/meal-plan-share.js) ──────
 // This device's fetched copy of a subscribed feed, or null if it has none.
 function planFeedCacheFor(cal) {
+  if (cal?.googleCalendarId) return feedEventsFor(cal, gcalCacheSnapshot());
   const cached = planCalendarCache[cal?.id];
   return cached && Array.isArray(cached.events) ? cached.events : null;
 }
@@ -20213,18 +20236,11 @@ async function loadCalendarEvents(options = {}) {
 // device (calendar/google-client.js cache) and never written into synced state.
 // Which Google calendar backs which app calendar lives server-side (gcal_links);
 // state.calendars entries only cache it as googleCalendarId.
-let gcalStatus = null;        // last gcal-calendars result: { connected, email, calendars, links } | { connected:false, reconnect? }
-let gcalStatusAt = 0;
-let gcalSyncInFlight = null;
-let gcalEventsAt = 0;
-let gcalBusy = "";            // panel status line while an action runs
-let gcalReport = null;        // last severance dry-run result (rendered in the panel)
-const GCAL_STATUS_TTL_MS = 60 * 60 * 1000;      // calendar-list / discovery check: hourly
-const GCAL_EVENTS_INTERVAL_MS = 5 * 60 * 1000;  // event refresh: every 5 min, only while visible
-
-let gcalQaForce = false; // dev-only (window.__liveQA.gcalForce), never true off localhost
 function gcalAvailable() {
-  return (Boolean(authSession?.access_token) && !canUseLocalBackend()) || (gcalQaForce && localDevMode);
+  // The iPhone app runs at capacitor://localhost, where canUseLocalBackend() is
+  // true but /.netlify/functions calls reach the live site (native fetch shim).
+  const live = !canUseLocalBackend() || isNativeApp();
+  return (Boolean(authSession?.access_token) && live) || (gcalQaForce && localDevMode);
 }
 
 // Fetch connection status + calendar list, propose links for new Google
@@ -20271,14 +20287,15 @@ function syncGoogleCalendarLinks({ force = false } = {}) {
 // full pull). Returns { entries, unavailable } — unavailable maps app id → reason;
 // such a calendar falls back to its iCal url when it has one.
 async function loadGoogleApiEvents(apiCals, { force = false } = {}) {
-  const cache = loadGcalCache();
+  const cache = gcalCacheSnapshot();
   let next = cache;
   let unavailable = {};
   try {
     const response = await gcalApi.events(authSession.access_token, buildEventsRequest(apiCals, cache, { force }));
     ({ cache: next, unavailable } = applyEventsResponse(cache, response, apiCals.map((calendar) => calendar.id)));
-    saveGcalCache(next);
+    gcalSaveCache(next);
     gcalEventsAt = Date.now();
+    gcalMaybeUpdateMealPlanShare();
     if (Object.values(unavailable).includes("reconnect") && gcalStatus?.connected) {
       gcalStatus = { connected: false, reconnect: true };
       renderGcalPanels();
@@ -20311,6 +20328,22 @@ function maybeRefreshGoogleEvents() {
     if (activeAppArea === "plan") renderPlanPage();
   });
   syncGoogleCalendarLinks().then((changed) => { if (changed) refreshAfterGcalChange(); });
+}
+
+// Fresh Google events may change what this member's personal calendars share
+// with the household meal plan (a Google calendar switched to "Show on Meal
+// Plan"). persist() rewrites the share only when its snapshot actually changed,
+// so this saves only then — never on an unchanged 5-minute refresh.
+function gcalMaybeUpdateMealPlanShare() {
+  const own = ownMealPlanShare();
+  if (!own) return;
+  const flags = { ...normalizeMealPlanCalendarFlags(state.planMealPlanCalendars), ...normalizeMealPlanCalendarFlags(shadowSections.plan?.planMealPlanCalendars) };
+  const anyGoogleOnMealPlan = [...(state.calendars || []), ...(shadowSections.plan?.calendars || [])].some((c) => c?.googleCalendarId && flags[c.id]);
+  if (!anyGoogleOnMealPlan) return;
+  const stored = state.mealPlanSharedEvents?.[own.userId];
+  if (!stored && !own.snapshot.events.length) return;
+  if (stored && stored.windowStart === own.snapshot.windowStart && JSON.stringify(stored.events) === JSON.stringify(own.snapshot.events)) return;
+  persist();
 }
 
 function refreshAfterGcalChange({ full = false } = {}) {
@@ -20435,8 +20468,24 @@ async function onGcalPanelClick(event) {
   };
 
   if (action === "connect") {
-    // Google blocks OAuth inside embedded webviews; tokens are stored server-side
-    // per account, so connecting once in a browser syncs straight to the app.
+    // Google blocks OAuth inside embedded webviews, so in the iPhone app the
+    // consent page opens in Apple's sign-in sheet (WebAuth plugin), exactly as the
+    // Gmail connection does; gcal-callback sends the sheet back to the app scheme.
+    if (isNativeApp() && nativeWebAuth()) {
+      await run("Opening Google…", async () => {
+        const { url } = await gcalApi.authUrl(token, { native: true });
+        const result = await nativeWebAuth().start({ url, callbackScheme: APP_CALLBACK_SCHEME });
+        const { status, reason } = result?.url ? parseAppCallback(result.url) : { status: result?.cancelled ? "cancelled" : "unknown" };
+        if (status === "error") { alert(gcalErrorMessage(reason)); return; }
+        // Connected — or the sheet was closed: re-check with the server either way.
+        const changed = await syncGoogleCalendarLinks({ force: true });
+        if (gcalStatus?.connected) showMailToast("Google Calendar connected");
+        if (changed || gcalStatus?.connected) await refreshAfterGcalChange();
+      });
+      return;
+    }
+    // An older app build without the sign-in sheet: connect from a browser
+    // (tokens are stored per account, so it syncs straight to the app).
     if (isNativeApp()) {
       alert("Connect Google Calendar from the web app in Safari or Chrome — it then syncs to this app automatically.");
       return;
@@ -20481,7 +20530,7 @@ async function onGcalPanelClick(event) {
         .filter((c) => !(c.googleCalendarId && !c.url))
         .map(({ googleCalendarId, ...rest }) => rest);
       persist();
-      saveGcalCache({});
+      gcalSaveCache({});
       gcalStatus = { connected: false };
       gcalReport = null;
       await refreshAfterGcalChange();
@@ -27342,9 +27391,10 @@ function openEditCalDialog(id) {
   elements.planNewCalName.value = cal.name || "";
   elements.planNewCalUrl.value = cal.url || "";
   renderCalendarColorPicker(elements.planNewCalColorPicker, cal.color, "planNewCalColor", usedCalendarColors(id));
-  // Google calendars already show on the meal plan's day strip, so the switch is
-  // for the calendars whose events carry times: your own and subscribed feeds.
-  setPlanCalMealPlanToggle(Boolean(state.planMealPlanCalendars?.[id]), store === "planCalendars");
+  // iCal-linked Google calendars only show on the meal plan's day strip (no
+  // times), so the switch is for calendars whose events carry times: your own,
+  // subscribed feeds, and Google calendars connected through the Google API.
+  setPlanCalMealPlanToggle(Boolean(state.planMealPlanCalendars?.[id]), store === "planCalendars" || Boolean(cal.googleCalendarId));
   setPlanCalDialogMode(true);
   elements.planAddCalDialog.showModal();
   requestAnimationFrame(() => elements.planNewCalName.focus());
@@ -27837,7 +27887,7 @@ async function addPlanCalendar() {
     if (!existing) return;
     const urlChanged = (existing.url || "") !== url;
     state[store] = (state[store] || []).map((c) => c.id === id ? { ...c, name, color, url } : c);
-    if (store === "planCalendars") setCalendarOnMealPlan(id, showOnMealPlan);
+    if (store === "planCalendars" || existing.googleCalendarId) setCalendarOnMealPlan(id, showOnMealPlan);
     persist();
     maybeWriteCloudSnapshot({ force: true }).catch(() => {});
     renderPlanCalList();

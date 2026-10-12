@@ -175,6 +175,25 @@ async function main() {
   const afterRemove = await page.evaluate(() => window.__liveQA.gcalSyncNow());
   check(!afterRemove.calendars.some((c) => c.googleCalendarId === WIFE), "a removed calendar is not re-added by discovery");
 
+  // Show on Meal Plan: offered for a Google API calendar in its Edit dialog, and
+  // switching it on puts its timed events on the meal plan.
+  await page.evaluate(() => document.getElementById("closeCalendarsBtn")?.click());
+  await page.evaluate((id) => document.querySelector(`[data-cal-edit="${id}"]`)?.click(), legacyId);
+  await page.waitForTimeout(500);
+  const toggle = await page.evaluate(() => {
+    const row = document.getElementById("planCalMealPlanRow");
+    const input = document.getElementById("planCalMealPlan");
+    return { shown: Boolean(row && !row.hidden), exists: Boolean(input) };
+  });
+  check(toggle.exists && toggle.shown, "Edit dialog offers 'Show on Meal Plan' for a Google API calendar", JSON.stringify(toggle));
+  await page.evaluate(() => { const i = document.getElementById("planCalMealPlan"); if (i) i.checked = true; document.getElementById("addPlanCalBtn")?.click(); });
+  await page.waitForTimeout(800);
+  const mealEvents = await page.evaluate(() => window.__liveQA.gcalMealPlanEvents());
+  const mealShift = (mealEvents || []).find((e) => e.title === "Work shift");
+  check(mealShift && mealShift.startTime === "08:00" && mealShift.endTime === "16:00" && mealShift.allDay === false, "switched-on Google calendar puts its timed events on the meal plan", JSON.stringify(mealEvents));
+  await page.evaluate(() => document.getElementById("openCalendarsBtn")?.click());
+  await page.waitForTimeout(400);
+
   // Severance dry run from the Settings panel.
   await page.evaluate(() => document.querySelector('#calendarsDialog [data-gcal-action="report"]')?.click());
   await page.waitForFunction(() => /Dry run|import cleanly/.test(document.querySelector("#calendarsDialog .gcal-report")?.innerText || ""), { timeout: 5000 }).catch(() => {});

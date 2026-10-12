@@ -13,7 +13,7 @@
 //     localStorage cache (raw events per app calendar) and are flattened into the
 //     existing "linked" cache that every reader already consumes.
 
-import { applyGoogleEvents, storeToCacheEntries, appCalendarIdForGoogle } from "./google.js";
+import { applyGoogleEvents, storeToCacheEntries, appCalendarIdForGoogle, googleEventToFeedEvent } from "./google.js";
 
 export const GCAL_CACHE_KEY = "live-gcal-cache-v1";
 const FULL_REFRESH_MS = 24 * 3600 * 1000; // re-pull the whole window daily (window drift)
@@ -34,7 +34,7 @@ async function call(path, token, { method = "GET", body } = {}) {
 export const gcalApi = {
   status: (token) => call("gcal-calendars", token),
   action: (token, body) => call("gcal-calendars", token, { method: "POST", body }),
-  authUrl: (token) => call("gcal-auth", token),
+  authUrl: (token, { native = false } = {}) => call(native ? "gcal-auth?client=ios" : "gcal-auth", token),
   events: (token, body) => call("gcal-events", token, { method: "POST", body })
 };
 
@@ -133,4 +133,12 @@ export function panelRows(googleCalendars, links, calendars) {
     const inApp = Boolean(link?.enabled && appIds.has(link.appCalendarId));
     return { id: g.id, name: g.summary || g.id, color: g.color, accessRole: g.accessRole, primary: g.primary, inApp, link: link || null };
   }).sort((a, b) => (b.primary - a.primary) || (b.inApp - a.inApp) || a.name.localeCompare(b.name));
+}
+
+// A Google-backed calendar's events as feed events for the meal-plan share
+// (calendar/meal-plan-share.js), or null when this device holds no copy yet.
+export function feedEventsFor(calendar, cache) {
+  const store = cache?.[calendar?.id];
+  if (!store?.events) return null;
+  return Object.values(store.events).map(googleEventToFeedEvent).filter(Boolean);
 }

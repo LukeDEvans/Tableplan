@@ -159,6 +159,32 @@ export function googleEventToCacheEntries(raw, cal) {
   }];
 }
 
+// One compact Google event → the feed-event shape the meal-plan share reads
+// (same fields the ICS parser produces), kept as ONE event with an inclusive
+// endDate rather than split per day. null for cancelled / start-less events.
+export function googleEventToFeedEvent(raw) {
+  if (!raw?.id || raw.status === "cancelled") return null;
+  const start = readGoogleTime(raw.start);
+  if (!start) return null;
+  const end = readGoogleTime(raw.end);
+  let endDate = null;
+  if (start.allDay && end?.allDay && end.date > start.date) {
+    const last = addDaysKey(end.date, -1);
+    if (last !== start.date) endDate = last;
+  } else if (!start.allDay && end && !end.allDay && end.date !== start.date) {
+    endDate = end.date;
+  }
+  return {
+    uid: String(raw.id),
+    title: String(raw.summary || "").trim() || "(No title)",
+    date: start.date,
+    allDay: start.allDay,
+    startTime: start.allDay ? null : start.time,
+    endTime: start.allDay || !end || end.allDay ? null : end.time,
+    endDate
+  };
+}
+
 // Apply a gcal-events response to one calendar's raw-event store.
 //   store: { events: { [googleEventId]: compactRaw } }
 //   full=true replaces everything; otherwise items are an updatedMin delta, where
