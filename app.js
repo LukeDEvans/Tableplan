@@ -1666,13 +1666,13 @@ const PAGE_NOTIF_BUTTONS = {
 };
 
 // A News article sent to Media (news-ui.js ⋯ → Send to Media / Open / Listen) is
-// added to Media → Publications right away; the server saves the same record by
-// id (savedArticles unions by id).
+// added to the saved articles (News → Saved articles) right away; the server saves
+// the same record by id (savedArticles unions by id).
 function addAcceptedNewsArticle(article) {
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
   if (!state.savedArticles.some((a) => a.id === article.id)) state.savedArticles.unshift(article);
   persist();
-  if (activeAppArea === "media" && isArticlePubTab(activeMediaTab)) renderArticleList("articleList", activeMediaTab);
+  showSavedArticlesView();
 }
 
 const pageNotifCounts = {};
@@ -1747,9 +1747,10 @@ const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed
 
 // ── News domain (news-ui.js, NEWS_PAGE_DESIGN.md) ──────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showNewsApp stays in
-// app.js. Cross-domain (all deferred): a sent article is added to Media →
-// Publications right away (addAcceptedNewsArticle — the server saves the same
-// record by id); Open / Listen hand off to the Media reader and its TTS.
+// app.js. Cross-domain (all deferred): a sent article is added to the saved
+// articles right away (addAcceptedNewsArticle — the server saves the same record
+// by id); Open / Listen open the article reader, which lives in News, with its
+// TTS (MEDIA_SPLIT_DESIGN.md). The saved-articles list is News's "Saved" view.
 const _news = createNewsModule({
   escapeHtml: (...a) => escapeHtml(...a),
   callGmailApi: (...a) => callGmailApi(...a),
@@ -1758,9 +1759,16 @@ const _news = createNewsModule({
   getState: () => state,
   getActiveAppArea: () => activeAppArea,
   onSentToMedia: (...a) => addAcceptedNewsArticle(...a),
-  openInMedia: (id) => openArticleFrom(id, { tab: "all" }),
+  openInMedia: (id) => openArticleFrom(id),
   listenInMedia: (id) => listenToArticle(id),
   scores: { mount: (...a) => mountScores(...a), unmount: (...a) => unmountScores(...a), refresh: (...a) => refreshScores(...a) },
+  // Saved articles + the reader (the former Media → Publications; MEDIA_SPLIT_DESIGN.md).
+  // Thunks: savedArticlesForNews is declared further down (consts aren't hoisted).
+  saved: {
+    mount: (...a) => savedArticlesForNews.mount(...a), unmount: (...a) => savedArticlesForNews.unmount(...a),
+    refresh: (...a) => savedArticlesForNews.refresh(...a), search: (...a) => savedArticlesForNews.search(...a),
+    count: (...a) => savedArticlesForNews.count(...a),
+  },
   // News → Sync Settings: the app's own paper sign-ins, and pasted cookies.
   openSignInSettings: () => openContextSettingsDialog("read-sync"),
   // The phone's own newspaper sign-ins (news-device-signin.js), or null in a
@@ -3838,7 +3846,7 @@ async function saveArticleScan() {
     date: elements.articleScanDate.value || new Date().toISOString().slice(0, 10),
   }, bodyHtml);
   elements.articleScanDialog?.close();
-  openArticleFrom(article.id, { tab: article.publication });
+  openArticleFrom(article.id, { savedPub: article.publication });
 }
 
 // The typed publication name → a Media → Publications key ("nyt", "economist", …)
@@ -7853,6 +7861,7 @@ function render() {
   renderPlayPlanner();
   renderCollapsedSections();
   if (activeAppArea === "media") renderActiveMediaView();
+  if (activeAppArea === "news") refreshSavedArticlesIfShown(); // News → Saved articles
   if (activeAppArea === "explore") renderExploreSidebar(exploreOpenTripId);
   if (activeAppArea === "finance") renderFinancePage();
 }
@@ -8130,6 +8139,7 @@ function showNewsApp(event) {
   if (!isPageEnabled("news")) { showHomeApp(); return; }
   activeAppArea = "news";
   hideAllPages();
+  hideReaderQuietly(); // openArticleFrom re-opens it right after, when that's why we're here
   elements.newsMainPage.hidden = false;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
@@ -8228,11 +8238,12 @@ function showHomeApp(event) {
   renderHomeBriefing();
 }
 
-function showMediaApp(event) {
-  event?.stopPropagation();
+// keepView: coming back from the reader (MEDIA_SPLIT_DESIGN.md) — show Media
+// exactly as it was left instead of landing on the queue.
+function showMediaApp(event, { keepView = false } = {}) {
+  event?.stopPropagation?.();
   if (!isPageEnabled("read")) { showHomeApp(); return; }
   activeAppArea = "media";
-  readerReturn = null; // arriving here some other way: nothing to go back to
   hideAllPages();
   elements.mediaMainPage.hidden = false;
   // No date bar on Media (like Mail/Explore) — hide the week-tools row.
@@ -8240,7 +8251,8 @@ function showMediaApp(event) {
   elements.activeCookingSection.hidden = true;
   setPageTitle("Media");
   setPageHash("media");
-  initMediaPage();
+  if (keepView && mediaTabsWired) renderActiveMediaView();
+  else initMediaPage();
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -16280,7 +16292,7 @@ function updateSettingsMenuOptions() {
   elements.menuReadSyncBtn.hidden = activeAppArea !== "news"; // newspaper sign-ins: News, not Media
   elements.menuPodcastSettingsBtn.hidden = activeAppArea !== "media";
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
-  elements.menuPublicationsBtn.hidden = activeAppArea !== "media";
+  elements.menuPublicationsBtn.hidden = activeAppArea !== "news"; // the saved-articles publications list lives in News
   elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
   const isFinance = activeAppArea === "finance";
   elements.menuFinanceAccountsBtn.hidden = !isFinance;
@@ -27667,30 +27679,31 @@ function removePublication(key) {
   state.readPublications = state.readPublications.filter(p => p.key !== key);
   persist();
   renderMediaPubTabs();
-  if (activeMediaTab === key) switchMediaTab("all");
+  if (activeSavedPub === key) showSavedArticlesView("all");
 }
 
 let activeMediaTab = "queue"; // "queue" is the sidebar's top "All" tab — Media's main page
 // The episode page was opened from the mini-player (not by browsing Podcasts),
 // so its Back button returns to the queue. Any tab switch clears it.
 let podcastPlayerBackToQueue = false;
-let mediaSearchQuery = "";     // top-bar search across podcasts + articles + books
+let mediaSearchQuery = "";     // top-bar search across podcasts + books (articles: News)
 let openArticleId = null;
 // Reader return-to-origin: the page that hosts the reader, and where the open
-// reader should go back to when closed (see openArticleFrom).
-const READER_HOST_AREA = "media";
+// reader should go back to when closed (see openArticleFrom). The reader and the
+// saved-articles list live in News (MEDIA_SPLIT_DESIGN.md).
+const READER_HOST_AREA = "news";
 let readerReturn = null;
 let mediaTabsWired = false;
+let savedArticlesWired = false;
+let activeSavedPub = "all";     // the saved-articles list's publication sub-tab
 let articleViewMode = "unread"; // "unread" | "archive" (toggled by the Archive button)
-let articleSearchActive = false; // Search button toggles a search box over the list
+let articleSearchActive = false; // true while News's search box has text (Saved view)
 let articleSearchQuery = "";
 
 function initMediaPage() {
-  renderMediaPubTabs();
   wireMediaTabs();
   // Every visit lands on the "All" tab (not wherever the last visit ended)
   switchMediaTab("queue");
-  maybeAutoSync("read");
   refreshStalePodcastFeeds(); // stale views render immediately, then update in place
 }
 
@@ -27787,7 +27800,6 @@ function wireMediaTabs() {
   const sidebar = document.getElementById("mediaSidebar");
   if (sidebar) {
     sidebar.querySelectorAll("[data-media-tab]").forEach((btn) => {
-      if (btn.closest("#mediaPubTabs")) return;
       btn.addEventListener("click", () => switchMediaTab(btn.dataset.mediaTab));
     });
   }
@@ -27812,6 +27824,16 @@ function wireMediaTabs() {
 
   // (Reset-order moved into the Playlist settings modal.)
 
+  document.getElementById("bookSearchBtn")?.addEventListener("click", openReadingSearchDialog);
+  document.getElementById("bookArchiveBtn")?.addEventListener("click", openReadingArchive);
+}
+
+// The reader and the saved-articles list (News, MEDIA_SPLIT_DESIGN.md). Wired
+// once, the first time either is used — from News, or from an article opened
+// anywhere else.
+function wireSavedArticles() {
+  if (savedArticlesWired) return;
+  savedArticlesWired = true;
   document.getElementById("articleReaderCloseBtn")?.addEventListener("click", closeArticleReader);
   document.getElementById("articleReaderDeleteBtn")?.addEventListener("click", deleteOpenArticle);
   document.getElementById("articleAddBtn")?.addEventListener("click", openArticleSaveDialog);
@@ -27825,22 +27847,82 @@ function wireMediaTabs() {
   document.getElementById("articleUrlInput")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") confirmSaveArticle();
   });
-  document.getElementById("bookSearchBtn")?.addEventListener("click", openReadingSearchDialog);
-  document.getElementById("bookArchiveBtn")?.addEventListener("click", openReadingArchive);
   document.getElementById("articleArchiveBtn")?.addEventListener("click", () => {
     articleViewMode = articleViewMode === "archive" ? "unread" : "archive";
-    articleSearchActive = false;
-    renderArticleList("articleList", isArticlePubTab(activeMediaTab) ? activeMediaTab : "all");
-  });
-  document.getElementById("articleSearchBtn")?.addEventListener("click", () => {
-    articleSearchActive = !articleSearchActive;
-    if (articleSearchActive) articleViewMode = "unread"; else articleSearchQuery = "";
-    renderArticleList("articleList", isArticlePubTab(activeMediaTab) ? activeMediaTab : "all");
+    renderArticleList("articleList", activeSavedPub);
   });
   document.getElementById("closePdfImportBtn")?.addEventListener("click", () => document.getElementById("pdfImportDialog")?.close());
   document.getElementById("cancelPdfImportBtn")?.addEventListener("click", () => document.getElementById("pdfImportDialog")?.close());
   document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
 }
+
+// ── Saved articles in News (the former Media → Publications) ──────────────────
+// news-ui.js gives the list a place in its "Saved articles" view; the list and
+// its publication sub-tabs stay here. The panel waits in #newsSavedParking when
+// another News view is showing, so it (and its scroll) survives re-renders.
+// A function declaration (hoisted) so the boot-time render() can name it; it
+// only runs once News is the active page, long after module load.
+function refreshSavedArticlesIfShown() {
+  if (savedListShown()) renderSavedArticles();
+}
+function savedListShown() {
+  return activeAppArea === "news" && document.getElementById("articleListPanel")?.parentElement?.id === "newsSavedMount";
+}
+// What the list last showed — so News re-renders it on return only if something
+// changed (an article added or removed elsewhere), keeping its scroll otherwise.
+let savedArticlesRenderSig = "";
+function savedArticlesSig() {
+  const list = state.savedArticles || [];
+  return [list.length, list[0]?.id, list[list.length - 1]?.id, (state.articleHistory || []).length,
+    getReadPublications().length, activeSavedPub, articleViewMode, articleSearchQuery].join("|");
+}
+function renderSavedArticles() {
+  savedArticlesRenderSig = savedArticlesSig();
+  const syncBtn = document.getElementById("articleSyncBtn");
+  if (syncBtn) syncBtn.hidden = !getReadPublications().some((p) => p.key === activeSavedPub) || !hasSyncCookies();
+  renderMediaPubTabs();
+  renderArticleList("articleList", activeSavedPub);
+}
+// Switch the list to a publication sub-tab (or just re-render with no argument).
+// Switching publications exits the archive back to the normal list.
+function showSavedArticlesView(pub) {
+  if (pub != null) {
+    activeSavedPub = isArticlePubTab(pub) ? pub : "all";
+    articleViewMode = "unread";
+  }
+  if (savedListShown()) renderSavedArticles();
+}
+const savedArticlesForNews = {
+  mount(el, { query = "" } = {}) {
+    const panel = document.getElementById("articleListPanel");
+    if (!panel || !el) return;
+    if (panel.parentElement === el) {
+      if (savedArticlesSig() !== savedArticlesRenderSig) renderSavedArticles();
+      return;
+    }
+    wireSavedArticles();
+    el.appendChild(panel);
+    articleSearchQuery = query;
+    articleSearchActive = !!query.trim();
+    renderSavedArticles();
+    maybeAutoSync("read");
+  },
+  unmount() {
+    const panel = document.getElementById("articleListPanel");
+    const parking = document.getElementById("newsSavedParking");
+    if (panel && parking && panel.parentElement !== parking) parking.appendChild(panel);
+  },
+  refresh() { if (savedListShown()) renderSavedArticles(); },
+  search(q) {
+    articleSearchQuery = String(q || "");
+    articleSearchActive = !!articleSearchQuery.trim();
+    if (articleSearchActive) articleViewMode = "unread";
+    if (savedListShown()) renderArticleList("articleList", activeSavedPub);
+  },
+  // Saved articles are removed once read (2026-09-21 storage audit), so what's
+  // here is what's left to read.
+  count: () => (state.savedArticles || []).length,
+};
 
 const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio"];
 
@@ -27854,26 +27936,18 @@ function switchMediaTab(tab) {
   if (sidebar) {
     sidebar.querySelectorAll("[data-media-tab]").forEach((btn) => {
       const bt = btn.dataset.mediaTab;
-      // The single "Saved Articles" sidebar entry stays active for any of its
-      // publication sub-tabs (Recent/Email/NYT/…), which live in the top bar.
-      const active = bt === tab || (bt === "all" && isArticlePubTab(tab));
+      const active = bt === tab;
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-selected", String(active));
     });
   }
   const booksPanel = document.getElementById("articleBooksPanel");
-  const listPanel = document.getElementById("articleListPanel");
-  const readerPanel = document.getElementById("articleReaderPanel");
-  const syncBtn = document.getElementById("articleSyncBtn");
-  const syncSettingsBtn = document.getElementById("articleSyncSettingsBtn");
   const podcastsPanel = document.getElementById("mediaPodcastsPanel");
   const allPanel = document.getElementById("mediaAllPanel");
   const musicPanel = document.getElementById("mediaMusicPanel");
   const radioPanel = document.getElementById("mediaRadioPanel");
 
   if (booksPanel) booksPanel.hidden = true;
-  if (listPanel) listPanel.hidden = true;
-  if (readerPanel) readerPanel.hidden = true;
   if (podcastsPanel) podcastsPanel.hidden = true;
   if (allPanel) allPanel.hidden = true;
   if (musicPanel) musicPanel.hidden = true;
@@ -27886,10 +27960,6 @@ function switchMediaTab(tab) {
     const si = document.getElementById("mediaSearchInput");
     if (si) si.value = "";
   }
-  if (syncBtn) syncBtn.hidden = true;
-  if (syncSettingsBtn) syncSettingsBtn.hidden = true;
-  openArticleId = null;
-  readerReturn = null;
 
   if (tab === "queue") {
     // Top "All" tab: the blended listen queue (podcasts + articles + books)
@@ -27907,15 +27977,11 @@ function switchMediaTab(tab) {
     if (radioPanel) radioPanel.hidden = false;
     initRadioPanel();
   } else {
-    const isArticleTab = getReadPublications().some(p => p.key === tab);
-    if (listPanel) listPanel.hidden = false;
-    if (syncBtn) syncBtn.hidden = !isArticleTab || !hasSyncCookies();
-    if (syncSettingsBtn) syncSettingsBtn.hidden = true; // Sync Settings moved to News (newspaper sign-ins)
-    // Switching publication tabs exits search/archive back to the normal list.
-    articleSearchActive = false;
-    articleViewMode = "unread";
-    renderMediaPubTabs(); // top publication bar, active tab highlighted
-    renderArticleList("articleList", tab);
+    // Saved articles moved to News (MEDIA_SPLIT_DESIGN.md); anything unknown —
+    // an old "all"/publication key — lands on the queue.
+    activeMediaTab = "queue";
+    if (allPanel) { allPanel.hidden = false; renderMediaAllList(); }
+    sidebar?.querySelector('[data-media-tab="queue"]')?.classList.add("is-active");
   }
 }
 
@@ -28130,7 +28196,7 @@ if (typeof window !== "undefined" && canUseLocalBackend()) {
         text: text || "<p>This is a test article for the on-device Kokoro voice. If you can hear these words read aloud inside the app, the whole text-to-speech pipeline is working end to end: the app sent this text to the local function, the function asked Kokoro on your own machine to synthesize it, and the audio came back and played through the shared media engine. Enjoy Bella.</p>",
       });
       persist();
-      try { showMediaApp(); openArticle(id, "articleList"); } catch (e) { console.warn("Article added — open it from Media manually:", e); }
+      try { openArticleFrom(id); } catch (e) { console.warn("Article added — open it from News → Saved articles manually:", e); }
       return id;
     },
   };
@@ -28566,14 +28632,14 @@ function renderMediaPubTabs() {
     { key: "other", label: "Other" },
   ];
   container.innerHTML = entries.map(p => {
-    const active = activeMediaTab === p.key;
-    return `<button class="watch-category-tab${active ? " is-active" : ""}" type="button" role="tab" aria-selected="${active}" data-media-tab="${escapeHtml(p.key)}">${escapeHtml(p.label)}</button>`;
+    const active = activeSavedPub === p.key;
+    return `<button class="watch-category-tab${active ? " is-active" : ""}" type="button" role="tab" aria-selected="${active}" data-saved-pub="${escapeHtml(p.key)}">${escapeHtml(p.label)}</button>`;
   }).join("")
     // "+" at the end of the tabs = import an article/PDF (styled like the
     // podcast add-tab button).
     + `<button class="watch-category-tab watch-category-add-tab" type="button" id="articleImportTabBtn" title="Import article or PDF" aria-label="Import article or PDF">+</button>`;
-  container.querySelectorAll("[data-media-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => switchMediaTab(btn.dataset.mediaTab));
+  container.querySelectorAll("[data-saved-pub]").forEach((btn) => {
+    btn.addEventListener("click", () => showSavedArticlesView(btn.dataset.savedPub));
   });
   container.querySelector("#articleImportTabBtn")?.addEventListener("click", openPdfImportDialog);
 }
@@ -28800,10 +28866,9 @@ function renderActiveMediaView() {
   if (tab === "queue") renderMediaAllList();
   else if (tab === "books") renderBooksView();
   else if (tab === "podcasts") switchPodcastTab(activePodcastTab); // re-dispatch the active podcast sub-tab
-  else renderArticleList("articleList", tab);
 }
 
-// ── Media top-bar search: podcasts + saved articles + books ───────────────────
+// ── Media top-bar search: podcasts + books (articles are searched in News) ─────
 function exitMediaSearch() {
   const panel = document.getElementById("mediaSearchPanel");
   if (panel) panel.hidden = true;
@@ -28814,7 +28879,7 @@ function renderMediaSearchResults() {
   const panel = document.getElementById("mediaSearchPanel");
   if (!listEl || !panel) return;
   // Show only the search panel.
-  ["articleBooksPanel", "articleListPanel", "articleReaderPanel", "mediaPodcastsPanel", "mediaAllPanel"]
+  ["articleBooksPanel", "mediaPodcastsPanel", "mediaAllPanel", "mediaMusicPanel", "mediaRadioPanel"]
     .forEach((id) => { const el = document.getElementById(id); if (el) el.hidden = true; });
   panel.hidden = false;
 
@@ -28825,13 +28890,6 @@ function renderMediaSearchResults() {
       if ((ep.title || "").toLowerCase().includes(q) || (show.title || "").toLowerCase().includes(q)) {
         results.push({ type: "podcast", id: ep.id, title: ep.title || "Episode", sub: show.title || "", art: ep.art || show.art || "", icon: "🎧", date: ep.pubDate });
       }
-    }
-  }
-  const pubs = getReadPublications();
-  for (const a of (state.savedArticles || [])) {
-    if ((a.title || "").toLowerCase().includes(q) || (a.author || "").toLowerCase().includes(q) || (a.url || "").toLowerCase().includes(q)) {
-      const pubEntry = pubs.find(p => p.key === a.publication);
-      results.push({ type: "article", id: a.id, title: a.title || a.url, sub: pubEntry?.label || a.author || "Article", art: articleArtUrl(a) || "", icon: "📰", date: a.savedAt });
     }
   }
   for (const b of (state.readingItems || [])) {
@@ -35814,7 +35872,6 @@ function wireArticleRows(listEl, containerId) {
 
 function updateArticleActionButtons() {
   document.getElementById("articleArchiveBtn")?.classList.toggle("is-active", articleViewMode === "archive");
-  document.getElementById("articleSearchBtn")?.classList.toggle("is-active", articleSearchActive);
 }
 
 function renderArticleList(containerId, pub) {
@@ -35822,18 +35879,10 @@ function renderArticleList(containerId, pub) {
   if (!listEl) return;
   updateArticleActionButtons();
 
-  // Search mode: a persistent search box plus a results container that updates
-  // as you type (so focus is never lost). Searches all saved (unread) articles.
+  // Search mode: News's own search box (top bar) filters every saved article,
+  // across publications, while the Saved view is showing.
   if (articleSearchActive) {
-    listEl.innerHTML = `
-      <div class="article-search-bar">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input class="article-search-input" id="articleSearchInput" type="search" placeholder="Search articles…" autocomplete="off" value="${escapeHtml(articleSearchQuery)}" />
-      </div>
-      <div class="article-list-scroll" id="articleSearchResults"></div>`;
-    const input = listEl.querySelector("#articleSearchInput");
-    input?.addEventListener("input", () => { articleSearchQuery = input.value; renderArticleSearchResults(containerId); });
-    requestAnimationFrame(() => input?.focus());
+    listEl.innerHTML = `<div class="article-list-scroll" id="articleSearchResults"></div>`;
     renderArticleSearchResults(containerId);
     return;
   }
@@ -36066,9 +36115,9 @@ function showArticleTeaserActions(textEl, article, html) {
 }
 
 // ── Reader return-to-origin (reader-return.js, MEDIA_SPLIT_DESIGN.md) ─────────
-// The reader is hosted on one page. Opening it from anywhere else records where
-// you were; closing it takes you back there (page, tab, scroll). In-page opens
-// (a row in the list under the reader) leave nothing to return to.
+// The reader lives in News. Opening it from anywhere else (Media's queue, the
+// now-playing bar, Media search) records where you were; closing it takes you
+// back there (page, tab, scroll). Opens inside News just close in place.
 function snapshotReaderOrigin() {
   const page = document.querySelector('[id$="MainPage"]:not([hidden])');
   return makeReaderOrigin({
@@ -36079,16 +36128,38 @@ function snapshotReaderOrigin() {
   });
 }
 
-// Open an article from outside the reader's own list: News, the now-playing bar,
-// a scan. `tab` picks the host page's tab to show under the reader.
-function openArticleFrom(id, { tab = null } = {}) {
+// Open an article in the reader, going to News first if needed and remembering
+// where you were. `savedPub` also points the saved-articles list (under the
+// reader) at that publication — a scan or a pasted URL lands there.
+function openArticleFrom(id, { savedPub = null } = {}) {
   if (!(state.savedArticles || []).some((a) => a.id === id)) return false;
   const origin = snapshotReaderOrigin();
-  if (activeAppArea !== READER_HOST_AREA) showMediaApp();
-  if (tab && tab !== activeMediaTab) switchMediaTab(tab);
-  openArticle(id, "articleList");
-  readerReturn = origin; // after navigating: switching pages/tabs clears it
+  if (activeAppArea !== READER_HOST_AREA) showNewsApp();
+  wireSavedArticles();
+  if (savedPub) showSavedArticlesView(savedPub);
+  showArticleInReader(id, "articleList");
+  readerReturn = origin; // after navigating: arriving at News clears it
   return true;
+}
+
+// A tap on an article anywhere: in News it just opens; elsewhere it goes to
+// News's reader and comes back on close.
+function openArticle(id, fromListId) {
+  if (activeAppArea === READER_HOST_AREA) {
+    readerReturn = null;
+    showArticleInReader(id, fromListId);
+  } else {
+    openArticleFrom(id);
+  }
+}
+
+// Arriving at News some other way (menu, link) shows News, not a reader left
+// open from an earlier visit.
+function hideReaderQuietly() {
+  const readerPanel = document.getElementById("articleReaderPanel");
+  if (readerPanel) readerPanel.hidden = true;
+  openArticleId = null;
+  readerReturn = null;
 }
 
 function returnToReaderOrigin(origin) {
@@ -36100,7 +36171,10 @@ function returnToReaderOrigin(origin) {
     settings: showSettingsApp, home: showHomeApp, watch: showWatchApp,
   }[origin.area];
   if (!show) return;
-  if (origin.area !== activeAppArea) show();
+  // Media comes back exactly as it was left (tab, search, open show); other
+  // pages re-enter as usual.
+  if (origin.area === "media") showMediaApp(null, { keepView: true });
+  else if (origin.area !== activeAppArea) show();
   if (origin.area === "media" && origin.tab && origin.tab !== activeMediaTab) switchMediaTab(origin.tab);
   // Pages re-render on entry; put the scroll back once they have, and again a
   // moment later in case the list filled in from cache after the first frame.
@@ -36108,7 +36182,9 @@ function returnToReaderOrigin(origin) {
   setTimeout(() => restoreScroll(origin, document, window), 300);
 }
 
-function openArticle(id, fromListId) {
+// Render an article into the reader (where it is: News). Also used to refresh
+// the open article in place — after its text loads, or the listen queue moves on.
+function showArticleInReader(id, fromListId) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
   warmKokoroVoiceIfKokoro(); // opening an article → a Listen may be seconds away
@@ -36162,9 +36238,7 @@ function deleteArticle(id) {
   state.readArticleIds = (state.readArticleIds || []).filter((rid) => rid !== id);
   persist();
   if (openArticleId === id) closeArticleReader();
-  if (activeAppArea === "media" && !MEDIA_SERVICE_TABS.includes(activeMediaTab)) {
-    renderArticleList("articleList", activeMediaTab);
-  }
+  showSavedArticlesView();
 }
 
 function deleteOpenArticle() {
@@ -36443,7 +36517,7 @@ async function refetchArticleWithLogin(id) {
   } else {
     showMailToast("Still only the opening — check you're signed in.");
   }
-  if (openArticleId === id) openArticle(id, "articleList");
+  if (openArticleId === id) showArticleInReader(id, "articleList");
 }
 
 // "This phone has been through <paper>'s sign-in sheet" — a per-device note (not
@@ -36556,7 +36630,7 @@ async function fetchArticleText(id) {
   try {
     const result = await ensureArticleText(id);
     if (result.ok) {
-      openArticle(id, "articleList");
+      showArticleInReader(id, "articleList");
     } else if (textEl) {
       textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(result.error)}</p><a href="${escapeHtml(safeUrl(article.url, "#"))}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a>${articlePaperLoginActionsHtml(article, { teaser: false })}</div>`;
       bindArticlePaperLoginActions(textEl, article);
@@ -36592,7 +36666,7 @@ function saveArticleUrl(url) {
   const existing = findSavedArticleByUrl(url);
   if (existing) {
     showMailToast("Article already saved.");
-    if (activeAppArea === "media") switchMediaTab(existing.publication || "other");
+    showSavedArticlesView(existing.publication || "other");
     return;
   }
   const pub = detectArticlePublication(url);
@@ -36601,7 +36675,7 @@ function saveArticleUrl(url) {
   state.savedArticles.push({ id, url, canonicalUrl: canonicalizeImportUrl(url), title: url, publication: pub, savedAt, author: null, date: null, text: null,
     provenance: makeProvenance({ origin: PROV_ORIGIN.IMPORTED, source: "import", sourceUrl: url, importedAt: savedAt }) });
   persist();
-  if (activeAppArea === "media") switchMediaTab(pub);
+  showSavedArticlesView(pub);
 }
 
 // Save an article the import gateway already extracted — richer than saveArticleUrl's
@@ -36622,7 +36696,7 @@ function saveImportedArticle(data, sourceUrl) {
   const existing = findSavedArticleByUrl(url);
   if (existing) {
     showMailToast("Article already saved.");
-    if (activeAppArea === "media") switchMediaTab(existing.publication || "other");
+    showSavedArticlesView(existing.publication || "other");
     return;
   }
   const pub = data.publication || detectArticlePublication(url);
@@ -36642,7 +36716,7 @@ function saveImportedArticle(data, sourceUrl) {
   });
   persist();
   showMailToast(`Saved “${data.title || "article"}”.`);
-  if (activeAppArea === "media") switchMediaTab(pub);
+  showSavedArticlesView(pub);
 }
 
 // ── PDF import ──────────────────────────────────────────────────────────────
@@ -36732,9 +36806,7 @@ window._liveAddArticle = function(article) {
   if (findSavedArticleByUrl(article.url)) return;
   state.savedArticles.push({ ...article, canonicalUrl: article.canonicalUrl || canonicalizeImportUrl(article.url) });
   persist();
-  if (activeAppArea === "media" && !MEDIA_SERVICE_TABS.includes(activeMediaTab)) {
-    renderArticleList("articleList", activeMediaTab);
-  }
+  showSavedArticlesView();
 };
 
 function detectArticlePublication(url) {
@@ -36881,10 +36953,7 @@ async function syncSavedArticles(source, silent = false) {
       if (!state.articleSync) state.articleSync = {};
       state.articleSync.lastSyncedAt = new Date().toISOString();
       persist();
-      const allPubKeys = ["all", "other", "email", ...getReadPublications().map(p => p.key)];
-      if (activeAppArea === "media" && allPubKeys.includes(activeMediaTab)) {
-        renderArticleList("articleList", activeMediaTab);
-      }
+      showSavedArticlesView();
       if (!silent) {
         const errors = [res.nytError, res.economistError].filter(Boolean);
         if (errors.length) {
@@ -36983,7 +37052,7 @@ function saveDialogStribCookie() {
 function updateSyncButtons(source) {
   const pubs = getReadPublications();
   const syncBtn = document.getElementById("articleSyncBtn");
-  if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeMediaTab) || !hasSyncCookies();
+  if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeSavedPub) || !hasSyncCookies();
 }
 
 function initReadListenSettings() {
@@ -37252,7 +37321,7 @@ async function listenToArticle(id) {
     // shows a "Fetching…"/failure state.
     const result = await ensureArticleText(id);
     if (!result.ok) return;
-    openArticle(id, "articleList");
+    showArticleInReader(id, "articleList");
   }
   startListenTTS(article);
 }
@@ -37780,7 +37849,7 @@ function newNativeSession(fields) {
     article: null, prepared: null, charsTotal: 0, charIndex: 0,
     episode: null, show: null, audioPos: 0, audioDur: 0,
     rate: mediaPlaybackSpeed || 1, paused: false, subs: [],
-    listTab: activeMediaTab, upcomingPrepared: new Map(), upcomingToken: 0,
+    listTab: activeSavedPub, upcomingPrepared: new Map(), upcomingToken: 0,
     ...fields,
   };
 }
@@ -38111,7 +38180,7 @@ function onNativeTtsItemStart(session, e) {
     listenArticle = article;
     listenSpeaking = true;
     listenTotalDuration = Math.max(1, Math.round(session.charsTotal / (15 * (session.rate || 1))));
-    if (activeAppArea === "media" && !document.getElementById("articleReaderPanel")?.hidden) openArticle(article.id, "articleList");
+    if (activeAppArea === READER_HOST_AREA && !document.getElementById("articleReaderPanel")?.hidden) showArticleInReader(article.id, "articleList");
     showMiniPlayerForArticle(article);
   }
   updateListenPlayBtn(); updateMiniPlayerPlayBtn();
@@ -38220,7 +38289,7 @@ async function startListenTTS(article) {
     const r = await ensureArticleText(article.id);
     listenLoading = false;
     if (!r.ok) { updateListenPlayBtn(); alert("Couldn't load this article's text to read aloud."); return; }
-    if (openArticleId === article.id) openArticle(article.id, "articleList");
+    if (openArticleId === article.id) showArticleInReader(article.id, "articleList");
   }
   stopPodcastAudio(); // never let a podcast and an article read at the same time
   stopListen();
@@ -38414,7 +38483,7 @@ function advanceListenArticle() {
   // Advance relative to the article we were reading (which may not be the one
   // open on screen anymore now that audio persists across page changes).
   const anchorId = listenArticle?.id || openArticleId;
-  const articles = getFilteredSortedArticles(activeMediaTab);
+  const articles = getFilteredSortedArticles(activeSavedPub);
   const currentIndex = articles.findIndex(a => a.id === anchorId);
   if (currentIndex === -1) return false;
   if (currentIndex + 1 >= articles.length) return false;
@@ -38422,7 +38491,7 @@ function advanceListenArticle() {
   // articles have .text offloaded to the backstop, so gating on it here made this
   // loop find no eligible "next" article almost every time (item: TTS sweep).
   const next = articles[currentIndex + 1];
-  if (activeAppArea === "media" && !document.getElementById("articleReaderPanel")?.hidden) openArticle(next.id, "articleList");
+  if (activeAppArea === READER_HOST_AREA && !document.getElementById("articleReaderPanel")?.hidden) showArticleInReader(next.id, "articleList");
   startListenTTS(next);
   return true;
 }

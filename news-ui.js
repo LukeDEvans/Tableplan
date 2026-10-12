@@ -180,6 +180,7 @@ const ICONS = {
   front: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 4h13a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H4z"/><path d="M19 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="8" x2="14" y2="8"/><line x1="7" y1="12" x2="14" y2="12"/><line x1="7" y1="16" x2="11" y2="16"/></svg>',
   briefings: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="m4 7 8 6 8-6"/></svg>',
   sent: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  saved: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
   open: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>',
   listen: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3z"/><path d="M3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>',
   share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>',
@@ -197,7 +198,11 @@ export function createNewsModule(deps) {
     getDeviceSignIn,
     // The Scores view (scores-ui.js, SPORTS_SCORES_DESIGN.md), shown as a tab of the
     // Sports section: { mount(el), unmount(), refresh() }. Optional.
-    scores
+    scores,
+    // Saved articles (app.js — the former Media → Publications list, with its
+    // reader; MEDIA_SPLIT_DESIGN.md): { mount(el), unmount(), refresh(),
+    // search(q), count() }; mount(el, { query }) applies the News search box. Optional.
+    saved
   } = deps;
   const deviceSignIn = () => getDeviceSignIn?.() || null;
 
@@ -221,6 +226,7 @@ export function createNewsModule(deps) {
   let sportsTab = "scores";
   try { if (localStorage.getItem(SPORTS_TAB_KEY) === "stories") sportsTab = "stories"; } catch { /* private mode */ }
   const onScores = () => !!scores && view.kind === "section" && view.key === "sports" && sportsTab === "scores";
+  const onSaved = () => !!saved && view.kind === "saved";
 
   const $ = (id) => document.getElementById(id);
   const isNarrow = () => window.innerWidth <= 680;
@@ -266,7 +272,7 @@ export function createNewsModule(deps) {
 
   // Load (or refresh) the current view's first page, or with `more` its next page.
   async function load(force = false, { more = false } = {}) {
-    if (view.kind === "briefings") { render(); return; }
+    if (view.kind === "briefings" || view.kind === "saved") { render(); return; }
     const key = viewKey();
     const page = pages.get(key);
     if (seeded) {
@@ -391,12 +397,12 @@ export function createNewsModule(deps) {
       for (const k of [...pages.keys()]) if (k.startsWith("sent:")) pages.delete(k); // re-read on next visit
       enqueue(id, "send");
       onSentToMedia?.(record);
-      if (!quiet) showToast?.("Sent to Media → Publications.");
+      if (!quiet) showToast?.("Saved. It's in Saved articles.");
     } else {
       // Sent from another device (or since removed from Media): make sure this
       // device has the copy Open / Listen hand to the reader. Skips duplicates by id.
       onSentToMedia?.(record);
-      if (!quiet) showToast?.("Already in Media → Publications.");
+      if (!quiet) showToast?.("Already in Saved articles.");
     }
     return record;
   }
@@ -450,6 +456,7 @@ export function createNewsModule(deps) {
     let h = sideTab("front", null, `${ICONS.front}<span>Front page</span>`, c.all);
     h += sideTab("briefings", null, `${ICONS.briefings}<span>Briefings</span>`, briefings.length);
     h += sideTab("sent", null, `${ICONS.sent}<span>Sent to Media</span>`, c.sent);
+    if (saved) h += sideTab("saved", null, `${ICONS.saved}<span>Saved articles</span>`, saved.count?.() || 0);
     h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Sections</div>`;
     for (const s of NEWS_SECTIONS) {
       // Sports always shows when the Scores view is mounted: scores don't depend on
@@ -556,6 +563,19 @@ export function createNewsModule(deps) {
       return;
     }
     scores?.unmount();
+    // Saved articles: app.js owns the list (and keeps its scroll); News gives it a
+    // place. Built once per visit to the view so re-renders don't reset it.
+    if (onSaved()) {
+      if (!$("newsSavedMount")) {
+        el.innerHTML = `<div class="news-saved">
+          <div class="news-head"><h2 class="news-title">Saved articles</h2></div>
+          <div class="news-saved-mount" id="newsSavedMount"></div>
+        </div>`;
+      }
+      saved.mount($("newsSavedMount"), { query: String(query || "").trim() });
+      return;
+    }
+    saved?.unmount();
     const page = currentPage();
     if (!page && view.kind !== "briefings") {
       el.innerHTML = `<div class="news-scroll"><p class="news-empty">${esc(loadError || "Loading News…")}</p></div>`;
@@ -630,14 +650,17 @@ export function createNewsModule(deps) {
     $("newsSettingsBtn")?.addEventListener("click", () => openSignInSettings?.());
     $("newsRefreshBtn")?.addEventListener("click", () => {
       if (onScores()) scores.refresh();
+      if (onSaved()) saved.refresh();
       flush();
       for (const p of pages.values()) p.loadedAt = 0; // every view re-reads when next shown
       load(true);
     });
     // Search runs on the server (titles across the whole window), debounced.
+    // Saved articles search on the device instead (they're local).
     $("newsSearchInput")?.addEventListener("input", (e) => {
       query = e.target.value;
       clearTimeout(searchTimer);
+      if (onSaved()) { saved.search(query); return; }
       searchTimer = setTimeout(() => load(), 300);
     });
     $("newsSidebar")?.addEventListener("click", (e) => {
@@ -723,8 +746,15 @@ export function createNewsModule(deps) {
     if (paper && Array.isArray(steps) && steps.length) pendingTrail = { paper, steps: steps.slice(0, 80).map(String) };
   }
 
+  // Show one of the sidebar's views ("saved", "briefings", …) — app.js uses this
+  // after a scan or Add-by-URL lands a new saved article.
+  function showView(kind, key) {
+    if (kind === "saved" && !saved) return;
+    if (view.kind !== kind || view.key !== key) setView({ kind, key });
+  }
+
   return {
-    enter, leave, load, verifySignIns, render, seed, setDeviceTrail,
+    enter, leave, load, verifySignIns, render, seed, setDeviceTrail, showView,
     deviceStatus: () => lastDeviceStatus,
     signInStatus: () => (signInsLoaded ? signIns : null)
   };
