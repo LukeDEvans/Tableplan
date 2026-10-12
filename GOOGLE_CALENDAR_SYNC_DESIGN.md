@@ -134,7 +134,7 @@ Real start/end times also fix meal-plan placement for Google events.
 **Phase 0: Google Cloud console (Luke, ~10 min)**
 - Enable the Google Calendar API on the existing OAuth project.
 - Add the calendar scopes to the consent screen.
-- Confirm the publishing status is **In production** (unverified is fine for family use). In *Testing*, refresh tokens for sensitive scopes expire after 7 days, which forces weekly reconnects.
+- ✅ Publishing status confirmed **In production** (Luke, 2026-10-12). Keep it there: in *Testing*, refresh tokens for sensitive scopes expire after 7 days.
 
 **Phase 1: Read via API (biggest immediate win)**
 - Ship: `gcal_accounts` migration, `gcal-auth/callback/calendars/events`, connect UI, in-place migration, timed events, auto-discovered new calendars.
