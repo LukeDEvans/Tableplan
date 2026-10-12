@@ -30,6 +30,12 @@ _(none)_
 
 
 ## P2
+- [ ] **[P2] Google-backed plan events still use title-based ids** (calendar · app.js getPlanEventsForRange Google projection · 2026-10-12)
+      Phase 1 kept `gcal:<cal>:<date>:<title>` so hides/renames made on the iCal feed keep working after a calendar switches to the Google API. Consequence: renaming an event in Google orphans a local hide/rename for it (same as before the switch). Phase 2 (editing) needs ids keyed by the Google event id anyway — re-key existing `planExternalExclusions`/`planExternalOverrides` then (match date + title once). Verdict: KNOWN GAP, deliberate.
+
+- [ ] **[P2] Household members can read each other's linked Google calendars by app id** (calendar · netlify/functions/_gcal.js chooseLinks · 2026-10-12)
+      `gcal-events` serves a calendar through another member's Google token when caller and owner share a live group, so a shared household plan row shows the spouse's linked calendars. Any member who knows (or computes) the app id of the other's linked calendar can read it, including one only in the owner's personal plan row. Intended for a two-person household; revisit if groups ever include non-family members (e.g. require the calendar to be in the household row or a per-calendar "share with household" flag). Verdict: BY DESIGN for now.
+
 - [x] **[P2] Native (on-device voice) read-aloud never marks a finished article read** (media · app.js startListenNativeTts · 2026-09-27)
       The engine path marked read on finish; the Apple-voice paths never did. **RESOLVED 2026-09-28 (Luke: "Apple voice should also mark as read"):** native `ttsFinish` → `markNativeItemDone` (article → `markArticleRead`, podcast → `setPodcastEpisodePlayed`). The Web Speech path does the same in `speakSystemChunk`. Marking happens *after* the JS advance picks the next item, because read articles drop out of the lists. Skipping (next) doesn't mark, same as the engine path.
 

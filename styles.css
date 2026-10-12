@@ -8174,6 +8174,81 @@ textarea {
   color: #a33a3a;
 }
 
+/* Google Calendar connection panel (Settings → Calendars, Add Calendar) */
+.gcal-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  min-width: 0;
+}
+.gcal-panel[hidden] { display: none; }
+.gcal-panel:empty { display: none; }
+.gcal-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.gcal-panel-head small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gcal-rows {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.gcal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.gcal-row .calendar-event-dot { flex: 0 0 auto; }
+.gcal-row-name {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gcal-row-name small { color: var(--muted); font-size: 0.7rem; }
+.gcal-row-state { color: var(--muted); font-size: 0.75rem; font-weight: 700; }
+.gcal-row .secondary-btn { flex: 0 0 auto; padding: 4px 12px; }
+.gcal-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gcal-panel-actions .secondary-btn,
+.gcal-panel-actions .primary-btn {
+  padding: 5px 12px;
+  font-size: 0.8rem;
+}
+.gcal-report {
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+.gcal-report p { margin: 0; }
+.gcal-report-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.8rem;
+}
+
 .weekly-email-editor .restore-preview-card {
   gap: 5px;
 }

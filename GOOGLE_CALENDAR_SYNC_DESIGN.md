@@ -136,7 +136,20 @@ Real start/end times also fix meal-plan placement for Google events.
 - ✅ Scope `https://www.googleapis.com/auth/calendar` added to the consent screen. This single full scope covers Phases 1–2 (events, calendar list, and creating calendars for the automatic move). `gcal-auth` should request exactly this scope.
 - ✅ Publishing status confirmed **In production** (Luke, 2026-10-12). Keep it there: in *Testing*, refresh tokens for sensitive scopes expire after 7 days.
 
-**Phase 1: Read via API (biggest immediate win)**
+**Phase 1: Read via API (biggest immediate win) — ✅ BUILT on `integration` (2026-10-12), not deployed**
+- As built: `migrations/2026-10-12-gcal-accounts.sql` (`gcal_accounts` + `gcal_links`), `netlify/functions/_gcal.js` + `gcal-auth` / `gcal-callback` / `gcal-calendars` / `gcal-events`, `calendar/google.js` (pure mapping + severance converter), `calendar/google-client.js` (device cache + link reconciliation), app.js glue (search "Google Calendar API sync"), panel in Settings → Calendars and the sidebar's Add Calendar dialog.
+- Deviations from §3–5, on purpose:
+  - The app↔Google mapping is authoritative in **`gcal_links`** (server), not only on the `state.calendars` entry. Older deployed clients strip unknown fields from `state.calendars` when they re-save the plan row, so the entry's `googleCalendarId` is just a cache that every status sync re-applies.
+  - A removed calendar is a `gcal_links` row with `enabled=false`, so discovery never re-adds it. Re-adding mints a fresh app id, because the old one is tombstoned.
+  - Plan-calendar event ids stay `gcal:<cal>:<date>:<title>`, so hides and renames made before the switch keep working. A second same-titled event that day gets `#<googleId>` appended. Stable Google-id-based ids are a Phase 2 item (needed for editing anyway).
+  - The 5-minute refresh touches only API calendars, never the legacy iCal feeds.
+  - Connecting happens in a browser, not the iOS app: Google blocks sign-in in embedded webviews, same as Gmail. Tokens are server-side, so the app picks it up.
+- QA: `test/calendar-google.test.js`, `test/calendar-gcal-server.test.js`, and `scripts/qa-gcal.mjs` (headless, 18 checks against the real client paths with mocked functions; run on a fresh local state).
+- **Before it works in production (Luke):**
+  1. Run `migrations/2026-10-12-gcal-accounts.sql` in the Supabase SQL editor.
+  2. Add `https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/gcal-callback` to the OAuth client's **Authorized redirect URIs** (Google Cloud → Google Auth Platform → Clients).
+  3. Deploy. No new env vars: the state signature falls back to `GOOGLE_CLIENT_SECRET` (set `OAUTH_STATE_SECRET` to separate them).
+- Original Phase 1 scope:
 - Ship: `gcal_accounts` migration, `gcal-auth/callback/calendars/events`, connect UI, in-place migration, timed events, auto-discovered new calendars.
 - Also ship the **severance converter + dry-run report** (§9) now, not at the end.
 - Done when: an event added in Google appears in the app with correct times on next open/focus, and a new Google calendar shows up in settings.
