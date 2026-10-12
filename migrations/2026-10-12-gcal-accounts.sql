@@ -40,3 +40,9 @@ alter table public.gcal_links    enable row level security;
 -- Service-role only (Netlify functions): no anon/authenticated grant, no policies.
 grant select, insert, update, delete on public.gcal_accounts to service_role;
 grant select, insert, update, delete on public.gcal_links    to service_role;
+
+-- This project still auto-grants new public tables to anon/authenticated. RLS (no
+-- policies) already blocks them, but these rows hold Google refresh tokens, so the
+-- client roles get no table privileges at all.
+revoke all on public.gcal_accounts from anon, authenticated;
+revoke all on public.gcal_links    from anon, authenticated;
