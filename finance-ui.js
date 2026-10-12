@@ -109,9 +109,6 @@ export const FINANCE_ACCOUNT_KINDS = ["cash", "retirement", "investment", "debt"
 // the config section (state.financeAlertPrefs), NOT the schema-guarded finance
 // section — these are preferences, not ledger data.
 export const FINANCE_ALERTS = [
-  { key: "overBudget", label: "Category over budget", desc: "Flag when a category's spending passes its budget this month." },
-  { key: "largeTxn", label: "Large purchase", desc: "Flag any single transaction over $400." },
-  { key: "lowBalance", label: "Low cash balance", desc: "Flag when a cash account drops below $100." },
   { key: "priceChange", label: "Subscription price change", desc: "Flag when a recurring charge's amount changes vs its budget line." },
 ];
 export function normalizeFinanceAccounts(raw, createId) {
@@ -2202,7 +2199,7 @@ function financeAccountStatus(acct, liveById, now = Date.now()) {
 }
 
 // All linked accounts that need attention (stale or disconnected), plus whether
-// the bridge itself reported a connection-level error. Drives the Overview chips.
+// the bridge itself reported a connection-level error. Drives the Accounts tab dot.
 function financeAccountHealth() {
   const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
   const accounts = (state.financeAccounts || []).map((a) => ({ acct: a, status: financeAccountStatus(a, liveById) }));
@@ -2222,29 +2219,6 @@ function financeAccountStatusPill(status) {
   const d = status.days;
   const label = d == null ? "Linked" : d <= 0 ? "Updated today" : d === 1 ? "Updated 1d ago" : `Updated ${d}d ago`;
   return `<span class="fin-acct-status is-ok" title="Bank-linked and up to date">${label}</span>`;
-}
-
-// Net-worth trend from the server's daily snapshots (financeHistory). Reused by
-// the Overview band and the Net-worth card. Bank-linked balances only, so it can
-// differ slightly from live net worth that also counts manual accounts.
-function financeHistoryDays() {
-  return financeHistory ? Object.keys(financeHistory).sort() : [];
-}
-function financeTrendSparklineHtml(cls = "fin-trend") {
-  const days = financeHistoryDays();
-  if (days.length < 2) return "";
-  const vals = days.map((d) => Number(financeHistory[d]?.netWorth) || 0);
-  const min = Math.min(...vals), max = Math.max(...vals);
-  const span = (max - min) || 1;
-  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 100},${26 - ((v - min) / span) * 22}`).join(" ");
-  return `<svg class="${cls}" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="Net worth over time"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
-}
-function financeNetWorthDelta() {
-  const days = financeHistoryDays();
-  if (days.length < 2) return null;
-  const first = Number(financeHistory[days[0]]?.netWorth) || 0;
-  const last = Number(financeHistory[days[days.length - 1]]?.netWorth) || 0;
-  return { delta: last - first, sinceLabel: new Date(days[0] + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) };
 }
 
 // The finance bell / home-tile badge total.
@@ -3908,21 +3882,13 @@ function renderFinancePage() {
     </div>
     <div class="fin-budget-groups">${groupCards}</div>`;
 
-  // ── Overview band: the always-on "state of our finances" summary ──────────
+  // ── Attention state (tab dots) ─────────────────────────────────────────────
   const health = financeAccountHealth();
   const reviewCount = financeUnlabeledCount();
-  // This month's actual net spend (spend portions are negative) vs total budgeted.
+  // This month's actual net spend (spend portions are negative) — feeds Cash flow.
   const monthActualSpend = showActuals ? -[...catActuals.values()].reduce((s, v) => s + v, 0) : null;
-  const nowD = new Date();
-  const daysInMonth = new Date(nowD.getFullYear(), nowD.getMonth() + 1, 0).getDate();
-  const dayOfMonth = nowD.getDate();
-  const projectedSpend = (isCurrentMonth && monthActualSpend != null && dayOfMonth > 0) ? (monthActualSpend / dayOfMonth) * daysInMonth : null;
-  const paceOver = (projectedSpend != null && expenses > 0) ? projectedSpend - expenses : null;
-  const monthPct = (monthActualSpend != null && expenses > 0) ? Math.min(100, Math.round((monthActualSpend / expenses) * 100)) : 0;
-  const monthOver = monthActualSpend != null && expenses > 0 && monthActualSpend > expenses;
-  const nwDelta = financeNetWorthDelta();
 
-  // Attention flags — drive the tab dots and whether the "all clear" line shows.
+  // Attention flags — drive the tab dots.
   // Unaddressed = still to review OR swiped-out-but-not-yet-confirmed (red-dot).
   const unconfirmedCount = allTxns.filter(financeTxnNeedsConfirm).length;
   const hasTxnAttention = reviewCount > 0 || unconfirmedCount > 0;
@@ -3951,64 +3917,6 @@ function renderFinancePage() {
     if (t) { rClaimed.add(t.id); rMatched.push({ r, t }); } else rUnmatched.push(r);
   }
   const itemizable = rMatched.filter(({ r, t }) => t.label !== "split" && (r.portions || r.items || []).length > 1);
-
-  const chips = [];
-  if (reviewCount) chips.push(`<button class="fin-chip fin-chip-review" type="button" data-fin-action="review-txns">${reviewCount} to review</button>`);
-  if (health.bridgeError) chips.push(`<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">Bank connection error</button>`);
-  for (const { acct, status } of health.needsAttention) {
-    const nm = escapeHtml(acct.name || "Account");
-    chips.push(status.kind === "disconnected"
-      ? `<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">${nm} · disconnected</button>`
-      : `<button class="fin-chip fin-chip-warn" type="button" data-fin-action="fin-tab" data-tab="accounts">${nm} · stale ${status.days}d</button>`);
-  }
-  // Configurable alert chips (Settings › Finance › Alerts; default on).
-  if (showActuals && financeAlertPref("overBudget")) {
-    let overCount = 0;
-    for (const g of (state.financeBudgetGroups || [])) for (const c of g.categories) { const b = financeCategoryTotal(c); if (b > 0 && -catActual(g, c) > b) overCount++; }
-    if (overCount) chips.push(`<button class="fin-chip fin-chip-warn" type="button" data-fin-action="fin-tab" data-tab="budget">${overCount} over budget</button>`);
-  }
-  if (financeAlertPref("largeTxn")) {
-    const big = monthTxns.filter((t) => (t.amount || 0) <= -400).sort((a, b) => (a.amount || 0) - (b.amount || 0))[0];
-    if (big) chips.push(`<button class="fin-chip fin-chip-warn" type="button" data-fin-action="fin-tab" data-tab="transactions">Large: ${escapeHtml(big.displayName)} ${formatFinMoney(big.amount)}</button>`);
-  }
-  if (financeAlertPref("lowBalance")) {
-    for (const a of (state.financeAccounts || [])) {
-      if (financeAccountKind(a) !== "cash") continue;
-      const bal = financeAccountBalance(a, liveById);
-      if (bal != null && bal >= 0 && bal < 100) { chips.push(`<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">Low: ${escapeHtml(a.name)} ${formatFinMoney(bal)}</button>`); break; }
-    }
-  }
-  if (itemizable.length) chips.push(`<button class="fin-chip fin-chip-review" type="button" data-fin-action="fin-tab" data-tab="insights">${itemizable.length} to itemize</button>`);
-
-  const overviewBand = `
-    <section class="fin-overview">
-      <div class="fin-ov-grid">
-        <div class="fin-ov-card fin-ov-networth">
-          <div class="fin-ov-label">Net worth</div>
-          <div class="fin-ov-value${netWorth != null && netWorth < 0 ? " is-neg" : ""}">${netWorth == null ? "—" : formatFinMoney(netWorth)}</div>
-          <div class="fin-ov-trend">
-            ${nwDelta ? `<span class="fin-ov-delta${nwDelta.delta < 0 ? " is-neg" : ""}">${nwDelta.delta >= 0 ? "+" : ""}${formatFinMoney(nwDelta.delta)}</span><span class="fin-of">since ${escapeHtml(nwDelta.sinceLabel)}</span>` : `<span class="fin-hint">Trend builds as balances are recorded.</span>`}
-            ${financeTrendSparklineHtml("fin-ov-spark")}
-          </div>
-        </div>
-        <div class="fin-ov-card">
-          <div class="fin-ov-label">Cash on hand</div>
-          <div class="fin-ov-value">${cashOnHand == null ? "—" : formatFinMoney(cashOnHand)}</div>
-          ${safeToSpend != null && upcoming.total > 0 ? `<div class="fin-ov-sub">${formatFinMoney(safeToSpend)} safe after bills</div>` : ""}
-        </div>
-        <div class="fin-ov-card fin-ov-month">
-          <div class="fin-ov-label">This month${isCurrentMonth ? "" : ` · ${escapeHtml(monthKey)}`}</div>
-          ${monthActualSpend == null
-            ? `<div class="fin-ov-value">${formatFinMoney(expenses)}</div><div class="fin-ov-sub">budgeted</div>`
-            : `<div class="fin-ov-value">${formatFinMoney(monthActualSpend)} <span class="fin-of">/ ${formatFinMoney(expenses)}</span></div>
-               <div class="fin-gauge"><i class="${monthOver ? "is-over" : ""}" style="width:${monthPct}%"></i></div>
-               ${paceOver != null ? `<div class="fin-ov-pace${paceOver > 0 ? " is-over" : ""}">${paceOver > 0 ? `~${formatFinMoney(paceOver)} over by month-end` : `on pace · ~${formatFinMoney(-paceOver)} under`}</div>` : ""}`}
-        </div>
-      </div>
-      ${chips.length
-        ? `<div class="fin-ov-chips">${chips.join("")}</div>`
-        : (hasTxnAttention || hasAcctAttention ? "" : `<div class="fin-ov-chips fin-ov-clear">✓ Accounts fresh · nothing to review</div>`)}
-    </section>`;
 
   const financeTabNav = `
     <div class="fin-tabs" role="tablist" aria-label="Finance sections">
@@ -4267,7 +4175,6 @@ function renderFinancePage() {
     </div>`;
 
   // Route the existing cards into tabs (they keep their own internals + wiring).
-  // Overview stays pinned above.
   const accountsPanel = `<div class="fin-card fin-accounts-card"><div class="fin-subhead fin-accounts-title">Accounts</div>${renderFinanceAccountsPanel()}</div>`;
   const tabBody =
     financeTab === "budget" ? `${showOnboard ? connectPrompt : ""}${budgetView}${personalCard}`
@@ -4277,7 +4184,6 @@ function renderFinancePage() {
 
   grid.innerHTML = `
     <section class="fin-panel">
-      ${overviewBand}
       ${financeTabNav}
       <div class="fin-tab-body" id="fin-tabpanel" role="tabpanel" aria-labelledby="fin-tab-${financeTab}" tabindex="0" data-fin-tab-body="${financeTab}">${tabBody}</div>
     </section>`;

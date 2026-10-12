@@ -16657,7 +16657,7 @@ function renderContextSettingsDialog(kind) {
       <div class="fin-accounts-panel">${renderFinanceAccountsPanel()}</div>
       <div class="fin-alerts-settings">
         <div class="fin-subhead fin-alerts-title">Alerts</div>
-        <p class="settings-hint">Which finance alerts appear in the Overview and the notifications bell.</p>
+        <p class="settings-hint">Which finance alerts appear in the notifications bell.</p>
         ${FINANCE_ALERTS.map((a) => `
           <div class="mail-ai-feature-row">
             <div class="mail-ai-feature-text">
