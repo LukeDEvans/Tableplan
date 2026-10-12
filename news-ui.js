@@ -455,7 +455,7 @@ export function createNewsModule(deps) {
     const present = new Set(c.sections || []);
     let h = sideTab("front", null, `${ICONS.front}<span>Front page</span>`, c.all);
     h += sideTab("briefings", null, `${ICONS.briefings}<span>Briefings</span>`, briefings.length);
-    h += sideTab("sent", null, `${ICONS.sent}<span>Sent to Media</span>`, c.sent);
+    h += sideTab("sent", null, `${ICONS.sent}<span>Sent to Listen</span>`, c.sent);
     if (saved) h += sideTab("saved", null, `${ICONS.saved}<span>Saved articles</span>`, saved.count?.() || 0);
     h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Sections</div>`;
     for (const s of NEWS_SECTIONS) {
@@ -477,7 +477,7 @@ export function createNewsModule(deps) {
 
   function menuHtml(a) {
     return `<div class="news-menu" role="menu">
-      <button type="button" role="menuitem" class="news-menu-primary" data-news-act="send">${ICONS.media}${a.sentAt ? "In Media ✓" : "Send to Media"}</button>
+      <button type="button" role="menuitem" class="news-menu-primary" data-news-act="send">${ICONS.media}${a.sentAt ? "In Listen ✓" : "Send to Listen"}</button>
       <button type="button" role="menuitem" data-news-act="open">${ICONS.open}Open</button>
       <button type="button" role="menuitem" data-news-act="listen">${ICONS.listen}Listen</button>
       <button type="button" role="menuitem" data-news-act="share">${ICONS.share}Share</button>
@@ -586,7 +586,7 @@ export function createNewsModule(deps) {
     let title = "Front page";
     if (view.kind === "section") title = SECTION_LABEL[view.key] || "Section";
     else if (view.kind === "paper") title = PAPER[view.key]?.label || "Paper";
-    else if (view.kind === "sent") title = "Sent to Media";
+    else if (view.kind === "sent") title = "Sent to Listen";
     else if (view.kind === "briefings") title = "Briefings";
 
     let body = "";
@@ -602,7 +602,7 @@ export function createNewsModule(deps) {
       body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : `${shown} · ${unread} unread`}</div>`;
       if (view.kind === "front" && !query) body += briefingsHtml(briefings.slice(0, 4), true);
       if (!list.length) {
-        body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing sent yet. Use ⋯ → Send to Media on any story." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
+        body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing sent yet. Use ⋯ → Send to Listen on any story." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
       } else {
         const { lead, rest } = arrangeFront(list, nowMs);
         const kicker = view.kind === "front"

@@ -627,7 +627,7 @@ const MANAGED_PAGES = [
   { key: "do",        label: "Tasks" },
   { key: "play",      label: "Exercise" },
   { key: "watch",     label: "Watch" },
-  { key: "read",      label: "Media" },
+  { key: "read",      label: "Listen" }, // was "Media" (MEDIA_SPLIT_DESIGN.md); key unchanged
   { key: "recreate",  label: "Recreate" },
   { key: "explore",   label: "Explore" },
   { key: "plan",      label: "Calendar" },
@@ -1077,7 +1077,7 @@ const elements = {
   settingsMainPage: document.querySelector("#settingsMainPage"),
   playMainPage: document.querySelector("#playMainPage"),
   playPlannerGrid: document.querySelector("#playPlannerGrid"),
-  watchPlannerGrid: document.querySelector("#watchPlannerGrid"), // now inside the Media page's Watch tab panel
+  watchPlannerGrid: document.querySelector("#watchPlannerGrid"), // on the Watch page (#watchMainPage)
   shopMainPage: document.querySelector("#shopMainPage"),
   shopReceiptsList: document.querySelector("#shopReceiptsList"),
   openShopReceiptsBtn: document.querySelector("#openShopReceiptsBtn"),
@@ -8249,7 +8249,7 @@ function showMediaApp(event, { keepView = false } = {}) {
   // No date bar on Media (like Mail/Explore) — hide the week-tools row.
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Media");
+  setPageTitle("Listen");
   setPageHash("media");
   if (keepView && mediaTabsWired) renderActiveMediaView();
   else initMediaPage();
@@ -10270,7 +10270,7 @@ function showMailMoreMenu(thread, lastMsg) {
     </button>
     <button class="mail-more-option" type="button" data-action="move-to-media">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      Send to Media
+      Send to Listen
     </button>
     <button class="mail-more-option" type="button" data-action="send-to-explore">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
@@ -10450,7 +10450,7 @@ async function moveMailToMedia(thread, lastMsg) {
   // Trash the email and drop back to the list (optimistic — the row goes now).
   const removeIds = (currentMailbox && !["TRASH", "ALL"].includes(currentMailbox)) ? [currentMailbox] : [];
   afterMailThreadAction(thread.id);
-  showMailToast("Sent to Media");
+  showMailToast("Sent to Listen. It's in News → Saved articles too.");
   callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["TRASH"], removeLabelIds: removeIds });
 }
 
@@ -11684,7 +11684,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Shop"; // a space of the Shop page
   if (activeAppArea === "watch") return "Watch";
-  if (activeAppArea === "media") return "Media";
+  if (activeAppArea === "media") return "Listen";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Recreate";
   if (activeAppArea === "finance") return "Finance";
@@ -16366,19 +16366,19 @@ const MAIL_AI_FEATURES = [
     key: "nutritionFactsDigest",
     defaultOn: true,
     label: "Dr. Greger / NutritionFacts links",
-    desc: "Collects article and video links from NutritionFacts.org emails and saves them straight to the Media page, then files the email away."
+    desc: "Collects article and video links from NutritionFacts.org emails and saves them to News → Saved articles, then files the email away."
   },
   {
     key: "nytMorningToArticle",
     defaultOn: true,
     label: "“The Morning” → article",
-    desc: "Converts NYT's daily The Morning email into a clean article you can read or listen to on the Media page, then files the email away."
+    desc: "Converts NYT's daily The Morning email into a clean article you can read in News or listen to in Listen, then files the email away."
   },
   {
     key: "economistBriefToArticle",
     defaultOn: true,
     label: "“The world in brief” → article",
-    desc: "Same for The Economist's daily briefing — saved as a listenable article on the Media page, email filed away."
+    desc: "Same for The Economist's daily briefing — saved as an article you can read in News or listen to in Listen, email filed away."
   },
   {
     key: "nytNewsLinks",
@@ -27819,7 +27819,7 @@ function wireMediaTabs() {
   // Media bell: a placeholder again — news articles moved to the News page
   // (NEWS_PAGE_DESIGN.md).
   document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => {
-    showMailToast("Media notifications are coming soon.");
+    showMailToast("Listen notifications are coming soon.");
   });
 
   // (Reset-order moved into the Playlist settings modal.)
@@ -34742,7 +34742,7 @@ function renderMiniPlayerIdle() {
   const time = document.getElementById("miniPlayerTime");
   if (time) time.textContent = "";
   if (t) t.textContent = plan ? plan.title : "Nothing playing";
-  if (s) s.textContent = plan ? plan.sub : "Tap to browse Media";
+  if (s) s.textContent = plan ? plan.sub : "Tap to browse Listen";
   if (a) { const art = plan?.art || ""; a.dataset.art = art; a.src = art; a.hidden = !art; }
   updateMiniPlayerPlayBtn();
   setupMiniPlayerMarquee();
@@ -35154,7 +35154,7 @@ function nowPlayingInfo() { const k = nowPlayingKind(); return (k && MEDIA_KINDS
 // (idlePlaybackPlan: resume / the top of the queue / the queue-ends pick).
 function idleNowPlayingInfo() {
   const plan = idlePlaybackPlan();
-  if (!plan) return { art: "", title: "Nothing playing", show: "", date: "", desc: "Nothing is queued. Press play to open Media and pick something.", idle: true };
+  if (!plan) return { art: "", title: "Nothing playing", show: "", date: "", desc: "Nothing is queued. Press play to open Listen and pick something.", idle: true };
   const ep = plan.episodeId ? findPodcastEpisode(plan.episodeId).episode : null;
   return { art: plan.art || "", title: plan.title || "", show: plan.show || "", date: plan.sub || "", idle: true,
     episodeId: ep ? ep.id : null, desc: ep ? plainTextFromHtml(ep.description) : plainTextFromHtml(plan.desc).slice(0, 2000) };

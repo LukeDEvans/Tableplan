@@ -1,6 +1,7 @@
 # Media split — News reads, Watch stands alone, Listen is audio
 
-Status: **APPROVED DIRECTION** (Luke, 2026-10-12). Built in phases (below).
+Status: **BUILT, not deployed** (Luke's direction 2026-10-12; all four phases on
+branch `claude/media-split`). Not yet checked in a real browser or on the phone.
 
 ## Why
 
@@ -45,6 +46,35 @@ News now covers what Publications was for. Luke's direction:
    Send/Open/Listen in News) opens the reader in News, with Phase 1's return.
 4. **Listen.** Page title, page menu and labels say Listen. Media's top-bar
    search covers audio only; News search also finds saved articles.
+
+## As built
+
+- Phase 1: `reader-return.js` (pure, tested in `test/media-reader-return.test.js`);
+  `openArticleFrom` / `returnToReaderOrigin` / `closeArticleReader` in app.js.
+  Returning to Listen uses `showMediaApp(null, { keepView: true })`, so the tab,
+  search and open show are exactly as left.
+- Phase 2: `#watchMainPage` holds the Watch panel (`#watchPagePanel`).
+  `activeAppArea = "watch"`. Watch's search filter offers Movies & TV and Videos
+  only. Listen's "Find podcasts, music and radio" row searches online audio in
+  place (`#mediaDiscoverResults`).
+- Phase 3: the reader (`#articleReaderPanel`) sits beside `#newsContent` in News
+  and replaces it while open. The saved list (`#articleListPanel`) is News's
+  "Saved articles" view, mounted through news-ui.js's injected `saved`
+  interface; it waits in `#newsSavedParking` otherwise. News's search box
+  filters saved articles locally in that view. A tap on an article anywhere
+  else goes to News's reader (`openArticle` → `openArticleFrom`); in-place
+  refreshes use `showArticleInReader` and never navigate.
+- Phase 4: visible labels say Listen ("Send to Listen", "Sent to Listen", page
+  title, page-access label). Keys, `activeAppArea "media"`, and `#media` links
+  are unchanged.
+
+## Open questions for Luke
+
+- News now has both **Sent to Listen** (stories sent from News, from the
+  server) and **Saved articles** (everything saved: sent stories, newsletters,
+  extension, URL, scans, PDFs). Merge them into one?
+- "Send to Listen" is the new name for the old "Send to Media" (the story is
+  saved, and joins Listen's queue). Keep that name, or "Save"?
 
 ## Out of scope
 
