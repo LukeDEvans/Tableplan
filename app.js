@@ -1209,6 +1209,7 @@ const elements = {
   closeWatchArchiveBtn: document.querySelector("#closeWatchArchiveBtn"),
   miniPlayerInfoBtn: document.querySelector("#miniPlayerInfoBtn"),
   mediaMainPage: document.querySelector("#mediaMainPage"),
+  watchMainPage: document.querySelector("#watchMainPage"),
   readingPlannerGrid: document.querySelector("#readingPlannerGrid"),
   readingSearchDialog: document.querySelector("#readingSearchDialog"),
   readingSearchDialogInput: document.querySelector("#readingSearchDialogInput"),
@@ -7960,6 +7961,7 @@ function hideAllPages() {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.mediaMainPage.hidden = true;
+  if (elements.watchMainPage) elements.watchMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -8020,14 +8022,22 @@ function showPlayApp(event) {
   closeAppMenu();
 }
 
-// Watch is no longer a standalone page — it lives inside Media as a sidebar tab.
-// This redirect keeps every entry point (home/title buttons, the "watch" hash,
-// voice commands, deep links) working, landing on Media → Watch.
+// Watch is its own page again (MEDIA_SPLIT_DESIGN.md): universal film/TV/video
+// search on top, the watchlist/planner below. Every older entry point (home and
+// page-menu buttons, the "watch" hash, voice commands, deep links) lands here.
 function showWatchApp(event) {
   event?.stopPropagation();
-  showMediaApp();
-  switchMediaTab("watch");
+  if (!isPageEnabled("watch") || !elements.watchMainPage) { showHomeApp(); return; }
+  activeAppArea = "watch";
+  hideAllPages();
+  elements.watchMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Watch");
   setPageHash("watch");
+  closePageTitleMenu();
+  closeAppMenu();
+  renderWatchTab();
 }
 
 // Recreate is the hub for Explore (travel), Exercise and Leisure (hobbies): it's
@@ -16123,7 +16133,7 @@ function setPageTitle(title) {
 function updatePageTitleMenu() {
   elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPagePersonallyEnabled("eat");
   elements.titleToDoListBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no top-level nav button
-  elements.titleWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no top-level nav button
+  elements.titleWatchBtn.hidden = activeAppArea === "watch" || !isPagePersonallyEnabled("watch");
   elements.titleShopBtn.hidden = activeAppArea === "shop" || activeAppArea === "inventory" || !isPagePersonallyEnabled("shop");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !recreateHubEnabled(isPagePersonallyEnabled);
   if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
@@ -16139,7 +16149,7 @@ function updatePageTitleMenu() {
 function updatePageVisibility() {
   elements.homeEatBtn.hidden = !isPagePersonallyEnabled("eat");
   elements.homeDoBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no home-screen button
-  elements.homeWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no home-screen button
+  elements.homeWatchBtn.hidden = !isPagePersonallyEnabled("watch");
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
   elements.homeRecreateBtn.hidden = !recreateHubEnabled(isPagePersonallyEnabled);
   if (elements.homeFinanceBtn) elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");
@@ -16257,7 +16267,7 @@ function updateSettingsMenuOptions() {
   elements.menuIngredientOptionsBtn.hidden = !isEat;
   elements.menuFoodHealthSettingsBtn.hidden = !isEat;
   elements.menuMealPlanSettingsBtn.hidden = !isEat;
-  const isWatchTab = activeAppArea === "media" && activeMediaTab === "watch";
+  const isWatchTab = activeAppArea === "watch";
   elements.menuWatchServicesBtn.hidden = !isWatchTab;
   elements.menuWatchTheatersBtn.hidden = !isWatchTab;
   // T3: Tasks moved into the Calendar page's overlay, and this app-menu item was
@@ -27832,7 +27842,7 @@ function wireMediaTabs() {
   document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
 }
 
-const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio", "watch"];
+const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio"];
 
 function switchMediaTab(tab) {
   activeMediaTab = tab;
@@ -27860,7 +27870,6 @@ function switchMediaTab(tab) {
   const allPanel = document.getElementById("mediaAllPanel");
   const musicPanel = document.getElementById("mediaMusicPanel");
   const radioPanel = document.getElementById("mediaRadioPanel");
-  const watchPanel = document.getElementById("mediaWatchPanel");
 
   if (booksPanel) booksPanel.hidden = true;
   if (listPanel) listPanel.hidden = true;
@@ -27869,7 +27878,6 @@ function switchMediaTab(tab) {
   if (allPanel) allPanel.hidden = true;
   if (musicPanel) musicPanel.hidden = true;
   if (radioPanel) radioPanel.hidden = true;
-  if (watchPanel) watchPanel.hidden = true;
   const searchPanel = document.getElementById("mediaSearchPanel");
   if (searchPanel) searchPanel.hidden = true;
   // Leaving to a folder clears an active top-bar search.
@@ -27898,9 +27906,6 @@ function switchMediaTab(tab) {
   } else if (tab === "radio") {
     if (radioPanel) radioPanel.hidden = false;
     initRadioPanel();
-  } else if (tab === "watch") {
-    if (watchPanel) watchPanel.hidden = false;
-    renderWatchTab(); // universal search on top + the watchlist/planner below
   } else {
     const isArticleTab = getReadPublications().some(p => p.key === tab);
     if (listPanel) listPanel.hidden = false;
@@ -28156,6 +28161,13 @@ const DISCOVER_SERVICE_OPTIONS = [
 // to. The type→provider mapping + normalization live in the pure, tested
 // media-search-scope.js; here we only own the localStorage read/write and the DOM.
 const WATCH_SCOPE_KEY = "live_watch_search_scope";
+// Search is split per page (MEDIA_SPLIT_DESIGN.md, decision 5): Watch searches
+// films, shows and videos; Listen's top bar searches podcasts, music and radio.
+const WATCH_PAGE_SEARCH_TYPES = ["movtv", "video"];
+const LISTEN_PAGE_SEARCH_TYPES = ["music", "podcast", "radio"];
+function watchPageScopeTypes() {
+  return getWatchSearchScope().types.filter((k) => WATCH_PAGE_SEARCH_TYPES.includes(k));
+}
 let watchSearchScope = null;
 function getWatchSearchScope() {
   if (watchSearchScope) return watchSearchScope;
@@ -28177,7 +28189,7 @@ function renderDiscoverFilterMenu() {
   const scope = getWatchSearchScope();
   menu.innerHTML =
     `<div class="discover-filter-head">Show</div>` +
-    WATCH_SCOPE_TYPES.map((t) =>
+    WATCH_SCOPE_TYPES.filter((t) => WATCH_PAGE_SEARCH_TYPES.includes(t.key)).map((t) =>
       `<label class="discover-filter-row"><span>${escapeHtml(t.label)}</span>` +
       `<input type="checkbox" class="live-toggle" data-scope-type="${t.key}"${scope.types.includes(t.key) ? " checked" : ""}></label>`).join("") +
     `<div class="discover-filter-sep"></div>` +
@@ -28249,13 +28261,15 @@ function openDiscoverServicesDialog() {
 }
 
 
-async function runDiscoverSearch(query) {
-  const results = document.getElementById("discoverResults");
+// Universal search. Default target is the Watch page (its filter's types); the
+// Listen page passes its own results element and the audio types.
+async function runDiscoverSearch(query, { resultsId = "discoverResults", types = null } = {}) {
+  const results = document.getElementById(resultsId);
   if (!results) return;
   const token = ++discoverSearchToken;
-  if (!query) { showWatchList(); return; }
-  const scope = getWatchSearchScope();
-  const allowedIds = allowedProviderIds(scope);
+  const isWatch = !types;
+  if (!query) { if (isWatch) showWatchList(); else { results.hidden = true; results.innerHTML = ""; } return; }
+  const allowedIds = allowedProviderIds({ types: isWatch ? watchPageScopeTypes() : types });
   if (!allowedIds.size) { results.hidden = false; results.innerHTML = `<p class="discover-hint">No media types selected. Tap the filter and pick at least one.</p>`; return; }
   results.innerHTML = `<p class="discover-hint">Searching…</p>`;
   try {
@@ -28265,7 +28279,7 @@ async function runDiscoverSearch(query) {
     if (token !== discoverSearchToken) return; // out-of-order guard
     const enriched = await hub.search.enrichWithAvailability(items, hub.tmdb); // "where can I watch this"
     if (token !== discoverSearchToken) return;
-    renderDiscoverResults(enriched, providerStatuses, hub);
+    renderDiscoverResults(enriched, providerStatuses, hub, { results, servicesOnly: isWatch && getWatchSearchScope().servicesOnly });
   } catch (e) {
     if (token !== discoverSearchToken) return;
     results.innerHTML = `<p class="discover-hint">Couldn't search right now. ${escapeHtml(e?.message || "")}</p>`;
@@ -28343,7 +28357,7 @@ function ensureHubForWatch() {
   if (watchHubReady || watchHubLoading) return;
   watchHubLoading = true;
   getMediaHub()
-    .then(async (hub) => { try { await hub.ensureJellyfinIndex(); } catch { /* index optional */ } watchHubLoading = false; watchHubReady = true; if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner(); })
+    .then(async (hub) => { try { await hub.ensureJellyfinIndex(); } catch { /* index optional */ } watchHubLoading = false; watchHubReady = true; if (activeAppArea === "watch") renderWatchPlanner(); })
     .catch(() => { watchHubLoading = false; });
 }
 
@@ -28352,13 +28366,13 @@ function toggleWatchlistSave(item) {
   const existing = videoInWatchlist(item.meta.tmdbId);
   if (!existing) {
     addWatchItemFromTmdb(discoverVideoToTmdbResult(item)); // adds want-item + loads providers
-    if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner();
+    if (activeAppArea === "watch") renderWatchPlanner();
     return true;
   }
   if (watchItemIsPristine(existing)) {
     state.watchItems = (state.watchItems || []).filter((w) => w !== existing);
     persist();
-    if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner();
+    if (activeAppArea === "watch") renderWatchPlanner();
     return false;
   }
   // Has real history — keep it, just tell the user where it lives.
@@ -28411,15 +28425,14 @@ function discoverSvcActivate(btn, hub) {
   else window.open(uri, "_blank", "noopener");
 }
 
-function renderDiscoverResults(items, providerStatuses, hub) {
-  const results = document.getElementById("discoverResults");
+function renderDiscoverResults(items, providerStatuses, hub, { results = document.getElementById("discoverResults"), servicesOnly = getWatchSearchScope().servicesOnly } = {}) {
   if (!results) return;
   if (!items.length) { results.innerHTML = `<p class="discover-hint">No results.</p>`; return; }
   discoverItemsByKey = new Map();
   let views = discoverViewsFor(items, hub);
   // "Only my services": keep native-audio kinds (always playable in-app) and any
   // video available on a streamer the user subscribes to (view.yours non-empty).
-  if (getWatchSearchScope().servicesOnly) {
+  if (servicesOnly) {
     const audioKinds = new Set(["music", "podcast", "radio"]);
     views = views.filter((v) => audioKinds.has(v.kind) || (v.yours && v.yours.length));
     if (!views.length) { results.innerHTML = `<p class="discover-hint">Nothing on your services matched. Turn off “Only my services” in the filter to see more.</p>`; return; }
@@ -28866,16 +28879,23 @@ function renderMediaSearchResults() {
 function topSearchDiscoverRowHtml(q) {
   return `<button class="media-search-discover-row" type="button" data-discover-q="${escapeHtml(q)}">` +
     `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>` +
-    `<span>Search all media for “${escapeHtml(q)}”</span></button>`;
+    `<span>Find podcasts, music and radio for “${escapeHtml(q)}”</span></button>` +
+    `<div class="discover-results listen-discover-results" id="mediaDiscoverResults" hidden></div>`;
 }
+// The row searches online audio right here in Listen (search is split per page);
+// films and shows are the Watch page's own search.
 function wireTopSearchDiscoverRow(listEl, q) {
-  listEl.querySelector(".media-search-discover-row")?.addEventListener("click", () => goToDiscoverSearch(q));
+  const row = listEl.querySelector(".media-search-discover-row");
+  row?.addEventListener("click", () => {
+    row.hidden = true;
+    const results = document.getElementById("mediaDiscoverResults");
+    if (results) { results.hidden = false; results.innerHTML = `<p class="discover-hint">Searching…</p>`; }
+    runDiscoverSearch(q, { resultsId: "mediaDiscoverResults", types: LISTEN_PAGE_SEARCH_TYPES });
+  });
 }
+// Universal Watch search for `q` (mediaApi.open).
 function goToDiscoverSearch(q) {
-  mediaSearchQuery = "";
-  const si = document.getElementById("mediaSearchInput"); if (si) si.value = "";
-  activeMediaTab = "watch";
-  switchMediaTab("watch");
+  showWatchApp();
   const input = document.getElementById("discoverSearchInput");
   if (input) input.value = q;
   watchTabSearch(q);
@@ -40536,7 +40556,7 @@ async function executeChatTool(name, input) {
           recordDeletion("watchItems", removed.id);
           state.watchItems = watchItemsList().filter((_, i) => i !== idx);
           persist();
-          if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner();
+          if (activeAppArea === "watch") renderWatchPlanner();
           return `Removed "${removed.title}" from watchlist.`;
         }
         if (list === "reading") {
