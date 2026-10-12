@@ -958,8 +958,9 @@ async function linkFinanceBanks() {
 // live in financeTxnLabels (txnId → key). financeTxnRules learns merchant →
 // label counts from MANUAL labels only, so auto-labels never train themselves.
 let financeNotifOpen = false;
-const financeTxnFilter = { q: "", kind: "", account: "", sort: "date" };
-let financeTxnFilterOpen = false;
+// from/to: optional YYYY-MM-DD date range (inclusive). Either set → the list shows
+// that range across everything loaded instead of just the viewed month.
+const financeTxnFilter = { q: "", kind: "", account: "", from: "", to: "", sort: "date" };
 // Redesigned finance page: an always-on Overview band + a working area switched
 // between these tabs. "transactions" is the default (purchase tracking is primary).
 let financeTab = "transactions";
@@ -1699,6 +1700,98 @@ function financeReviewGroups() {
   return financeUnlabeledByMerchant(financeDeckWindow(financeLabeledTxns()));
 }
 
+const FIN_FILTER_SVG = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5h17l-6.5 7.5V19l-4 1.8v-8.3Z"/></svg>`;
+
+function finFilterDateLabel(ymd) {
+  const d = new Date(ymd + "T12:00:00");
+  return Number.isNaN(d.getTime()) ? ymd : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+
+// Transactions filter window — same overlay + box as the notifications window,
+// sized to its content. Changes apply live to the list behind it.
+function openFinanceTxnFilter() {
+  document.getElementById("finFilterOverlay")?.remove();
+  const f = financeTxnFilter;
+  const allTxns = financeLabeledTxns();
+  const accountOptions = [...new Map(allTxns.filter((t) => t.accountId).map((t) => [t.accountId, t.account || "Account"])).entries()];
+  const dates = allTxns.map((t) => (t.posted || "").slice(0, 10)).filter(Boolean).sort();
+  const oldest = dates[0] || "";
+  const today = new Date().toISOString().slice(0, 10);
+  const overlay = document.createElement("div");
+  overlay.id = "finFilterOverlay";
+  overlay.className = "fin-review-overlay fin-filter-overlay";
+  const body = () => `
+    <label class="fin-filter-field"><span class="fin-filter-label">Label</span>
+      <select class="fin-scenario-select" data-fin-filter="kind">
+        <option value="">All labels</option>
+        <option value="unlabeled" ${f.kind === "unlabeled" ? "selected" : ""}>Unlabeled</option>
+        <option value="auto" ${f.kind === "auto" ? "selected" : ""}>Auto-labeled</option>
+        <option value="income" ${f.kind === "income" ? "selected" : ""}>Income</option>
+        <option value="mgmt" ${f.kind === "mgmt" ? "selected" : ""}>Account mgmt</option>
+        <option value="split" ${f.kind === "split" ? "selected" : ""}>Splits</option>
+        ${(state.financeBudgetGroups || []).map((g) => `<option value="group:${escapeHtml(g.id)}" ${f.kind === `group:${g.id}` ? "selected" : ""}>${escapeHtml(g.label)}</option>`).join("")}
+      </select>
+    </label>
+    <label class="fin-filter-field"><span class="fin-filter-label">Account</span>
+      <select class="fin-scenario-select" data-fin-filter="account">
+        <option value="">All accounts</option>
+        ${accountOptions.map(([id, name]) => `<option value="${escapeHtml(id)}" ${f.account === id ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+      </select>
+    </label>
+    <div class="fin-filter-field"><span class="fin-filter-label">Date range</span>
+      <div class="fin-filter-dates">
+        <input class="fin-item-name" type="date" value="${escapeHtml(f.from)}" ${oldest ? `min="${oldest}"` : ""} max="${escapeHtml(f.to || today)}" data-fin-filter="from" aria-label="From date" />
+        <span class="fin-of">to</span>
+        <input class="fin-item-name" type="date" value="${escapeHtml(f.to)}" ${f.from || oldest ? `min="${escapeHtml(f.from || oldest)}"` : ""} max="${today}" data-fin-filter="to" aria-label="To date" />
+      </div>
+      <span class="fin-hint">${f.from || f.to ? "Covers every loaded transaction in the range, regardless of the month shown." : "Blank = the month shown at the top."}${oldest ? ` Transactions are loaded back to ${escapeHtml(finFilterDateLabel(oldest))}.` : ""}</span>
+    </div>`;
+  const active = () => Boolean(f.kind || f.account || f.from || f.to);
+  overlay.innerHTML = `
+    <div class="fin-review-modal fin-filter-modal" role="dialog" aria-modal="true" aria-label="Filter transactions">
+      <div class="fin-review-head">
+        <span class="fin-review-title">Filter</span>
+        <button class="fin-review-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="fin-filter-body" data-fin-filter-body>${body()}</div>
+      <div class="fin-filter-foot">
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-filter-clear ${active() ? "" : "disabled"}>Clear filters</button>
+        <button class="primary-btn fin-add-btn" type="button" data-fin-filter-done>Done</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const place = () => {
+    const modal = overlay.querySelector(".fin-filter-modal");
+    const box = notificationsWindowBox();
+    modal.style.top = box.top + "px";
+    modal.style.left = box.left + "px";
+    modal.style.right = box.right + "px";
+    modal.style.maxHeight = `calc(100% - ${box.top + box.bottom}px)`;
+  };
+  place();
+  window.addEventListener("resize", place);
+  const close = () => { window.removeEventListener("resize", place); overlay.remove(); };
+  const refresh = () => {
+    financeTxnListExpanded = false;
+    if (getActiveAppArea() === "finance") renderFinancePage();
+    overlay.querySelector("[data-fin-filter-body]").innerHTML = body();
+    overlay.querySelector("[data-fin-filter-clear]").disabled = !active();
+  };
+  overlay.addEventListener("change", (e) => {
+    const key = e.target.dataset?.finFilter;
+    if (!key) return;
+    f[key] = e.target.value || "";
+    // keep the range ordered if one end is moved past the other
+    if (f.from && f.to && f.from > f.to) { if (key === "from") f.to = f.from; else f.from = f.to; }
+    refresh();
+  });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay || e.target.closest(".fin-review-close, [data-fin-filter-done]")) return close();
+    if (e.target.closest("[data-fin-filter-clear]")) { f.kind = ""; f.account = ""; f.from = ""; f.to = ""; refresh(); }
+  });
+  overlay.querySelector("[data-fin-filter-body] select")?.focus();
+}
+
 function openFinanceTxnReview() {
   if (!financeReviewGroups().length && !financeNotifDeckAlertsHtml()) { showMailToast("You're all caught up."); return; }
   financeNotifOpen = false;
@@ -2272,7 +2365,6 @@ function updateFinanceMonthActuals() {
 // (a mixed basket teaches nothing about the merchant's usual category).
 let financeSplitDraft = null; // { txnId, portions: [{label, amount}] }
 let financeScanBusy = false;
-let financeBatchScanBusy = false;
 
 function startSplitTxn(txnId) {
   const t = financeLabeledTxns().find((x) => x.id === txnId);
@@ -2417,70 +2509,6 @@ function financeBatchMatchTxn(receipt, claimed) {
     cands.sort((a, b) => Math.abs(new Date(a.posted || 0).getTime() - rDate) - Math.abs(new Date(b.posted || 0).getTime() - rDate));
   }
   return cands[0];
-}
-
-// Scan a pile of receipt photos at once: each is itemized+categorized by the
-// same server path the single scan uses, auto-matched to its transaction, then
-// its category split is applied and the image kept. Fully non-destructive —
-// only touches txns with no manual label, and every image is kept best-effort.
-async function financeBatchScanReceipts(files) {
-  const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 20);
-  if (!list.length || financeBatchScanBusy) return;
-  financeBatchScanBusy = true;
-  renderFinancePage();
-  const res = { matched: 0, attached: 0, unmatched: 0, failed: 0 };
-  const claimed = new Set();
-  for (const file of list) {
-    try {
-      trackUsage("claude_receipt_scan");
-      const image = await fileToDataUrl(await prepareScanImage(file, undefined, { maxDimension: 1600, quality: 0.82 }));
-      const data = await callNetlifyFunction("simplefin", { action: "scanReceipt", image });
-      const receipt = data?.receipt;
-      if (!receipt || !Number(receipt.total)) { res.failed++; continue; }
-      const txn = financeBatchMatchTxn(receipt, claimed);
-      if (!txn) { res.unmatched++; continue; }
-      claimed.add(txn.id);
-      const total = Math.abs(txn.amount || 0);
-      // Group the receipt's line items by category (labeled portions only).
-      const byLabel = new Map();
-      for (const p of (receipt.portions || [])) {
-        const amt = Math.abs(parseFinAmount(p.amount) || 0);
-        if (!amt || !p.label) continue;
-        byLabel.set(p.label, (byLabel.get(p.label) || 0) + amt);
-      }
-      let portions = [...byLabel.entries()].map(([label, amount]) => ({ label, amount: Math.round(amount * 100) / 100 }));
-      const labeledSum = portions.reduce((s, p) => s + p.amount, 0);
-      const remainder = Math.round((total - labeledSum) * 100) / 100;
-      // Only categorize when the labeled items cover the transaction (a small
-      // tax/uncertain remainder is folded into the largest portion so the split
-      // totals exactly). A large unlabeled remainder = can't categorize with
-      // confidence, so keep the image and leave the category for the user.
-      const canCategorize = portions.length >= 1 && Math.abs(remainder) <= Math.max(2, total * 0.05);
-      if (canCategorize) {
-        if (Math.abs(remainder) > 0.02) {
-          portions.sort((a, b) => b.amount - a.amount);
-          portions[0].amount = Math.round((portions[0].amount + remainder) * 100) / 100;
-        }
-        if (portions.length >= 2) recordFinanceTxnSplit(txn.id, portions);
-        else recordFinanceTxnLabel(txn.id, portions[0].label, txn.description);
-        res.matched++;
-      } else {
-        res.attached++;
-      }
-      await uploadReceiptImage(txn.id, file).catch((e) => console.warn("Receipt image not kept:", e?.message || e));
-    } catch (e) {
-      res.failed++;
-    }
-  }
-  financeBatchScanBusy = false;
-  invalidateFinanceLabeled();
-  renderFinancePage();
-  const parts = [];
-  if (res.matched) parts.push(`${res.matched} matched & categorized`);
-  if (res.attached) parts.push(`${res.attached} matched — image kept, add a category`);
-  if (res.unmatched) parts.push(`${res.unmatched} with no matching transaction`);
-  if (res.failed) parts.push(`${res.failed} unreadable`);
-  alert(`Scanned ${list.length} receipt${list.length === 1 ? "" : "s"}: ${parts.join(" · ") || "nothing to apply"}.`);
 }
 
 // ── Merchant renaming ("Electronic Deposit Ur..." → "Urban Greens") ─────────
@@ -3403,7 +3431,11 @@ function renderFinancePage() {
   // A search looks across the WHOLE loaded window (~45 days), not just the viewed
   // month — otherwise searching in September silently can't find an August charge,
   // which reads as "it's gone." No query = the viewed month's ledger as before.
-  let shownTxns = (query ? allTxns : monthTxns).slice(); // copy — sorting below must never mutate the cached/shared array
+  // A date range likewise spans everything loaded, ignoring the month pager.
+  const hasRange = Boolean(f.from || f.to);
+  let shownTxns = (query || hasRange ? allTxns : monthTxns).slice(); // copy — sorting below must never mutate the cached/shared array
+  if (f.from) shownTxns = shownTxns.filter((t) => (t.posted || "").slice(0, 10) >= f.from);
+  if (f.to) shownTxns = shownTxns.filter((t) => (t.posted || "").slice(0, 10) && (t.posted || "").slice(0, 10) <= f.to);
   if (query) shownTxns = shownTxns.filter((t) => `${t.description || ""} ${t.displayName || ""}`.toLowerCase().includes(query));
   if (f.account) shownTxns = shownTxns.filter((t) => t.accountId === f.account);
   if (f.kind === "unlabeled") shownTxns = shownTxns.filter((t) => !t.label);
@@ -3695,7 +3727,7 @@ function renderFinancePage() {
   // instead of an inline list — so no panel is embedded in the card head.
   const notifPanel = "";
 
-  const filterActive = Boolean(query || f.kind || f.account);
+  const filterActive = Boolean(f.kind || f.account || f.from || f.to); // the popup's filters (search has its own box)
   // Build the list: grouped by day for the default (date) sort, flat otherwise.
   const renderTxnBlock = (t) => txnRow(t, { grouped: f.sort === "date" }) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "");
   const txnDayLabel = (dayStr) => {
@@ -3762,6 +3794,8 @@ function renderFinancePage() {
     <div class="fin-card" data-fin-card="txns">
       <div class="fin-card-head fin-txns-head">
         <h3>Transactions</h3>
+        <button class="icon-btn fin-head-btn" type="button" data-fin-action="manual-txn-open" aria-label="Add transaction" title="Add a transaction"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+        <button class="icon-btn fin-head-btn${filterActive ? " is-active" : ""}" type="button" data-fin-action="txn-filter-open" aria-label="${filterActive ? "Filter transactions (filters on)" : "Filter transactions"}" title="Filter by label, account or date">${FIN_FILTER_SVG}${filterActive ? `<span class="fin-head-btn-dot" aria-hidden="true"></span>` : ""}</button>
         ${notifBell}
       </div>
       <div class="fin-txn-status">${financeLiveLoading ? `<span class="fin-txn-status-load">Updating…</span>` : (financeLive?.at ? `Updated ${escapeHtml(finUpdatedLabel(financeLive.at))}` : "")}</div>
@@ -3774,30 +3808,8 @@ function renderFinancePage() {
           <option value="label" ${f.sort === "label" ? "selected" : ""}>Sort: Label</option>
           <option value="account" ${f.sort === "account" ? "selected" : ""}>Sort: Account</option>
         </select>
-        <button class="secondary-btn fin-add-btn${filterActive ? " is-active" : ""}" type="button" data-fin-action="txn-filter-toggle" aria-expanded="${financeTxnFilterOpen}">Filter${filterActive ? " •" : ""}</button>
-        <button class="icon-btn fin-txn-icon-btn" type="button" data-fin-action="batch-scan-receipts" ${financeBatchScanBusy ? "disabled" : ""} aria-label="Scan receipts" title="Scan receipts to auto-file">${financeBatchScanBusy ? `<span class="fin-txn-icon-busy" aria-hidden="true">…</span>` : scanReceiptSvg}</button>
-        <button class="icon-btn std-add-btn" type="button" data-fin-action="manual-txn-open" aria-label="Add transaction" title="Add a transaction"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
       </div>
-      ${query ? `<div class="fin-hint fin-txn-search-scope">Searching all loaded transactions (~45 days). Older months keep saved category totals only.</div>` : ""}
-      ${!financeTxnFilterOpen ? "" : `
-      <div class="fin-txn-filter-panel">
-        <select class="fin-scenario-select" data-fin-edit="txn-filter-kind" aria-label="Filter by label">
-          <option value="">All labels</option>
-          <option value="unlabeled" ${f.kind === "unlabeled" ? "selected" : ""}>Unlabeled</option>
-          <option value="auto" ${f.kind === "auto" ? "selected" : ""}>Auto-labeled</option>
-          <option value="income" ${f.kind === "income" ? "selected" : ""}>Income</option>
-          <option value="mgmt" ${f.kind === "mgmt" ? "selected" : ""}>Account mgmt</option>
-          <option value="split" ${f.kind === "split" ? "selected" : ""}>Splits</option>
-          ${(state.financeBudgetGroups || []).map((g) => `<option value="group:${g.id}" ${f.kind === `group:${g.id}` ? "selected" : ""}>${escapeHtml(g.label)}</option>`).join("")}
-        </select>
-        <select class="fin-scenario-select" data-fin-edit="txn-filter-account" aria-label="Filter by account">
-          <option value="">All accounts</option>
-          ${accountOptions.map(([id, name]) => `<option value="${escapeHtml(id)}" ${f.account === id ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
-        </select>
-        ${filterActive || sortActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
-        <span class="fin-hint fin-txn-window-hint">Search covers the loaded window (~45 days + the viewed month); older months keep saved category totals, not individual transactions.</span>
-      </div>`}
-      ${(financeLive?.errors || []).length ? `<div class="fin-txn-error" role="alert">Couldn't load some transactions — ${escapeHtml(financeLive.errors.join(" · "))}</div>` : ""}
+      ${query || hasRange ? `<div class="fin-hint fin-txn-search-scope">${query ? "Searching" : "Showing"} all loaded transactions${hasRange ? ` from ${escapeHtml(f.from ? finFilterDateLabel(f.from) : "the start")} to ${escapeHtml(f.to ? finFilterDateLabel(f.to) : "today")}` : ""}. Older months keep saved category totals only.</div>` : ""}
       ${manualFormHtml}
       ${txnListHtml}
       ${txnsTruncated ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show all ${shownTxns.length}</button>`
@@ -4217,12 +4229,6 @@ function renderFinancePage() {
       financeNotifOpen = false;
       renderFinancePage();
     }, { capture: true });
-    document.addEventListener("click", (e) => {
-      if (!financeTxnFilterOpen) return;
-      if (e.target.closest(".fin-txn-filters, .fin-txn-filter-panel")) return;
-      financeTxnFilterOpen = false;
-      renderFinancePage();
-    }, { capture: true });
     grid.addEventListener("contextmenu", (e) => {
       const row = e.target.closest("[data-fin-txn-id]");
       if (row) { e.preventDefault(); showFinTxnMenu(e.clientX, e.clientY, row.dataset.finTxnId); return; }
@@ -4451,16 +4457,6 @@ function onFinanceGridClick(e) {
     input.click();
     return;
   }
-  if (action === "batch-scan-receipts") {
-    if (financeBatchScanBusy) return;
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.multiple = true;
-    input.onchange = () => financeBatchScanReceipts(input.files);
-    input.click();
-    return;
-  }
   if (action === "flip-txn-sign") { toggleFinanceTxnSignFlip(btn.dataset.id); return; }
   if (action === "open-txn-detail") {
     financeDetailTxnId = financeDetailTxnId === btn.dataset.id ? null : btn.dataset.id;
@@ -4468,12 +4464,7 @@ function onFinanceGridClick(e) {
     return;
   }
   if (action === "close-txn-detail") { financeDetailTxnId = null; renderFinancePage(); return; }
-  if (action === "txn-filter-clear") {
-    financeTxnFilter.q = ""; financeTxnFilter.kind = ""; financeTxnFilter.account = ""; financeTxnFilter.sort = "date";
-    renderFinancePage();
-    return;
-  }
-  if (action === "txn-filter-toggle") { financeTxnFilterOpen = !financeTxnFilterOpen; renderFinancePage(); return; }
+  if (action === "txn-filter-open") { openFinanceTxnFilter(); return; }
   if (action === "manual-txn-open") { openManualTxnForm(null); return; }
   if (action === "manual-txn-edit") {
     const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
@@ -4745,7 +4736,7 @@ function onFinanceGridChange(e) {
     if (kind === "txn-filter-q") financeTxnFilter.q = el.value.trim();
     else if (kind === "txn-filter-kind") financeTxnFilter.kind = el.value;
     else if (kind === "txn-filter-sort") financeTxnFilter.sort = el.value;
-    else financeTxnFilter.account = el.value;
+    else if (kind === "txn-filter-account") financeTxnFilter.account = el.value;
     renderFinancePage();
     return;
   }
