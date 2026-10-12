@@ -5,24 +5,38 @@ const g = require("../netlify/functions/_gcal.js");
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("signed OAuth state", () => {
+describe("signed OAuth state (shared _oauth-state, Calendar purpose)", () => {
   const secret = "test-secret";
-  it("round-trips a payload", () => {
-    const s = g.signState({ u: "user-1" }, { secret, now: 1_000_000 });
-    expect(g.verifyState(s, { secret, now: 1_000_000 + 60_000 })).toMatchObject({ u: "user-1" });
+  it("round-trips the user and the native flag", () => {
+    const s = g.signState("user-1", { secret, now: 1_000_000, native: true });
+    expect(g.verifyState(s, { secret, now: 1_000_000 + 60_000 })).toEqual({ userId: "user-1", native: true });
+    expect(g.verifyState(g.signState("user-1", { secret, now: 1_000_000 }), { secret, now: 1_000_000 })).toEqual({ userId: "user-1", native: false });
   });
-  it("rejects a forged / tampered / plain-base64 state", () => {
-    const s = g.signState({ u: "user-1" }, { secret, now: 1_000_000 });
-    const [body, sig] = s.split(".");
-    const forgedBody = Buffer.from(JSON.stringify({ u: "victim", t: 1_000_000, n: "x" })).toString("base64url");
-    expect(g.verifyState(`${forgedBody}.${sig}`, { secret, now: 1_000_000 })).toBeNull();
-    expect(g.verifyState(`${body}.${sig.slice(1)}x`, { secret, now: 1_000_000 })).toBeNull();
-    expect(g.verifyState(forgedBody, { secret, now: 1_000_000 })).toBeNull(); // the Gmail flow's shape
+  it("rejects tampered, foreign-key, expired and Gmail-purpose states", () => {
+    const s = g.signState("user-1", { secret, now: 1_000_000 });
+    const [, sig] = s.split(".");
+    const forged = Buffer.from(JSON.stringify({ userId: "victim", nonce: "x", exp: 9e15 })).toString("base64url");
+    expect(g.verifyState(`${forged}.${sig}`, { secret, now: 1_000_000 })).toBeNull();
     expect(g.verifyState(s, { secret: "other", now: 1_000_000 })).toBeNull();
-  });
-  it("expires after 15 minutes", () => {
-    const s = g.signState({ u: "user-1" }, { secret, now: 1_000_000 });
     expect(g.verifyState(s, { secret, now: 1_000_000 + 16 * 60_000 })).toBeNull();
+    const { createOAuthState } = require("../netlify/functions/_oauth-state.js");
+    expect(g.verifyState(createOAuthState("user-1", secret, { now: 1_000_000 }), { secret, now: 1_000_000 })).toBeNull();
+  });
+});
+
+describe("gcal-callback returns to the right place", () => {
+  it("sends an iPhone-app flow back to the app scheme, a web flow back to the site", async () => {
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
+    process.env.URL = "https://example.netlify.app";
+    const { handler } = require("../netlify/functions/gcal-callback.js");
+    const native = g.signState("u1", { native: true, secret: "svc" });
+    const web = g.signState("u1", { secret: "svc" });
+    const r1 = await handler({ queryStringParameters: { error: "access_denied", state: native } });
+    expect(r1.headers.Location).toBe("com.mrlukedevans.live://gcal?status=error&reason=denied");
+    const r2 = await handler({ queryStringParameters: { error: "access_denied", state: web } });
+    expect(r2.headers.Location).toBe("https://example.netlify.app/?gcal=error&reason=denied#plan");
+    const r3 = await handler({ queryStringParameters: { code: "c", state: "forged.sig" } });
+    expect(r3.headers.Location).toBe("https://example.netlify.app/?gcal=error&reason=state#plan");
   });
 });
 

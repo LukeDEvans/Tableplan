@@ -1,18 +1,25 @@
 // Google redirects here after consent. Verifies the SIGNED state, exchanges the
 // code, stores the refresh token in gcal_accounts, then sends the browser back
-// to the app (?gcal=connected | ?gcal=error&reason=…).
+// to the site (?gcal=connected | ?gcal=error&reason=…) — or, for a flow started
+// in the iPhone app, to the app's URL scheme, where the sign-in sheet is waiting.
+// Only a status goes back; tokens never leave the server.
 const { verifyState, redirectUri, appBase, saveAccount, GCAL_SCOPE } = require("./_gcal");
 
-function back(params) {
-  return { statusCode: 302, headers: { Location: `${appBase()}/?${new URLSearchParams(params)}#plan` }, body: "" };
-}
+const NATIVE_RETURN = "com.mrlukedevans.live://gcal";
 
 exports.handler = async (event) => {
   const { code, error, state } = event.queryStringParameters || {};
-  if (error || !code || !state) return back({ gcal: "error", reason: error === "access_denied" ? "denied" : "missing" });
+  // Verify first so even an error result goes back to the right place.
+  const payload = state ? verifyState(state) : null;
+  const back = ({ gcal, reason }) => {
+    const location = payload?.native
+      ? `${NATIVE_RETURN}?${gcal === "connected" ? "status=connected" : `status=error&reason=${encodeURIComponent(reason || "unknown")}`}`
+      : `${appBase()}/?${new URLSearchParams(reason ? { gcal, reason } : { gcal })}#plan`;
+    return { statusCode: 302, headers: { Location: location }, body: "" };
+  };
 
-  const payload = verifyState(state);
-  if (!payload?.u) return back({ gcal: "error", reason: "state" });
+  if (error || !code || !state) return back({ gcal: "error", reason: error === "access_denied" ? "denied" : "missing" });
+  if (!payload?.userId) return back({ gcal: "error", reason: "state" });
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -36,7 +43,7 @@ exports.handler = async (event) => {
   } catch { /* email is cosmetic */ }
 
   try {
-    await saveAccount(payload.u, {
+    await saveAccount(payload.userId, {
       google_email: email,
       refresh_token: tokens.refresh_token,
       access_token: tokens.access_token,

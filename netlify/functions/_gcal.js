@@ -5,11 +5,8 @@
 // small, isolated, service-role-only tables, never the hot tableplan_states rows.
 // Every per-call DB touch here is a primary-key / indexed read of a few hundred bytes.
 
-const crypto = require("crypto");
-
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const GCAL_SCOPE = "https://www.googleapis.com/auth/calendar";
-const STATE_MAX_AGE_MS = 15 * 60 * 1000;
 
 function serviceKey() {
   return (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -54,32 +51,19 @@ async function userIdFromRequest(event) {
 }
 
 // ── Signed OAuth state ───────────────────────────────────────────────────────
-// HMAC-signed so a forged callback can't attach someone's Google tokens to
-// another app user (the Gmail flow's plain base64 state can be forged — ISSUES.md).
+// Same signed, expiring state as the Gmail flow (_oauth-state.js, SRV-1), under
+// its own purpose so a Gmail state can never complete a Calendar connection.
+const { createOAuthState, verifyOAuthState } = require("./_oauth-state");
+const STATE_PURPOSE = "gcal-oauth-state-v1";
 
-function stateSecret() {
-  return (process.env.OAUTH_STATE_SECRET || process.env.GOOGLE_CLIENT_SECRET || "").trim();
+function signState(userId, { native = false, secret = serviceKey(), now } = {}) {
+  return createOAuthState(userId, secret, { purpose: STATE_PURPOSE, native, ...(now ? { now } : {}) });
 }
 
-function signState(payload, { now = Date.now(), secret = stateSecret() } = {}) {
-  if (!secret) throw new Error("no state secret");
-  const body = Buffer.from(JSON.stringify({ ...payload, t: now, n: crypto.randomBytes(8).toString("hex") })).toString("base64url");
-  const sig = crypto.createHmac("sha256", secret).update(body).digest("base64url");
-  return `${body}.${sig}`;
-}
-
-function verifyState(state, { now = Date.now(), secret = stateSecret(), maxAgeMs = STATE_MAX_AGE_MS } = {}) {
-  if (!secret || typeof state !== "string") return null;
-  const [body, sig] = state.split(".");
-  if (!body || !sig) return null;
-  const expected = crypto.createHmac("sha256", secret).update(body).digest("base64url");
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  let payload;
-  try { payload = JSON.parse(Buffer.from(body, "base64url").toString()); } catch { return null; }
-  if (!payload || typeof payload.t !== "number" || now - payload.t > maxAgeMs || payload.t - now > 60_000) return null;
-  return payload;
+// Returns { userId, native } or null.
+function verifyState(state, { secret = serviceKey(), now } = {}) {
+  if (!secret) return null;
+  return verifyOAuthState(state, secret, { purpose: STATE_PURPOSE, ...(now ? { now } : {}) });
 }
 
 function redirectUri() {
