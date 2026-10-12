@@ -452,7 +452,10 @@ export function createNewsModule(deps) {
     h += sideTab("sent", null, `${ICONS.sent}<span>Sent to Media</span>`, c.sent);
     h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Sections</div>`;
     for (const s of NEWS_SECTIONS) {
-      if (!present.has(s.key) && !(view.kind === "section" && view.key === s.key)) continue;
+      // Sports always shows when the Scores view is mounted: scores don't depend on
+      // sports articles arriving, so hiding it until one does made Scores unreachable.
+      const alwaysShown = s.key === "sports" && !!scores;
+      if (!alwaysShown && !present.has(s.key) && !(view.kind === "section" && view.key === s.key)) continue;
       h += sideTab("section", s.key, `<i class="news-side-dot article-sidebar-icon" style="${hue(s.key)}" aria-hidden="true"></i><span>${esc(s.label)}</span>`, c.section[s.key]);
     }
     if (!present.size) h += `<div class="news-side-empty">Sections appear as articles arrive.</div>`;
