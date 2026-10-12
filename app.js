@@ -25148,9 +25148,9 @@ function scrollPlanGridToNow() {
 
 // ── Zoom navigation ──────────────────────────────────────────────────────────
 // Scroll wheel (laptop) and two-finger pinch (mobile) move between calendar zoom
-// levels: month → week → day. Scroll UP / pinch fingers TOGETHER zooms in toward
-// day (centred on the day under the cursor / pinch); scroll DOWN / pinch APART
-// zooms out toward month. (Agenda isn't part of the ladder.)
+// levels: month → week → day. Scroll UP / pinch fingers APART zooms in toward
+// day (centred on the day under the cursor / pinch); scroll DOWN / pinch fingers
+// TOGETHER zooms out toward month. (Agenda isn't part of the ladder.)
 const PLAN_ZOOM_LADDER = ["month", "week", "day"];
 const PLAN_WHEEL_THRESHOLD = 60;  // accumulated |deltaY| before one step fires
 const PLAN_ZOOM_COOLDOWN = 380;   // ms between steps, so one flick ≈ one step
@@ -25209,8 +25209,8 @@ function bindPlanZoomNavigation(root) {
     if (zoomPlanView(dir, e.clientX, e.clientY)) planZoomCooldownUntil = now + PLAN_ZOOM_COOLDOWN;
   }, { passive: false });
 
-  // Two-finger pinch. Distance shrinking (fingers together) → zoom in; growing
-  // (fingers apart) → zoom out. One-finger gestures fall through to swipe/scroll.
+  // Two-finger pinch, like a photo: fingers apart → zoom in (month→week→day);
+  // fingers together → zoom out. One-finger gestures fall through to swipe/scroll.
   let pinchDist = 0, pinching = false;
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
@@ -25228,8 +25228,8 @@ function bindPlanZoomNavigation(root) {
     if (!pinchDist) { pinchDist = d; return; }
     const ratio = d / pinchDist;
     let dir = 0;
-    if (ratio <= 0.75) dir = 1;         // pinched together → zoom in
-    else if (ratio >= 1.34) dir = -1;   // spread apart → zoom out
+    if (ratio >= 1.34) dir = 1;         // spread apart → zoom in
+    else if (ratio <= 0.75) dir = -1;   // pinched together → zoom out
     if (!dir) return;
     const m = mid(e.touches);
     if (zoomPlanView(dir, m.x, m.y)) { planZoomCooldownUntil = now + PLAN_ZOOM_COOLDOWN; pinchDist = d; }
