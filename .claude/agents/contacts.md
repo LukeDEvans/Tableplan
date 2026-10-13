@@ -1,6 +1,6 @@
 ---
 name: contacts
-description: Use for changes scoped to the Contacts domain — people/contact records, contact list & detail UI, groups, vCard import/export, photos. Lives in contacts.js (app.js keeps only the showContactsApp nav entry + module wiring).
+description: Use for changes scoped to Contacts — people/contact records, list & detail UI, groups, vCard import/export, photos. Contacts opens inside the Mail page (contacts mode). Lives in contacts.js; app.js keeps only the showContactsApp nav entry + module wiring.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -15,6 +15,13 @@ Contacts domain only.
   patterns.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
+
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `contacts.js`
+- state: `contacts`, `contactGroups`
 
 ## Your scope (edit these)
 - **Module:** `contacts.js` — this is where nearly all Contacts logic lives:

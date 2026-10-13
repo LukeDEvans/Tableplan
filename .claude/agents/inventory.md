@@ -1,6 +1,6 @@
 ---
 name: inventory
-description: Use for changes scoped to the Inventory domain — home stock (rooms/containers/items), the weekly inventory checklist, item/box dialogs, and the default-rooms registry. Lives in inventory-ui.js; app.js keeps only the showInventoryApp nav entry.
+description: Use for changes scoped to Inventory — home stock (rooms/containers/items), item/box dialogs, room visibility and the default-rooms registry. Inventory is a tab of the Shop page (Checklist · Shop · Inventory), not its own page; the weekly checklist now lives in Shop's Checklist tab (groceries agent). Lives in inventory-ui.js; app.js keeps only the showInventoryApp nav entry.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -13,6 +13,13 @@ most of your work is there. Make focused changes to the Inventory domain only.
   **ARCHITECTURE.md** (§4 boundaries, §19 shared infra). Use existing conventions.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you actually verified.
+
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `inventory-ui.js`
+- state: `inventory*`
 
 ## Your scope (edit these)
 - **`inventory-ui.js`** — the whole domain: `createInventoryModule(deps)` returns
