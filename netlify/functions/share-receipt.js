@@ -7,7 +7,8 @@
 //           share token for this user. The iPhone app stores it in the keychain
 //           group it shares with its Share Extension.
 //   share — Authorization: Bearer <share token>. Body { images: [data URLs] }
-//           (or { text }). Extracts the order(s), stores them in the household's
+//           or { text, kind: "summary" } (the text of an order-summary PDF,
+//           extracted on the phone). Extracts the order(s), stores them in the household's
 //           finreceipts_ inbox (source "share"); Finance imports them into the
 //           one receipts list like email / extension receipts.
 //
@@ -67,19 +68,20 @@ exports.handler = async (event) => {
     const parts = rawImages.map((img) => String(img || "").match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/));
     if (parts.some((m) => !m)) return cors(json(400, { error: "Images must be base64 data URLs." }));
     if (parts.reduce((n, m) => n + m[2].length, 0) > MAX_IMAGE_BASE64) return cors(json(413, { error: "Screenshots too large." }));
-    const text = String(body.text || "").slice(0, 20000);
+    const text = String(body.text || "").slice(0, 40000);
     if (!parts.length && text.length < 40) {
-      return cors(json(400, { error: "Share a screenshot of the order." }));
+      return cors(json(400, { error: "Share a screenshot of the order or its order summary." }));
     }
+    const source = body.kind === "summary" && text.length >= 40 && !parts.length ? "summary" : "screenshots";
 
     const categories = await loadFinanceCategories(serviceKey, groupId);
     if (!categories.length) return cors(json(409, { error: "Set up budget categories in Finance first." }));
 
     const today = new Date().toISOString().slice(0, 10);
     const content = [
-      { type: "text", text: `${orderScreenshotPrompt(categories)}\n\nToday is ${today}.` },
+      { type: "text", text: `${orderScreenshotPrompt(categories, { source })}\n\nToday is ${today}.` },
       ...parts.map((m) => ({ type: "image", source: { type: "base64", media_type: m[1], data: m[2] } })),
-      ...(text.length >= 40 ? [{ type: "text", text: `SHARED TEXT:\n${text}` }] : [])
+      ...(text.length >= 40 ? [{ type: "text", text: `${source === "summary" ? "ORDER SUMMARY TEXT" : "SHARED TEXT"}:\n${text}` }] : [])
     ];
     // Netlify cuts a synchronous function off at 10 s (Free plan) with an HTML
     // 502. Stop the read just short of that so the share sheet gets a clear
@@ -100,12 +102,12 @@ exports.handler = async (event) => {
         })
       });
     } catch (e) {
-      if (e?.name === "AbortError") return cors(json(504, { error: "That took too long. Try fewer screenshots." }));
+      if (e?.name === "AbortError") return cors(json(504, { error: source === "summary" ? "That took too long. Try again, or share screenshots instead." : "That took too long. Try fewer screenshots." }));
       throw e;
     } finally {
       clearTimeout(timer);
     }
-    if (!ai.ok) return cors(json(502, { error: `Couldn't read the screenshot (${ai.status}).` }));
+    if (!ai.ok) return cors(json(502, { error: `Couldn't read the ${source === "summary" ? "order summary" : "screenshot"} (${ai.status}).` }));
 
     const receipts = receiptsFromModel(await modelText(ai), categories);
     for (const receipt of receipts) {

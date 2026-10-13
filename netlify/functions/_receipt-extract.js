@@ -72,10 +72,20 @@ async function saveImportedReceipt(serviceKey, groupId, receipt) {
 // Order screenshots (Amazon order details / "Your Orders", other stores'
 // purchase history) can show several orders at once, so this prompt asks for
 // a list — one entry per order.
-function orderScreenshotPrompt(categories) {
+// source "screenshots" (default) or "summary": the text of an order summary /
+// invoice PDF shared from the store's app (Amazon's detailed "Order Summary").
+function orderScreenshotPrompt(categories, { source = "screenshots" } = {}) {
+  const intro = source === "summary"
+    ? [
+      "You extract purchases from the text of an online order summary or invoice (for example Amazon's detailed \"Order Summary\", saved as a PDF) for a household budget app.",
+      "The text was extracted from the PDF, so columns may be run together; read prices by their position next to each item. One order becomes one entry; several shipments of the same order stay in that one entry, with the order's grand total. A document with several separate order numbers becomes one entry per order."
+    ]
+    : [
+      "You extract purchases from screenshots of online order pages (Amazon order details, \"Your Orders\" lists, other stores' order history) for a household budget app.",
+      "The screenshots belong together (one long page captured in several shots). Each distinct order becomes one entry."
+    ];
   return [
-    "You extract purchases from screenshots of online order pages (Amazon order details, \"Your Orders\" lists, other stores' order history) for a household budget app.",
-    "The screenshots belong together (one long page captured in several shots). Each distinct order becomes one entry.",
+    ...intro,
     'Reply with ONLY valid JSON, no markdown: {"receipts": [...]} — an empty list if no order is readable.',
     'Entry shape: {"merchant": "...", "date": "YYYY-MM-DD", "total": 12.34, "items": [{"name": "...", "price": 1.23, "category": "<key>" or null}]}',
     "merchant = the store (\"Amazon\" for Amazon, even for third-party sellers).",

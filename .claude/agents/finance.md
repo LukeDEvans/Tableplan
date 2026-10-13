@@ -23,7 +23,7 @@ all your work is there. Make focused changes to the Finance domain only.
 - state: `finance*`
 
 ## Your scope (edit these)
-- **Share-sheet receipts** (RECEIPTS.md → "Share sheet"): `share-receipt.js` (share token + order-screenshot read into the `finreceipts_` inbox), `_receipt-extract.js` (receipt prompts/parsing shared with `simplefin.js`), the app-side token sync `receipt-share-token.js`, and the iOS Share Extension (`ios/App/ShareExtension/`, `ShareTokenPlugin.swift`, `ios/App/Shared/ShareTokenStore.swift`). The share token is auth: changes to it need Luke's OK.
+- **Share-sheet receipts** (RECEIPTS.md → "Share sheet"): `share-receipt.js` (share token + order-screenshot read into the `finreceipts_` inbox), `_receipt-extract.js` (receipt prompts/parsing shared with `simplefin.js`), the app-side token sync `receipt-share-token.js`, and the iOS Share Extension (`ios/App/ShareExtension/`, `ShareTokenPlugin.swift`, `ios/App/Shared/ShareTokenStore.swift`). The share token is auth: changes to it need Luke's OK. The extension also takes one **order-summary PDF** (Luke, 2026-10-13: Amazon's detailed Order Summary is the best source): its text is extracted on the phone (PDFKit) and read with the `summary` prompt; a scanned PDF falls back to page images.
 - **`finance-ui.js`** — the whole finance UI as `createFinanceModule(deps)`: the
   services/data layer (`refreshFinanceLive`, `checkFinanceLinkStatus`,
   `loadFinanceHistory`, bank link), transactions + the review deck, **txn-receipts**
