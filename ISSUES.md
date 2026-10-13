@@ -16,6 +16,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
+- [ ] **[P1] Daily briefing push goes to every user's devices** (notifications · netlify/functions/daily-briefing.js loadSubscriptions · 2026-10-13)
+      `loadSubscriptions()` reads every row of `live_push_subscriptions` with no `user_id` filter, and the prompt is hard-coded to Luke. → If Luke's wife ever subscribes a browser, she gets Luke's briefing. No exposure today as far as known (only Luke subscribes). Planned fix: Luke decided (2026-10-13) to retire the briefing entirely in notifications Phase 2 (IOS_NOTIFICATIONS_DESIGN.md §3), keeping the function's TTS cleanup + finance snapshot as `daily-maintenance`. Verdict: CONFIRMED (by reading).
 - [ ] **[P2] Share-sheet receipts: not run on a phone or through the App Store export yet** (finance · ios/App/ShareExtension · netlify/functions/share-receipt.js · 2026-10-13)
       Verified: server tests (mint, share, forged/expired/other-purpose tokens, multi-order, dedupe), client tests (token sync, `share` source, re-share upgrade), the full suite, the browser boot check, and the PR's iOS check — the ad-hoc archive compiles both targets and both signatures carry the keychain group. Not verified: the App Store export registering the new bundle ID and keeping the entitlement, the keychain hand-off on a device, and how well Haiku reads real Amazon screenshots. → First TestFlight build after the function is deployed; CAPACITOR.md → "Share sheet" has the steps.
 - [ ] **[P3] Share-sheet receipts don't keep the screenshot** (finance · netlify/functions/share-receipt.js · 2026-10-13)
@@ -128,6 +130,8 @@ _(none)_
 
 
 ## P2
+- [ ] **[P2] Reminders: not yet tried on an iPhone** (calendar · calendar/reminders-native.js · 2026-10-13)
+      Phase 1 of IOS_NOTIFICATIONS_DESIGN.md is verified by unit tests (mock plugin), `scripts/qa-reminders.mjs` (web paths) and a Postgres check of the migration, but no TestFlight build has run it: iOS permission prompt, delivery with the app killed, survival across a reboot, and tap → event are UNVERIFIED. Also needs `npm run ios:sync` on the Mac (Podfile.lock). Verdict: UNVERIFIED until a build is on the phone.
 - [ ] **[P2] Google-backed plan events still use title-based ids** (calendar · app.js getPlanEventsForRange Google projection · 2026-10-12)
       Phase 1 kept `gcal:<cal>:<date>:<title>` so hides/renames made on the iCal feed keep working after a calendar switches to the Google API. Consequence: renaming an event in Google orphans a local hide/rename for it (same as before the switch). Phase 2 (editing) needs ids keyed by the Google event id anyway — re-key existing `planExternalExclusions`/`planExternalOverrides` then (match date + title once). Verdict: KNOWN GAP, deliberate.
 

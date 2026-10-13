@@ -234,7 +234,10 @@ async function listGoogleCalendars(token) {
   return out;
 }
 
-const LIVE_FIELDS = "items(id,status,summary,start,end,recurringEventId,updated),nextPageToken";
+// reminders + defaultReminders feed the app's own event reminders
+// (IOS_NOTIFICATIONS_DESIGN.md §4): Google's per-user reminder settings for the
+// token owner. Google → Netlify → device only; nothing reaches Supabase.
+const LIVE_FIELDS = "items(id,status,summary,start,end,recurringEventId,updated,reminders),defaultReminders,nextPageToken";
 const MASTER_FIELDS = "items(id,status,summary,description,location,start,end,recurrence,recurringEventId,originalStartTime,created,updated,reminders,extendedProperties,attendees(self),hangoutLink,conferenceData(conferenceId),attachments(title)),nextPageToken";
 
 // mode "live": expanded occurrences in [timeMin, timeMax), optionally only those
@@ -245,17 +248,19 @@ async function listGoogleEvents(token, googleCalendarId, { mode = "live", timeMi
   let pageToken;
   const maxPages = mode === "masters" ? 10 : 8;
   let truncated = false;
+  let defaultReminders = null;
   for (let i = 0; i < maxPages; i++) {
     const params = mode === "masters"
       ? { singleEvents: "false", timeMin, maxResults: 2500, pageToken, fields: MASTER_FIELDS }
       : { singleEvents: "true", timeMin, timeMax, updatedMin, showDeleted: updatedMin ? "true" : undefined, maxResults: 2500, pageToken, fields: LIVE_FIELDS };
     const data = await gApi(token, `calendars/${encodeURIComponent(googleCalendarId)}/events`, params);
     items.push(...(data.items || []));
+    if (Array.isArray(data.defaultReminders)) defaultReminders = data.defaultReminders;
     pageToken = data.nextPageToken;
     if (!pageToken) break;
     if (i === maxPages - 1) truncated = true;
   }
-  return { items, truncated };
+  return { items, truncated, defaultReminders: mode === "live" ? (defaultReminders || []) : undefined };
 }
 
 module.exports = {

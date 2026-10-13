@@ -36,12 +36,15 @@ import { normalizeExternalEvent } from './calendar/normalize.js';
 import { buildSharedSnapshot, mealPlanDisplayEvents, mealPlanEventsFromScope, mergeMealPlanSharedEvents, normalizeMealPlanCalendarFlags, normalizeMealPlanSharedEvents } from './calendar/meal-plan-share.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
-import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport } from './calendar/google.js';
+import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googleReminderMinutes, googleEventStart } from './calendar/google.js';
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
+import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
+import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
+import { createNativeReminderScheduler } from './calendar/reminders-native.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
@@ -852,6 +855,14 @@ function gcalSaveCache(cache) {
   gcalCacheMem = cache;
   saveGcalCache(cache);
 }
+// Event reminders (IOS_NOTIFICATIONS_DESIGN.md §4–5) — declared up here for the same
+// reason as the Google state above: persist() reaches scheduleReminderSync().
+let reminderPrefsStoreMem = null;  // calendar/reminder-prefs.js store (lazy)
+let reminderNativeMem;             // calendar/reminders-native.js scheduler (lazy; null on web)
+let reminderSyncTimer = 0;
+let reminderTickAt = 0;            // last in-app reminder tick (ms)
+const firedEventReminders = new Set();
+let reminderLegacyFoldTried = "";  // user id the one-time legacy fold ran for
 const GCAL_STATUS_TTL_MS = 60 * 60 * 1000;      // calendar-list / discovery check: hourly
 const GCAL_EVENTS_INTERVAL_MS = 5 * 60 * 1000;  // event refresh: every 5 min, only while visible
 
@@ -2587,11 +2598,9 @@ function bindEvents() {
   });
   elements.planEventCalPicker?.addEventListener("change", updatePlanEventCalDot);
   // Ask for notification permission the first time a reminder is chosen, so the
-  // reminder can surface even when the tab isn't focused.
+  // reminder can surface when the app is closed (iPhone) or the tab isn't focused.
   document.getElementById("planEventReminder")?.addEventListener("change", (e) => {
-    if (e.target.value && window.Notification && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
+    if (e.target.value) ensureReminderPermission();
   });
   elements.planEventLocation?.addEventListener("input", () => {
     planEventSelectedPlace = null; // typing invalidates the previous pick
@@ -3227,6 +3236,7 @@ async function initializeApp() {
   handleHashNavigation();
   refreshAllCalendarSources({ kinds: ["linked"] }); // boot: refresh the linked pipeline (ics refreshes on Plan-open)
   initGoogleCalendarSync(); // Google Calendar API: OAuth return, calendar discovery, 5-min refresh while visible
+  initEventReminders(); // per-user reminders: prefs refresh, legacy fold, iPhone local notifications
   initAiChatPanel();
   initRecipeTimer();
   refreshBottomDock(); // state has loaded: idle "play" pick, weather availability + ticker
@@ -3594,6 +3604,19 @@ function setupDiagnostics() {
     // the QA script mocks /.netlify/functions/gcal-* and flips this on to run the
     // real client paths (discovery, linking, event load, panel) against the mocks.
     gcalForce: (on = true) => { if (!localDevMode) return null; gcalQaForce = Boolean(on); gcalStatus = null; gcalStatusAt = 0; gcalEventsAt = 0; return true; },
+    // Event reminders (scripts/qa-reminders.mjs): the real editor / detail / prefs /
+    // scheduling paths, driven with explicit times instead of waiting for the clock.
+    reminderOpenEditor: (date, eventId = null) => { if (!localDevMode) return null; openPlanEventDialog(date, eventId); return true; },
+    reminderSetTime: (prefix, hhmm) => { if (!localDevMode) return null; setPlanTimeField(prefix, hhmm); return true; },
+    reminderOpenDetail: (id, date) => { if (!localDevMode) return null; openPlanEventDetail(id, date); return true; },
+    reminderPrefs: () => (localDevMode ? reminderPrefs().prefs() : null),
+    reminderEffective: () => (localDevMode ? reminderEffectivePrefs() : null),
+    reminderInstances: (now) => (localDevMode ? currentReminderInstances({ now }).map(({ key, kind, title, body, minutes, fireAt, eventId, date }) => ({ key, kind, title, body, minutes, fireAt, eventId, date })) : null),
+    reminderTick: (fromMs, nowMs) => { if (!localDevMode) return null; reminderTickAt = fromMs; checkEventReminders(nowMs); return true; },
+    reminderFold: () => { if (!localDevMode) return null; reminderLegacyFoldTried = ""; foldLegacyReminders(); return reminderPrefs().prefs(); },
+    reminderSeedLegacy: (ev) => { if (!localDevMode) return null; state.planEvents = [...(state.planEvents || []), ev]; persist(); return true; },
+    planEvent: (id) => (localDevMode ? (state.planEvents || []).find((e) => e.id === id) || null : null),
+    planEventIds: () => (localDevMode ? (state.planEvents || []).map((e) => e.id) : null),
     gcalSyncNow: async () => {
       if (!localDevMode) return null;
       await syncGoogleCalendarLinks({ force: true });
@@ -4728,6 +4751,7 @@ function persist() {
   saveTripBackup();
   saveStateToSharedStorage();
   scheduleLocalBackup();
+  scheduleReminderSync(); // iPhone: keep scheduled event reminders in line (debounced, local only)
 }
 
 function trackUsage(key) {
@@ -18301,6 +18325,7 @@ function openCalendarsDialog(event) {
   elements.calendarColorInput.value = normalizeCalendarColor("", state.calendars.length);
   renderCalendarList();
   renderGcalPanels();
+  renderReminderDevicePanel();
   elements.calendarStatus.textContent = calendarEvents.length
     ? `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced.`
     : "No calendars synced yet.";
@@ -20337,6 +20362,7 @@ async function loadGoogleApiEvents(apiCals, { force = false } = {}) {
     gcalSaveCache(next);
     gcalEventsAt = Date.now();
     gcalMaybeUpdateMealPlanShare();
+    scheduleReminderSync(); // Google events carry their own reminders
     if (Object.values(unavailable).includes("reconnect") && gcalStatus?.connected) {
       gcalStatus = { connected: false, reconnect: true };
       renderGcalPanels();
@@ -25686,46 +25712,248 @@ function bindPlanZoomNavigation(root) {
   root.addEventListener("touchcancel", endPinch, { passive: true });
 }
 
-// In-app event reminders: fires a toast (+ browser notification when granted)
-// as each timed event's reminder time passes, while the app is open. Runs on
-// the shared per-minute tick; fired reminders are tracked per session.
-const firedEventReminders = new Set();
-function checkEventReminders() {
-  const now = new Date();
-  const todayKey = dateKeyFromDate(now);
-  // Scan planEvents directly (no iCal / meal / workout / to-do merge — those
-  // aren't reminder-bearing), so the per-minute tick stays cheap.
-  for (const e of (state.planEvents || [])) {
-    if (e.allDay || !e.startTime || !Number.isFinite(e.reminder)) continue;
-    const occurs = planEventOccursOn(e, todayKey) || (e.endDate && e.date <= todayKey && todayKey <= e.endDate);
-    if (!occurs) continue;
-    const [h, m] = e.startTime.split(":").map(Number);
-    if (!Number.isFinite(h)) continue;
-    const start = new Date(now); start.setHours(h, m || 0, 0, 0);
-    const diff = now.getTime() - (start.getTime() - e.reminder * 60000);
-    if (diff < 0 || diff >= 60000) continue; // reminder falls in this minute
-    const fireKey = `${e.id}:${todayKey}`;
-    if (firedEventReminders.has(fireKey)) continue;
-    firedEventReminders.add(fireKey);
-    fireEventReminder(e);
+// ── Event reminders (IOS_NOTIFICATIONS_DESIGN.md §4–5) ───────────────────────
+// Reminders are per person: each user's choices live in their own
+// live_notification_prefs row (calendar/reminder-prefs.js), never on the shared
+// event. Google events also remind with Google's own settings for the user whose
+// token read them. On the iPhone the reminders are handed to iOS as local
+// notifications (they fire with the app closed); on the web they fire from the
+// per-minute tick while the app is open (toast + browser notification).
+
+function reminderPrefs() {
+  if (!reminderPrefsStoreMem) {
+    reminderPrefsStoreMem = createReminderPrefsStore({
+      config: () => {
+        if (localDevMode) return { userId: "local-dev" }; // device-only
+        if (!canUseCloudStorage() || !authSession?.access_token || !authSession?.user?.id) return null;
+        const anonKey = supabaseConfig().anonKey;
+        return { baseUrl: supabaseBaseUrl(), headers: { apikey: anonKey, Authorization: `Bearer ${authSession.access_token}` }, userId: authSession.user.id };
+      }
+    });
+    reminderPrefsStoreMem.onChange(() => scheduleReminderSync(0));
+  }
+  return reminderPrefsStoreMem;
+}
+
+// The old shared planEvents[].reminder belonged to whoever set it, and only the
+// household admin (Luke) has used reminders so far — so it counts as the admin's
+// until folded into their prefs (once; a turned-off reminder is a tombstone).
+function reminderOwnsLegacy() {
+  return localDevMode || !userGroup || userGroup.role === "admin";
+}
+
+// Both scopes: reminders fire whichever view (household / personal) is showing.
+function reminderPlanEvents() {
+  return [...(state.planEvents || []), ...(shadowSections.plan?.planEvents || [])];
+}
+
+function reminderEffectivePrefs() {
+  const prefs = reminderPrefs().prefs();
+  if (!reminderOwnsLegacy()) return prefs;
+  return { ...legacyReminderFolds(reminderPlanEvents(), prefs), ...prefs };
+}
+
+// One-time: write the legacy shared reminders into the admin's own prefs, so they
+// follow them to every device and stop depending on the shared field.
+function foldLegacyReminders() {
+  const uid = localDevMode ? "local-dev" : authSession?.user?.id;
+  if (!uid || reminderLegacyFoldTried === uid || !reminderOwnsLegacy()) return;
+  // Only against the server's copy: a device that has never read it (e.g. new and
+  // offline) could otherwise re-add reminders the user turned off elsewhere.
+  if (!reminderPrefs().hasServerCopy()) return;
+  reminderLegacyFoldTried = uid;
+  const folds = legacyReminderFolds(reminderPlanEvents(), reminderPrefs().prefs());
+  if (Object.keys(folds).length) reminderPrefs().setMany(folds);
+}
+
+// Google-backed calendars this device holds events for, with whose reminders they are.
+function reminderGoogleStores() {
+  const cache = gcalCacheSnapshot();
+  return normalizeLinkedCalendars(state.calendars)
+    .filter((cal) => cal.enabled && cal.googleCalendarId && cache[cal.id]?.events)
+    .map((cal) => ({ appCalendarId: cal.id, calendarName: cal.name || "", own: cache[cal.id].own === true, defaultReminders: cache[cal.id].defaultReminders || [], events: cache[cal.id].events }));
+}
+
+function currentReminderInstances(options = {}) {
+  return reminderInstances({ planEvents: reminderPlanEvents(), googleStores: reminderGoogleStores(), prefs: reminderEffectivePrefs(), formatTime: planFormatTime, ...options });
+}
+
+// iPhone app with the local-notifications plugin → scheduler; otherwise null.
+function reminderNative() {
+  if (reminderNativeMem === undefined) {
+    const plugin = nativeLocalNotifications();
+    reminderNativeMem = plugin ? createNativeReminderScheduler({ plugin, onTap: openReminderTarget, log: (m, e) => console.warn(m, e) }) : null;
+    // Taps are listened for from initEventReminders(), after boot: iOS holds a
+    // cold-start tap until a listener exists, and opening the event needs state.
+  }
+  return reminderNativeMem;
+}
+
+function scheduleReminderSync(delay = 2000) {
+  if (!reminderNative()) return;
+  window.clearTimeout(reminderSyncTimer);
+  reminderSyncTimer = window.setTimeout(syncNativeReminders, delay);
+}
+
+function syncNativeReminders() {
+  const native = reminderNative();
+  if (!native) return Promise.resolve(null);
+  try {
+    return native.sync(currentReminderInstances());
+  } catch (error) {
+    console.warn("Reminder scheduling failed.", error);
+    return Promise.resolve(null);
   }
 }
 
-function fireEventReminder(e) {
-  const body = `${e.title} — ${planFormatTime(e.startTime)}`;
-  showMailToast(body);
+// Ask once, in context (the user just chose a reminder, or tapped "Turn on").
+async function ensureReminderPermission() {
+  const native = reminderNative();
+  if (native) {
+    const result = await native.requestPermission();
+    if (result === "granted") scheduleReminderSync(0);
+    else showMailToast("Reminders are off for Live — turn on notifications in iPhone Settings → Live.");
+    renderReminderDevicePanel();
+    return result;
+  }
+  if (window.Notification && Notification.permission === "default") {
+    try { return await Notification.requestPermission(); } catch { return "denied"; }
+  }
+  return window.Notification?.permission || "denied";
+}
+
+// A tapped reminder opens its event (or at least its day) in the calendar.
+function openReminderTarget({ kind, eventId, date } = {}) {
+  if (!date) return;
+  planViewDate = new Date(`${date}T00:00:00`);
+  showPlanApp();
+  const range = getPlanEventsForRange(date, date);
+  const ev = kind === "google"
+    ? range.find((e) => e.externalId === eventId)
+    : range.find((e) => e.id === eventId);
+  if (ev) openPlanEventDetail(ev.id, date);
+}
+
+// Per-minute tick (web, or an iPhone that hasn't allowed notifications / an older
+// app build without the plugin): fire what came due since the last tick.
+function checkEventReminders(now = Date.now()) {
+  const native = reminderNative();
+  if (native) {
+    // iOS delivers them itself; just keep the schedule current (cheap when unchanged:
+    // the horizon rolls forward and remote edits land here within a minute).
+    syncNativeReminders();
+    if (native.permission() === "granted") { reminderTickAt = now; return; }
+    // Permission not known yet (first sync still running): wait a tick rather than
+    // risk a toast on top of iOS's own banner. The next tick covers this window.
+    if (native.permission() === null) return;
+  }
+  const from = reminderTickAt && now - reminderTickAt < 10 * 60000 ? reminderTickAt : now - 60000;
+  reminderTickAt = now;
+  for (const r of currentReminderInstances({ now: from - 1, horizonDays: 2 })) {
+    if (r.fireAt > now) break;
+    const fireKey = `${r.key}|${r.fireAt}`;
+    if (firedEventReminders.has(fireKey)) continue;
+    firedEventReminders.add(fireKey);
+    fireEventReminder(r);
+  }
+}
+
+function fireEventReminder(r) {
+  showMailToast(`${r.title} — ${r.body}`);
   // Prefer the service worker (shows even when the tab is backgrounded); fall
   // back to a page Notification. Both need granted permission.
   try {
     if (window.Notification && Notification.permission === "granted") {
-      const opts = { body, icon: "/favicon.svg", tag: `plan-evt-${e.id}`, data: { url: "/#schedule" } };
+      const opts = { body: r.body, icon: "/favicon.svg", tag: `plan-rem-${r.key}`, data: { url: "/#schedule" } };
       if (navigator.serviceWorker?.ready) {
-        navigator.serviceWorker.ready.then((reg) => reg.showNotification("Upcoming event", opts)).catch(() => new Notification("Upcoming event", opts));
+        navigator.serviceWorker.ready.then((reg) => reg.showNotification(r.title, opts)).catch(() => new Notification(r.title, opts));
       } else {
-        new Notification("Upcoming event", opts);
+        new Notification(r.title, opts);
       }
     }
   } catch { /* notifications unavailable */ }
+}
+
+// The signed-in user's reminder for a local event, as the editor's select value.
+function eventReminderSelectValue(eventId) {
+  return eventId ? reminderSelectValue(reminderEffectivePrefs()[eventId]) : "";
+}
+
+// Save the editor's choice for this user only. "No reminder" is stored as a
+// tombstone only when there was something to turn off (keeps the row small).
+function setEventReminderChoice(eventId, selectValue) {
+  if (!eventId) return;
+  const next = reminderValueFromSelect(selectValue);
+  const current = reminderEffectivePrefs()[eventId];
+  if (next.off && (!current || current.off)) return;
+  reminderPrefs().set(eventId, next);
+  foldLegacyReminders(); // make sure a legacy value can't outlive the user's choice
+}
+
+// Google events: the key is per series, so "remind me" covers every occurrence.
+function googleReminderContext(ev) {
+  if (ev?.provider !== "google" || !ev.externalId || !ev.calendarId) return null;
+  const store = gcalCacheSnapshot()[ev.calendarId];
+  const raw = store?.events?.[ev.externalId];
+  if (!raw) return null;
+  const start = googleEventStart(raw);
+  const googleMinutes = store.own ? googleReminderMinutes(raw, store.defaultReminders || [], { allDay: Boolean(start?.allDay) }) : [];
+  const key = googleReminderKey(ev.calendarId, raw.recurringEventId || raw.id);
+  return { key, googleMinutes, own: store.own === true, pref: normalizeReminderValue(reminderPrefs().get(key)) };
+}
+
+function googleReminderSelectHtml(ctx) {
+  const googleText = ctx.googleMinutes.length
+    ? `Google's reminder (${ctx.googleMinutes.map(reminderDescription).join(", ").toLowerCase()})`
+    : (ctx.own ? "Google's reminder (none)" : "No reminder");
+  const current = ctx.pref ? (ctx.pref.off ? "" : String(ctx.pref.min)) : "google";
+  const opts = [["google", googleText], ["", "No reminder"], ["0", "At time of event"], ["5", "5 minutes before"], ["10", "10 minutes before"], ["30", "30 minutes before"], ["60", "1 hour before"], ["1440", "1 day before"]];
+  if (!ctx.own) opts.splice(1, 1); // "No reminder" already is the default for someone else's calendar
+  if (ctx.pref && !ctx.pref.off && !opts.some(([v]) => v === current)) opts.push([current, reminderDescription(ctx.pref.min)]);
+  return `<select class="plan-cal-select" data-plan-detail-reminder="${escapeHtml(ctx.key)}" aria-label="Remind me">${opts.map(([v, t]) => `<option value="${escapeHtml(v)}"${v === current ? " selected" : ""}>${escapeHtml(t)}</option>`).join("")}</select>`;
+}
+
+function setGoogleReminderChoice(key, value) {
+  reminderPrefs().set(key, value === "google" ? null : reminderValueFromSelect(value));
+  if (value !== "google" && value !== "") ensureReminderPermission();
+}
+
+// Settings → Calendars: whether this iPhone will show reminders (native only).
+function renderReminderDevicePanel() {
+  const el = document.getElementById("reminderDevicePanel");
+  if (!el) return;
+  const native = reminderNative();
+  if (!native) { el.hidden = true; return; }
+  el.hidden = false;
+  const render = (permission) => {
+    const on = permission === "granted";
+    el.innerHTML = `<div class="reminder-device-row">
+      <span><strong>Reminders on this iPhone</strong><small>${on
+        ? "On — your event reminders and Google's arrive as notifications, even when the app is closed."
+        : (permission === "denied" ? "Off — turn on notifications for Live in iPhone Settings." : "Off — allow notifications so your event reminders reach you when the app is closed.")}</small></span>
+      ${on ? "" : `<button class="secondary-btn" type="button" data-reminder-enable>Turn on</button>`}
+    </div>`;
+    el.querySelector("[data-reminder-enable]")?.addEventListener("click", () => ensureReminderPermission());
+  };
+  render(native.permission());
+  native.checkPermission().then(render);
+}
+
+function initEventReminders() {
+  reminderTickAt = Date.now();
+  reminderNative()?.listenForTaps();
+  const prefs = reminderPrefs();
+  prefs.refresh().then(() => { foldLegacyReminders(); scheduleReminderSync(0); });
+  prefs.flush(); // anything chosen offline last time
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    reminderNative()?.invalidate(); // notification permission may have changed in iPhone Settings
+    prefs.refresh().then(() => foldLegacyReminders()); // throttled to every 10 min; only pulls a changed row
+    prefs.flush();
+    scheduleReminderSync(500);
+  });
+  window.addEventListener("online", () => prefs.flush());
+  scheduleReminderSync(0);
 }
 
 // Drag-to-reschedule: move a personal event to the dropped-on day.
@@ -26548,7 +26776,12 @@ function renderPlanEventDetail(ev) {
   let locText = "";
   if (typeof ev.location === "string") locText = ev.location;
   else if (ev.location && typeof ev.location === "object") locText = ev.location.name || ev.location.address || ev.location.label || "";
-  const remText = Number.isFinite(ev.reminder) ? (ev.reminder === 0 ? "At time of event" : `${ev.reminder} minutes before`) : "";
+  // Reminders are per person (IOS_NOTIFICATIONS_DESIGN.md §4): a personal event shows
+  // the viewer's own reminder; a Google event gets a "Remind me" picker.
+  const ownPref = (!ev.source || ev.source === "personal" || ev.source === "personal-overlay") && !ev.allDay
+    ? normalizeReminderValue(reminderEffectivePrefs()[ev.occurrenceOf || ev.id]) : null;
+  const remText = ownPref && !ownPref.off ? reminderDescription(ownPref.min) : "";
+  const googleRem = googleReminderContext(ev);
   const chores = Array.isArray(ev.chores) ? ev.chores.filter(Boolean) : [];
 
   let sourceText;
@@ -26572,6 +26805,7 @@ function renderPlanEventDetail(ev) {
     planEventDetailRow("📍", "Location", locText),
     planEventDetailRow("📝", "Notes", ev.notes || ""),
     remText ? planEventDetailRow("🔔", "Reminder", remText) : "",
+    googleRem ? `<div class="plan-detail-row plan-detail-reminder"><span class="plan-detail-row-icon" aria-hidden="true">🔔</span><div class="plan-detail-row-text"><span class="plan-detail-row-label">Remind me</span>${googleReminderSelectHtml(googleRem)}</div></div>` : "",
     chores.length ? planEventDetailRow("✔", "Linked tasks", chores.join("\n")) : "",
     planEventDetailRow("🔗", "Source", sourceText),
     ev._overridden ? planEventDetailRow("✎", "Renamed", `Originally “${ev._sourceTitle || ""}”`) : ""
@@ -26647,6 +26881,11 @@ function initPlanEventDetail() {
       closePlanEventDetail();
       setPlanExternalTitle(ctx.id, ""); // §15 reset to source title
     }
+  });
+  // Google event "Remind me" picker (per series, this user only).
+  panel.addEventListener("change", (e) => {
+    const sel = e.target.closest?.("[data-plan-detail-reminder]");
+    if (sel) setGoogleReminderChoice(sel.dataset.planDetailReminder, sel.value);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !panel.hidden) { e.stopPropagation(); closePlanEventDetail(); }
@@ -26732,9 +26971,21 @@ function openPlanEventDialog(date, eventId, prefill) {
   // Restore the monthly/yearly pattern (populatePlanRepeatMode ran via sync).
   const repeatModeSel = document.getElementById("planEventRepeatMode");
   if (repeatModeSel && !repeatModeSel.hidden) repeatModeSel.value = rec?.monthMode === "nthWeekday" ? "nthWeekday" : "dayOfMonth";
-  // Reminder (timed events only — hidden for all-day).
+  // Reminder (timed events only — hidden for all-day). Per person: shows the
+  // signed-in user's own choice, never someone else's (IOS_NOTIFICATIONS_DESIGN.md §4).
   const remSel = document.getElementById("planEventReminder");
-  if (remSel) remSel.value = existing?.reminder != null ? String(existing.reminder) : "";
+  if (remSel) {
+    const v = eventReminderSelectValue(existing?.id);
+    // A value set elsewhere (a folded legacy reminder, another device) may not be
+    // one of the preset choices — add it so it shows rather than reading "No reminder".
+    remSel.querySelectorAll("option[data-custom-reminder]").forEach((o) => o.remove());
+    if (v && ![...remSel.options].some((o) => o.value === v)) {
+      const opt = new Option(reminderDescription(Number(v)), v);
+      opt.dataset.customReminder = "1";
+      remSel.add(opt);
+    }
+    remSel.value = v;
+  }
   const remRow = document.getElementById("planEventReminderRow");
   if (remRow) remRow.hidden = elements.planEventAllDay.checked;
   // Optional end date (multi-day events).
@@ -26996,13 +27247,14 @@ async function savePlanEvent() {
   const addToDo = Boolean(document.getElementById("planEventAddTodo")?.checked);
   const showInMealPlan = Boolean(document.getElementById("planEventAddMealPlan")?.checked);
   const chores = (planEventChoresDraft || []).map((c) => c.trim()).filter(Boolean);
-  const remRaw = document.getElementById("planEventReminder")?.value;
-  const reminder = (!allDay && remRaw !== "" && remRaw != null) ? Number(remRaw) : null;
+  // The reminder is this user's own (saved to their prefs below, after the event
+  // has its final id) — it is no longer written onto the shared event.
+  const remRaw = allDay ? "" : (document.getElementById("planEventReminder")?.value ?? "");
   const endDateRaw = document.getElementById("planEventEndDate")?.value || "";
   const endDate = (endDateRaw && endDateRaw > date) ? endDateRaw : null;
   const eventData = {
     title, date, allDay,
-    reminder, endDate,
+    endDate,
     startTime: allDay ? null : readPlanTimeField("planEventStart"),
     endTime: allDay ? null : readPlanTimeField("planEventEnd"),
     notes: elements.planEventNotes.value.trim(),
@@ -27073,6 +27325,7 @@ async function savePlanEvent() {
     state.planEvents = [...(state.planEvents || []), savedEvent];
   }
   syncEventChoresToDoList(savedEvent);
+  setEventReminderChoice(savedEvent.id, remRaw); // this user's reminder, keyed to the saved (possibly new) id
   // A "this"/"following" split also changed the ORIGINAL series (exception /
   // shorter until) — resync its linked chores so dropped dates lose their tasks.
   if (isRecurringEdit && scope !== "all") {

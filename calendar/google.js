@@ -48,6 +48,29 @@ function readGoogleTime(t) {
   return null;
 }
 
+// Start of a compact Google event in the viewer's local time:
+// { allDay, date: "YYYY-MM-DD", time: "HH:MM" | null } or null.
+export function googleEventStart(raw) {
+  return readGoogleTime(raw?.start);
+}
+
+// The popup reminders (minutes before start) Google would show for this event,
+// for the user whose token read it: the event's own overrides, or — when it uses
+// the calendar default — that calendar's default reminders. Google applies a
+// calendar's defaultReminders to timed events only. Email reminders are ignored
+// (the app only shows notifications). Returns sorted, de-duplicated minutes;
+// [] when the event has no reminders or predates reminder fetching.
+export function googleReminderMinutes(raw, defaultReminders = [], { allDay = false } = {}) {
+  const r = raw?.reminders;
+  if (!r || typeof r !== "object") return [];
+  const list = r.useDefault ? (allDay ? [] : defaultReminders) : r.overrides;
+  const mins = (Array.isArray(list) ? list : [])
+    .filter((o) => o && (o.method === "popup" || o.method == null))
+    .map((o) => Number(o.minutes))
+    .filter((m) => Number.isInteger(m) && m >= 0 && m <= 40320);
+  return [...new Set(mins)].sort((a, b) => a - b);
+}
+
 // ── 2. Linking ────────────────────────────────────────────────────────────────
 
 // The calendar id embedded in a Google secret/public iCal URL:

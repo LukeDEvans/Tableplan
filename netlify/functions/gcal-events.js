@@ -1,6 +1,8 @@
 // Events for Google-backed app calendars (GOOGLE_CALENDAR_SYNC_DESIGN.md §4).
 //   POST { mode: "live" | "masters", calendars: [{ appCalendarId, updatedMin? }], timeMin?, timeMax? }
-//   → { results: { [appCalendarId]: { status: "ok", full, items, fetchedAt, truncated } | { status: "unavailable", reason } } }
+//   → { results: { [appCalendarId]: { status: "ok", full, items, fetchedAt, truncated, own?, defaultReminders? } | { status: "unavailable", reason } } }
+//     own / defaultReminders (live mode only): whether the caller's own token read it,
+//     and that user's default reminders for the calendar (IOS_NOTIFICATIONS_DESIGN.md §4).
 //
 // Reads go through the caller's own link, or — for a household calendar another
 // member connected — through that member's link when both are in the same live
@@ -45,6 +47,10 @@ exports.handler = async (event) => {
       return tokens.get(owner);
     };
 
+    // Reminders in Google are per user. `own` says whether this calendar was read
+    // with the CALLER's token, i.e. whether its reminders/defaultReminders are the
+    // caller's own (a household calendar read through another member's link
+    // carries that member's reminders, which must never fire for the caller).
     const results = {};
     await Promise.all(requested.map(async (req) => {
       const link = chosen[req.appCalendarId];
@@ -52,16 +58,17 @@ exports.handler = async (event) => {
       const tok = await tokenFor(link.userId);
       if (!tok?.token) { results[req.appCalendarId] = { status: "unavailable", reason: tok?.invalidGrant ? "reconnect" : "token" }; return; }
       const updatedMin = mode === "live" ? isoOrNull(req.updatedMin) : null;
+      const remindersMeta = (defaultReminders) => (mode === "live" ? { own: link.userId === userId, defaultReminders: defaultReminders || [] } : {});
       const fetchedAt = new Date().toISOString();
       try {
-        const { items, truncated } = await g.listGoogleEvents(tok.token, link.googleCalendarId, { mode, timeMin, timeMax, updatedMin });
-        results[req.appCalendarId] = { status: "ok", full: !updatedMin, items, fetchedAt, truncated };
+        const { items, truncated, defaultReminders } = await g.listGoogleEvents(tok.token, link.googleCalendarId, { mode, timeMin, timeMax, updatedMin });
+        results[req.appCalendarId] = { status: "ok", full: !updatedMin, items, fetchedAt, truncated, ...remindersMeta(defaultReminders) };
       } catch (e) {
         if (updatedMin && (e.status === 410 || e.status === 400)) {
           // Delta window rejected → fall back to a full refetch of the window.
           try {
-            const { items, truncated } = await g.listGoogleEvents(tok.token, link.googleCalendarId, { mode, timeMin, timeMax });
-            results[req.appCalendarId] = { status: "ok", full: true, items, fetchedAt, truncated };
+            const { items, truncated, defaultReminders } = await g.listGoogleEvents(tok.token, link.googleCalendarId, { mode, timeMin, timeMax });
+            results[req.appCalendarId] = { status: "ok", full: true, items, fetchedAt, truncated, ...remindersMeta(defaultReminders) };
             return;
           } catch (e2) { e = e2; }
         }

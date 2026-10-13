@@ -96,11 +96,43 @@ describe("gcal-events handler", () => {
     const res = await handler({ httpMethod: "POST", headers: { authorization: "Bearer t" }, body: JSON.stringify({ calendars: [{ appCalendarId: "cal-a" }, { appCalendarId: "cal-zzz" }] }) });
     const body = JSON.parse(res.body);
     expect(res.statusCode).toBe(200);
-    expect(body.results["cal-a"]).toMatchObject({ status: "ok", full: true, items: [{ id: "e1" }] });
+    expect(body.results["cal-a"]).toMatchObject({ status: "ok", full: true, items: [{ id: "e1" }], own: true, defaultReminders: [] });
     expect(body.results["cal-zzz"]).toEqual({ status: "unavailable", reason: "not-linked" });
     const gcall = calls.find((c) => c.includes("/events?"));
     expect(gcall).toContain("singleEvents=true");
+    // Reminders are requested for the app's own event reminders (IOS_NOTIFICATIONS_DESIGN.md §4).
+    expect(decodeURIComponent(gcall)).toContain("reminders");
+    expect(decodeURIComponent(gcall)).toContain("defaultReminders");
     expect(calls.some((c) => c.includes("oauth2.googleapis.com/token"))).toBe(false); // token still valid → no refresh
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("gcal-events reminder ownership", () => {
+  it("marks a calendar read through another household member's link as not own, and passes default reminders through", async () => {
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
+    process.env.GOOGLE_CLIENT_ID = "cid";
+    process.env.GOOGLE_CLIENT_SECRET = "csecret";
+    const future = new Date(Date.now() + 3600_000).toISOString();
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const u = String(url);
+      const ok = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+      if (u.includes("/auth/v1/user")) return ok({ id: "luke" });
+      if (u.includes("/rest/v1/gcal_links")) return ok([
+        { user_id: "luke", app_calendar_id: "cal-mine", google_calendar_id: "luke@gmail.com", enabled: true },
+        { user_id: "wife", app_calendar_id: "cal-hers", google_calendar_id: "wife@gmail.com", enabled: true }
+      ]);
+      if (u.includes("/rest/v1/live_group_members")) return ok([{ group_id: "home" }]);
+      if (u.includes("/rest/v1/gcal_accounts")) return ok([{ user_id: "x", refresh_token: "r", access_token: "at", expires_at: future }]);
+      if (u.includes("calendars/luke%40gmail.com/events")) return ok({ items: [], defaultReminders: [{ method: "popup", minutes: 30 }] });
+      if (u.includes("calendars/wife%40gmail.com/events")) return ok({ items: [], defaultReminders: [{ method: "popup", minutes: 10 }] });
+      throw new Error(`unexpected fetch ${u}`);
+    }));
+    const { handler } = require("../netlify/functions/gcal-events.js");
+    const res = await handler({ httpMethod: "POST", headers: { authorization: "Bearer t" }, body: JSON.stringify({ calendars: [{ appCalendarId: "cal-mine" }, { appCalendarId: "cal-hers" }] }) });
+    const body = JSON.parse(res.body);
+    expect(body.results["cal-mine"]).toMatchObject({ status: "ok", own: true, defaultReminders: [{ method: "popup", minutes: 30 }] });
+    expect(body.results["cal-hers"]).toMatchObject({ status: "ok", own: false });
     vi.unstubAllGlobals();
   });
 });
