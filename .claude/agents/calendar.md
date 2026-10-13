@@ -1,6 +1,6 @@
 ---
 name: calendar
-description: Use for changes scoped to the Calendar/Plan domain — events, recurrence, month/week/day/agenda views and gestures, ICS feeds, linked Google calendars (Google Calendar API sync, GOOGLE_CALENDAR_SYNC_DESIGN.md), the meal-plan event share, and Tasks (the "do" area). Owns calendar/, the gcal-* Netlify functions, and the "plan"/"do" areas of app.js.
+description: Use for changes scoped to the Calendar/Plan domain — events, recurrence, month/week/day/agenda views and gestures, ICS feeds, linked Google calendars (Google Calendar API sync, GOOGLE_CALENDAR_SYNC_DESIGN.md), per-person event reminders and their iPhone local notifications (IOS_NOTIFICATIONS_DESIGN.md), the meal-plan event share, and Tasks (the "do" area). Owns calendar/, the gcal-* Netlify functions, and the "plan"/"do" areas of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -14,6 +14,8 @@ changes to the Calendar (and its sibling Tasks) domain only.
 - **CALENDAR_AUTHORITY_FLIP.md** — what is authoritative today and why the flip is held.
 - **GOOGLE_CALENDAR_SYNC_DESIGN.md** — before touching anything Google-backed. It
   records Luke's decisions (§8) and the phase status; update it when a phase moves.
+- **IOS_NOTIFICATIONS_DESIGN.md** — before touching event reminders (§4 data model,
+  §2 egress budget, §10 Luke's decisions); update its status when a phase moves.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
@@ -31,20 +33,29 @@ changes to the Calendar (and its sibling Tasks) domain only.
   **`google.js`** (Google → app mapping, link proposals, RRULE → app recurrence,
   the severance converter + dry-run report), **`google-client.js`** (device event
   cache `live-gcal-cache-v1`, delta requests, link reconciliation, panel rows), and
-  **`meal-plan-share.js`** (household meal-plan event share — see below).
+  **`meal-plan-share.js`** (household meal-plan event share — see below), and the
+  event reminders: **`reminders.js`** (pure: per-user prefs values, instances,
+  notification ids, schedule diff, legacy fold), **`reminder-prefs.js`** (the user's
+  `live_notification_prefs` row: cached, throttled, merge-RPC writes, offline outbox)
+  and **`reminders-native.js`** (iPhone local notifications through
+  `nativeLocalNotifications()` in `native-bridge.js`).
 - **Server:** `netlify/functions/_gcal.js` + `gcal-auth`, `gcal-callback`,
   `gcal-calendars`, `gcal-events` (and the future `gcal-write`). OAuth state is
   signed through `_oauth-state.js` with its own purpose (`gcal-oauth-state-v1`);
   `invalid_grant` clears the account and the app shows "Reconnect". Tables `gcal_accounts` / `gcal_links`
   (`migrations/2026-10-12-gcal-accounts.sql`): service role only, never read from
-  the browser.
+  the browser. `live_notification_prefs` + `merge_my_reminders()`
+  (`migrations/2026-10-13-notification-prefs.sql`): each user reads/merges only their
+  own row.
 - **`app.js`:** the Plan sections — `activeAppArea === "plan"`
   (`renderPlanMonthView` / `WeekView` / `DayView` / `AgendaView`, `savePlanEvent`,
   drag/resize, pinch-zoom and swipe), the Google block (search
   `Google Calendar API sync`; its `let gcal*` state is declared near the top on
   purpose, before `persist()` can reach it — keep it there), and the Tasks area,
   `activeAppArea === "do"` (its bell sits on the Calendar page). Search:
-  `renderPlan`, `planEvents`, `planCalendars`, `savePlanEvent`, `loadCalendarEvents`, `gcal`.
+  `renderPlan`, `planEvents`, `planCalendars`, `savePlanEvent`, `loadCalendarEvents`, `gcal`,
+  and the reminders block (search `Event reminders (IOS_NOTIFICATIONS_DESIGN`; its
+  `let reminder*` state sits with the gcal state near the top for the same reason).
 - **Data:** `state.planEvents`; `state.calendars` (linked feeds, incl. Google API
   calendars with `provider: "google-api"` + `googleCalendarId`) and
   `state.planCalendars` (ICS/local) — **authoritative**; `state.calendarSources` —
@@ -77,6 +88,22 @@ changes to the Calendar (and its sibling Tasks) domain only.
   events are copied (title, dates, times, repeat rule, color only — no notes,
   location, chores) into `mealPlanSharedEvents` for an 18-week window, merged per
   member. Re-save the share only when its snapshot actually changed (egress).
+- **Reminders are per person** (Luke, 2026-10-13): a reminder goes only to each user
+  who asked for it. Choices live in that user's `live_notification_prefs.reminders`
+  (`{min}` | `{off:true}` tombstone | key absent), **never on the shared event** — new
+  code must not write `planEvents[].reminder` (older clients still do; their value is
+  the household admin's until folded once into the admin's prefs, and only after the
+  device has read the server copy). Google events remind with Google's own settings
+  for the user whose token read them (`own` from `gcal-events`); a household member's
+  Google reminders never fire for someone else; an app-side choice per Google series
+  (`gcal:<appCalId>:<seriesId>`) overrides, and removing the key (null) goes back to
+  Google's. **The app, not Google, sends reminders** (Luke, 2026-10-13) — so Luke can
+  see what the app sends while moving off Google.
+- **Reminder egress:** the prefs row is read at most every 10 min and only when newer
+  (`updated_at=gt.`); writes go through `merge_my_reminders()`; nothing touches
+  `tableplan_states`. On the iPhone, scheduling is local (iOS holds ≤64; we keep the
+  nearest 50 over 14 days) and re-synced on persist, focus and the minute tick, cheap
+  when unchanged.
 - **Recurrence is mature and fully tested** (`calendar/recurrence.js`, incl. Feb-29 /
   month-end SKIP semantics). Extend with tests; don't rewrite.
 - **Do not change local-event timezone semantics** (naive local `YYYY-MM-DD` + local
@@ -84,9 +111,9 @@ changes to the Calendar (and its sibling Tasks) domain only.
 
 ## Verify
 `npx vitest run` (calendar tests incl. `test/calendar-google.test.js`,
-`test/calendar-gcal-server.test.js`), `npm run check:boot`, and for Google work
-`node scripts/qa-gcal.mjs` against `npm run dev:local` (start from a fresh local
-state: `rm -f data/tableplan-state.json`). Gestures need a look on the phone.
+`test/calendar-gcal-server.test.js`, `test/calendar-reminders.test.js`), `npm run check:boot`, and for Google work
+`node scripts/qa-gcal.mjs` (reminders: `node scripts/qa-reminders.mjs`) against `npm run dev:local` (start from a fresh local
+state: `rm -f data/tableplan-state.json`). Gestures and iPhone notifications need a look on the phone.
 
 ## Out of scope — flag, don't touch silently
 `app.js` is ONE shared file; other agents may be editing it now. Keep edits in the

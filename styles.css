@@ -8335,6 +8335,27 @@ textarea {
 .gcal-row-name small { color: var(--muted); font-size: 0.7rem; }
 .gcal-row-state { color: var(--muted); font-size: 0.75rem; font-weight: 700; }
 .gcal-row .secondary-btn { flex: 0 0 auto; padding: 4px 12px; }
+/* Settings → Calendars: "Reminders on this iPhone" (iPhone app only). */
+.reminder-device-panel {
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  min-width: 0;
+}
+.reminder-device-panel[hidden] { display: none; }
+.reminder-device-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.reminder-device-row > span { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.reminder-device-row small { color: var(--muted); font-size: 0.75rem; }
+.reminder-device-row .secondary-btn { flex: 0 0 auto; padding: 5px 12px; }
+/* Event detail: the Google event "Remind me" picker fits the row. */
+.plan-detail-reminder .plan-cal-select { display: block; max-width: 100%; margin-top: 2px; }
 .gcal-panel-actions {
   display: flex;
   flex-wrap: wrap;

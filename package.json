@@ -13,12 +13,14 @@
     "assistant:check": "node scripts/check-assistant.mjs",
     "qa:p0p1": "node scripts/qa-p0p1.mjs",
     "qa:p0p1-extended": "node scripts/qa-p0p1-extended.mjs",
+    "qa:reminders": "node scripts/qa-reminders.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },
   "dependencies": {
     "@capacitor/core": "^6.2.2",
     "@capacitor/ios": "^6.2.2",
+    "@capacitor/local-notifications": "^6.1.3",
     "fast-xml-parser": "^5.10.1",
     "fflate": "^0.8.3",
     "opensheetmusicdisplay": "^2.1.2",

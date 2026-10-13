@@ -50,6 +50,14 @@ export function saveGcalCache(cache, storage = globalThis.localStorage) {
 
 // Build the gcal-events request for a set of API calendars: a delta (updatedMin)
 // when this device has a recent full pull, otherwise a full window.
+// A store pulled before reminders were fetched (no `rv`) gets one full re-pull so
+// its events carry reminders; if the server is older and still omits them, the
+// attempt is remembered (rvTriedAt) and retried at most daily, never every refresh.
+const REMINDERS_VERSION = 1;
+function hasReminders(c, now) {
+  return c?.rv === REMINDERS_VERSION || (c?.rvTriedAt && now - Date.parse(c.rvTriedAt) < FULL_REFRESH_MS);
+}
+
 export function buildEventsRequest(apiCalendars, cache, { now = Date.now(), force = false } = {}) {
   return {
     mode: "live",
@@ -57,7 +65,7 @@ export function buildEventsRequest(apiCalendars, cache, { now = Date.now(), forc
     timeMax: new Date(now + 400 * 86400000).toISOString(),
     calendars: apiCalendars.map((cal) => {
       const c = cache[cal.id];
-      const fresh = !force && c?.fullAt && now - Date.parse(c.fullAt) < FULL_REFRESH_MS && c.fetchedAt;
+      const fresh = !force && c?.fullAt && now - Date.parse(c.fullAt) < FULL_REFRESH_MS && c.fetchedAt && hasReminders(c, now);
       return fresh
         ? { appCalendarId: cal.id, updatedMin: new Date(Date.parse(c.fetchedAt) - DELTA_OVERLAP_MS).toISOString() }
         : { appCalendarId: cal.id };
@@ -74,8 +82,19 @@ export function applyEventsResponse(cache, response, apiCalendarIds) {
   for (const id of apiCalendarIds) {
     const r = response?.results?.[id];
     if (r?.status === "ok") {
-      const store = applyGoogleEvents(cache[id], r.items, { full: r.full });
-      next[id] = { ...store, fetchedAt: r.fetchedAt, fullAt: r.full ? r.fetchedAt : (cache[id]?.fullAt || r.fetchedAt), truncated: Boolean(r.truncated) };
+      const prev = cache[id] || {};
+      const store = applyGoogleEvents(prev, r.items, { full: r.full });
+      // Reminder metadata (IOS_NOTIFICATIONS_DESIGN.md §4): whose reminders these
+      // are and the calendar's default reminders. A delta from an older server
+      // omits them, so keep the previous values rather than wiping them.
+      const sent = Array.isArray(r.defaultReminders);
+      const meta = {
+        own: typeof r.own === "boolean" ? r.own : (prev.own ?? false),
+        defaultReminders: sent ? r.defaultReminders : (prev.defaultReminders || []),
+        ...(r.full ? { rvTriedAt: r.fetchedAt } : (prev.rvTriedAt ? { rvTriedAt: prev.rvTriedAt } : {})),
+        ...((r.full && sent) || (!r.full && prev.rv === REMINDERS_VERSION) ? { rv: REMINDERS_VERSION } : {})
+      };
+      next[id] = { ...store, ...meta, fetchedAt: r.fetchedAt, fullAt: r.full ? r.fetchedAt : (prev.fullAt || r.fetchedAt), truncated: Boolean(r.truncated) };
     } else {
       if (cache[id]) next[id] = cache[id];
       unavailable[id] = r?.reason || "no-response";
