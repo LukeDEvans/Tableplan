@@ -1,10 +1,16 @@
 import UIKit
 import ImageIO
+import PDFKit
 import UniformTypeIdentifiers
 
-// "Live" in the iOS share sheet for screenshots: share up to 4 screenshots of an
-// online order (Amazon order details, "Your Orders", …) and they go straight to
-// Finance. RECEIPTS.md → "Share sheet".
+// "Live" in the iOS share sheet for order screenshots and order-summary PDFs:
+// share up to 4 screenshots of an online order (Amazon order details, "Your
+// Orders", …) or one PDF (Amazon's detailed "Order Summary" → Save), and they go
+// straight to Finance. RECEIPTS.md → "Share sheet".
+//
+// A PDF is read on the phone with PDFKit: its text is sent (small and exact —
+// the model reads every line of the invoice). A PDF with no text layer (a scan)
+// is sent as page images instead, like screenshots.
 //
 // The extension uploads directly to the share-receipt Netlify function with the
 // share token the app left in the shared keychain (ShareTokenStore), so nothing
@@ -13,6 +19,9 @@ import UniformTypeIdentifiers
 final class ShareViewController: UIViewController {
     private static let endpoint = URL(string: "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/share-receipt")!
     private static let maxImages = 4
+    private static let maxPdfPages = 6
+    private static let maxPdfText = 40000
+    private static let minPdfText = 80
 
     private let card = UIView()
     private let spinner = UIActivityIndicatorView(style: .large)
@@ -35,13 +44,24 @@ final class ShareViewController: UIViewController {
             finish(title: "Open Live first", detail: "Open the Live app and sign in once, then share again.", autoClose: false)
             return
         }
-        let images = await loadImages()
-        guard !images.isEmpty else {
-            finish(title: "No screenshot", detail: "Share a screenshot of the order.", autoClose: false)
+        var images: [Data] = []
+        var text: String? = nil
+        if let pdf = await loadPDF() {
+            let pdfText = Self.text(of: pdf)
+            if pdfText.count >= Self.minPdfText {
+                text = pdfText
+            } else {
+                images = Self.pageImages(of: pdf)
+            }
+        } else {
+            images = await loadImages()
+        }
+        guard !images.isEmpty || text != nil else {
+            finish(title: "Nothing to read", detail: "Share a screenshot of the order or its order-summary PDF.", autoClose: false)
             return
         }
         do {
-            let result = try await upload(images: images, token: token)
+            let result = try await upload(images: images, text: text, token: token)
             finish(title: result.title, detail: result.detail, autoClose: result.ok)
         } catch {
             finish(title: "Couldn't send", detail: "Check your connection and share again.", autoClose: false)
@@ -50,15 +70,19 @@ final class ShareViewController: UIViewController {
 
     private struct Outcome { let ok: Bool; let title: String; let detail: String }
 
-    private func upload(images: [Data], token: String) async throws -> Outcome {
+    private func upload(images: [Data], text: String?, token: String) async throws -> Outcome {
         var request = URLRequest(url: Self.endpoint, timeoutInterval: 90)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "action": "share",
             "images": images.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
         ]
+        if let text {
+            payload["text"] = text
+            payload["kind"] = "summary"
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -71,7 +95,7 @@ final class ShareViewController: UIViewController {
         }
         let receipts = json["receipts"] as? [[String: Any]] ?? []
         if receipts.isEmpty {
-            return Outcome(ok: false, title: "No order found", detail: "Try a screenshot that shows the order total.")
+            return Outcome(ok: false, title: "No order found", detail: "Try a screenshot or summary that shows the order total.")
         }
         if receipts.count == 1, let r = receipts.first {
             return Outcome(ok: true, title: "Added to Finance", detail: Self.describe(r))
@@ -104,6 +128,49 @@ final class ShareViewController: UIViewController {
     }()
 
     // MARK: - Attachments
+
+    // The first shared PDF, if any. Apps hand it over as a file URL or as data.
+    private func loadPDF() async -> PDFDocument? {
+        let provider = (extensionContext?.inputItems as? [NSExtensionItem] ?? [])
+            .flatMap { $0.attachments ?? [] }
+            .first { $0.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) }
+        guard let provider else { return nil }
+        return await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.pdf.identifier, options: nil) { item, _ in
+                var doc: PDFDocument?
+                if let url = item as? URL {
+                    doc = PDFDocument(url: url)
+                } else if let data = item as? Data {
+                    doc = PDFDocument(data: data)
+                }
+                continuation.resume(returning: doc)
+            }
+        }
+    }
+
+    // Text of the first pages, page by page, capped.
+    static func text(of doc: PDFDocument) -> String {
+        var pages: [String] = []
+        for i in 0..<min(doc.pageCount, maxPdfPages) {
+            if let s = doc.page(at: i)?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+                pages.append(s)
+            }
+        }
+        return String(pages.joined(separator: "\n\n--- page ---\n\n").prefix(maxPdfText))
+    }
+
+    // A PDF without a text layer (scanned): its first pages as JPEGs.
+    static func pageImages(of doc: PDFDocument) -> [Data] {
+        (0..<min(doc.pageCount, maxImages)).compactMap { i in
+            guard let page = doc.page(at: i) else { return nil }
+            let bounds = page.bounds(for: .mediaBox)
+            let longest = max(bounds.width, bounds.height)
+            guard longest > 0 else { return nil }
+            let scale = ShareImage.maxPixelSize / longest
+            let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+            return page.thumbnail(of: size, for: .mediaBox).jpegData(compressionQuality: 0.75)
+        }
+    }
 
     private func loadImages() async -> [Data] {
         let providers = (extensionContext?.inputItems as? [NSExtensionItem] ?? [])

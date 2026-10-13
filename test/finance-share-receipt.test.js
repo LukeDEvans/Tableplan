@@ -82,6 +82,36 @@ describe("share-receipt share", () => {
     expect(inbox).toHaveLength(2);
   });
 
+  it("reads an order-summary PDF's text with the summary prompt (no images)", async () => {
+    const summary = [
+      "Final Details for Order #112-1234567-1234567",
+      "Order Placed: October 10, 2026",
+      "Order Total: $31.47",
+      "Items Ordered Price",
+      "1 of: Bounty Paper Towels, 12 Double Rolls $24.99",
+      "Item(s) Subtotal: $24.99  Shipping & Handling: $0.00  Estimated tax to be collected: $6.48",
+      "Grand Total: $31.47"
+    ].join("\n");
+    const res = await call(shareToken(), { text: summary, kind: "summary" });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).receipts).toEqual([{ merchant: "Amazon", date: "2026-10-10", total: 31.47, items: 2 }]);
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0].source).toBe("share");
+    const ai = JSON.parse(calls.find((c) => c.url.includes("anthropic")).opts.body);
+    const parts = ai.messages[0].content;
+    expect(parts.some((c) => c.type === "image")).toBe(false);
+    expect(parts[0].text).toMatch(/order summary or invoice/);
+    expect(parts[1].text.startsWith("ORDER SUMMARY TEXT:\n")).toBe(true);
+    expect(parts[1].text).toContain("Grand Total: $31.47");
+  });
+
+  it("keeps the screenshot prompt when kind isn't summary, and caps very long text", async () => {
+    await call(shareToken(), { text: "x".repeat(60000) });
+    const ai = JSON.parse(calls.find((c) => c.url.includes("anthropic")).opts.body);
+    expect(ai.messages[0].content[0].text).toMatch(/screenshots of online order pages/);
+    expect(ai.messages[0].content[1].text.length).toBeLessThanOrEqual("SHARED TEXT:\n".length + 40000);
+  });
+
   it("sharing the same order again replaces it instead of duplicating", async () => {
     await call(shareToken(), { images: [IMG] });
     await call(shareToken(), { images: [IMG] });

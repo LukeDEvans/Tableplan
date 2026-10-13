@@ -61,8 +61,18 @@ fills a split directly and stores nothing.
 other stores' order history) shared from the iPhone share sheet go to Finance. Amazon's
 emails don't carry enough detail, so a screenshot is the source.
 
+**Decision (Luke, 2026-10-13, later):** Amazon's detailed **Order Summary** (Save → share
+sheet, a PDF) goes to Finance the same way; it's the most detailed source.
+
+- **Order-summary PDFs:** the extension also appears for PDFs. It reads the PDF on the
+  phone with PDFKit (first 6 pages, ≤40,000 characters) and sends the **text** with
+  `kind: "summary"`, so the model reads an exact invoice instead of an image. A PDF with
+  no text layer (a scan) is sent as up to 4 page images instead, like screenshots. The
+  server uses the summary variant of `orderScreenshotPrompt` (`{ source: "summary" }`):
+  one entry per order, shipments kept together, the grand total.
 - **Share Extension** (`ios/App/ShareExtension/`): "Live" in the share sheet for 1–4
-  images. It downscales each screenshot (≤1568px, JPEG) and POSTs them straight to
+  images or one PDF (activation predicate: any attachment conforming to `public.image`
+  or `com.adobe.pdf`; only the first 4 images / first PDF are used). It downscales each screenshot (≤1568px, JPEG) and POSTs them straight to
   `share-receipt`, so nothing waits for the app to open. It shows "Added to Finance ·
   Amazon · $31.47 · Oct 10" and closes, or says what went wrong.
 - **Auth: a share token, not the app's session.** The extension can't safely use the

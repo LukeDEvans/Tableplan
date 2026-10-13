@@ -186,11 +186,12 @@ browser/PWA is unchanged.
 open an Economist article saved from a news email; it should load in full. Repeat for
 NYT and Star Tribune.
 
-## Share sheet: order screenshots → Finance
+## Share sheet: order screenshots and order summaries → Finance
 
 The app ships a Share Extension (`ios/App/ShareExtension/`, bundle ID
-`com.mrlukedevans.live.ShareExtension`): share up to 4 screenshots of an online order
-and they're read and added to Finance. Design and auth: RECEIPTS.md → "Share sheet".
+`com.mrlukedevans.live.ShareExtension`): share up to 4 screenshots of an online order,
+or one order-summary PDF (Amazon → order → "Order Summary" → Save), and they're read
+and added to Finance. Design and auth: RECEIPTS.md → "Share sheet".
 It's the app's first entitlement (a keychain group shared by the app and the
 extension), which is why the CI archive is now signed ad hoc instead of unsigned.
 
@@ -202,7 +203,10 @@ developer.apple.com → Identifiers (no capabilities to tick) and run it again.
 **Check on the phone after a TestFlight build** (needs the `share-receipt` function
 deployed): open the app once (it stores the share token), take a screenshot of an
 Amazon order, tap the screenshot → Share → Live. The sheet should say "Added to
-Finance" with the merchant and total; then open Finance → Insights → Receipts.
+Finance" with the merchant and total; then open Finance → Insights → Receipts. For a
+summary: in Amazon open the order → Order Summary → Save → Live. If Live isn't in that
+sheet, Amazon is sharing a link rather than a PDF; use Print → pinch out on the preview →
+Share → Live instead.
 
 ## Coming next (not now)
 - **Stage 1:** CORS + Supabase auth + Gmail native OAuth + confirm asset serving.
