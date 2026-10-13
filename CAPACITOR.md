@@ -186,6 +186,24 @@ browser/PWA is unchanged.
 open an Economist article saved from a news email; it should load in full. Repeat for
 NYT and Star Tribune.
 
+## Share sheet: order screenshots → Finance
+
+The app ships a Share Extension (`ios/App/ShareExtension/`, bundle ID
+`com.mrlukedevans.live.ShareExtension`): share up to 4 screenshots of an online order
+and they're read and added to Finance. Design and auth: RECEIPTS.md → "Share sheet".
+It's the app's first entitlement (a keychain group shared by the app and the
+extension), which is why the CI archive is now signed ad hoc instead of unsigned.
+
+**First TestFlight build with it:** the App Store export registers the new bundle ID
+with the API key (`-allowProvisioningUpdates`). If the export fails with a profile or
+bundle-ID error, register `com.mrlukedevans.live.ShareExtension` at
+developer.apple.com → Identifiers (no capabilities to tick) and run it again.
+
+**Check on the phone after a TestFlight build** (needs the `share-receipt` function
+deployed): open the app once (it stores the share token), take a screenshot of an
+Amazon order, tap the screenshot → Share → Live. The sheet should say "Added to
+Finance" with the merchant and total; then open Finance → Insights → Receipts.
+
 ## Coming next (not now)
 - **Stage 1:** CORS + Supabase auth + Gmail native OAuth + confirm asset serving.
 - **Stage 2:** native background-audio queue + on-device TTS behind `native-bridge.js`.
