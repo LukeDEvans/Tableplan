@@ -16,5 +16,24 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(DocumentScannerPlugin())
         bridge?.registerPluginInstance(WebAuthPlugin())
         bridge?.registerPluginInstance(LiveLocationPlugin())
+
+        // Tap the status bar → scroll to top. iOS only scrolls the web view's own
+        // document on that tap, and this app's document never scrolls (each page
+        // scrolls inside its own element), so the tap would do nothing. Capacitor
+        // core already posts a notification for the tap; forward it to the page
+        // as a window "statusTap" event, which status-tap-scroll.js handles.
+        statusTapObserver = NotificationCenter.default.addObserver(
+            forName: .capacitorStatusBarTapped, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.bridge?.triggerWindowJSEvent(eventName: "statusTap")
+        }
+    }
+
+    private var statusTapObserver: NSObjectProtocol?
+
+    deinit {
+        if let observer = statusTapObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 }

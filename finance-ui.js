@@ -3798,7 +3798,6 @@ function renderFinancePage() {
         <button class="icon-btn fin-head-btn${filterActive ? " is-active" : ""}" type="button" data-fin-action="txn-filter-open" aria-label="${filterActive ? "Filter transactions (filters on)" : "Filter transactions"}" title="Filter by label, account or date">${FIN_FILTER_SVG}${filterActive ? `<span class="fin-head-btn-dot" aria-hidden="true"></span>` : ""}</button>
         ${notifBell}
       </div>
-      <div class="fin-txn-status">${financeLiveLoading ? `<span class="fin-txn-status-load">Updating…</span>` : (financeLive?.at ? `Updated ${escapeHtml(finUpdatedLabel(financeLive.at))}` : "")}</div>
       ${notifPanel}
       ${!txnsOpen ? "" : `
       <div class="fin-txn-filters">
@@ -3814,6 +3813,7 @@ function renderFinancePage() {
       ${txnListHtml}
       ${txnsTruncated ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show all ${shownTxns.length}</button>`
         : (financeTxnListExpanded && shownTxns.length > FIN_TXN_LIST_CAP ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show fewer</button>` : "")}`}
+      ${financeLiveLoading || financeLive?.at ? `<div class="fin-txn-status">${financeLiveLoading ? `<span class="fin-txn-status-load">Updating…</span>` : `Updated ${escapeHtml(finUpdatedLabel(financeLive.at))}`}</div>` : ""}
     </div>`;
 
   // Net-worth detail — only rendered when the user clicks the Net worth stat.

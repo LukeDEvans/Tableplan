@@ -1258,6 +1258,7 @@ body {
    keep them flush to the window-border (no buffer). */
 #mailMainPage.planner-column,
 #mediaMainPage.planner-column,
+#watchMainPage.planner-column,
 #planMainPage.planner-column { padding: 0; }
 
 .side-stack {
@@ -3789,7 +3790,6 @@ input.live-toggle:checked::before,
 
 /* Checklist space. */
 .shop-checklist { display: flex; flex-direction: column; gap: 4px; }
-.shop-checklist-hint { margin: 2px 2px 8px; }
 .shop-checklist-list { display: flex; flex-direction: column; }
 .shop-checklist-row.is-checked .grocery-name {
   color: var(--muted);
@@ -3942,6 +3942,20 @@ body.shop-move-dragging { user-select: none; -webkit-user-select: none; }
   padding: 2px;
   border-radius: var(--radius);
   transition: background-color 140ms ease, outline-color 140ms ease;
+}
+
+/* An empty store shows just its heading — no placeholder box. It is still a
+   drop target: the drag rules below give it height while a drag is active. */
+.grocery-store-list.is-empty {
+  min-height: 0;
+  padding: 0;
+}
+
+.grocery-store-heading,
+#groceryStoreTabBar [data-grocery-store-setting] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .grocery-store-list.drag-over {
@@ -9603,7 +9617,7 @@ body.touch-drag-active * {
    region. Without this the watch list was clipped and couldn't scroll on
    mobile — the core of the "disaster on mobile". Scoped to #watchPlannerGrid so
    the Tasks planner (same .planner-grid class, different element) is untouched. */
-#mediaWatchPanel #watchPlannerGrid:not([hidden]) {
+#watchPagePanel #watchPlannerGrid:not([hidden]) {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -9611,8 +9625,8 @@ body.touch-drag-active * {
   gap: 0;
   overflow: hidden;
 }
-#mediaWatchPanel #watchPlannerGrid .watch-category-bar { flex-shrink: 0; }
-#mediaWatchPanel #watchPlannerGrid .watch-list-panel {
+#watchPagePanel #watchPlannerGrid .watch-category-bar { flex-shrink: 0; }
+#watchPagePanel #watchPlannerGrid .watch-list-panel {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -9870,9 +9884,11 @@ body.touch-drag-active * {
 }
 /* Watch tab = search head (fixed) + watchlist grid OR search results (each a
    direct scroll-child of the overflow:hidden panel, toggled by [hidden]). */
-#mediaWatchPanel > .planner-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start; }
+#watchPagePanel > .planner-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start; }
 .media-search-discover-row { display: flex; align-items: center; gap: 10px; width: 100%; font: inherit; font-size: 0.9rem; font-weight: 600; text-align: left; padding: 12px 14px; margin: 2px 0 8px; border: 1px solid var(--line, #e4e0d8); border-radius: 12px; background: var(--surface-2, #f0ece3); color: var(--ink); cursor: pointer; }
 .media-search-discover-row:hover { border-color: var(--ink); }
+/* Listen's own online search (podcasts, music, radio) opens in place under the row. */
+.listen-discover-results { flex: none; overflow: visible; margin: 0 0 12px; }
 .media-search-discover-row svg { flex: 0 0 auto; color: var(--muted); }
 .discover-services-list { display: flex; flex-direction: column; }
 .discover-service-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 2px; border-bottom: 1px solid var(--line, #e4e0d8); font-size: 0.9rem; }
@@ -13428,12 +13444,12 @@ body[data-theme="dark"] .watch-provider-link:hover {
 
 /* ── Inventory page ─────────────────────────────────────────────── */
 #inventoryMainPage { overflow-y: auto; }
-/* No window frame, to match Shop (Luke, 2026-10-06): Checklist · Shop · Inventory
-   are one set of tabs, so the frame must not come and go between them. */
+/* Same window as Shop: no shadow, but the blue border (Luke, 2026-10-13 — it came
+   back on Shop on 2026-10-11, and Checklist · List · Inventory are one set of tabs,
+   so the frame must not come and go between them). */
 #inventoryMainPage.planner-column {
-  border: 0;
   box-shadow: none;
-  padding: 4px 0 0; /* puts the tabs at the same height as Shop's */
+  padding: 12px 0 0; /* puts the tabs at the same height as Shop's (its list panel pads 12px) */
 }
 #inventoryMainPage #inventorySpaceTabBar .watch-category-tabs {
   padding-left: 10px;
@@ -13442,7 +13458,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
 /* Same right inset Shop's bar has, so the three tabs don't shift between pages. */
 #inventoryMainPage #inventorySpaceTabBar { padding-right: 12px; }
 #inventoryMainPage .inventory-rooms-grid { padding: 12px 10px; }
-#inventoryMainPage .inventory-toolbar { padding: 6px 10px 0; }
 
 /* Inventory — Room Card Grid */
 .inventory-layout {
@@ -13646,32 +13661,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
 }
 .inventory-item-chip:hover { background: color-mix(in srgb, var(--accent-soft) 50%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 .inventory-item-chip.inv-dragging { opacity: 0.3; cursor: grabbing; }
-.inventory-item-chip.is-tracked { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.inventory-item-track-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
-/* Inventory toolbar + weekly checklist */
-.inventory-toolbar { display: flex; justify-content: flex-end; padding: 0 2px 10px; }
-.inventory-checklist-btn { display: inline-flex; align-items: center; gap: 6px; }
-.inventory-checklist-dialog { max-width: 480px; width: 92vw; }
-.inventory-checklist-body { display: flex; flex-direction: column; gap: 14px; max-height: 62vh; overflow-y: auto; }
-.inventory-checklist-group { display: flex; flex-direction: column; gap: 6px; }
-.inventory-checklist-room { font-size: 0.72rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.inventory-checklist-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 11px;
-  border: 1px solid var(--window-border);
-  border-radius: 12px;
-  background: var(--window-bg);
-  cursor: pointer;
-  font-weight: 650;
-}
-.inventory-checklist-row input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; accent-color: var(--accent); }
-.inventory-checklist-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inventory-checklist-flag { flex: 0 0 auto; font-size: 0.72rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
-.inventory-checklist-row.is-low { border-color: color-mix(in srgb, var(--accent) 45%, var(--window-border)); background: color-mix(in srgb, var(--accent-soft) 30%, var(--window-bg)); }
-.inventory-checklist-row.is-low .inventory-checklist-flag { color: var(--accent-dark); }
 
 .inventory-item-name {
   font-size: 0.84rem;
@@ -15672,6 +15662,14 @@ body:has(#mediaMainPage:not([hidden])) { overflow: hidden; height: 100dvh; }
 body:has(#mediaMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
 body:has(#mediaMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Watch page (its own page again — MEDIA_SPLIT_DESIGN.md): same viewport lock,
+   so the search head stays put and only the watchlist / results scroll. */
+body:has(#watchMainPage:not([hidden])) { overflow: hidden; height: 100dvh; }
+body:has(#watchMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#watchMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+#watchMainPage .article-page-inner { min-height: 0; }
+.watch-page-panel { width: 100%; max-width: 1100px; margin: 0 auto; box-sizing: border-box; padding: 10px 14px 0; }
 /* The All and Archive lists scroll within their panels, like .article-list */
 #mediaAllList, #mediaArchiveList { flex: 1; min-height: 0; overflow-y: auto; }
 
@@ -18295,7 +18293,7 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
    rules in the (hover:none) block below own them). Without this exclusion the id
    here out-specifies the swipe-hide and the buttons sit there permanently. */
 @media (max-width: 680px) {
-  #mediaMainPage .article-row:not(.podcast-episode-row) .article-row-actions { display: flex; }
+  :is(#mediaMainPage, #newsMainPage) .article-row:not(.podcast-episode-row) .article-row-actions { display: flex; }
 }
 /* …except the Playlist rows, which hide their quick-actions until a swipe-left
    reveals them (a clean tap plays/opens; long-press reorders). */
@@ -18343,16 +18341,23 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 #shopMainPage #groceryStoreTabBar,
 #exploreMainPage .travel-detail-header,
 #mediaMainPage .media-all-header,
-#mediaMainPage .article-reader-topbar {
+#newsMainPage .article-reader-topbar {
   padding-right: 12px;
   gap: 10px;
 }
-/* Reading an article is a focused view — hide the Media search/menu/notifications
-   top bar while the reader is open (the reader has its own Back button). */
-#mediaMainPage:has(#articleReaderPanel:not([hidden])) .media-topbar { display: none; }
+/* Reading an article is a focused view — hide the News search/settings top bar
+   while the reader is open (the reader has its own Back button). The reader lives
+   in News (MEDIA_SPLIT_DESIGN.md): it takes the content area's place. */
+#newsMainPage:has(#articleReaderPanel:not([hidden])) .news-topbar { display: none; }
+#newsMainPage .article-layout { position: relative; }
+#newsMainPage .article-layout:has(> #articleReaderPanel:not([hidden])) > #newsContent { display: none; }
+/* The saved-articles list (former Media → Publications) inside News. */
+.news-saved { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.news-saved > .news-head { padding: 14px clamp(12px, 3vw, 24px) 0; }
+.news-saved-mount { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* Icon-only play/pause beside the speed control (Stop, the text label and the
    trash button were removed to give the speed control room). */
-#mediaMainPage .article-reader-actions .listen-play-btn { width: 40px; height: 40px; }
+#newsMainPage .article-reader-actions .listen-play-btn { width: 40px; height: 40px; }
 /* The old top-right scope toggle is now hidden (it moved to Settings → View),
    so the podcast tab bar no longer reserves room for it — let the search and
    archive buttons sit flush against the right edge of the window. */
@@ -21288,6 +21293,15 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 /* ── Section tabs (Transactions · Budget · Accounts) ── */
 .fin-tabs { display: flex; gap: 6px; padding: 3px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; overflow-x: auto; scrollbar-width: none; }
 .fin-tabs::-webkit-scrollbar { display: none; }
+/* Pinned: the tabs stay at the top of the Finance window while its content
+   scrolls (#financeMainPage is the scroller). The tint is mixed onto the window
+   colour so it's opaque, and the ring in the window colour masks rows sliding
+   past the rounded corners. */
+.fin-tabs {
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--ink) 6%, var(--window-bg));
+  box-shadow: 0 0 0 8px var(--window-bg);
+}
 .fin-tab {
   /* grow to fill on desktop, but never shrink below the label (4 tabs) — on a
      narrow phone the bar scrolls horizontally instead of clipping "Transactions". */
@@ -21995,7 +22009,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-txn-search-scope { display: block; padding: 0 2px 6px; }
 
 /* Freshness line under the Transactions header (bank data syncs ~once a day). */
-.fin-txn-status { font-size: 0.72rem; color: var(--muted); padding: 0 2px 4px; min-height: 0.9rem; }
+/* Footer of the Transactions card: when the bank data was last updated. */
+.fin-txn-status { font-size: 0.72rem; color: var(--muted); padding: 10px 2px 0; text-align: center; }
 .fin-txn-status-load { color: var(--accent-dark, var(--accent)); }
 /* Inline "some transactions failed to load" note (distinct from an empty month). */
 /* Loading skeleton — distinguishes "fetching" from "empty month" / "failed". */
