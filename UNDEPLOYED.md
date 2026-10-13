@@ -10,4 +10,6 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Nothing undeployed. Last deploy: 2026-10-13 (Google Calendar Phase 1, reminders, share-sheet receipts, and everything merged since 10-11)._
+_Last deploy: 2026-10-13 (Google Calendar Phase 1, reminders, share-sheet receipts)._
+
+- **Share sheet: Amazon order-summary PDFs → Finance** · PR #97 · "Live" now appears in the share sheet for a PDF (Amazon → order → Order Summary → Save). The extension reads the PDF's text on the phone (PDFKit) and sends it; a scanned PDF goes as page images. The server reads summary text with an invoice-specific prompt and a 40,000-character limit. **The TestFlight build adds the PDF option and already works against the live server; this deploy only improves the read** (summary prompt, longer text). Verified: server tests, full suite, the iOS compile check. **After TestFlight (+ deploy):** in Amazon open an order → Order Summary → Save → Live; check "Added to Finance" with the right total, then Finance → Insights → Receipts shows the items. If Live isn't in that sheet, Amazon shared a link: use Print → pinch out on the preview → Share → Live, and tell Claude which one it was.
