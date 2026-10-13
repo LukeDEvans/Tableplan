@@ -1,6 +1,6 @@
 ---
 name: groceries
-description: Use for changes scoped to the Groceries domain — the shopping list, grocery stores + pricing + receipts (scan/edit/review), the checklist + next-stop, pantry, store routing/optimization, and grocery-item identity (aliases/splits/locations). Lives in groceries-ui.js (createGroceriesModule); app.js keeps only the Shop/Inventory nav + the restaurant seam.
+description: Use for changes scoped to the Shop page's groceries — the shopping list, stores + pricing + receipts (scan/edit/review), the Checklist tab + next-stop, pantry, store routing, Instacart hand-off, and grocery-item identity (aliases/splits/locations). Lives in groceries-ui.js (createGroceriesModule) + grocery-*.js / instacart.js; app.js keeps only the Shop/Inventory nav + the restaurant seam.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -15,6 +15,13 @@ almost all your work is there. Make focused changes to the Groceries domain only
   existing conventions; don't invent new patterns.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — this domain has **zero UI test coverage** (below).
+
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `groceries-ui.js`, `grocery-*.js`, `instacart.js`, `receipt-*.js`, `scan-content.js`, `netlify/functions/instacart-list.mjs`, `netlify/functions/scan-receipt.js`, `netlify/functions/auto-tag-grocery.js`, `netlify/functions/google-places.js`
+- state: `grocery*`, `pantry`, `persistentManualGroceries`, `persistentManualGroceryStamps`, `checkedGroceries`, `receipts`, `receiptItemMappings`, `priceHistory`, `nextStopItems`, `instacartOrders`, `dailyDozenTagSeedVersion`
 
 ## Your scope (edit these)
 - **`groceries-ui.js`** — the whole grocery UI as `createGroceriesModule(deps)` (290

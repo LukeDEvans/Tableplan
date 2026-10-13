@@ -15,6 +15,13 @@ all your work is there. Make focused changes to the Finance domain only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you actually verified.
 
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`
+- state: `finance*`
+
 ## Your scope (edit these)
 - **`finance-ui.js`** — the whole finance UI as `createFinanceModule(deps)`: the
   services/data layer (`refreshFinanceLive`, `checkFinanceLinkStatus`,

@@ -17,6 +17,13 @@ Tableplan** — a single-page, vanilla-ESM web app. Recipes has been **extracted
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. This domain has
   **zero UI test coverage** (below).
 
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `recipes-ui.js`, `recipe-scan.js`, `daily-dozen.js`, `nutrition-*.js`, `netlify/functions/import-recipe.js`, `netlify/functions/clean-recipe.js`, `netlify/functions/scan-recipe.js`, `netlify/functions/recipe-photo.js`, `netlify/functions/recipe-review.js`, `netlify/functions/_recipe-review.js`, `netlify/functions/_recipe-extract.js`, `netlify/functions/estimate-nutrition.js`
+- state: `recipes`, `trashedRecipes`, `folders`, `recipeTags`, `ingredientOptions`, `activeCooking`
+
 ## Your scope (edit these)
 - **`recipes-ui.js`** — the whole domain as `createRecipesModule(deps)` (~227 fns): recipe
   library/folders/tags, recipe box page, the recipe **view** + **editor** (form, photo,
@@ -31,6 +38,14 @@ Tableplan** — a single-page, vanilla-ESM web app. Recipes has been **extracted
   exports, not inside the factory.
 - **Pure logic module (tested):** `meal-plan-servings.js` (`scalingFactor`, serving math) —
   imported by the module.
+- **Nutrition & Daily Dozen (Decision #3):** `daily-dozen.js`, `nutrition-domain.js`,
+  `nutrition-provider.js` (+ `netlify/functions/estimate-nutrition.js`) are owned here,
+  behind a small, narrow interface so a future health domain can consume them without
+  re-extracting. Don't build health-side abstractions; the health agent reads them.
+- **Server:** `import-recipe.js`, `clean-recipe.js`, `scan-recipe.js`, `recipe-photo.js`,
+  `recipe-review.js` + `_recipe-review.js` (the Recipe Box review bell — follows the
+  notifications-window rules), `_recipe-extract.js`. Recipe *emails* (the digest) are
+  swept by Mail.
 - **`app.js` (glue only):** `showEatApp` nav, the `createRecipesModule({...})` instantiation +
   destructure, and the `bindEvents` wiring (which calls the exposed `onRecipeViewDialogClose`).
 

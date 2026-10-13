@@ -1,6 +1,6 @@
 ---
 name: weather
-description: Use for changes scoped to the Weather domain — the weather page (current conditions, hourly/daily forecast, alerts, radar map), the normalized weather service, and location management. Lives in weather-ui.js + the weather-* logic modules; app.js keeps only the showWeatherApp nav entry.
+description: Use for changes scoped to the Weather domain — the weather page (current conditions, hourly/daily forecast, alerts, radar map), the normalized weather service, and location management. Weather opens from the bottom dock's weather ticker. Lives in weather-ui.js + the weather-* logic modules; app.js keeps only the showWeatherApp nav entry.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -15,6 +15,13 @@ Weather domain only.
   **WEATHER.md** (domain design). Use existing conventions; don't invent new patterns.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you actually verified.
+
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `weather-*.js`, `netlify/functions/weather.js`
+- state: `weather*`
 
 ## Your scope (edit these)
 - **`weather-ui.js`** — the whole domain: the normalized service (`weatherRequest`,

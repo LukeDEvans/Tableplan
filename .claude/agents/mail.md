@@ -17,6 +17,13 @@ changes to Mail only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `mail-frame.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/weekly-email.js`, `netlify/functions/weekly-review.js`, `netlify/functions/_weekly-context.js`, `netlify/functions/_recipient.js`, `netlify/functions/email-interview.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
+- state: `mail*`, `emailPrefs`, `weeklyEmailSettings`
+
 ## Your scope (edit these)
 - **Reading frame:** `mail-frame.js` (sanitizing, image handling, fit/size; app.js
   only injects `onReady` and the embedded-image fetch) and `html-sanitize.js`.

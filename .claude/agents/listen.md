@@ -17,6 +17,13 @@ changes to the Listen page's audio (everything except streaming music) only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `media-queue-*.js`, `media-tier.js`, `media-progress.js`, `media-history.js`, `media-state.js`, `media-sources.js`, `media-model.js`, `media-search.js`, `media-provider.js`, `media-provider-podcast.js`, `media-provider-radio.js`, `media-content.js`, `radio*.js`, `podcast-retention.js`, `playback-*.js`, `voice-*.js`, `tts-*.js`, `tts-*.mjs`, `kokoro-*.mjs`, `article-body-backfill.mjs`, `netlify/functions/fetch-podcast.js`, `netlify/functions/generate-tts.js`, `netlify/functions/kokoro-tts.mjs`, `netlify/functions/presynth-*.mjs`, `netlify/functions/_presynth-key.mjs`, `netlify/functions/tts-cache-cleanup.js`, `netlify/functions/check-hcl.js`
+- state: `podcast*`, `media*`, `radio*`, `readingItems`, `readingSettings`, `readingProgress`, `libraryKey`, `publicationTiers`
+
 ## Naming — read this first
 The page is **Listen** to Luke, but **internal keys did not change** (decision 6):
 `activeAppArea` is `"media"`, the page-access key is `read`, `#media` / `#read` /
@@ -33,8 +40,8 @@ mini-player** (`miniPlayerInfoBtn`), where its notification dot also sits.
   `media-state.js` (Continue · History · Saved), `media-sources.js`, `media-model.js`,
   `media-search.js` (Listen's search covers **audio only**).
 - **Providers:** `media-provider-podcast.js` (+ `netlify/functions/fetch-podcast.js`),
-  `media-provider-radio.js`, `radio.js` with `radio-provider-mpr.js` /
-  `-radiobrowser.js` / `-user.js`. New providers follow the injected-`fetchJson`,
+  `media-provider-radio.js`, `radio.js` with `radio-provider-mpr.js`,
+  `radio-provider-radiobrowser.js`, `radio-provider-user.js`. New providers follow the injected-`fetchJson`,
   pure/testable pattern and register through `media-provider.js` capabilities.
 - **Speech:** `voice-service.js` (the seam every speech consumer uses — read-aloud
   *and* the assistant), `voice-registry.js`, `voice-prefs.js`, `tts-provider.js`,

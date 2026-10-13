@@ -17,6 +17,13 @@ changes to the Calendar (and its sibling Tasks) domain only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `calendar/*.js`, `calendar/*.mjs`, `tasks-overlay.js`, `netlify/functions/_gcal.js`, `netlify/functions/gcal-*.js`, `netlify/functions/google-calendar.js`, `netlify/functions/ics-proxy.mjs`, `netlify/functions/google-birthdays.js`, `netlify/functions/us-holidays.js`, `netlify/functions/event-attachment.js`
+- state: `calendars`, `planEvents`, `planCalendars`, `calendarSources`, `planHiddenSources`, `planExternalExclusions`, `planExternalOverrides`, `planMealPlanCalendars`, `planSettingStamps`, `mealPlanSharedEvents`, `do*`, `recurringTasks`, `collapsedDays`
+
 ## Your scope (edit these)
 - **Pure modules (tested — prefer adding logic here over `app.js`):** `calendar/`
   — `recurrence.js`, `model.js`, `projection.js`, `tasks-project.js`, `sources.js`

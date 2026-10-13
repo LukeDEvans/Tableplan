@@ -1,6 +1,6 @@
 ---
 name: health
-description: Use for changes scoped to the Health / Nutrition / Exercise domain — food & nutrition tracking, health checklists, daily-dozen, and the "sweat" (exercise) area. Owns food-health*.js, daily-dozen.js, nutrition-*.js, and the "sweat"/nutrition sections of app.js.
+description: Use for changes scoped to Health / Exercise — food-health checklists and logs, person goals, and the "sweat" exercise area (workout cards in Recreate's Exercise row). Owns food-health*.js and the sweat/food-health sections of app.js. Daily Dozen and nutrition modules belong to the recipes agent (Decision #3).
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -14,15 +14,25 @@ changes to the Health / Nutrition / Exercise domain only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `food-health*.js`
+- state: `dailyDozenCategories`, `dailyDozenEntries`, `dailyChecklistEntries`, `foodLogEntries`, `nutritionIngredientMappings`, `checklistTemplates`, `personChecklistSettings`, `personGoals`, `foodHealthVersion`, `workouts`, `play*`
+
 ## Your scope (edit these)
-- **Modules:** `food-health.js`, `food-health-checklists.js`, `daily-dozen.js`,
-  `nutrition-domain.js`, `nutrition-provider.js`.
+- **Modules:** `food-health.js`, `food-health-checklists.js`. `daily-dozen.js`,
+  `nutrition-domain.js` and `nutrition-provider.js` are **owned by the recipes agent**
+  (CLAUDE.md Decision #3) — read them through their narrow interface; changes go
+  through recipes.
 - **`app.js`:** the exercise sections — `activeAppArea === "sweat"` — plus the
   food-health / nutrition-checklist sections. Search: `health`, `nutrition`,
   `dailyDozen`, `sweat`, `exercise`.
 - **Data:** health/nutrition/exercise state sections.
 - **Where it lives:** no home-grid or page-menu entry — the workout cards are Recreate's
   **Exercise** row (`wireWorkoutPoolCards`; route `#sweat` still opens the full Exercise page).
+
 ## Domain landmines (do NOT change without flagging)
 - **This domain overlaps with Recipes / Meal-Plan.** `daily-dozen.js`,
   `nutrition-domain.js`, and `nutrition-provider.js` feed meal-plan nutrition, which
