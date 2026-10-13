@@ -3945,6 +3945,20 @@ body.shop-move-dragging { user-select: none; -webkit-user-select: none; }
   transition: background-color 140ms ease, outline-color 140ms ease;
 }
 
+/* An empty store shows just its heading — no placeholder box. It is still a
+   drop target: the drag rules below give it height while a drag is active. */
+.grocery-store-list.is-empty {
+  min-height: 0;
+  padding: 0;
+}
+
+.grocery-store-heading,
+#groceryStoreTabBar [data-grocery-store-setting] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .grocery-store-list.drag-over {
   background: color-mix(in srgb, var(--accent-soft) 62%, transparent);
   outline: 2px dashed var(--accent);

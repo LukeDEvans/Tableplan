@@ -919,6 +919,47 @@ function groceryPlacesRequestOptions() {
   return { cache: "no-store", headers };
 }
 
+// Touch long-press (~500 ms, finger held still) on a store heading or store tab
+// opens the same Skip this week / Edit / Remove menu that right-click opens on
+// desktop (iOS never fires contextmenu on a long-press). Moving more than a few
+// px first (a scroll) cancels it; the click that follows the release is
+// swallowed so the heading doesn't also collapse/expand or switch tabs.
+function wireGroceryStoreLongPress(el) {
+  if (!el || el.__storeLongPressBound) return;
+  el.__storeLongPressBound = true;
+  let timer = null, sx = 0, sy = 0, target = null;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  el.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    delete el.dataset.lpFired;
+    sx = e.clientX; sy = e.clientY; target = e.target;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      el.dataset.lpFired = "1";
+      setTimeout(() => { delete el.dataset.lpFired; }, 800);
+      navigator.vibrate?.(10);
+      const noop = () => {};
+      openGroceryStoreMenu({ preventDefault: noop, stopPropagation: noop, target, clientX: sx, clientY: sy });
+    }, 500);
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) cancel();
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => el.addEventListener(ev, cancel));
+  // Swallow the post-release click (capture, so it beats the collapse/tab handlers).
+  el.addEventListener("click", (e) => {
+    if (!el.dataset.lpFired) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  // Android fires its own contextmenu on long-press — the menu is already open.
+  el.addEventListener("contextmenu", (e) => {
+    if (el.dataset.lpFired) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    openGroceryStoreMenu(e);
+  });
+}
+
 function openGroceryStoreMenu(event) {
   event.preventDefault();
   event.stopPropagation();
@@ -2368,7 +2409,7 @@ function renderShopSpaceNav() {
   if (!bars.length) return;
   const spaces = [
     { id: "checklist", label: "Checklist" },
-    { id: "shop", label: "Shop" },
+    { id: "shop", label: "List" },
     { id: "inventory", label: "Inventory" }
   ];
   const html = `
@@ -2446,7 +2487,7 @@ function renderGroceryStoreTabs() {
       renderGroceries();
     });
     if (btn.dataset.groceryTab !== "all") {
-      btn.addEventListener("contextmenu", openGroceryStoreMenu);
+      wireGroceryStoreLongPress(btn);
       btn.addEventListener("dragover", (event) => {
         if (!draggedGroceryItem?.itemKey) return;
         event.preventDefault();
@@ -2579,7 +2620,7 @@ function renderGroceries() {
         <div class="grocery-store-list ${rowsToRender.length ? "" : "is-empty"}"
           data-grocery-store-list="${escapeHtml(storeId)}"
           data-grocery-store-section-list="">
-          ${rowsToRender.length ? rowsToRender.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
+          ${rowsToRender.map(groceryItemTemplate).join("")}
         </div>
       </section>
     `;
@@ -2704,9 +2745,7 @@ function renderGroceries() {
       itemLabel: (row) => (row.querySelector(".grocery-item-name, .grocery-item-label")?.textContent || row.textContent || "item").trim().slice(0, 40),
     });
   }
-  elements.groceryList.querySelectorAll("[data-grocery-store-setting]").forEach((heading) => {
-    heading.addEventListener("contextmenu", openGroceryStoreMenu);
-  });
+  elements.groceryList.querySelectorAll("[data-grocery-store-setting]").forEach(wireGroceryStoreLongPress);
   elements.groceryList.querySelectorAll("[data-unskip-grocery-store]").forEach((btn) => {
     btn.addEventListener("click", () => setGroceryStoreSkipped(btn.dataset.unskipGroceryStore, false));
   });
@@ -2761,7 +2800,12 @@ function optimizeGroceryBasket(rows) {
   if (!settings.enabled) return empty;
   const locations = groceryItemLocations();
   const observations = currentGroceryPriceObservations();
-  const availableStoreIds = [...new Set(observations.map((observation) => observation.storeId))];
+  // Only plan across stores actually being shopped: a store skipped this week
+  // (or disabled) is out, so skipping one re-optimizes its items across the rest
+  // instead of stranding them in Other.
+  const skippedIds = skippedGroceryStoreIds();
+  const usableStoreIds = new Set(groceryStores().filter((s) => s.enabled !== false && !skippedIds.has(s.id)).map((s) => s.id));
+  const availableStoreIds = [...new Set(observations.map((observation) => observation.storeId))].filter((id) => usableStoreIds.has(id));
   if (!availableStoreIds.length) return empty;
 
   // Per-row candidates are independent of the store subset: key and cost them
@@ -2774,7 +2818,8 @@ function optimizeGroceryBasket(rows) {
   });
   const rowCandidates = rows.map((row) => ({
     row,
-    fixedStoreId: locations[row.key]?.storeId || "",
+    // A pin to a skipped/disabled store no longer holds this week.
+    fixedStoreId: usableStoreIds.has(locations[row.key]?.storeId) ? locations[row.key].storeId : "",
     candidates: (observationsByKey.get(row.key) || [])
       .map((observation) => ({ observation, cost: estimatedObservationCost(row, observation) }))
       .sort((a, b) => a.cost - b.cost
