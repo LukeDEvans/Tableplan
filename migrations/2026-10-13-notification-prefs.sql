@@ -110,7 +110,9 @@ $$;
 -- ── Data API grants ─────────────────────────────────────────────────────────
 -- Least privilege: signed-in users read/insert/update their own row (RLS above),
 -- service_role for the Phase 2/3 senders. No anon, no delete (rows go with the user).
-revoke all on public.live_notification_prefs from anon, public;
+-- This project still auto-grants new public tables (incl. DELETE/TRUNCATE) to anon and
+-- authenticated, so revoke everything first and grant back only what's needed.
+revoke all on public.live_notification_prefs from anon, authenticated, public;
 grant select, insert, update on public.live_notification_prefs to authenticated;
 grant select, insert, update, delete on public.live_notification_prefs to service_role;
 
