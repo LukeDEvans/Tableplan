@@ -1,8 +1,10 @@
 // news-ui.js — the News page (NEWS_PAGE_DESIGN.md). Articles linked in the
 // newspapers' emails (collected server-side by the mail sweep, _news-links.js),
 // sorted into newspaper sections, in the same shell as Mail and Media: a top bar,
-// a sidebar directory (Front page · Briefings · Sent to Media · sections · papers)
-// and the stories. Each story's ⋯ menu: Send to Media, Open, Listen, Share, Hide.
+// a sidebar directory (Front page · Briefings · Saved · sections · papers) and
+// the stories. Each story's ⋯ menu: Save, Open, Listen, Share, Hide. Saved is the
+// one list of saved articles (stories saved here, newsletters, extension, URL,
+// scans, PDFs) — app.js owns it (MEDIA_SPLIT_DESIGN.md).
 //
 // Data: gmail.js `newsFeed` over the news_articles table (NEWS_PAGE_DESIGN.md §10)
 // — one page of one view at a time (Front page, a section, a paper, Sent), plus
@@ -397,12 +399,12 @@ export function createNewsModule(deps) {
       for (const k of [...pages.keys()]) if (k.startsWith("sent:")) pages.delete(k); // re-read on next visit
       enqueue(id, "send");
       onSentToMedia?.(record);
-      if (!quiet) showToast?.("Saved. It's in Saved articles.");
+      if (!quiet) showToast?.("Saved.");
     } else {
       // Sent from another device (or since removed from Media): make sure this
       // device has the copy Open / Listen hand to the reader. Skips duplicates by id.
       onSentToMedia?.(record);
-      if (!quiet) showToast?.("Already in Saved articles.");
+      if (!quiet) showToast?.("Already saved.");
     }
     return record;
   }
@@ -455,8 +457,9 @@ export function createNewsModule(deps) {
     const present = new Set(c.sections || []);
     let h = sideTab("front", null, `${ICONS.front}<span>Front page</span>`, c.all);
     h += sideTab("briefings", null, `${ICONS.briefings}<span>Briefings</span>`, briefings.length);
-    h += sideTab("sent", null, `${ICONS.sent}<span>Sent to Listen</span>`, c.sent);
-    if (saved) h += sideTab("saved", null, `${ICONS.saved}<span>Saved articles</span>`, saved.count?.() || 0);
+    // One Saved view (MEDIA_SPLIT_DESIGN.md): stories saved here land in the same
+    // list as newsletters, scans and links, so there is no separate "Sent" view.
+    if (saved) h += sideTab("saved", null, `${ICONS.saved}<span>Saved</span>`, saved.count?.() || 0);
     h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Sections</div>`;
     for (const s of NEWS_SECTIONS) {
       // Sports always shows when the Scores view is mounted: scores don't depend on
@@ -477,7 +480,7 @@ export function createNewsModule(deps) {
 
   function menuHtml(a) {
     return `<div class="news-menu" role="menu">
-      <button type="button" role="menuitem" class="news-menu-primary" data-news-act="send">${ICONS.media}${a.sentAt ? "In Listen ✓" : "Send to Listen"}</button>
+      <button type="button" role="menuitem" class="news-menu-primary" data-news-act="send">${ICONS.saved.replace(' class="article-sidebar-icon"', "")}${a.sentAt ? "Saved ✓" : "Save"}</button>
       <button type="button" role="menuitem" data-news-act="open">${ICONS.open}Open</button>
       <button type="button" role="menuitem" data-news-act="listen">${ICONS.listen}Listen</button>
       <button type="button" role="menuitem" data-news-act="share">${ICONS.share}Share</button>
@@ -568,7 +571,7 @@ export function createNewsModule(deps) {
     if (onSaved()) {
       if (!$("newsSavedMount")) {
         el.innerHTML = `<div class="news-saved">
-          <div class="news-head"><h2 class="news-title">Saved articles</h2></div>
+          <div class="news-head"><h2 class="news-title">Saved</h2></div>
           <div class="news-saved-mount" id="newsSavedMount"></div>
         </div>`;
       }
@@ -586,7 +589,7 @@ export function createNewsModule(deps) {
     let title = "Front page";
     if (view.kind === "section") title = SECTION_LABEL[view.key] || "Section";
     else if (view.kind === "paper") title = PAPER[view.key]?.label || "Paper";
-    else if (view.kind === "sent") title = "Sent to Listen";
+    else if (view.kind === "sent") title = "Saved";
     else if (view.kind === "briefings") title = "Briefings";
 
     let body = "";
@@ -602,7 +605,7 @@ export function createNewsModule(deps) {
       body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : `${shown} · ${unread} unread`}</div>`;
       if (view.kind === "front" && !query) body += briefingsHtml(briefings.slice(0, 4), true);
       if (!list.length) {
-        body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing sent yet. Use ⋯ → Send to Listen on any story." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
+        body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing saved yet. Use ⋯ → Save on any story." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
       } else {
         const { lead, rest } = arrangeFront(list, nowMs);
         const kicker = view.kind === "front"
@@ -628,7 +631,8 @@ export function createNewsModule(deps) {
   }
 
   function setView(next) {
-    view = next;
+    // The old "Sent" view folded into Saved.
+    view = next?.kind === "sent" && saved ? { kind: "saved" } : next;
     openMenuId = null;
     if (isNarrow()) $("newsSidebar")?.classList.remove("is-expanded");
     render();

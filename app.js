@@ -10270,7 +10270,7 @@ function showMailMoreMenu(thread, lastMsg) {
     </button>
     <button class="mail-more-option" type="button" data-action="move-to-media">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      Send to Listen
+      Save to News
     </button>
     <button class="mail-more-option" type="button" data-action="send-to-explore">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
@@ -10450,7 +10450,7 @@ async function moveMailToMedia(thread, lastMsg) {
   // Trash the email and drop back to the list (optimistic — the row goes now).
   const removeIds = (currentMailbox && !["TRASH", "ALL"].includes(currentMailbox)) ? [currentMailbox] : [];
   afterMailThreadAction(thread.id);
-  showMailToast("Sent to Listen. It's in News → Saved articles too.");
+  showMailToast("Saved to News.");
   callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["TRASH"], removeLabelIds: removeIds });
 }
 
@@ -16366,7 +16366,7 @@ const MAIL_AI_FEATURES = [
     key: "nutritionFactsDigest",
     defaultOn: true,
     label: "Dr. Greger / NutritionFacts links",
-    desc: "Collects article and video links from NutritionFacts.org emails and saves them to News → Saved articles, then files the email away."
+    desc: "Collects article and video links from NutritionFacts.org emails and saves them to News → Saved, then files the email away."
   },
   {
     key: "nytMorningToArticle",

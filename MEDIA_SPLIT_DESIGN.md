@@ -68,13 +68,13 @@ News now covers what Publications was for. Luke's direction:
   title, page-access label). Keys, `activeAppArea "media"`, and `#media` links
   are unchanged.
 
-## Open questions for Luke
+## Follow-up decisions (Luke, 2026-10-12)
 
-- News now has both **Sent to Listen** (stories sent from News, from the
-  server) and **Saved articles** (everything saved: sent stories, newsletters,
-  extension, URL, scans, PDFs). Merge them into one?
-- "Send to Listen" is the new name for the old "Send to Media" (the story is
-  saved, and joins Listen's queue). Keep that name, or "Save"?
+- **"Save", one Saved view.** A story's ⋯ menu says **Save** (then "Saved ✓").
+  News's sidebar has a single **Saved** view: stories saved from News,
+  newsletters, the extension, URLs, scans and PDFs. The separate "Sent" view is
+  gone (an old link to it opens Saved). Mail's action is **Save to News**.
+  Saved articles still join Listen's queue for read-aloud as before.
 
 ## Out of scope
 
