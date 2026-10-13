@@ -124,6 +124,12 @@ _(none)_
 
 
 ## P2
+- [ ] **[P2] Google-backed plan events still use title-based ids** (calendar · app.js getPlanEventsForRange Google projection · 2026-10-12)
+      Phase 1 kept `gcal:<cal>:<date>:<title>` so hides/renames made on the iCal feed keep working after a calendar switches to the Google API. Consequence: renaming an event in Google orphans a local hide/rename for it (same as before the switch). Phase 2 (editing) needs ids keyed by the Google event id anyway — re-key existing `planExternalExclusions`/`planExternalOverrides` then (match date + title once). Verdict: KNOWN GAP, deliberate.
+
+- [ ] **[P2] Household members can read each other's linked Google calendars by app id** (calendar · netlify/functions/_gcal.js chooseLinks · 2026-10-12)
+      `gcal-events` serves a calendar through another member's Google token when caller and owner share a live group, so a shared household plan row shows the spouse's linked calendars. Any member who knows (or computes) the app id of the other's linked calendar can read it, including one only in the owner's personal plan row. Intended for a two-person household; revisit if groups ever include non-family members (e.g. require the calendar to be in the household row or a per-calendar "share with household" flag). Verdict: BY DESIGN for now.
+
 - [ ] **[P2] Media queue changes were run in a desktop browser at phone size, not on the iPhone** (media · app.js `advanceMediaAllQueue` / `onNativeTtsItemStart` / `refreshRunningQueueOrder` · 2026-10-06)
       The iPhone app plays podcasts on its own player, which is handed its next few items up front. The new code re-sends that list when the queue's order changes and puts an item passed with the lock-screen next button at the back of the line; both paths were read from code, not run on a device. → On the phone: start the queue, drag a different item to the top of Up Next, lock the phone and let the current one finish; the dragged item should play next.
 - [ ] **[P3] Queue window settings longer than a month no longer reach further back** (media · app.js `RECENT_WINDOW_OPTIONS` · podcast-retention.js · 2026-10-06)

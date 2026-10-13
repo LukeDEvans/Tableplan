@@ -36,6 +36,8 @@ import { normalizeExternalEvent } from './calendar/normalize.js';
 import { buildSharedSnapshot, mealPlanDisplayEvents, mealPlanEventsFromScope, mergeMealPlanSharedEvents, normalizeMealPlanCalendarFlags, normalizeMealPlanSharedEvents } from './calendar/meal-plan-share.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
+import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport } from './calendar/google.js';
+import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
@@ -832,6 +834,27 @@ let pendingMealIngredientSelection = null;
 let pendingAutoRuleRecipeSelection = null;
 let pendingAutoRuleIngredientSelection = null;
 let calendarEvents = loadCachedCalendarEvents();
+// Google Calendar API sync state (declared up here, before anything at module top
+// can reach persist() → planFeedCacheFor, so none of it is in its TDZ).
+let gcalStatus = null;        // last gcal-calendars result: { connected, email, calendars, links } | { connected:false, reconnect? }
+let gcalStatusAt = 0;
+let gcalSyncInFlight = null;
+let gcalEventsAt = 0;
+let gcalBusy = "";            // panel status line while an action runs
+let gcalReport = null;        // last severance dry-run result (rendered in the panel)
+let gcalCacheMem = null;      // in-memory copy of the device cache (persist() reads it for the meal-plan share)
+function gcalCacheSnapshot() {
+  if (!gcalCacheMem) gcalCacheMem = loadGcalCache();
+  return gcalCacheMem;
+}
+function gcalSaveCache(cache) {
+  gcalCacheMem = cache;
+  saveGcalCache(cache);
+}
+const GCAL_STATUS_TTL_MS = 60 * 60 * 1000;      // calendar-list / discovery check: hourly
+const GCAL_EVENTS_INTERVAL_MS = 5 * 60 * 1000;  // event refresh: every 5 min, only while visible
+
+let gcalQaForce = false; // dev-only (window.__liveQA.gcalForce), never true off localhost
 // The Shop page's three spaces (spec: Checklist · Shop · Inventory). Shop is the
 // default/opening view; the existing header/date bar sits above this nav.
 // Per-store session toggle: which stores are currently showing their bought
@@ -3199,6 +3222,7 @@ async function initializeApp() {
   handleImportUrlParameter();
   handleHashNavigation();
   refreshAllCalendarSources({ kinds: ["linked"] }); // boot: refresh the linked pipeline (ics refreshes on Plan-open)
+  initGoogleCalendarSync(); // Google Calendar API: OAuth return, calendar discovery, 5-min refresh while visible
   initAiChatPanel();
   initRecipeTimer();
   refreshBottomDock(); // state has loaded: idle "play" pick, weather availability + ticker
@@ -3547,6 +3571,21 @@ function setupDiagnostics() {
   // persist/merge + boot-empty guards + auto-rule dedup directly, instead of
   // fragile gesture/UI simulation.
   window.__liveQA = {
+    // Google Calendar (scripts/qa-gcal.mjs): local dev has no Netlify functions, so
+    // the QA script mocks /.netlify/functions/gcal-* and flips this on to run the
+    // real client paths (discovery, linking, event load, panel) against the mocks.
+    gcalForce: (on = true) => { if (!localDevMode) return null; gcalQaForce = Boolean(on); gcalStatus = null; gcalStatusAt = 0; gcalEventsAt = 0; return true; },
+    gcalSyncNow: async () => {
+      if (!localDevMode) return null;
+      await syncGoogleCalendarLinks({ force: true });
+      await refreshAllCalendarSources({ kinds: ["linked"], force: true });
+      return {
+        calendars: normalizeLinkedCalendars(state.calendars).map(({ id, name, url, googleCalendarId, enabled }) => ({ id, name, url, googleCalendarId, enabled })),
+        events: calendarEvents.map(({ summary, date, startTime, endTime, allDay, calendarId, source }) => ({ summary, date, startTime, endTime, allDay, calendarId, source }))
+      };
+    },
+    gcalMealPlanEvents: () => (localDevMode ? mealPlanCalendarEvents().filter((e) => e.external).map(({ id, title, date, startTime, endTime, allDay, calendarId }) => ({ id, title, date, startTime, endTime, allDay, calendarId })) : null),
+    gcalPlanEvents: (dateKey) => (localDevMode ? getPlanEventsForRange(dateKey, dateKey).filter((e) => e.provider === "google").map(({ id, title, date, allDay, startTime, endTime, externalId }) => ({ id, title, date, allDay, startTime, endTime, externalId })) : null),
     // Force a synchronous write to the local backend (bypasses the debounce) so a
     // second context's stale/empty write can be sequenced deterministically. Uses
     // the real write path (writeStateToLocalBackend → PUT /api/state).
@@ -4600,6 +4639,7 @@ function adoptSettingsBaseline() {
 // ── Calendar → Meal Plan sharing (logic in calendar/meal-plan-share.js) ──────
 // This device's fetched copy of a subscribed feed, or null if it has none.
 function planFeedCacheFor(cal) {
+  if (cal?.googleCalendarId) return feedEventsFor(cal, gcalCacheSnapshot());
   const cached = planCalendarCache[cal?.id];
   return cached && Array.isArray(cached.events) ? cached.events : null;
 }
@@ -5304,9 +5344,12 @@ function normalizeLinkedCalendars(calendars, legacyBirthdayCalendar = null) {
       // proxy, which relays ANY ICS url — so this is NOT a vendor tag; a linked
       // feed is generic ICS, same data as source:"ics", just a different fetcher).
       source: "linked",
-      readOnly: true
+      readOnly: true,
+      // Google Calendar API link (GOOGLE_CALENDAR_SYNC_DESIGN.md). A cache of the
+      // server-side gcal_links row; an API-only calendar has no iCal url.
+      ...(calendar?.googleCalendarId ? { googleCalendarId: String(calendar.googleCalendarId) } : {})
     }))
-    .filter((calendar) => calendar.url);
+    .filter((calendar) => calendar.url || calendar.googleCalendarId);
   const legacyUrl = normalizeBirthdayCalendarSettings(legacyBirthdayCalendar).url;
   if (legacyUrl && !normalized.some((calendar) => calendar.url === legacyUrl)) {
     normalized.push({ id: createId("cal"), name: "Birthdays", url: legacyUrl, color: normalizeCalendarColor("", normalized.length), enabled: true, source: "linked", readOnly: true });
@@ -18237,6 +18280,7 @@ function openCalendarsDialog(event) {
   elements.calendarUrlInput.value = "";
   elements.calendarColorInput.value = normalizeCalendarColor("", state.calendars.length);
   renderCalendarList();
+  renderGcalPanels();
   elements.calendarStatus.textContent = calendarEvents.length
     ? `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced.`
     : "No calendars synced yet.";
@@ -18283,7 +18327,7 @@ function renderCalendarList() {
     <article class="calendar-list-item">
       <div class="calendar-list-main">
         <strong>${escapeHtml(calendar.name)}</strong>
-        <small>${escapeHtml(calendar.url)}</small>
+        <small>${escapeHtml(calendar.url || (calendar.googleCalendarId ? "Google Calendar (connected account)" : ""))}</small>
       </div>
       <div class="calendar-list-controls">
         <label>
@@ -18323,6 +18367,7 @@ function renderCalendarList() {
   elements.calendarList.querySelectorAll("[data-remove-calendar]").forEach((button) => {
     button.addEventListener("click", () => {
       recordDeletion("calendars", button.dataset.removeCalendar);
+      gcalUnlinkQuietly(state.calendars.find((calendar) => calendar.id === button.dataset.removeCalendar));
       state.calendars = state.calendars.filter((calendar) => calendar.id !== button.dataset.removeCalendar);
       persist();
       renderCalendarList();
@@ -20153,8 +20198,30 @@ async function loadCalendarEvents(options = {}) {
     renderPlanner();
     return;
   }
+  // Google Calendar API calendars (googleCalendarId) load through gcal-events with
+  // real times; everything else (and any API calendar Google can't serve right now
+  // that still has its legacy iCal url) loads through the iCal path below.
+  const apiCals = gcalAvailable() ? calendars.filter((calendar) => calendar.googleCalendarId) : [];
+  let icalCals = calendars.filter((calendar) => !apiCals.includes(calendar) && calendar.url);
+  let apiEntries = [];
+  if (apiCals.length) {
+    // `force` on the linked pipeline means "refresh now"; for Google a delta is
+    // just as fresh, so only an explicit gcalFull re-pulls the whole window.
+    const api = await loadGoogleApiEvents(apiCals, { force: Boolean(options.gcalFull) });
+    apiEntries = api.entries;
+    icalCals = icalCals.concat(apiCals.filter((calendar) => api.unavailable[calendar.id] && calendar.url));
+  }
+  if (!icalCals.length) {
+    planRangeCache.clear();
+    writeCalendarSourceCache({ source: "linked" }, apiEntries);
+    if (options.statusElement) {
+      options.statusElement.textContent = `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced from ${calendars.length} calendar${calendars.length === 1 ? "" : "s"}.`;
+    }
+    renderPlanner();
+    return;
+  }
   try {
-    const eventGroups = await Promise.all(calendars.map(async (calendar) => {
+    const eventGroups = await Promise.all(icalCals.map(async (calendar) => {
       const response = await fetch(calendarHelperUrl(calendar.url), { cache: "no-store", headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `${calendar.name} sync failed with status ${response.status}`);
@@ -20165,7 +20232,7 @@ async function loadCalendarEvents(options = {}) {
         calendarColor: calendar.color
       }));
     }));
-    const flat = eventGroups.flat();
+    const flat = [...apiEntries, ...eventGroups.flat()];
     planRangeCache.clear(); // Google events also feed the Plan calendar (drop its memoized range)
     writeCalendarSourceCache({ source: "linked" }, flat); // sets calendarEvents + rewrites the linked blob (ISO timestamp) via the facade
     if (options.statusElement) {
@@ -20175,6 +20242,335 @@ async function loadCalendarEvents(options = {}) {
   } catch (error) {
     console.warn("Calendar sync failed.", error);
     if (options.statusElement) options.statusElement.textContent = error.message || "Calendar sync failed.";
+    // Keep the previous iCal events, but still show fresh Google API events.
+    if (apiCals.length) {
+      const icalIds = new Set(icalCals.map((calendar) => calendar.id));
+      planRangeCache.clear();
+      writeCalendarSourceCache({ source: "linked" }, [...apiEntries, ...calendarEvents.filter((event) => event.source !== "google-api" && icalIds.has(event.calendarId))]);
+      renderPlanner();
+    }
+  }
+}
+
+// ── Google Calendar API sync (GOOGLE_CALENDAR_SYNC_DESIGN.md, Phase 1) ─────────
+// Google stays the authority for Google-backed calendars: events are fetched per
+// device (calendar/google-client.js cache) and never written into synced state.
+// Which Google calendar backs which app calendar lives server-side (gcal_links);
+// state.calendars entries only cache it as googleCalendarId.
+function gcalAvailable() {
+  // The iPhone app runs at capacitor://localhost, where canUseLocalBackend() is
+  // true but /.netlify/functions calls reach the live site (native fetch shim).
+  const live = !canUseLocalBackend() || isNativeApp();
+  return (Boolean(authSession?.access_token) && live) || (gcalQaForce && localDevMode);
+}
+
+// Fetch connection status + calendar list, propose links for new Google
+// calendars (legacy iCal entries keep their app id; owned/editable calendars are
+// added automatically), and re-apply the server's links onto state.calendars.
+// Resolves true when state.calendars changed (caller refreshes events).
+function syncGoogleCalendarLinks({ force = false } = {}) {
+  if (!gcalAvailable()) return Promise.resolve(false);
+  if (!force && gcalStatus && Date.now() - gcalStatusAt < GCAL_STATUS_TTL_MS) return Promise.resolve(false);
+  if (gcalSyncInFlight) return gcalSyncInFlight;
+  gcalSyncInFlight = (async () => {
+    const token = authSession.access_token;
+    let status = await gcalApi.status(token);
+    gcalStatusAt = Date.now();
+    if (gcalStatus?.error) gcalStatus = null;
+    if (!status.connected) { gcalStatus = status; return false; }
+    const proposals = proposeGoogleLinks(status.calendars, status.links, normalizeLinkedCalendars(state.calendars));
+    if (proposals.length) status = { ...status, links: (await gcalApi.action(token, { action: "link", links: proposals })).links };
+    const tombstoned = new Set((state.tombstones?.calendars || []).map(String));
+    const rec = reconcileGoogleLinks(normalizeLinkedCalendars(state.calendars), status.links, status.calendars, tombstoned, { colorFor: (color, index) => normalizeCalendarColor(color, index) });
+    for (const appCalendarId of rec.unlink) {
+      try { status = { ...status, links: (await gcalApi.action(token, { action: "unlink", appCalendarId })).links }; } catch { /* retried next sync */ }
+    }
+    gcalStatus = status;
+    if (!rec.changed) return false;
+    state.calendars = normalizeLinkedCalendars(rec.calendars);
+    persist();
+    return true;
+  })().catch((error) => {
+    console.warn("Google Calendar sync failed.", error);
+    // Record the failure so the hourly throttle applies and the panel shows a
+    // Retry button instead of re-requesting on every render.
+    gcalStatusAt = Date.now();
+    if (!gcalStatus) gcalStatus = { connected: false, error: true };
+    return false;
+  }).finally(() => {
+    gcalSyncInFlight = null;
+    renderGcalPanels();
+  });
+  return gcalSyncInFlight;
+}
+
+// Load events for API calendars through the device cache (delta after the first
+// full pull). Returns { entries, unavailable } — unavailable maps app id → reason;
+// such a calendar falls back to its iCal url when it has one.
+async function loadGoogleApiEvents(apiCals, { force = false } = {}) {
+  const cache = gcalCacheSnapshot();
+  let next = cache;
+  let unavailable = {};
+  try {
+    const response = await gcalApi.events(authSession.access_token, buildEventsRequest(apiCals, cache, { force }));
+    ({ cache: next, unavailable } = applyEventsResponse(cache, response, apiCals.map((calendar) => calendar.id)));
+    gcalSaveCache(next);
+    gcalEventsAt = Date.now();
+    gcalMaybeUpdateMealPlanShare();
+    if (Object.values(unavailable).includes("reconnect") && gcalStatus?.connected) {
+      gcalStatus = { connected: false, reconnect: true };
+      renderGcalPanels();
+    }
+  } catch (error) {
+    console.warn("Google Calendar events failed.", error);
+    // Offline / function error: keep showing cached events; calendars with no
+    // cache yet fall back to iCal if they can.
+    unavailable = Object.fromEntries(apiCals.filter((calendar) => !cache[calendar.id]).map((calendar) => [calendar.id, "offline"]));
+  }
+  const served = apiCals.filter((calendar) => !(unavailable[calendar.id] && calendar.url));
+  return { entries: cacheEntriesFor(served, next), unavailable };
+}
+
+// Light refresh of only the Google API calendars (leaves iCal feeds alone, so the
+// 5-minute cadence never re-pulls secret iCal URLs). Bounded: at most one call per
+// GCAL_EVENTS_INTERVAL_MS, only while the app is visible, and the function reads
+// two tiny indexed rows — never tableplan_states.
+function maybeRefreshGoogleEvents() {
+  if (!gcalAvailable() || document.visibilityState !== "visible") return;
+  if (Date.now() - gcalEventsAt < GCAL_EVENTS_INTERVAL_MS) return;
+  const apiCals = normalizeLinkedCalendars(state.calendars).filter((calendar) => calendar.enabled && calendar.googleCalendarId);
+  if (!apiCals.length) return;
+  gcalEventsAt = Date.now();
+  loadGoogleApiEvents(apiCals).then(({ entries, unavailable }) => {
+    const replaced = new Set(apiCals.filter((calendar) => !(unavailable[calendar.id] && calendar.url)).map((calendar) => calendar.id));
+    planRangeCache.clear();
+    writeCalendarSourceCache({ source: "linked" }, [...calendarEvents.filter((event) => !replaced.has(event.calendarId)), ...entries]);
+    renderPlanner();
+    if (activeAppArea === "plan") renderPlanPage();
+  });
+  syncGoogleCalendarLinks().then((changed) => { if (changed) refreshAfterGcalChange(); });
+}
+
+// Fresh Google events may change what this member's personal calendars share
+// with the household meal plan (a Google calendar switched to "Show on Meal
+// Plan"). persist() rewrites the share only when its snapshot actually changed,
+// so this saves only then — never on an unchanged 5-minute refresh.
+function gcalMaybeUpdateMealPlanShare() {
+  const own = ownMealPlanShare();
+  if (!own) return;
+  const flags = { ...normalizeMealPlanCalendarFlags(state.planMealPlanCalendars), ...normalizeMealPlanCalendarFlags(shadowSections.plan?.planMealPlanCalendars) };
+  const anyGoogleOnMealPlan = [...(state.calendars || []), ...(shadowSections.plan?.calendars || [])].some((c) => c?.googleCalendarId && flags[c.id]);
+  if (!anyGoogleOnMealPlan) return;
+  const stored = state.mealPlanSharedEvents?.[own.userId];
+  if (!stored && !own.snapshot.events.length) return;
+  if (stored && stored.windowStart === own.snapshot.windowStart && JSON.stringify(stored.events) === JSON.stringify(own.snapshot.events)) return;
+  persist();
+}
+
+function refreshAfterGcalChange({ full = false } = {}) {
+  return refreshAllCalendarSources({ kinds: ["linked"], force: true, gcalFull: full }).then(() => {
+    renderPlanCalList();
+    if (activeAppArea === "plan") renderPlanPage();
+    renderGcalPanels();
+  });
+}
+
+function gcalErrorMessage(reason) {
+  return {
+    denied: "Google Calendar wasn't connected — access was declined.",
+    scope: "Google Calendar wasn't connected — the calendar permission box was unticked. Try again and leave it ticked.",
+    state: "Google Calendar connection expired. Please try again.",
+    config: "Google Calendar isn't configured on the server yet.",
+    token: "Google didn't return a long-lived sign-in. Please try again."
+  }[reason] || "Google Calendar connection failed. Please try again.";
+}
+
+function initGoogleCalendarSync() {
+  const params = new URLSearchParams(window.location.search);
+  const returned = params.get("gcal");
+  if (returned) {
+    const reason = params.get("reason");
+    params.delete("gcal");
+    params.delete("reason");
+    const query = params.toString();
+    history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+    if (returned === "connected") showMailToast("Google Calendar connected");
+    else alert(gcalErrorMessage(reason));
+  }
+  if (!gcalAvailable()) return;
+  syncGoogleCalendarLinks({ force: returned === "connected" }).then((changed) => {
+    if (changed || returned === "connected") refreshAfterGcalChange();
+  });
+  window.setInterval(maybeRefreshGoogleEvents, GCAL_EVENTS_INTERVAL_MS);
+  document.addEventListener("visibilitychange", maybeRefreshGoogleEvents);
+}
+
+// The user removed a Google-backed calendar from the app: record it server-side
+// so automatic discovery never re-adds it (they can re-add it from the panel).
+function gcalUnlinkQuietly(calendar) {
+  if (!calendar?.googleCalendarId || !gcalAvailable()) return;
+  gcalApi.action(authSession.access_token, { action: "unlink", appCalendarId: calendar.id })
+    .then((r) => { if (gcalStatus?.connected) gcalStatus = { ...gcalStatus, links: r.links }; renderGcalPanels(); })
+    .catch(() => { /* reconcile retries the unlink from the tombstone */ });
+}
+
+// ── Google Calendar panel (Settings → Calendars, and the sidebar's Add Calendar) ──
+
+function renderGcalPanels() {
+  document.querySelectorAll("[data-gcal-panel]").forEach((el) => {
+    el.innerHTML = gcalPanelHtml();
+    el.onclick = onGcalPanelClick;
+  });
+}
+
+function gcalPanelHtml() {
+  const head = `<div class="gcal-panel-head"><strong>Google Calendar</strong>${gcalStatus?.connected && gcalStatus.email ? `<small>${escapeHtml(gcalStatus.email)}</small>` : ""}</div>`;
+  const busy = gcalBusy ? `<p class="muted-note">${escapeHtml(gcalBusy)}</p>` : "";
+  if (!gcalAvailable()) return `${head}<p class="muted-note">Sign in to connect Google Calendar.</p>`;
+  if (!gcalStatus) {
+    syncGoogleCalendarLinks();
+    return `${head}<p class="muted-note">Checking Google Calendar…</p>`;
+  }
+  if (gcalStatus.error) {
+    return `${head}<p class="muted-note">Couldn't reach Google Calendar.</p>${busy}
+      <div class="gcal-panel-actions"><button class="secondary-btn" type="button" data-gcal-action="refresh">Retry</button></div>`;
+  }
+  if (!gcalStatus.connected) {
+    const why = gcalStatus.reconnect
+      ? "Google needs you to reconnect."
+      : "Connect your Google account to see your Google calendars here with their times. New Google calendars you own or can edit are added automatically.";
+    return `${head}<p class="muted-note">${escapeHtml(why)}</p>${busy}
+      <div class="gcal-panel-actions"><button class="primary-btn" type="button" data-gcal-action="connect">${gcalStatus.reconnect ? "Reconnect" : "Connect Google Calendar"}</button></div>`;
+  }
+  const rows = gcalPanelRows(gcalStatus.calendars, gcalStatus.links, normalizeLinkedCalendars(state.calendars));
+  const rowHtml = rows.map((row) => `
+    <div class="gcal-row">
+      <span class="calendar-event-dot" style="background:${escapeHtml(row.color || "#999")}"></span>
+      <span class="gcal-row-name">${escapeHtml(row.name)}<small>${row.accessRole === "owner" || row.accessRole === "writer" ? "Can edit" : "View only"}</small></span>
+      ${row.inApp ? `<span class="gcal-row-state">In app</span>` : `<button class="secondary-btn" type="button" data-gcal-action="add" data-gcal-id="${escapeHtml(row.id)}">Add</button>`}
+    </div>`).join("");
+  return `${head}<div class="gcal-rows">${rowHtml || `<p class="muted-note">No calendars found in this Google account.</p>`}</div>${busy}
+    <div class="gcal-panel-actions">
+      <button class="secondary-btn" type="button" data-gcal-action="refresh">Refresh</button>
+      <button class="secondary-btn" type="button" data-gcal-action="report">Ready to leave Google?</button>
+      <button class="secondary-btn" type="button" data-gcal-action="disconnect">Disconnect</button>
+    </div>
+    ${gcalReportHtml()}`;
+}
+
+function gcalReportHtml() {
+  if (!gcalReport) return "";
+  if (gcalReport.error) return `<div class="gcal-report"><p class="muted-note">${escapeHtml(gcalReport.error)}</p></div>`;
+  const { report, unavailable, truncated } = gcalReport;
+  const t = report.totals;
+  const lost = [t.guests && `${t.guests} with guests (guest lists & RSVPs)`, t.meetLinks && `${t.meetLinks} with Meet links`, t.attachments && `${t.attachments} with Google attachments`].filter(Boolean);
+  const issues = report.issues.slice(0, 20).map((i) => `<li><strong>${escapeHtml(i.title)}</strong> (${escapeHtml(i.calendar)}) — ${escapeHtml(i.reason)}</li>`).join("");
+  return `<div class="gcal-report">
+    <p><strong>${report.clean && !unavailable.length ? "Everything would import cleanly." : "Dry run — nothing was changed."}</strong></p>
+    <p class="muted-note">${t.events} event${t.events === 1 ? "" : "s"} (${t.series} repeating series, ${t.singles} one-offs, ${t.movedOccurrences} moved occurrences) across ${report.perCalendar.length} calendar${report.perCalendar.length === 1 ? "" : "s"}, covering the last two years and everything ahead.</p>
+    ${issues ? `<p class="muted-note">Won't import exactly (${report.issues.length}):</p><ul class="gcal-report-list">${issues}</ul>` : ""}
+    ${lost.length ? `<p class="muted-note">Google-only details that would be left behind: ${escapeHtml(lost.join(", "))}.</p>` : ""}
+    ${unavailable.length ? `<p class="muted-note">Couldn't check: ${escapeHtml(unavailable.join(", "))}.</p>` : ""}
+    ${truncated.length ? `<p class="muted-note">Very large, only partly checked: ${escapeHtml(truncated.join(", "))}.</p>` : ""}
+  </div>`;
+}
+
+async function onGcalPanelClick(event) {
+  const button = event.target.closest("[data-gcal-action]");
+  if (!button || gcalBusy) return;
+  event.preventDefault();
+  const action = button.dataset.gcalAction;
+  const token = authSession?.access_token;
+  const run = async (label, fn) => {
+    gcalBusy = label;
+    renderGcalPanels();
+    try { await fn(); } catch (error) { alert(error.message || "Google Calendar request failed."); }
+    finally { gcalBusy = ""; renderGcalPanels(); }
+  };
+
+  if (action === "connect") {
+    // Google blocks OAuth inside embedded webviews, so in the iPhone app the
+    // consent page opens in Apple's sign-in sheet (WebAuth plugin), exactly as the
+    // Gmail connection does; gcal-callback sends the sheet back to the app scheme.
+    if (isNativeApp() && nativeWebAuth()) {
+      await run("Opening Google…", async () => {
+        const { url } = await gcalApi.authUrl(token, { native: true });
+        const result = await nativeWebAuth().start({ url, callbackScheme: APP_CALLBACK_SCHEME });
+        const { status, reason } = result?.url ? parseAppCallback(result.url) : { status: result?.cancelled ? "cancelled" : "unknown" };
+        if (status === "error") { alert(gcalErrorMessage(reason)); return; }
+        // Connected — or the sheet was closed: re-check with the server either way.
+        const changed = await syncGoogleCalendarLinks({ force: true });
+        if (gcalStatus?.connected) showMailToast("Google Calendar connected");
+        if (changed || gcalStatus?.connected) await refreshAfterGcalChange();
+      });
+      return;
+    }
+    // An older app build without the sign-in sheet: connect from a browser
+    // (tokens are stored per account, so it syncs straight to the app).
+    if (isNativeApp()) {
+      alert("Connect Google Calendar from the web app in Safari or Chrome — it then syncs to this app automatically.");
+      return;
+    }
+    await run("Opening Google…", async () => {
+      const { url } = await gcalApi.authUrl(token);
+      if (url) window.location.href = url;
+    });
+    return;
+  }
+
+  if (action === "add") {
+    const googleCalendarId = button.dataset.gcalId;
+    const existing = (gcalStatus?.links || []).find((l) => l.googleCalendarId === googleCalendarId);
+    await run("Adding…", async () => {
+      const body = existing
+        ? { action: "relink", googleCalendarId, appCalendarId: readdAppCalendarId(googleCalendarId) }
+        : { action: "link", links: [{ googleCalendarId, appCalendarId: appCalendarIdForGoogle(googleCalendarId) }] };
+      await gcalApi.action(token, body);
+      await syncGoogleCalendarLinks({ force: true });
+      await refreshAfterGcalChange();
+    });
+    return;
+  }
+
+  if (action === "refresh") {
+    await run("Refreshing…", async () => {
+      await syncGoogleCalendarLinks({ force: true });
+      await refreshAfterGcalChange({ full: true });
+    });
+    return;
+  }
+
+  if (action === "disconnect") {
+    const apiOnly = normalizeLinkedCalendars(state.calendars).filter((c) => c.googleCalendarId && !c.url);
+    const note = apiOnly.length ? ` ${apiOnly.length} calendar${apiOnly.length === 1 ? "" : "s"} added from Google will be removed from the app (nothing is deleted in Google).` : "";
+    if (!confirm(`Disconnect Google Calendar?${note}`)) return;
+    await run("Disconnecting…", async () => {
+      await gcalApi.action(token, { action: "disconnect" });
+      if (apiOnly.length) recordDeletions("calendars", apiOnly.map((c) => c.id));
+      state.calendars = normalizeLinkedCalendars(state.calendars)
+        .filter((c) => !(c.googleCalendarId && !c.url))
+        .map(({ googleCalendarId, ...rest }) => rest);
+      persist();
+      gcalSaveCache({});
+      gcalStatus = { connected: false };
+      gcalReport = null;
+      await refreshAfterGcalChange();
+    });
+    return;
+  }
+
+  if (action === "report") {
+    await run("Checking every event (this can take a few seconds)…", async () => {
+      const cals = normalizeLinkedCalendars(state.calendars).filter((c) => c.googleCalendarId);
+      if (!cals.length) { gcalReport = { error: "No Google calendars are in the app yet." }; return; }
+      const response = await gcalApi.events(token, { mode: "masters", calendars: cals.map((c) => ({ appCalendarId: c.id })) });
+      const ok = cals.filter((c) => response.results?.[c.id]?.status === "ok");
+      gcalReport = {
+        report: buildSeveranceReport(ok.map((c) => ({ name: c.name, appCalendarId: c.id, items: response.results[c.id].items }))),
+        unavailable: cals.filter((c) => !ok.includes(c)).map((c) => c.name),
+        truncated: ok.filter((c) => response.results[c.id].truncated).map((c) => c.name)
+      };
+    });
   }
 }
 
@@ -20212,6 +20608,7 @@ function dedupeCalendarEvents(events) {
   return events.filter((event) => {
     const key = [
       event.calendarId || "",
+      event.gid ? `${event.gid}|${event.startTime || ""}` : "",
       normalize(event.summary || ""),
       event.recursYearly ? "" : event.date || "",
       event.recursYearly ? event.monthDay || "" : ""
@@ -25504,11 +25901,18 @@ function getPlanEventsForRange(startKey, endKey) {
     let gg = 0;
     while (gCur <= gEnd && gg++ < 800) {
       const dk = dateKeyFromDate(gCur);
+      const seenIds = new Set();
       syncedCalendarEventsForDate(gCur).forEach((ev) => {
-        const id = `gcal:${ev.calendarId}:${dk}:${ev.summary}`;
+        // Id stays `gcal:<cal>:<date>:<title>` so hides/renames made before the
+        // Google API switch keep applying; a second same-titled event that day
+        // (only possible with API events) gets its Google id appended.
+        let id = `gcal:${ev.calendarId}:${dk}:${ev.summary}`;
+        if (seenIds.has(id) && ev.gid) id = `${id}#${ev.gid}`;
+        seenIds.add(id);
         if (excludedExternalIds.has(id)) return; // §16 locally hidden
         const ov = externalTitleOverrides.get(id); // §15 local rename
-        events.push({ id, title: ov || ev.summary, ...(ov ? { _sourceTitle: ev.summary, _overridden: true } : {}), date: dk, allDay: true, startTime: null, endTime: null, color: ev.calendarColor || PLAN_COLORS[0], source: "ical", readOnly: true, provider: "google", calendarId: ev.calendarId, calendarName: ev.calendarName });
+        const timed = ev.source === "google-api" && !ev.allDay && ev.startTime;
+        events.push({ id, title: ov || ev.summary, ...(ov ? { _sourceTitle: ev.summary, _overridden: true } : {}), date: dk, allDay: !timed, startTime: timed ? ev.startTime : null, endTime: timed ? (ev.endTime || null) : null, color: ev.calendarColor || PLAN_COLORS[0], source: "ical", readOnly: true, provider: "google", calendarId: ev.calendarId, calendarName: ev.calendarName, ...(ev.gid ? { externalId: ev.gid } : {}) });
       });
       gCur.setDate(gCur.getDate() + 1);
     }
@@ -26991,6 +27395,8 @@ function setPlanCalDialogMode(editing) {
   if (elements.addPlanCalBtn) elements.addPlanCalBtn.textContent = editing ? "Save" : "Add";
   const delBtn = document.getElementById("planCalDialogDeleteBtn");
   if (delBtn) delBtn.hidden = !editing;
+  const gcalPanel = document.getElementById("planAddCalGcal");
+  if (gcalPanel) gcalPanel.hidden = editing;
 }
 
 // The "Show on Meal Plan" switch in the Add/Edit Calendar dialog.
@@ -27017,6 +27423,7 @@ function openAddPlanCalDialog() {
   renderCalendarColorPicker(elements.planNewCalColorPicker, firstUnusedPlanColor(used), "planNewCalColor", used);
   setPlanCalMealPlanToggle(false, true);
   setPlanCalDialogMode(false);
+  renderGcalPanels();
   elements.planAddCalDialog.showModal();
   requestAnimationFrame(() => elements.planNewCalName.focus());
 }
@@ -27029,9 +27436,10 @@ function openEditCalDialog(id) {
   elements.planNewCalName.value = cal.name || "";
   elements.planNewCalUrl.value = cal.url || "";
   renderCalendarColorPicker(elements.planNewCalColorPicker, cal.color, "planNewCalColor", usedCalendarColors(id));
-  // Google calendars already show on the meal plan's day strip, so the switch is
-  // for the calendars whose events carry times: your own and subscribed feeds.
-  setPlanCalMealPlanToggle(Boolean(state.planMealPlanCalendars?.[id]), store === "planCalendars");
+  // iCal-linked Google calendars only show on the meal plan's day strip (no
+  // times), so the switch is for calendars whose events carry times: your own,
+  // subscribed feeds, and Google calendars connected through the Google API.
+  setPlanCalMealPlanToggle(Boolean(state.planMealPlanCalendars?.[id]), store === "planCalendars" || Boolean(cal.googleCalendarId));
   setPlanCalDialogMode(true);
   elements.planAddCalDialog.showModal();
   requestAnimationFrame(() => elements.planNewCalName.focus());
@@ -27258,6 +27666,7 @@ function deletePlanCalendar(id) {
   const calName = (state[store] || []).find((c) => c.id === id)?.name || "this calendar";
   if (!confirm(`Remove "${calName}"?`)) return;
   recordDeletion(store, id);
+  if (store === "calendars") gcalUnlinkQuietly((state.calendars || []).find((c) => c.id === id));
   state[store] = (state[store] || []).filter((c) => c.id !== id);
   if (store === "planCalendars") { delete planCalendarCache[id]; }
   persist();
@@ -27523,7 +27932,7 @@ async function addPlanCalendar() {
     if (!existing) return;
     const urlChanged = (existing.url || "") !== url;
     state[store] = (state[store] || []).map((c) => c.id === id ? { ...c, name, color, url } : c);
-    if (store === "planCalendars") setCalendarOnMealPlan(id, showOnMealPlan);
+    if (store === "planCalendars" || existing.googleCalendarId) setCalendarOnMealPlan(id, showOnMealPlan);
     persist();
     maybeWriteCloudSnapshot({ force: true }).catch(() => {});
     renderPlanCalList();

@@ -52,7 +52,7 @@ export function normalizeMealPlanCalendarFlags(value) {
 }
 
 // Everything one calendar scope puts on the meal plan.
-//   scope    — that scope's plan-section data ({ planEvents, planCalendars,
+//   scope    — that scope's plan-section data ({ planEvents, planCalendars, calendars,
 //              planMealPlanCalendars, planExternalExclusions, planExternalOverrides })
 //   cacheFor — (calendar) => this device's fetched feed events, or null if the
 //              feed hasn't been fetched here
@@ -80,6 +80,20 @@ export function mealPlanEventsFromScope(scope, cacheFor = () => null) {
     const cached = cacheFor(cal);
     if (!Array.isArray(cached)) { uncachedCalendarIds.push(cal.id); continue; }
     const source = sourceFromPlanCalendar(cal);
+    for (const raw of cached) {
+      const event = normalizeExternalEvent(raw, source);
+      if (!event.externalId || hidden.has(event.id)) continue;
+      events.push({ ...event, title: renamed.get(event.id) || event.title, external: true });
+    }
+  }
+  // Google Calendar API calendars (state.calendars entries with googleCalendarId,
+  // GOOGLE_CALENDAR_SYNC_DESIGN.md) carry real times, so they can be switched to
+  // "Show on Meal Plan" too. Their events come from this device's Google cache.
+  for (const cal of Array.isArray(scope.calendars) ? scope.calendars : []) {
+    if (!cal?.id || !cal.googleCalendarId || cal.enabled === false || !flags[cal.id]) continue;
+    const cached = cacheFor(cal);
+    if (!Array.isArray(cached)) { uncachedCalendarIds.push(cal.id); continue; }
+    const source = { id: cal.id, provider: "google-api", calendarId: cal.id, name: cal.name || "", color: cal.color || null, readOnly: true };
     for (const raw of cached) {
       const event = normalizeExternalEvent(raw, source);
       if (!event.externalId || hidden.has(event.id)) continue;
