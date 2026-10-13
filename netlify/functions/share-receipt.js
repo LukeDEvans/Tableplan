@@ -55,7 +55,7 @@ exports.handler = async (event) => {
     if (action !== "share") return cors(json(400, { error: `Unknown action: ${action}` }));
 
     const claim = verifyOAuthState(bearer, serviceKey, { purpose: SHARE_TOKEN_PURPOSE });
-    if (!claim) return cors(json(401, { error: "Open Liv once to reconnect sharing." }));
+    if (!claim) return cors(json(401, { error: "Open the Live app once to reconnect sharing." }));
     const groupId = await getUserGroupId(serviceKey, claim.userId);
     if (!groupId) return cors(json(403, { error: "No household group." }));
 

@@ -14,6 +14,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/ios-*.yml"
+      - "scripts/ios-*.sh"
   pull_request:
     paths:
       - "ios/**"
@@ -22,6 +23,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/ios-*.yml"
+      - "scripts/ios-*.sh"
   workflow_dispatch:
 
 jobs:
@@ -55,13 +57,25 @@ jobs:
       - name: Build web app + sync into iOS project
         run: npm run ios:sync
 
-      - name: Compile (no signing)
+      - name: Archive (ad-hoc signed, as the TestFlight workflow does)
+        # Same archive settings as ios-testflight.yml, so a PR proves the archive
+        # step works and that the app + Share Extension keep their entitlements.
+        # Only the App Store signing/upload (needs the API key) isn't covered.
         run: |
           set -o pipefail
-          xcodebuild build \
+          xcodebuild archive \
             -workspace ios/App/App.xcworkspace \
             -scheme App \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            | tee "$RUNNER_TEMP/build.log" | grep -E "error:|\*\* BUILD" || { tail -80 "$RUNNER_TEMP/build.log"; exit 1; }
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            DEVELOPMENT_TEAM=6RTNUZR7K5 \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=NO \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            | tee "$RUNNER_TEMP/build.log" | grep -E "error:|\*\* ARCHIVE" || { tail -80 "$RUNNER_TEMP/build.log"; exit 1; }
+
+      - name: Check the archive kept its entitlements
+        run: bash scripts/ios-check-entitlements.sh "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app"
