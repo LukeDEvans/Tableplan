@@ -1,4 +1,4 @@
-  const RECEIPT_SOURCES = ["scan", "email", "extension", "manual"];
+  const RECEIPT_SOURCES = ["scan", "email", "extension", "share", "manual"];
 
   function text(value) {
     return String(value || "").trim();
@@ -83,7 +83,8 @@ return {
       createdAt: text(receipt?.createdAt) || new Date().toISOString(),
       // One receipts list serves Shop and Finance (RECEIPTS.md). Where it came
       // from: "scan" (camera/photo, reviewed in Shop — the default), "email" (mail
-      // sweep), "extension" (browser order page), "manual". Only scan/manual
+      // sweep), "extension" (browser order page), "share" (order screenshot from
+      // the iPhone share sheet), "manual". Only scan/manual
       // receipts feed grocery price history.
       source: RECEIPT_SOURCES.includes(text(receipt?.source)) ? text(receipt.source) : "scan",
       // The source's own id (Gmail message id for email receipts) — for links.
@@ -309,12 +310,12 @@ return {
     };
   }
 
-  // An email / extension receipt from the server inbox (finreceipts_ row:
+  // An email / extension / share-sheet receipt from the server inbox (finreceipts_ row:
   // { id, merchant, date, total, items: [{ name, price, category }], source? })
   // → a receipt in the one list. The id is derived from the inbox id, so
   // importing the same receipt again is a no-op.
   function receiptFromFinanceInbox(inbound, createId = defaultId) {
-    const source = inbound?.source === "extension" || inbound?.source === "scan" ? inbound.source : "email";
+    const source = ["extension", "share", "scan"].includes(inbound?.source) ? inbound.source : "email";
     const externalId = text(inbound?.id);
     const id = `receipt-${source}-${externalId}`;
     return normalizeReceipt({
@@ -337,12 +338,32 @@ return {
     }, createId);
   }
 
+  // A share-sheet receipt arrives again under the same id when the same order is
+  // shared twice — typically the "Your Orders" list first (no item prices) and
+  // the order details page after. Take the newer read when it prices more items
+  // and the receipt hasn't been corrected by hand; keep the link, date added and
+  // any photos from the receipt already in the list.
+  function shareReceiptUpgrade(existing, incoming) {
+    if (existing?.source !== "share" || incoming?.source !== "share") return null;
+    const lines = (r) => (Array.isArray(r?.lineItems) ? r.lineItems : []);
+    if (lines(existing).some((l) => l?.userCorrected)) return null;
+    const priced = (r) => lines(r).filter((l) => number(l?.totalPrice) > 0).length;
+    if (priced(incoming) <= priced(existing)) return null;
+    return normalizeReceipt({
+      ...incoming,
+      createdAt: existing.createdAt || incoming.createdAt,
+      financeTxnId: existing.financeTxnId || "",
+      imageRefs: existing.imageRefs || [],
+    });
+  }
+
   function defaultId(prefix) {
     return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
 export {
     normalizeReceipt,
+    shareReceiptUpgrade,
     normalizeReceiptLineItem,
     validateReceipt,
     normalizeMappings,

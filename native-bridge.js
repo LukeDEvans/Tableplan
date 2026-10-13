@@ -137,6 +137,24 @@ export function nativeWebAuth() {
   return _webAuth;
 }
 
+// Receipt share token for the Share Extension (ShareToken plugin — shared
+// keychain group): set({ token }), clear(), status() → { present }. null in a
+// browser/PWA or an app build from before the extension existed.
+// receipt-share-token.js decides when to mint / store / clear.
+let _shareToken;
+export function nativeShareToken() {
+  if (_shareToken !== undefined) return _shareToken;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _shareToken = null;
+      return _shareToken;
+    }
+    const p = registerPlugin("ShareToken");
+    _shareToken = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("ShareToken")) ? p : null;
+  } catch { _shareToken = null; }
+  return _shareToken;
+}
+
 // The iPhone app runs at capacitor://localhost, so app.js's canUseLocalBackend()
 // (a hostname check) is TRUE there and URL helpers pick their local-dev-server
 // paths (/api/<name>, served by server.js on a laptop). The live site only routes
