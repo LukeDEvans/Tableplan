@@ -21947,7 +21947,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-txn-search-scope { display: block; padding: 0 2px 6px; }
 
 /* Freshness line under the Transactions header (bank data syncs ~once a day). */
-.fin-txn-status { font-size: 0.72rem; color: var(--muted); padding: 0 2px 4px; min-height: 0.9rem; }
+/* Footer of the Transactions card: when the bank data was last updated. */
+.fin-txn-status { font-size: 0.72rem; color: var(--muted); padding: 10px 2px 0; text-align: center; }
 .fin-txn-status-load { color: var(--accent-dark, var(--accent)); }
 /* Inline "some transactions failed to load" note (distinct from an empty month). */
 /* Loading skeleton — distinguishes "fetching" from "empty month" / "failed". */
