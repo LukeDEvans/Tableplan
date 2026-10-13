@@ -81,16 +81,30 @@ exports.handler = async (event) => {
       ...parts.map((m) => ({ type: "image", source: { type: "base64", media_type: m[1], data: m[2] } })),
       ...(text.length >= 40 ? [{ type: "text", text: `SHARED TEXT:\n${text}` }] : [])
     ];
-    const ai = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_RECEIPT_SCAN_MODEL || "claude-haiku-4-5-20251001",
-        max_tokens: 3000,
-        temperature: 0,
-        messages: [{ role: "user", content }]
-      })
-    });
+    // Netlify cuts a synchronous function off at 10 s (Free plan) with an HTML
+    // 502. Stop the read just short of that so the share sheet gets a clear
+    // message instead.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), Number(process.env.SHARE_RECEIPT_AI_TIMEOUT_MS) || 9000);
+    let ai;
+    try {
+      ai = await fetch("https://api.anthropic.com/v1/messages", {
+        signal: ctrl.signal,
+        method: "POST",
+        headers: { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: process.env.ANTHROPIC_RECEIPT_SCAN_MODEL || "claude-haiku-4-5-20251001",
+          max_tokens: 2000,
+          temperature: 0,
+          messages: [{ role: "user", content }]
+        })
+      });
+    } catch (e) {
+      if (e?.name === "AbortError") return cors(json(504, { error: "That took too long. Try fewer screenshots." }));
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!ai.ok) return cors(json(502, { error: `Couldn't read the screenshot (${ai.status}).` }));
 
     const receipts = receiptsFromModel(await modelText(ai), categories);

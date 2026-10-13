@@ -118,3 +118,22 @@ describe("share-receipt share", () => {
     expect(inbox).toEqual([]);
   });
 });
+
+describe("share-receipt time limit", () => {
+  it("answers with a clear 504 instead of running into Netlify's cutoff", async () => {
+    process.env.SHARE_RECEIPT_AI_TIMEOUT_MS = "20";
+    globalThis.fetch = (url, opts = {}) => {
+      if (String(url).includes("api.anthropic.com")) {
+        return new Promise((_, reject) => opts.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }))));
+      }
+      return fakeFetch(url, opts);
+    };
+    try {
+      const res = await call(shareToken(), { images: [IMG] });
+      expect(res.statusCode).toBe(504);
+      expect(inbox).toEqual([]);
+    } finally {
+      delete process.env.SHARE_RECEIPT_AI_TIMEOUT_MS;
+    }
+  });
+});
