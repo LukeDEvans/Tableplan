@@ -30,3 +30,6 @@ _Last deploy: 2026-10-11 #2 (News: Sports always shows)._
   - Open an article from Listen's queue, press Back, and land on the queue.
   - Watch opens from the landing page.
   - Save a story and find it in Saved.
+
+- **Finance: the four tabs stay pinned at the top while scrolling** · branch `claude/finance-sticky-tabs` · `.fin-tabs` is `position: sticky` inside the Finance window (its scroller is `#financeMainPage`), with an opaque backing so rows don't show through. CSS only. Verified at 360px in headless Chromium: after scrolling Transactions, Budget and Accounts, the tabs stay at the same spot and are still tappable. **After TestFlight/deploy:** scroll a long Transactions list on the phone and switch tabs without scrolling back up.
+

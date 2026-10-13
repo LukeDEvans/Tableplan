@@ -21231,6 +21231,15 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 /* ── Section tabs (Transactions · Budget · Accounts) ── */
 .fin-tabs { display: flex; gap: 6px; padding: 3px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; overflow-x: auto; scrollbar-width: none; }
 .fin-tabs::-webkit-scrollbar { display: none; }
+/* Pinned: the tabs stay at the top of the Finance window while its content
+   scrolls (#financeMainPage is the scroller). The tint is mixed onto the window
+   colour so it's opaque, and the ring in the window colour masks rows sliding
+   past the rounded corners. */
+.fin-tabs {
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--ink) 6%, var(--window-bg));
+  box-shadow: 0 0 0 8px var(--window-bg);
+}
 .fin-tab {
   /* grow to fill on desktop, but never shrink below the label (4 tabs) — on a
      narrow phone the bar scrolls horizontally instead of clipping "Transactions". */
