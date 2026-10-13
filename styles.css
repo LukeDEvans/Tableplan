@@ -3790,7 +3790,6 @@ input.live-toggle:checked::before,
 
 /* Checklist space. */
 .shop-checklist { display: flex; flex-direction: column; gap: 4px; }
-.shop-checklist-hint { margin: 2px 2px 8px; }
 .shop-checklist-list { display: flex; flex-direction: column; }
 .shop-checklist-row.is-checked .grocery-name {
   color: var(--muted);
@@ -13370,12 +13369,12 @@ body[data-theme="dark"] .watch-provider-link:hover {
 
 /* ── Inventory page ─────────────────────────────────────────────── */
 #inventoryMainPage { overflow-y: auto; }
-/* No window frame, to match Shop (Luke, 2026-10-06): Checklist · Shop · Inventory
-   are one set of tabs, so the frame must not come and go between them. */
+/* Same window as Shop: no shadow, but the blue border (Luke, 2026-10-13 — it came
+   back on Shop on 2026-10-11, and Checklist · List · Inventory are one set of tabs,
+   so the frame must not come and go between them). */
 #inventoryMainPage.planner-column {
-  border: 0;
   box-shadow: none;
-  padding: 4px 0 0; /* puts the tabs at the same height as Shop's */
+  padding: 12px 0 0; /* puts the tabs at the same height as Shop's (its list panel pads 12px) */
 }
 #inventoryMainPage #inventorySpaceTabBar .watch-category-tabs {
   padding-left: 10px;
@@ -13384,7 +13383,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
 /* Same right inset Shop's bar has, so the three tabs don't shift between pages. */
 #inventoryMainPage #inventorySpaceTabBar { padding-right: 12px; }
 #inventoryMainPage .inventory-rooms-grid { padding: 12px 10px; }
-#inventoryMainPage .inventory-toolbar { padding: 6px 10px 0; }
 
 /* Inventory — Room Card Grid */
 .inventory-layout {
@@ -13588,32 +13586,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
 }
 .inventory-item-chip:hover { background: color-mix(in srgb, var(--accent-soft) 50%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 .inventory-item-chip.inv-dragging { opacity: 0.3; cursor: grabbing; }
-.inventory-item-chip.is-tracked { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.inventory-item-track-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
-/* Inventory toolbar + weekly checklist */
-.inventory-toolbar { display: flex; justify-content: flex-end; padding: 0 2px 10px; }
-.inventory-checklist-btn { display: inline-flex; align-items: center; gap: 6px; }
-.inventory-checklist-dialog { max-width: 480px; width: 92vw; }
-.inventory-checklist-body { display: flex; flex-direction: column; gap: 14px; max-height: 62vh; overflow-y: auto; }
-.inventory-checklist-group { display: flex; flex-direction: column; gap: 6px; }
-.inventory-checklist-room { font-size: 0.72rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.inventory-checklist-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 11px;
-  border: 1px solid var(--window-border);
-  border-radius: 12px;
-  background: var(--window-bg);
-  cursor: pointer;
-  font-weight: 650;
-}
-.inventory-checklist-row input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; accent-color: var(--accent); }
-.inventory-checklist-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inventory-checklist-flag { flex: 0 0 auto; font-size: 0.72rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
-.inventory-checklist-row.is-low { border-color: color-mix(in srgb, var(--accent) 45%, var(--window-border)); background: color-mix(in srgb, var(--accent-soft) 30%, var(--window-bg)); }
-.inventory-checklist-row.is-low .inventory-checklist-flag { color: var(--accent-dark); }
 
 .inventory-item-name {
   font-size: 0.84rem;

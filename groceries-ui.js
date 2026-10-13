@@ -4820,7 +4820,6 @@ function renderShopChecklistSpace() {
   }
   elements.groceryList.innerHTML = `
     <div class="shop-checklist">
-      <p class="muted-label shop-checklist-hint">Check anything you don't need this week, then Submit. Starts fresh every Friday.</p>
       <div class="shop-checklist-list">
         ${config.map((entry) => `
           <label class="grocery-item shop-checklist-row ${answers[entry.id] ? "is-checked" : ""}">
@@ -4831,7 +4830,7 @@ function renderShopChecklistSpace() {
       </div>
       <div class="shop-checklist-footer">
         <button class="grocery-cleanup-link" type="button" data-open-checklist-config>Configure</button>
-        <span class="muted-label shop-checklist-status">${submission ? "Submitted this week" : "Not submitted yet this week"}${pending ? " · unsaved changes" : ""}</span>
+        <span class="muted-label shop-checklist-status">${submission ? `Submitted this week${pending ? " · unsaved changes" : ""}` : (pending ? "Unsaved changes" : "")}</span>
         <button class="primary-btn shop-checklist-submit" type="button" data-checklist-submit ${pending ? "" : "disabled"}>Submit</button>
       </div>
     </div>
@@ -5143,27 +5142,6 @@ function buildGroceryText() {
     .join("\n\n");
 }
 
-function shoppingListHas(name) {
-  const n = normalize(name);
-  return (state.persistentManualGroceries || []).some((x) => normalize(x) === n);
-}
-
-function addToShoppingList(name) {
-  if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
-  stampGroceryAdd(manualListStamps(), name, stampNow());
-  resetBoughtMarks(state.checkedGroceries, state.groceryCleared, manualGroceryRow(name).key);
-  if (!shoppingListHas(name)) {
-    state.persistentManualGroceries.push(name);
-    state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
-  }
-}
-
-function removeFromShoppingList(name) {
-  const n = normalize(name);
-  state.persistentManualGroceries = (state.persistentManualGroceries || []).filter((x) => normalize(x) !== n);
-  stampGroceryRemove(manualListStamps(), name, stampNow());
-}
-
 function renderShopPage() {
   renderGroceries();
   renderShopReceipts();
@@ -5259,7 +5237,6 @@ function renderShopReceipts() {
     addPantryItem,
     addReceiptReviewLine,
     addStoreToRank,
-    addToShoppingList,
     appendReceiptCameraFile,
     applyGroceryItemRename,
     attachPointerDragToTargets,
@@ -5317,7 +5294,6 @@ function renderShopReceipts() {
     receiptItemMappings,
     receiptPriceHistory,
     refreshReceiptValidation,
-    removeFromShoppingList,
     renderGroceries,
     renderGroceryLibrary,
     renderPantry,
@@ -5343,7 +5319,6 @@ function renderShopReceipts() {
     setReceiptImageEdits,
     setReceiptScanFiles,
     setShopSpaceValue,
-    shoppingListHas,
     toggleGroceryRangeMenu,
     unlistedGroceryItemsForWeek,
     updateReceiptScanSelectionStatus,
