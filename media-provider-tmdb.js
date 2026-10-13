@@ -27,8 +27,11 @@ async function defaultFetchJson(url, { signal } = {}) {
 // tmdb-search's normalized result → canonical video Work. The tmdb ref is a
 // metadata/availability ANCHOR (no playback); meta.tmdbId gives a trustworthy
 // cross-provider identity so a Jellyfin copy or streamer availability merges in.
+// The tmdb-search function returns `tmdbId` (not TMDB's raw `id`); accept both so
+// the adapter can't silently drop every result again.
 function mapResult(r) {
-  const id = (r && r.id != null) ? String(r.id) : "";
+  const raw = r ? (r.tmdbId ?? r.id) : null;
+  const id = raw != null ? String(raw) : "";
   if (!id) return null;
   const type = r.type === "tv" ? "tv" : "movie";
   return makeMediaItem({
