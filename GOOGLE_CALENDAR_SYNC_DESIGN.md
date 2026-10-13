@@ -1,6 +1,6 @@
 # Google Calendar two-way sync — design & plan
 
-Status: **APPROVED DIRECTION** (Luke, 2026-10-12). Nothing built. Written against `origin/integration` @ `fadfd2f`.
+Status: **Phase 1 merged to `main` (PR #90, 2026-10-13), not deployed.** Phase 2 not started. Direction approved by Luke 2026-10-12.
 
 Goal: events and calendars added in Google Calendar appear in Tableplan automatically, and events created/edited/deleted in Tableplan on a Google-backed calendar land in Google.
 
@@ -136,7 +136,7 @@ Real start/end times also fix meal-plan placement for Google events.
 - ✅ Scope `https://www.googleapis.com/auth/calendar` added to the consent screen. This single full scope covers Phases 1–2 (events, calendar list, and creating calendars for the automatic move). `gcal-auth` should request exactly this scope.
 - ✅ Publishing status confirmed **In production** (Luke, 2026-10-12). Keep it there: in *Testing*, refresh tokens for sensitive scopes expire after 7 days.
 
-**Phase 1: Read via API (biggest immediate win) — ✅ BUILT on branch `claude/gcal-sync` off `main` (2026-10-12), not deployed**
+**Phase 1: Read via API (biggest immediate win) — ✅ MERGED to `main` (PR #90, 2026-10-13), not deployed**
 - As built: `migrations/2026-10-12-gcal-accounts.sql` (`gcal_accounts` + `gcal_links`), `netlify/functions/_gcal.js` + `gcal-auth` / `gcal-callback` / `gcal-calendars` / `gcal-events`, `calendar/google.js` (pure mapping + severance converter), `calendar/google-client.js` (device cache + link reconciliation), app.js glue (search "Google Calendar API sync"), panel in Settings → Calendars and the sidebar's Add Calendar dialog.
 - Deviations from §3–5, on purpose:
   - The app↔Google mapping is authoritative in **`gcal_links`** (server), not only on the `state.calendars` entry. Older deployed clients strip unknown fields from `state.calendars` when they re-save the plan row, so the entry's `googleCalendarId` is just a cache that every status sync re-applies.
@@ -151,7 +151,7 @@ Real start/end times also fix meal-plan placement for Google events.
   1. ✅ Migration applied to prod (2026-10-12, via the Supabase MCP). Verified: both tables exist, RLS on, no policies, only `postgres`/`service_role` hold privileges.
   2. Redirect URI `https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/gcal-callback` (see 3).
   3. ✅ Redirect URI added to the OAuth client (Luke, 2026-10-12).
-  4. Merge `claude/gcal-sync` → `main` and deploy (needs Luke's OK). No new env vars.
+  4. ✅ Merged to `main` (PR #90, 2026-10-13). **Remaining: a `[deploy]` (needs Luke's OK) and a TestFlight build.** No new env vars. Post-deploy steps are in `UNDEPLOYED.md`.
 - Original Phase 1 scope:
 - Ship: `gcal_accounts` migration, `gcal-auth/callback/calendars/events`, connect UI, in-place migration, timed events, auto-discovered new calendars.
 - Also ship the **severance converter + dry-run report** (§9) now, not at the end.
