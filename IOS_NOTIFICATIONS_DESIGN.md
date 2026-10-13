@@ -1,6 +1,6 @@
 # iPhone app notifications — design & plan
 
-Status: **APPROVED DIRECTION** (Luke, 2026-10-13). Build all three phases, retire the briefing entirely, and stay well inside Supabase egress. **Phase 1 built on branch `claude/reminders-phase1` (2026-10-13), not merged or deployed; its migration is not applied.** Written against `main` @ `8bb21b9`.
+Status: **APPROVED DIRECTION** (Luke, 2026-10-13). Build all three phases, retire the briefing entirely, and stay well inside Supabase egress. **Phase 1 merged (PR #95) and deployed 2026-10-13, migration applied; needs a TestFlight build for the iPhone part.** Written against `main` @ `8bb21b9`.
 
 Goal: the TestFlight app on the iPhone shows real iOS notifications, both for what the phone already knows about (event reminders) and for what happens elsewhere (a dropped connection, a reminder set on another device). **The app becomes the source of reminders**, including for Google-calendar events, so Luke can see exactly what the app sends while working toward dropping Google.
 
@@ -131,7 +131,7 @@ Luke plans a significantly reworked version later. Nothing here needs preserving
 
 ## 5. Phase 1: local notifications on iOS
 
-**As built (branch `claude/reminders-phase1`):**
+**As built (PR #95):**
 - `migrations/2026-10-13-notification-prefs.sql`: `live_notification_prefs` + `merge_my_reminders(jsonb)`. The RPC validates values, merges key by key, and returns only `updated_at`; a `null` value removes a key. It was checked against Postgres (PGlite with stubbed `auth`): RLS isolation, no anon access, no deletes, bad values rejected. **Not applied.**
 - `calendar/reminders.js` (pure core), `calendar/reminder-prefs.js` (prefs store: cache, 10-min freshness, `updated_at=gt.`, merge-RPC writes, offline outbox), `calendar/reminders-native.js` (iOS scheduler).
   - These live in `calendar/` rather than a new `notifications/` folder, because reminders are calendar-owned. Phase 2's push code is shared infra and goes elsewhere.

@@ -224,13 +224,13 @@ is HELD** — the read-compat shim has a delete-resurrection gap that needs a sc
 `mergeStates` tombstone-routing fix first, and there is **no** `STATE_SCHEMA_VERSION`
 bump (it's finance-only). Full record + the prerequisite fix: **[CALENDAR_AUTHORITY_FLIP.md](CALENDAR_AUTHORITY_FLIP.md)**.
 
-**Google Calendar two-way sync (approved direction, 2026-10-12; Phase 1 merged in #90, not yet deployed):** Google is the
+**Google Calendar two-way sync (approved direction, 2026-10-12; Phase 1 merged in #90, deployed 2026-10-13):** Google is the
 authority for Google-backed calendars through the transition, fetched per device and never written
 into synced state (so it does **not** touch the held authority flip). The app becomes the master copy
 later via a planned severance. Plan, decisions, and readiness criteria:
 **[GOOGLE_CALENDAR_SYNC_DESIGN.md](GOOGLE_CALENDAR_SYNC_DESIGN.md)**.
 
-**Notifications & per-person reminders (approved direction, 2026-10-13; Phase 1 built on `claude/reminders-phase1`, not merged):**
+**Notifications & per-person reminders (approved direction, 2026-10-13; Phase 1 merged in #95 and deployed 2026-10-13, TestFlight pending):**
 reminders go only to each user who asked for them (stored in that user's `live_notification_prefs` row, never on
 the shared event); the app — not Google — sends them; iPhone delivery is local notifications (Phase 1), then APNs
 push (Phase 2, which also retires the daily briefing) and server-side reminders (Phase 3), all inside a hard
