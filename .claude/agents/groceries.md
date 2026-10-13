@@ -29,13 +29,19 @@ almost all your work is there. Make focused changes to the Groceries domain only
   top-level exports, not inside the factory.**
 - **Pure logic modules (tested — extend with tests, don't rewrite):** `grocery-catalog.js`
   (`catalogEntries`, `normalizeGroceryItemName`, `singularizeWord`), `grocery-sources.js`,
+  `grocery-bought.js` (a checked-off **manual** item stays bought across shopping cycles;
+  meal-plan needs reset each cycle), `grocery-list-stamps.js` (add/remove stamps in
+  `persistentManualGroceryStamps` so a removed manual item can't be resurrected by the
+  union merge), `instacart.js` (pure Instacart hand-off; the vendor call and API key live
+  only in `netlify/functions/instacart-list.mjs`, which re-validates the payload),
   `receipt-domain.js` / `receipt-scan.js` (the shared scan seam, also used by Recipes).
 - **Data:** the JSONB `grocery` section — `groceryStores, groceryBaseItems, groceryAliases,
   grocerySplitPreferences, groceryItemLocations, groceryStoreItemSections, priceHistory,
   receipts, receiptItemMappings, groceryPricingSettings, pantry, persistentManualGroceries,
   checkedGroceries, grocerySkippedStores, groceryItemWeekOverride, groceryCleared,
-  groceryDailyDozenTags, groceryReviewDismissed, groceryChecklist, nextStopItems`. Bump
-  `STATE_SCHEMA_VERSION` if you add/restructure keys.
+  groceryDailyDozenTags, groceryReviewDismissed, groceryChecklist, nextStopItems,
+  persistentManualGroceryStamps, instacartOrders`.
+  New keys follow "New synced state" below.
 
 ## Module contract & seams (preserve — the entanglement is real)
 - **Injected deps** (from app.js — add to the deps object, never reach for an app.js global):
@@ -61,6 +67,20 @@ almost all your work is there. Make focused changes to the Groceries domain only
   also read by Travel packing (`inventoryItemList` is inventory's, not ours). Don't rename
   the returned-interface functions without updating callers.
 
+## Luke's Shop decisions (keep them)
+- **Instacart:** one item, one store (enforced in data, so nothing can be ordered
+  twice); Instacart-capable stores are data (`instacartEnabled` on the store), not
+  hardcoded; per-store send button after checking off what's on hand; two distinct
+  order states — `sent_to_instacart` (handed off, not bought) and `delivered`
+  (Luke confirms by hand). No feature flag.
+- **Checked items are hidden by default** ("Show bought" reveals them, same as the
+  broom cleanup).
+- **The Checklist merges additively** (union by key, deletes via
+  `mergeChecklistConfig` tombstones in `grocery-sources.js` — not newest-wins) — an under-loaded
+  device once wiped Luke's 22-item checklist. Don't regress to newest-wins.
+- **Inventory is a child of Shop** (Checklist · Shop · Inventory tabs, one page, one
+  page-access setting).
+
 ## ⚠️ Landmines / do-not-touch
 - **`manualGroceries` storage is frozen (Decision #2b).** The live manual list is
   `state.persistentManualGroceries` (grocery-owned). The legacy `week.manualGroceries` in
@@ -85,6 +105,28 @@ polling** (a prior egress blowout came from polling `tableplan_states`). Store-s
 receipt-scan / auto-tag calls go through a Netlify function, never browser→vendor with a
 secret.
 
-## Git
-Commit locally as work completes; **never `git push`** without explicit permission (push =
-Netlify deploy credits). Run the PRE_PUSH_CHECKLIST mobile-fit pass before proposing a push.
+## New synced state
+A new key goes in `STATE_SECTIONS` (app.js) **and** gets an explicit merge rule in
+`mergeStates` or a documented `MERGE_NEWER_WINS_KEYS` entry
+(`test/architecture-state-merge-coverage.test.js` fails otherwise). A synced setting
+or preference also goes in `TRACKED_SETTINGS` (`settings-sync.js`) — see CLAUDE.md
+"Settings must sync by their own stamp". **Do not bump `STATE_SCHEMA_VERSION`** for a
+non-finance key: it drives the server's finance-protection trigger, and a bump is a
+decision for Luke (CLAUDE.md "Decision boundaries").
+
+## UI conventions
+Follow CLAUDE.md "UI conventions": the house `live-toggle` switch, and the
+notifications-window rules (never open empty, close when the last item is handled).
+Fixed windows and popovers size against the bottom dock via `dock-space.js`
+(`usableViewportBottom`, `dockInset`, `notificationsWindowBox`). Every page must fit a
+~360px phone with no sideways scroll.
+
+## Git & shipping
+Follow root **CLAUDE.md → Git / GitHub**. Commit on a branch as work completes;
+pushing a verified branch is fine. The main session opens the PR, waits for CI,
+merges, and adds the `UNDEPLOYED.md` entry. **Never** make a `[deploy]` commit, apply
+a DB migration, or cross a decision boundary without Luke's OK. In your final report,
+say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/` or
+other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
+the client, and native `ios/` changes only ship this way), or both. Log anything real
+you notice but don't fix to `ISSUES.md`.

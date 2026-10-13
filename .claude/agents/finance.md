@@ -26,14 +26,27 @@ all your work is there. Make focused changes to the Finance domain only.
   `finance-actuals.js`, `finance-csv.js`, `finance-review-gesture.js`, and
   `finance-sync.js` (⚠️ sync — see landmines). `receipt-domain.js` / `receipt-scan.js`
   are the shared scan seam (also used by Shop).
+- **The transactions ledger** (relational `finance_transactions` table — durable
+  bank/CSV/manual rows; read FINANCE_TRANSACTIONS_DESIGN.md first):
+  `finance-transactions.js` (pure core, tested), `finance-txn-store.js` (client data
+  module), `netlify/functions/_finance-ingest.js` (server ingest). The read path is
+  gated by `state.financeTxnSource` (latest choice wins via `financeTxnSourceSetAt`).
+  The daily bank pull is SimpleFIN (`netlify/functions/simplefin.js`, cron + manual
+  Refresh); the server caps every pull at `SIMPLEFIN_PULL_DAYS` = **44** (`_finance-ingest.js`)
+  — 45 triggers SimpleFIN's range-warning banner, so don't raise it.
+  Server changes here need a Netlify deploy.
+- **Receipts are Shop's** (`state.receipts`, one list for Shop and Finance — RECEIPTS.md);
+  Finance reads them only through the injected `receiptsForFinance` /
+  `linkReceiptToFinanceTxn` / `openReceiptDetail` interface.
 - **`app.js` (minimal, shared-glue only):** `showFinanceApp` (nav/router entry — it
   calls the module's `resetFinanceViewMonth()` + `onEnterFinancePage()`), the
   `createFinanceModule({...})` instantiation + destructure (above `render()`), and the
   finance bindings in `bindEvents()`.
 - **Data:** `state.finance*` in `tableplan_states` JSONB. **Finance is Supabase-only
   — never write finance data to localStorage.** Receipt images live in the private
-  `receipt-attachments` Storage bucket (per-user RLS, `<auth.uid()>/…`). Bump
-  `STATE_SCHEMA_VERSION` if finance state keys change.
+  `receipt-attachments` Storage bucket (per-user RLS, `<auth.uid()>/…`). A new or restructured
+  `finance*` key **needs** a `STATE_SCHEMA_VERSION` bump (the `tp_protect_finance_merge`
+  trigger relies on it) — that bump is a decision for Luke, so ask first.
 
 ## Module contract & cross-domain touchpoints (preserve)
 - **Injected deps** (from app.js): `state`, `persist`, `createId`, `escapeHtml`,
@@ -92,7 +105,28 @@ short-cadence polling of Supabase tables** (a prior egress blowout came from pol
 auth/session retry loops (a prior auth storm came from an unguarded retry). External
 calls go through a Netlify function, never browser→vendor with a secret.
 
-## Git
-Commit locally as work completes; **never `git push`** without explicit permission
-(push = Netlify deploy credits). Run the PRE_PUSH_CHECKLIST mobile-fit pass before
-proposing a push.
+## New synced state
+A new key goes in `STATE_SECTIONS` (app.js) **and** gets an explicit merge rule in
+`mergeStates` or a documented `MERGE_NEWER_WINS_KEYS` entry
+(`test/architecture-state-merge-coverage.test.js` fails otherwise). A synced setting
+or preference also goes in `TRACKED_SETTINGS` (`settings-sync.js`) — see CLAUDE.md
+"Settings must sync by their own stamp". **Do not bump `STATE_SCHEMA_VERSION`** for a
+non-finance key: it drives the server's finance-protection trigger, and a bump is a
+decision for Luke (CLAUDE.md "Decision boundaries").
+
+## UI conventions
+Follow CLAUDE.md "UI conventions": the house `live-toggle` switch, and the
+notifications-window rules (never open empty, close when the last item is handled).
+Fixed windows and popovers size against the bottom dock via `dock-space.js`
+(`usableViewportBottom`, `dockInset`, `notificationsWindowBox`). Every page must fit a
+~360px phone with no sideways scroll.
+
+## Git & shipping
+Follow root **CLAUDE.md → Git / GitHub**. Commit on a branch as work completes;
+pushing a verified branch is fine. The main session opens the PR, waits for CI,
+merges, and adds the `UNDEPLOYED.md` entry. **Never** make a `[deploy]` commit, apply
+a DB migration, or cross a decision boundary without Luke's OK. In your final report,
+say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/` or
+other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
+the client, and native `ios/` changes only ship this way), or both. Log anything real
+you notice but don't fix to `ISSUES.md`.

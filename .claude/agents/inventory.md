@@ -40,15 +40,17 @@ most of your work is there. Make focused changes to the Inventory domain only.
     "space" in the Checklist·Shop·Inventory tab nav).
 - **Cross-domain IN (injected — Inventory reaches into Shop/Groceries; preserve):**
   - `renderShopSpaceNav()` — re-render the shared Shop tab nav.
-  - `renderGroceries()` — refresh the grocery view after a checklist change.
-  - `shoppingListHas` / `addToShoppingList` / `removeFromShoppingList` — grocery
-    shopping-list ops that **write `state.persistentManualGroceries`**. They are kept
-    on the **grocery side in app.js** (they own grocery state) and injected here; the
-    inventory weekly checklist is their only current caller. If you need to change
-    grocery-list behavior, that's a **groceries** change — flag it, don't fork.
+  - `renderGroceries()` — refresh the grocery view.
+- **Inventory is a child of Shop, not its own page** (Luke, 2026-10-07): no separate
+  title, date header or window border; page access follows Shop's setting. The old
+  inventory "weekly checklist" dialog was **removed 2026-10-13** — the Shop
+  **Checklist** tab (groceries-owned) replaced it, so Inventory no longer writes the
+  shopping list. Items' stored `trackWeekly` flag is legacy, read only by the
+  Checklist's "Import from Inventory". Don't rebuild a checklist here — that's a
+  **groceries** change.
 - **No test coverage:** Inventory has **zero** tests. Verify changes by hand (build +
-  click-through: add/edit/remove a box & item, weekly checklist add/remove to the
-  shopping list, Shop→Inventory tab switch) and say what you verified.
+  click-through at phone width: add/edit/remove a box & item, room visibility,
+  Shop → Inventory tab switch) and say what you verified.
 - The recipe-dialog styling is just a shared CSS class string (`"recipe-dialog …"`),
   not a code dependency.
 
@@ -64,6 +66,28 @@ shopping-list ops) — those are the groceries domain; propose changes to that a
 Backend = Supabase (`noyocjcltrenwdovqrql`) + Netlify functions. No short-cadence
 polling of Supabase tables; guard auth/session retry loops.
 
-## Git
-Commit locally; **never `git push`** without explicit permission. Run the
-PRE_PUSH_CHECKLIST mobile-fit pass before proposing a push.
+## New synced state
+A new key goes in `STATE_SECTIONS` (app.js) **and** gets an explicit merge rule in
+`mergeStates` or a documented `MERGE_NEWER_WINS_KEYS` entry
+(`test/architecture-state-merge-coverage.test.js` fails otherwise). A synced setting
+or preference also goes in `TRACKED_SETTINGS` (`settings-sync.js`) — see CLAUDE.md
+"Settings must sync by their own stamp". **Do not bump `STATE_SCHEMA_VERSION`** for a
+non-finance key: it drives the server's finance-protection trigger, and a bump is a
+decision for Luke (CLAUDE.md "Decision boundaries").
+
+## UI conventions
+Follow CLAUDE.md "UI conventions": the house `live-toggle` switch, and the
+notifications-window rules (never open empty, close when the last item is handled).
+Fixed windows and popovers size against the bottom dock via `dock-space.js`
+(`usableViewportBottom`, `dockInset`, `notificationsWindowBox`). Every page must fit a
+~360px phone with no sideways scroll.
+
+## Git & shipping
+Follow root **CLAUDE.md → Git / GitHub**. Commit on a branch as work completes;
+pushing a verified branch is fine. The main session opens the PR, waits for CI,
+merges, and adds the `UNDEPLOYED.md` entry. **Never** make a `[deploy]` commit, apply
+a DB migration, or cross a decision boundary without Luke's OK. In your final report,
+say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/` or
+other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
+the client, and native `ios/` changes only ship this way), or both. Log anything real
+you notice but don't fix to `ISSUES.md`.

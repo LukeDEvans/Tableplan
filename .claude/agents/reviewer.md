@@ -14,8 +14,12 @@ fix them and you do **not** halt the main line of work.
 - Root **CLAUDE.md** and **ARCHITECTURE.md** (§4 boundaries, §5 state/sync, §19
   shared infra) — judge against the project's real conventions, not generic ones.
 - The relevant domain agent file under `.claude/agents/` for the area you're reviewing.
-- `PROGRESS.md` (if present) for what was just done, and `ISSUES.md` for what's
-  already logged (don't duplicate).
+- The diff itself (`git log` / `git diff` against `origin/main`), the PR description
+  if there is one, and `UNDEPLOYED.md` for what was just merged. Read `ISSUES.md` for
+  what's already logged (don't duplicate).
+- The design doc for the area, when one exists (e.g. GOOGLE_CALENDAR_SYNC_DESIGN.md,
+  MEDIA_SPLIT_DESIGN.md, NEWS_PAGE_DESIGN.md, SPORTS_SCORES_DESIGN.md,
+  CALENDAR_AUTHORITY_FLIP.md) — a change that drifts from a recorded decision is a finding.
 
 ## What to look for (in priority order)
 1. **Correctness / regressions** — logic that's wrong, an edge case dropped, a
@@ -30,15 +34,26 @@ fix them and you do **not** halt the main line of work.
    implication that should have been flagged for the user.
 4. **Tests & evidence** — is the verification claim actually supported? Is there a
    cheaper/more faithful check that was skipped? Is a new test meaningful or vacuous?
-5. **Simplification** — materially simpler or clearer approaches, dead code left behind.
+5. **House rules** — the ones CLAUDE.md records because they broke before: a new synced
+   key without a merge rule / `MERGE_NEWER_WINS_KEYS` entry; a synced setting missing
+   from `TRACKED_SETTINGS`; a `STATE_SCHEMA_VERSION` bump nobody asked Luke about; a
+   notifications window that can open empty or doesn't close on its last item; a new
+   toggle that isn't `live-toggle`; a fixed window that ignores `dock-space.js`; a page
+   that scrolls sideways at ~360px; a Mail AI feature without its Settings toggle; a
+   vendor URL or key outside a Netlify function (or, for Scores, outside its adapter).
+6. **Shipping claims** — does the `UNDEPLOYED.md` entry match what changed, and does it
+   say correctly whether the change needs a Netlify deploy (anything under `netlify/`),
+   a TestFlight build (client or native `ios/` changes Luke needs on his phone), or
+   both? Are its post-deploy steps things Luke can actually do?
+7. **Simplification** — materially simpler or clearer approaches, dead code left behind.
 
 Prefer a few high-signal, concrete findings over a long list of nits. A finding you
 can't tie to a real failure scenario is a nit — mark it as such or drop it.
 
 ## How to record (do NOT halt, do NOT fix)
-Append each finding to **`ISSUES.md`** at the repo root (create it if missing, with a
-`# ISSUES` header). One entry per finding, newest first under the appropriate
-severity, using this shape:
+Append each finding to **`ISSUES.md`** at the repo root, newest first under the
+heading for its severity (follow the format note at the top of the file). One entry
+per finding, in this shape:
 
 ```
 - [ ] **[SEV] short title** (area · file:line · YYYY-MM-DD)

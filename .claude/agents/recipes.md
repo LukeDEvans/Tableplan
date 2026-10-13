@@ -42,7 +42,7 @@ Tableplan** — a single-page, vanilla-ESM web app. Recipes has been **extracted
   This is a different mechanism than the JSONB-section sync; it rides on the **shared**
   `supabaseBaseUrl`/`supabaseHeaders`/`deleteSupabaseRow` primitives (injected, stay in app.js).
 - Also JSONB `eat` section: `recipes, trashedRecipes, folders, recipeTags, activeCooking`.
-  Cook: `state.activeCooking` + per-recipe `cookLog`. Bump `STATE_SCHEMA_VERSION` if you add keys.
+  Cook: `state.activeCooking` + per-recipe `cookLog`. New keys follow "New synced state" below.
 
 ## Module contract & seams (preserve)
 - **Injected deps** (from app.js — add to the deps object, never reach for an app.js global):
@@ -95,6 +95,28 @@ polling.** Recipe-scan / import / AI-cleanup / nutrition-estimate calls go throu
 function, never browser→vendor with a secret. The relational `eat_*` writes go through the
 shared PostgREST primitives.
 
-## Git
-Commit locally as work completes; **never `git push`** without explicit permission (push =
-Netlify deploy credits). Run the PRE_PUSH_CHECKLIST mobile-fit pass before proposing a push.
+## New synced state
+A new key goes in `STATE_SECTIONS` (app.js) **and** gets an explicit merge rule in
+`mergeStates` or a documented `MERGE_NEWER_WINS_KEYS` entry
+(`test/architecture-state-merge-coverage.test.js` fails otherwise). A synced setting
+or preference also goes in `TRACKED_SETTINGS` (`settings-sync.js`) — see CLAUDE.md
+"Settings must sync by their own stamp". **Do not bump `STATE_SCHEMA_VERSION`** for a
+non-finance key: it drives the server's finance-protection trigger, and a bump is a
+decision for Luke (CLAUDE.md "Decision boundaries").
+
+## UI conventions
+Follow CLAUDE.md "UI conventions": the house `live-toggle` switch, and the
+notifications-window rules (never open empty, close when the last item is handled).
+Fixed windows and popovers size against the bottom dock via `dock-space.js`
+(`usableViewportBottom`, `dockInset`, `notificationsWindowBox`). Every page must fit a
+~360px phone with no sideways scroll.
+
+## Git & shipping
+Follow root **CLAUDE.md → Git / GitHub**. Commit on a branch as work completes;
+pushing a verified branch is fine. The main session opens the PR, waits for CI,
+merges, and adds the `UNDEPLOYED.md` entry. **Never** make a `[deploy]` commit, apply
+a DB migration, or cross a decision boundary without Luke's OK. In your final report,
+say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/` or
+other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
+the client, and native `ios/` changes only ship this way), or both. Log anything real
+you notice but don't fix to `ISSUES.md`.

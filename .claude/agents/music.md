@@ -1,6 +1,6 @@
 ---
 name: music
-description: Use for changes scoped to the streaming-Music domain in the Media hub — music search/Discover, library & playlists, and streaming providers (Apple Music, Internet Archive, Jamendo). Owns music-*.js (root), media-provider-music.js, and the "media" music tab in app.js. NOT the music/ piano-practice directory.
+description: Use for changes scoped to streaming Music inside the Listen page (internally "media") — music search/Discover, library & playlists, and streaming providers (Apple Music incl. the iOS-native player, Internet Archive, Jamendo). Owns music-*.js (root), media-provider-music.js, and the music tab of the "media" area in app.js. NOT the music/ piano-practice directory, and not podcasts/radio/the queue (that is the listen agent).
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -23,8 +23,16 @@ There are **two unrelated "music" things** in this repo:
   pass" is not proof — say what you verified.
 
 ## Your scope (edit these)
+- **The page is called Listen now** (MEDIA_SPLIT_DESIGN.md): visible labels say
+  Listen, but `activeAppArea` stays `"media"`, the page-access key stays `read`, and
+  `#media` still opens it. Don't rename internal keys. Podcasts, radio, audiobooks, the
+  queue and read-aloud belong to the **listen** agent; Watch has its own agent.
 - **Modules:** `music-streaming.js` (provider registry + capabilities),
-  `music-provider-applemusic.js` / `-internetarchive.js`,
+  `music-provider-applemusic.js`, `music-provider-internetarchive.js`,
+  `music-applemusic-native.js` (the iPhone app's native Apple Music —
+  `ios/App/App/AppleMusicPlugin.swift` — behind a MusicKit-shaped facade; native
+  changes ship only through TestFlight), `music-discover.js` (Discover tab browse +
+  local search filters), `music-portable.js` (CSV export/import of the library),
   `music-canonical.js`, `music-library.js`, `music-library-model.js`,
   `music-source-resolver.js`, `music-tags.js`, `music-jellyfin.js`,
   `media-provider-music.js`.
@@ -59,6 +67,28 @@ polling of Supabase tables** (a prior egress blowout came from polling
 (e.g. the Apple Music developer token) are minted by Netlify functions — never ship
 a secret to the browser. Guard auth/session retry loops.
 
-## Git
-Commit locally; **never `git push`** without explicit permission. Run the
-PRE_PUSH_CHECKLIST mobile-fit pass before proposing a push.
+## New synced state
+A new key goes in `STATE_SECTIONS` (app.js) **and** gets an explicit merge rule in
+`mergeStates` or a documented `MERGE_NEWER_WINS_KEYS` entry
+(`test/architecture-state-merge-coverage.test.js` fails otherwise). A synced setting
+or preference also goes in `TRACKED_SETTINGS` (`settings-sync.js`) — see CLAUDE.md
+"Settings must sync by their own stamp". **Do not bump `STATE_SCHEMA_VERSION`** for a
+non-finance key: it drives the server's finance-protection trigger, and a bump is a
+decision for Luke (CLAUDE.md "Decision boundaries").
+
+## UI conventions
+Follow CLAUDE.md "UI conventions": the house `live-toggle` switch, and the
+notifications-window rules (never open empty, close when the last item is handled).
+Fixed windows and popovers size against the bottom dock via `dock-space.js`
+(`usableViewportBottom`, `dockInset`, `notificationsWindowBox`). Every page must fit a
+~360px phone with no sideways scroll.
+
+## Git & shipping
+Follow root **CLAUDE.md → Git / GitHub**. Commit on a branch as work completes;
+pushing a verified branch is fine. The main session opens the PR, waits for CI,
+merges, and adds the `UNDEPLOYED.md` entry. **Never** make a `[deploy]` commit, apply
+a DB migration, or cross a decision boundary without Luke's OK. In your final report,
+say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/` or
+other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
+the client, and native `ios/` changes only ship this way), or both. Log anything real
+you notice but don't fix to `ISSUES.md`.
