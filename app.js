@@ -83,6 +83,7 @@ import * as TravelGeo from './travel-geo.js';
 import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
 import { usableViewportBottom } from './dock-space.js';
+import { installStatusTapScroll } from './status-tap-scroll.js';
 import { makeReaderOrigin, readerReturnTarget, captureScroll, restoreScroll } from './reader-return.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
@@ -2182,6 +2183,8 @@ cleanupAutoAppliedFutureMealDefaults(state);
 
 render();
 bindEvents();
+// iPhone app: tap the status bar to scroll the page/sheet in front back to the top.
+installStatusTapScroll();
 
 // Refresh task-time reminders every minute while the app is open: keep the
 // page notification dot current, and if the To-Do page is showing (panel
