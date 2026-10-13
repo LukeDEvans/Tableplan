@@ -12,6 +12,8 @@ Each entry: what shipped · PR · post-deploy steps.
 
 - **Calendar: pinch direction flipped** — fingers apart zooms in (month → week → day), together zooms out. · PR #81 · Post-deploy: on the phone, pinch out from month → week → day and back in to month.
 
+- **Calendar: a pinch no longer also swipes to another month/week/day** · PR #86 · Swipe now ignores any gesture that had two fingers down (and the moment right after one), measures each finger from its own start, and needs a mostly sideways move. Client-only (TestFlight or deploy). Verified in headless Chromium with multi-touch: 4 sloppy pinches stay in the same month (before: drifted Oct → Aug); one-finger swipes still change month. **After TestFlight/deploy:** on the phone, pinch through month → week → day and back, and check the dates don't jump; one-finger swipes still go to the previous/next period.
+
 _Last deploy: 2026-10-11 #2 (News: Sports always shows)._
 
 - **Shop: the blue window border is back** · PR #82 · The 2026-10-06 change that slimmed the Shop window also removed its navy border; the border is restored. The buffer and shadow stay off and the trimmed list gutter stays, so the list keeps its extra width. CSS only. Verified in the browser at 390px: 2px navy border, no sideways scroll. **After deploy + TestFlight:** open Shop on the phone and check the border.
