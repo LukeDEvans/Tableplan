@@ -1,6 +1,6 @@
 ---
 name: calendar
-description: Use for changes scoped to the Calendar/Plan domain — events, recurrence, month/week/day/agenda views, ICS subscriptions, and Tasks (the "do"/To-Do area). Owns the calendar/ modules and the "plan"/"do" areas of app.js.
+description: Use for changes scoped to the Calendar/Plan domain — events, recurrence, month/week/day/agenda views and gestures, ICS feeds, linked Google calendars (Google Calendar API sync, GOOGLE_CALENDAR_SYNC_DESIGN.md), the meal-plan event share, and Tasks (the "do" area). Owns calendar/, the gcal-* Netlify functions, and the "plan"/"do" areas of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -10,48 +10,113 @@ changes to the Calendar (and its sibling Tasks) domain only.
 
 ## Read first
 - Root **CLAUDE.md** and **ARCHITECTURE.md** (§4 boundaries, §5 data, §19 shared
-  infra). Also skim the Calendar 2.0 plan/notes if present. Use existing
-  conventions; don't invent new patterns.
+  infra). Use existing conventions; don't invent new patterns.
+- **CALENDAR_AUTHORITY_FLIP.md** — what is authoritative today and why the flip is held.
+- **GOOGLE_CALENDAR_SYNC_DESIGN.md** — before touching anything Google-backed. It
+  records Luke's decisions (§8) and the phase status; update it when a phase moves.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
 ## Your scope (edit these)
-- **Modules:** the `calendar/` directory — `recurrence.js`, `model.js`,
-  `projection.js`, `tasks-project.js`, `sources.js`, `reconcile.js`, `normalize.js`,
-  `ics.mjs`. These are pure + tested; prefer adding logic here over `app.js`.
+- **Pure modules (tested — prefer adding logic here over `app.js`):** `calendar/`
+  — `recurrence.js`, `model.js`, `projection.js`, `tasks-project.js`, `sources.js`
+  (provider registry), `reconcile.js` (hides/overrides), `normalize.js`, `ics.mjs`,
+  **`google.js`** (Google → app mapping, link proposals, RRULE → app recurrence,
+  the severance converter + dry-run report), **`google-client.js`** (device event
+  cache `live-gcal-cache-v1`, delta requests, link reconciliation, panel rows), and
+  **`meal-plan-share.js`** (household meal-plan event share — see below).
+- **Server:** `netlify/functions/_gcal.js` + `gcal-auth`, `gcal-callback`,
+  `gcal-calendars`, `gcal-events` (and the future `gcal-write`). OAuth state is
+  signed through `_oauth-state.js` with its own purpose (`gcal-oauth-state-v1`);
+  `invalid_grant` clears the account and the app shows "Reconnect". Tables `gcal_accounts` / `gcal_links`
+  (`migrations/2026-10-12-gcal-accounts.sql`): service role only, never read from
+  the browser.
 - **`app.js`:** the Plan sections — `activeAppArea === "plan"`
   (`renderPlanMonthView` / `WeekView` / `DayView` / `AgendaView`, `savePlanEvent`,
-  drag/resize handlers) — and the Tasks area, `activeAppArea === "do"` (label
-  "Tasks"/"To-Do", chores, backlog). Search: `renderPlan`, `planEvents`,
-  `planCalendars`, `savePlanEvent`.
-- **Data:** `state.planEvents`, `state.planCalendars` (ICS subscriptions),
-  `state.calendars` (linked calendars used on the eat/meal-plan side), tasks under
+  drag/resize, pinch-zoom and swipe), the Google block (search
+  `Google Calendar API sync`; its `let gcal*` state is declared near the top on
+  purpose, before `persist()` can reach it — keep it there), and the Tasks area,
+  `activeAppArea === "do"` (its bell sits on the Calendar page). Search:
+  `renderPlan`, `planEvents`, `planCalendars`, `savePlanEvent`, `loadCalendarEvents`, `gcal`.
+- **Data:** `state.planEvents`; `state.calendars` (linked feeds, incl. Google API
+  calendars with `provider: "google-api"` + `googleCalendarId`) and
+  `state.planCalendars` (ICS/local) — **authoritative**; `state.calendarSources` —
+  a derived mirror rebuilt in `persist()`; `state.mealPlanSharedEvents`; Tasks under
   the `do` section.
 
 ## Domain landmines (do NOT change without flagging)
+- **The authority flip is HELD.** Never make `calendarSources` authoritative or
+  write to it directly, and don't touch the calendar tombstone handling in
+  `mergeStates` — see CALENDAR_AUTHORITY_FLIP.md (delete-resurrection).
+- **Google-backed calendars are Google-authoritative.** Their events are fetched and
+  cached per device; they are **never** written into `planEvents` or any synced
+  section (design §2). The app↔Google mapping lives in **`gcal_links`** on the
+  server; the `googleCalendarId` on a `state.calendars` entry is only a cache that
+  each status sync re-applies (older clients strip unknown fields). A removed
+  calendar is a disabled link row, so discovery never re-adds it.
+- **Keep the exit cheap.** Long-term the app becomes master and leaves Google
+  (design §9). Anything new on a Google event must survive the severance converter:
+  app-only fields round-trip through `extendedProperties.private`
+  (`toGooglePrivateProps` / `fromGooglePrivateProps`), and app calendar ids + colors
+  never change. Extend `buildSeveranceReport` when you add something it can't import.
+- **Event ids for Google calendars stay `gcal:<cal>:<date>:<title>`** (with
+  `#<googleId>` only for a same-day duplicate) until Phase 2 switches to stable
+  Google ids — hides and renames depend on them.
+- **Polling:** the Google refresh is deltas on open, on becoming visible, and every
+  5 min while visible — API calendars only, never the legacy iCal feeds, nothing in
+  the background. Don't shorten it or poll Supabase.
+- **Meal-plan share** (`meal-plan-share.js`): a calendar's **Show on Meal Plan**
+  switch puts its events on the household meal plan; each member's personal flagged
+  events are copied (title, dates, times, repeat rule, color only — no notes,
+  location, chores) into `mealPlanSharedEvents` for an 18-week window, merged per
+  member. Re-save the share only when its snapshot actually changed (egress).
 - **Recurrence is mature and fully tested** (`calendar/recurrence.js`, incl. Feb-29 /
-  month-end SKIP semantics). Do not rewrite it; extend with tests.
-- There are **two overlapping calendar lists** — `state.calendars` (linked, eat side)
-  and `state.planCalendars` (ICS, plan side). Unifying/migrating them is an
-  explicitly-gated decision — **do not merge or migrate their stored data without
-  approval.**
+  month-end SKIP semantics). Extend with tests; don't rewrite.
 - **Do not change local-event timezone semantics** (naive local `YYYY-MM-DD` + local
-  `HH:MM`) without approval — capture tz only at the external import boundary.
+  `HH:MM`). Capture time zones only at the external import boundary (ICS, Google).
+
+## Verify
+`npx vitest run` (calendar tests incl. `test/calendar-google.test.js`,
+`test/calendar-gcal-server.test.js`), `npm run check:boot`, and for Google work
+`node scripts/qa-gcal.mjs` against `npm run dev:local` (start from a fresh local
+state: `rm -f data/tableplan-state.json`). Gestures need a look on the phone.
 
 ## Out of scope — flag, don't touch silently
 `app.js` is ONE shared file; other agents may be editing it now. Keep edits in the
-Plan/Tasks sections. Changes to **shared infrastructure** — auth, state+sync
+Plan/Tasks/Google sections. Changes to **shared infrastructure** — auth, state+sync
 (`STATE_SECTIONS`, `mergeStates`, tombstones), global nav / `activeAppArea` routing,
-the shared boot/render scaffolding, notifications/push (global bell), the settings
-framework, or `styles.css` tokens — must be **flagged with rationale, not made
-silently.**
+the shared boot/render scaffolding, notifications/push, the settings framework, or
+`styles.css` tokens — must be **flagged with rationale, not made silently.** The
+Gmail OAuth flow is Mail's; share code through a helper, don't edit theirs.
 
 ## Supabase caution
 Backend = Supabase (`noyocjcltrenwdovqrql`) + Netlify functions. **No short-cadence
 polling of Supabase tables** (a prior egress blowout came from polling
-`tableplan_states` every 5–15s); ICS fetches go through the server proxy. Guard
-auth/session retry loops.
+`tableplan_states` every 5–15s). Per-user/per-poll calendar state goes in dedicated
+tables, not `tableplan_states`. ICS and Google fetches go through the server.
 
-## Git
-Commit locally; **never `git push`** without explicit permission. Run the
-PRE_PUSH_CHECKLIST mobile-fit pass before proposing a push.
+## New synced state
+A new key goes in `STATE_SECTIONS` (app.js) **and** gets an explicit merge rule in
+`mergeStates` or a documented `MERGE_NEWER_WINS_KEYS` entry
+(`test/architecture-state-merge-coverage.test.js` fails otherwise). A synced setting
+or preference also goes in `TRACKED_SETTINGS` (`settings-sync.js`) — see CLAUDE.md
+"Settings must sync by their own stamp". **Do not bump `STATE_SCHEMA_VERSION`** for a
+non-finance key: it drives the server's finance-protection trigger, and a bump is a
+decision for Luke (CLAUDE.md "Decision boundaries").
+
+## UI conventions
+Follow CLAUDE.md "UI conventions": the house `live-toggle` switch, and the
+notifications-window rules (never open empty, close when the last item is handled).
+Fixed windows and popovers size against the bottom dock via `dock-space.js`
+(`usableViewportBottom`, `dockInset`, `notificationsWindowBox`). Every page must fit a
+~360px phone with no sideways scroll.
+
+## Git & shipping
+Follow root **CLAUDE.md → Git / GitHub**. Commit on a branch as work completes;
+pushing a verified branch is fine. The main session opens the PR, waits for CI,
+merges, and adds the `UNDEPLOYED.md` entry. **Never** make a `[deploy]` commit, apply
+a DB migration, or cross a decision boundary without Luke's OK. In your final report,
+say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/` or
+other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
+the client, and native `ios/` changes only ship this way), or both. Log anything real
+you notice but don't fix to `ISSUES.md`.

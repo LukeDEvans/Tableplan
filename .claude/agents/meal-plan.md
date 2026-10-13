@@ -28,8 +28,11 @@ complete). Make focused changes to Meal-plan only.
   `normalizeAutoGenerateRules`, `mergeMealPlanConfig`, `recomputeMealPlanLayout`, …) are
   exported **top-level** (app.js calls them at boot) — keep boot-called normalizers as
   top-level exports, not inside the factory.
-- **Pure logic module (tested):** `meal-plan-servings.js` (`scalingFactor`, planned-recipe
-  normalize) — imported by the module.
+- **Pure logic modules (tested — extend with tests):** `meal-plan-servings.js`
+  (`scalingFactor`, planned-recipe normalize); `meal-plan-time.js` (which column opens
+  for the time of day, and which meals a calendar event lands on — `mealtimeForLabel`,
+  `eventDaySpan`, `spanCoversMealtime`, overnight/multi-day aware); `meal-plan-state.js`
+  (auto-fill snapshot/rollback, make-ahead/prep-ahead task de-dupe).
 - **`app.js` (glue only):** `showEatApp` nav, the `createMealplanModule({...})` instantiation
   (**LAST**, after inventory/groceries/recipes) + destructure, and `bindEvents` wiring.
 
@@ -38,7 +41,6 @@ complete). Make focused changes to Meal-plan only.
   `autoGenerateRules`. The per-week record holds `slots`, `combinedMealSections`, `mealNotes`,
   `mealPlanView`, `publishedSlots`, and a **legacy `manualGroceries` field** (⚠ NOT yours to
   migrate — Decision #2b; the live grocery list is `state.persistentManualGroceries`, grocery-owned).
-- Bump `STATE_SCHEMA_VERSION` if you add/restructure meal-plan keys.
 
 ## The hub wiring (understand before touching deps)
 - **Meal-plan is instantiated LAST.** It consumes the groceries + recipes interfaces directly
@@ -65,6 +67,18 @@ complete). Make focused changes to Meal-plan only.
 - **`createId` + `normalize` are module-scope copies.** `recomputeMealPlanLayout` (a pure export
   that reads state) uses the module-scope `_appState` set by the factory — leave that alone.
 
+## Events & notes (Luke's rules — keep them)
+- A calendar event shows **only on the meals its time of day covers** (an 8a–4p
+  shift shows on lunch; breakfast and dinner are assumed at home). All-day events
+  show on every meal. The logic is `meal-plan-time.js`; don't re-derive it in the UI.
+- Events & notes cards are **open by default**.
+- Which events reach the meal plan is Calendar's call: a calendar's **Show on Meal
+  Plan** switch (ICS feeds and Google calendars too), plus each member's personal
+  flagged events shared through `state.mealPlanSharedEvents`
+  (`calendar/meal-plan-share.js`, Calendar-owned). Read them through the injected
+  calendar readers; ask the Calendar agent for changes to what is shared.
+- The meal-plan recipe bell follows the notifications-window rules (CLAUDE.md).
+
 ## ⚠️ Landmines / do-not-touch
 - **Dual calendar list (Decision #1) is NOT unified yet.** Preserve `state.calendars` +
   `state.planCalendars` behavior exactly; read via the injected calendar readers; do not attempt
@@ -73,8 +87,10 @@ complete). Make focused changes to Meal-plan only.
   Don't move `weekState`/`slotEntries`/etc. into this module; call the injected versions.
 - **The restore machinery stays in app.js.** Meal-plan's `missingRestoreAutoRules`/`autoRuleSignature`
   move here, but the general restore orchestrator does not.
-- **No UI test coverage:** the meal-plan tests cover `meal-plan-servings.js` only, not the planner
-  render/handlers. Verify UI changes by hand and say so.
+- **No UI test coverage:** the meal-plan tests cover the pure modules (`meal-plan-servings`,
+  `-time`, `-state`, `calendar-meal-plan-share`), not the planner render/handlers. Verify UI
+  changes in headless Chromium at phone width (`npm run dev:local`, dev sign-in) and say so;
+  a real finger-drag on iOS still needs Luke's phone.
 
 ## Out of scope — flag, don't touch silently
 `app.js` is ONE shared file. Keep edits inside Meal-plan. Changes to shared infra — auth/session,
@@ -87,6 +103,28 @@ Backend = Supabase (project `noyocjcltrenwdovqrql`) + Netlify functions. **No sh
 polling.** Restaurant search / auto-generate go through Netlify functions, never browser→vendor
 with a secret.
 
-## Git
-Commit locally as work completes; **never `git push`** without explicit permission (push =
-Netlify deploy credits). Run the PRE_PUSH_CHECKLIST mobile-fit pass before proposing a push.
+## New synced state
+A new key goes in `STATE_SECTIONS` (app.js) **and** gets an explicit merge rule in
+`mergeStates` or a documented `MERGE_NEWER_WINS_KEYS` entry
+(`test/architecture-state-merge-coverage.test.js` fails otherwise). A synced setting
+or preference also goes in `TRACKED_SETTINGS` (`settings-sync.js`) — see CLAUDE.md
+"Settings must sync by their own stamp". **Do not bump `STATE_SCHEMA_VERSION`** for a
+non-finance key: it drives the server's finance-protection trigger, and a bump is a
+decision for Luke (CLAUDE.md "Decision boundaries").
+
+## UI conventions
+Follow CLAUDE.md "UI conventions": the house `live-toggle` switch, and the
+notifications-window rules (never open empty, close when the last item is handled).
+Fixed windows and popovers size against the bottom dock via `dock-space.js`
+(`usableViewportBottom`, `dockInset`, `notificationsWindowBox`). Every page must fit a
+~360px phone with no sideways scroll.
+
+## Git & shipping
+Follow root **CLAUDE.md → Git / GitHub**. Commit on a branch as work completes;
+pushing a verified branch is fine. The main session opens the PR, waits for CI,
+merges, and adds the `UNDEPLOYED.md` entry. **Never** make a `[deploy]` commit, apply
+a DB migration, or cross a decision boundary without Luke's OK. In your final report,
+say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/` or
+other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
+the client, and native `ios/` changes only ship this way), or both. Log anything real
+you notice but don't fix to `ISSUES.md`.
