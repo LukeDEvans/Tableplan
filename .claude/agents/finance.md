@@ -19,10 +19,11 @@ all your work is there. Make focused changes to the Finance domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`
+- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`
 - state: `finance*`
 
 ## Your scope (edit these)
+- **Share-sheet receipts** (RECEIPTS.md → "Share sheet"): `share-receipt.js` (share token + order-screenshot read into the `finreceipts_` inbox), `_receipt-extract.js` (receipt prompts/parsing shared with `simplefin.js`), the app-side token sync `receipt-share-token.js`, and the iOS Share Extension (`ios/App/ShareExtension/`, `ShareTokenPlugin.swift`, `ios/App/Shared/ShareTokenStore.swift`). The share token is auth: changes to it need Luke's OK.
 - **`finance-ui.js`** — the whole finance UI as `createFinanceModule(deps)`: the
   services/data layer (`refreshFinanceLive`, `checkFinanceLinkStatus`,
   `loadFinanceHistory`, bank link), transactions + the review deck, **txn-receipts**
