@@ -97,12 +97,17 @@ jobs:
         # 20260928.1845 (two components, each within Apple's limits).
         run: echo "BUILD_NUMBER=$(date -u +%Y%m%d.%H%M)" >> "$GITHUB_ENV"
 
-      - name: Archive (unsigned)
-        # Archive WITHOUT signing. With automatic signing, `xcodebuild archive`
+      - name: Archive (ad-hoc signed)
+        # Archive WITHOUT a real signature. With automatic signing, `xcodebuild archive`
         # signs for *development* first, which needs a development provisioning
         # profile, and that needs a registered device ("Your team has no devices
         # from which to generate a provisioning profile"). The export step below
         # does the real signing, for App Store distribution, which needs no devices.
+        #
+        # The archive is signed AD HOC ("-") rather than not at all: export reads each
+        # binary's entitlements from its archived signature, so an unsigned archive
+        # would ship without them (the keychain group the Share Extension reads the
+        # receipt share token from). Ad hoc needs no certificate or profile.
         run: |
           set -o pipefail
           xcodebuild archive \
@@ -113,11 +118,16 @@ jobs:
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER= \
             | tee "$RUNNER_TEMP/archive.log" | grep -E "error:|\*\* ARCHIVE" \
             || { tail -80 "$RUNNER_TEMP/archive.log"; exit 1; }
+
+      - name: Check the archive kept its entitlements
+        run: bash scripts/ios-check-entitlements.sh "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app"
 
       - name: Sign for App Store + upload to App Store Connect (TestFlight)
         # Signs with an Apple Distribution certificate and an App Store profile,

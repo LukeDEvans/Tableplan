@@ -54,3 +54,39 @@ The Finance → Insights → Receipts card lists receipts from the last 45 days.
 
 The split editor's own "Scan receipt" (`simplefin` `scanReceipt`) is unchanged. It
 fills a split directly and stores nothing.
+
+## Share sheet (iPhone)
+
+**Decision (Luke, 2026-10-13):** order screenshots (Amazon order details, "Your Orders",
+other stores' order history) shared from the iPhone share sheet go to Finance. Amazon's
+emails don't carry enough detail, so a screenshot is the source.
+
+- **Share Extension** (`ios/App/ShareExtension/`): "Live" in the share sheet for 1–4
+  images. It downscales each screenshot (≤1568px, JPEG) and POSTs them straight to
+  `share-receipt`, so nothing waits for the app to open. It shows "Added to Finance ·
+  Amazon · $31.47 · Oct 10" and closes, or says what went wrong.
+- **Auth: a share token, not the app's session.** The extension can't safely use the
+  Supabase session (a refresh there would rotate the refresh token out from under the
+  app). `share-receipt` `mint` turns a session into an HMAC-signed `{ userId, exp }`
+  token (the `_oauth-state.js` signer, purpose `receipt-share-v1`, one year). The app
+  stores it in the keychain group it shares with the extension
+  (`6RTNUZR7K5.com.mrlukedevans.live.shared`, `ShareTokenStore.swift`) via the
+  `ShareToken` plugin. `receipt-share-token.js` mints on sign-in / app start (again
+  after 30 days) and clears on sign-out. The token can only add receipts to the inbox of
+  the household the user is in right now. **Revoke every token:** bump
+  `SHARE_TOKEN_PURPOSE`.
+- **Server** (`netlify/functions/share-receipt.js`): one read of the screenshots
+  (`orderScreenshotPrompt` in `_receipt-extract.js`, which also holds the helpers moved
+  out of `simplefin.js`). One receipt per order on the page; an order without a visible
+  total is skipped. Each goes to the `finreceipts_` inbox as source `share`, id
+  `shr_<merchant|date|total>`, so re-sharing an order replaces it.
+- **Into the list:** Finance imports the inbox at session start, and again when Finance
+  is opened or the app returns to the foreground on Finance (at most every 2 min). A
+  `share` receipt is shown as "Online order" and doesn't feed grocery price history.
+  When the same order is shared again with more item prices (the list page first, the
+  details page after), the newer read replaces the line items unless a line was edited
+  by hand (`shareReceiptUpgrade`); the transaction link and date added are kept.
+- **CI signing:** both iOS workflows archive **ad hoc** (`CODE_SIGN_IDENTITY=-`), not
+  unsigned, because the App Store export copies entitlements from the archived
+  signature. `scripts/ios-check-entitlements.sh` fails the run if the app or the
+  extension lost the keychain group.

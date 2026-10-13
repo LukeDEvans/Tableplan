@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Shared with the Share Extension for the receipt share token (ShareTokenStore.swift). -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>6RTNUZR7K5.com.mrlukedevans.live.shared</string>
+	</array>
+</dict>
+</plist>

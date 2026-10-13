@@ -40,7 +40,8 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeLocalNotifications, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { syncReceiptShareToken } from './receipt-share-token.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
 import { createNativeReminderScheduler } from './calendar/reminders-native.js';
@@ -1866,7 +1867,7 @@ const {
   checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney,
   invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick,
   refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu,
-  renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth,
+  renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth,
   getFinanceLinkStatus,
 } = _finance;
 
@@ -3067,6 +3068,9 @@ function bindEvents() {
       // Back in the foreground: pull in anything the server or another device
       // saved meanwhile (cheap stamp check, throttled — see the function).
       refreshChangedSectionsOnResume();
+      // Orders shared from the iPhone share sheet land in the Finance inbox; pick
+      // them up when coming back to Finance (throttled in finance-ui.js).
+      if (activeAppArea === "finance" && authSession?.access_token) refreshFinanceInboxReceipts();
       return;
     }
     appHiddenAt = Date.now();
@@ -3314,7 +3318,7 @@ async function initializeSupabaseAuth() {
   // and a subsequent sign-in is a clean 'first'.
   stateAccountId = authSession?.user?.id || authSession?.user?.email || null;
   updateAppLockState();
-  if (authSession?.access_token) { warmMailStatus(); warmMailList(); warmPageNotifs(); }
+  if (authSession?.access_token) { warmMailStatus(); warmMailList(); warmPageNotifs(); syncShareTokenForSession(true); }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     // Multi-tab account isolation: classify the change against the account whose
     // data this tab holds. A transition can arrive cross-tab (Supabase broadcasts
@@ -3350,6 +3354,7 @@ async function initializeSupabaseAuth() {
         purgeLocalCadenceContent(),
         purgeLocalMusicContent(),
         purgeLocalFinanceTxnStore(),
+        syncShareTokenForSession(false),
       ]);
       window.location.reload();
       return;
@@ -3379,12 +3384,26 @@ async function initializeSupabaseAuth() {
       warmMailStatus();
       warmMailList();
       warmPageNotifs();
+      syncShareTokenForSession(true);
     } else {
       mailStatusPromise = null;
       mailListPreload = null;
     }
   });
   updateAuthUi();
+}
+
+// iPhone app only: keep the Share Extension's receipt share token in step with
+// sign-in (mint on sign-in / app start, clear on sign-out). No-op on the web.
+function syncShareTokenForSession(signedIn) {
+  const plugin = nativeShareToken();
+  if (!plugin) return Promise.resolve("unavailable");
+  return syncReceiptShareToken({
+    plugin,
+    signedIn,
+    storage: localStorage,
+    mint: () => callNetlifyFunction("share-receipt", { action: "mint" }),
+  }).catch(() => "failed");
 }
 
 // `message` (optional) is shown on the sign-in gate's status line — used for
@@ -4040,6 +4059,7 @@ async function toggleAuth() {
     purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
     purgeLocalMusicContent();   // same: drop local uploaded-music blobs (live-music IDB)
     purgeLocalFinanceTxnStore(); // same: drop the durable-transaction mirror (live-finance-txns IDB)
+    await syncShareTokenForSession(false); // the iPhone Share Extension stops sending receipts for this account
     try {
       await supabaseClient.auth.signOut();
     } finally {

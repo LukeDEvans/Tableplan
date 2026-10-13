@@ -5163,7 +5163,7 @@ function renderShopReceipts() {
       : "";
     const total = r.total != null ? Number(r.total).toLocaleString("en-US", { style: "currency", currency: "USD" }) : "";
     const itemCount = Array.isArray(r.lineItems) ? r.lineItems.length : 0;
-    const sourceTag = r.source === "email" ? "Email" : r.source === "extension" ? "Online order" : "";
+    const sourceTag = r.source === "email" ? "Email" : (r.source === "extension" || r.source === "share") ? "Online order" : "";
     return `
       <button class="shop-receipt-card" type="button" data-receipt-id="${escapeHtml(r.id)}">
         <div class="shop-receipt-store">${escapeHtml(r.storeName || "Unknown store")}</div>
@@ -5189,17 +5189,29 @@ function renderShopReceipts() {
   }
   // Email / extension receipts from the server inbox (finreceipts_) join the
   // list once; a receipt deleted here stays deleted (tombstone check).
+  // Returns how many receipts were added or upgraded (share-sheet re-reads —
+  // LiveReceiptDomain.shareReceiptUpgrade).
   function importFinanceInboxReceipts(inbound) {
-    const have = new Set((state.receipts || []).map((r) => r.id));
+    const byId = new Map((state.receipts || []).map((r) => [r.id, r]));
     const deleted = new Set((state.tombstones?.receipts || []).map(String));
-    const fresh = (Array.isArray(inbound) ? inbound : [])
+    const incoming = (Array.isArray(inbound) ? inbound : [])
       .filter((r) => r && r.id && Number(r.total))
       .map((r) => LiveReceiptDomain.receiptFromFinanceInbox(r, createId))
-      .filter((r) => !have.has(r.id) && !deleted.has(r.id));
-    if (!fresh.length) return 0;
-    state.receipts = normalizeReceipts([...(state.receipts || []), ...fresh]);
+      .filter((r) => !deleted.has(r.id));
+    const fresh = incoming.filter((r) => !byId.has(r.id));
+    const upgrades = new Map();
+    for (const r of incoming) {
+      const existing = byId.get(r.id);
+      const upgraded = existing && LiveReceiptDomain.shareReceiptUpgrade(existing, r);
+      if (upgraded) upgrades.set(r.id, upgraded);
+    }
+    if (!fresh.length && !upgrades.size) return 0;
+    state.receipts = normalizeReceipts([
+      ...(state.receipts || []).map((r) => upgrades.get(r.id) || r),
+      ...fresh,
+    ]);
     persist();
-    return fresh.length;
+    return fresh.length + upgrades.size;
   }
   function linkReceiptToFinanceTxn(receiptId, txnId) {
     const receipt = (state.receipts || []).find((r) => r.id === receiptId);

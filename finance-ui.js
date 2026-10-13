@@ -835,15 +835,35 @@ async function loadFinanceHistory() {
 // Receipts come from the ONE receipts list (state.receipts, owned by Shop — see
 // RECEIPTS.md), read through the injected receiptsForFinance(). Email and
 // browser-extension receipts still arrive in the server inbox (finreceipts_);
-// loadFinanceReceipts() imports them into that list once per session.
+// loadFinanceReceipts() imports them into that list once per session, and again
+// (refreshFinanceInboxReceipts) when Finance is opened or the app comes back to
+// the foreground on Finance — that's how an order shared from the iPhone share
+// sheet shows up without restarting the app. Bounded: one small row read, at
+// most once per RECEIPT_INBOX_MIN_INTERVAL_MS, never re-entrant.
 let financeReceiptsImported = false;
+let financeReceiptsLoadedAt = 0;
+let financeReceiptsInFlight = false;
+const RECEIPT_INBOX_MIN_INTERVAL_MS = 2 * 60 * 1000;
 const RECEIPT_MATCH_DAYS = 4;
 
 async function loadFinanceReceipts() {
+  if (financeReceiptsInFlight) return;
   financeReceiptsImported = true;
-  const data = await callNetlifyFunction("simplefin", { action: "receipts" });
-  const added = Array.isArray(data?.receipts) ? importFinanceInboxReceipts(data.receipts) : 0;
-  if (added && getActiveAppArea() === "finance") renderFinancePage();
+  financeReceiptsInFlight = true;
+  financeReceiptsLoadedAt = Date.now();
+  try {
+    const data = await callNetlifyFunction("simplefin", { action: "receipts" });
+    const result = Array.isArray(data?.receipts) ? importFinanceInboxReceipts(data.receipts) : 0;
+    const changed = typeof result === "number" ? result : (result?.added || 0) + (result?.updated || 0);
+    if (changed && getActiveAppArea() === "finance") renderFinancePage();
+  } finally {
+    financeReceiptsInFlight = false;
+  }
+}
+
+function refreshFinanceInboxReceipts() {
+  if (financeReceiptsInFlight || Date.now() - financeReceiptsLoadedAt < RECEIPT_INBOX_MIN_INTERVAL_MS) return;
+  loadFinanceReceipts().catch(() => {});
 }
 
 function financeReceiptList() {
@@ -3684,7 +3704,7 @@ function renderFinancePage() {
       ${returnLinkHtml(t)}
       ${rc?.id ? `
       <div class="fin-return-box fin-receipt-email">
-        <span class="fin-hint">${rc.source === "email" ? "Order email" : rc.source === "extension" ? "Online order" : "Receipt"}${rc.merchant ? ` · ${escapeHtml(rc.merchant)}` : ""}${(rc.items || []).length ? ` · ${rc.items.length} item${rc.items.length === 1 ? "" : "s"}` : ""}</span>
+        <span class="fin-hint">${rc.source === "email" ? "Order email" : (rc.source === "extension" || rc.source === "share") ? "Online order" : "Receipt"}${rc.merchant ? ` · ${escapeHtml(rc.merchant)}` : ""}${(rc.items || []).length ? ` · ${rc.items.length} item${rc.items.length === 1 ? "" : "s"}` : ""}</span>
         ${!isSplit && (rc.portions || rc.items || []).length > 1 ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="itemize-email" data-id="${escapeHtml(t.id)}">Itemize</button>` : ""}
         ${rc.source === "email" && rc.externalId
           ? `<a class="secondary-btn fin-add-btn" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.externalId)}" target="_blank" rel="noopener noreferrer">View email</a>`
@@ -4949,11 +4969,12 @@ function refreshFinanceSettingsIfOpen() {
   function resetFinanceViewMonth() { financeViewMonth = financeCurrentMonthKey(); }
   function onEnterFinancePage() {
     renderFinancePage();
+    refreshFinanceInboxReceipts();
     if (financeLinkStatus === null) checkFinanceLinkStatus();
     else if (financeLinkStatus.connected && !financeLive) refreshFinanceLive();
   }
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }
