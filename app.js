@@ -1789,15 +1789,14 @@ const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSig
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
 // stays in app.js. Inventory is NOT isolated — cross-domain hooks are injected:
 // renderShopSpaceNav/renderGroceries (it refreshes the Shop page's tab nav + grocery
-// view), and the grocery shopping-list ops (shoppingListHas/add/remove — kept on the
-// grocery side, written by the inventory weekly checklist). inventoryItemList and
+// view). The old inventory weekly checklist (and the grocery shopping-list ops it
+// used) is gone — the Shop Checklist tab replaced it. inventoryItemList and
 // renderInventoryPage are consumed cross-domain by Groceries/Travel/Shop.
 const _inventory = createInventoryModule({
   state, elements, persist, createId, escapeHtml, recordDeletion, recordDeletions,
   closeFolderMenu: (...a) => closeFolderMenu(...a),
   getActiveAppArea: () => activeAppArea,
   renderShopSpaceNav: (...a) => renderShopSpaceNav(...a), renderGroceries: (...a) => renderGroceries(...a),
-  shoppingListHas: (...a) => shoppingListHas(...a), addToShoppingList: (...a) => addToShoppingList(...a), removeFromShoppingList: (...a) => removeFromShoppingList(...a),
 });
 const { inventoryItemList, renderInventoryPage, saveInventoryBox, saveInventoryItem, openInventoryRoomsDialog } = _inventory;
 
@@ -1875,7 +1874,6 @@ const {
   addPantryItem,
   addReceiptReviewLine,
   addStoreToRank,
-  addToShoppingList,
   appendReceiptCameraFile,
   applyGroceryItemRename,
   attachPointerDragToTargets,
@@ -1933,7 +1931,6 @@ const {
   receiptItemMappings,
   receiptPriceHistory,
   refreshReceiptValidation,
-  removeFromShoppingList,
   renderGroceries,
   renderGroceryLibrary,
   renderPantry,
@@ -1959,7 +1956,6 @@ const {
   setReceiptImageEdits,
   setReceiptScanFiles,
   setShopSpaceValue,
-  shoppingListHas,
   toggleGroceryRangeMenu,
   unlistedGroceryItemsForWeek,
   updateReceiptScanSelectionStatus,
