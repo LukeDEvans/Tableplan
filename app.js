@@ -25182,6 +25182,10 @@ const PLAN_ZOOM_COOLDOWN = 380;   // ms between steps, so one flick ≈ one step
 let planWheelAccum = 0;
 let planWheelDir = 0;
 let planZoomCooldownUntil = 0;
+// Last moment two+ fingers were on the calendar. A swipe ending soon after a
+// pinch is the tail of that pinch, not a request to change month/week/day.
+let planLastMultiTouchAt = 0;
+const PLAN_SWIPE_AFTER_PINCH_MS = 450;
 
 function planDayFromPoint(clientX, clientY) {
   if (clientX == null || clientY == null) return null;
@@ -25240,12 +25244,14 @@ function bindPlanZoomNavigation(root) {
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
   root.addEventListener("touchstart", (e) => {
+    if (e.touches.length >= 2) planLastMultiTouchAt = Date.now();
     if (e.touches.length === 2 && PLAN_ZOOM_LADDER.indexOf(planViewMode) !== -1) {
       pinching = true; pinchDist = dist(e.touches);
     }
   }, { passive: true });
   root.addEventListener("touchmove", (e) => {
     if (!pinching || e.touches.length !== 2) return;
+    planLastMultiTouchAt = Date.now();
     e.preventDefault();                                          // suppress two-finger pan
     const now = Date.now();
     if (now < planZoomCooldownUntil) return;
@@ -25259,7 +25265,10 @@ function bindPlanZoomNavigation(root) {
     const m = mid(e.touches);
     if (zoomPlanView(dir, m.x, m.y)) { planZoomCooldownUntil = now + PLAN_ZOOM_COOLDOWN; pinchDist = d; }
   }, { passive: false });
-  const endPinch = (e) => { if (!e || e.touches.length < 2) { pinching = false; pinchDist = 0; } };
+  const endPinch = (e) => {
+    if (pinching) planLastMultiTouchAt = Date.now();
+    if (!e || e.touches.length < 2) { pinching = false; pinchDist = 0; }
+  };
   root.addEventListener("touchend", endPinch, { passive: true });
   root.addEventListener("touchcancel", endPinch, { passive: true });
 }
@@ -25390,14 +25399,29 @@ function bindPlanEventDrag() {
   });
 }
 
+// One-finger horizontal swipe → previous/next period. Each pointer is measured
+// from its own start, and a gesture that ever had two fingers down (a pinch) never
+// counts as a swipe. A pointer whose start this element didn't see (the pinch
+// re-rendered the grid mid-gesture) is ignored, as is anything mostly vertical.
 function bindPlanSwipe(el) {
   if (!el) return;
-  let startX = 0;
-  el.addEventListener("pointerdown", (e) => { startX = e.clientX; }, { passive: true });
-  el.addEventListener("pointerup", (e) => {
-    const dx = e.clientX - startX;
-    if (Math.abs(dx) > 60) navigatePlanView(dx < 0 ? 1 : -1);
+  const starts = new Map(); // pointerId → { x, y }
+  let multi = false;
+  const release = (id) => { starts.delete(id); if (!starts.size) multi = false; };
+  el.addEventListener("pointerdown", (e) => {
+    starts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (starts.size > 1) multi = true;
   }, { passive: true });
+  el.addEventListener("pointerup", (e) => {
+    const start = starts.get(e.pointerId);
+    const wasMulti = multi;
+    release(e.pointerId);
+    if (!start || wasMulti) return;
+    if (Date.now() - planLastMultiTouchAt < PLAN_SWIPE_AFTER_PINCH_MS) return;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) navigatePlanView(dx < 0 ? 1 : -1);
+  }, { passive: true });
+  el.addEventListener("pointercancel", (e) => release(e.pointerId), { passive: true });
 }
 
 // Route a click on an auto-generated calendar event to its source page.
