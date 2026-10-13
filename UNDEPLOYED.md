@@ -33,3 +33,5 @@ _Last deploy: 2026-10-11 #2 (News: Sports always shows)._
 
 - **Finance: the four tabs stay pinned at the top while scrolling** · branch `claude/finance-sticky-tabs` · `.fin-tabs` is `position: sticky` inside the Finance window (its scroller is `#financeMainPage`), with an opaque backing so rows don't show through. CSS only. Verified at 360px in headless Chromium: after scrolling Transactions, Budget and Accounts, the tabs stay at the same spot and are still tappable. **After TestFlight/deploy:** scroll a long Transactions list on the phone and switch tabs without scrolling back up.
 
+- **Finance: "Updated …" moved to the bottom of the Transactions card** · branch `claude/finance-updated-footer` · The bank-data timestamp ("Updated yesterday" / "Updating…") moved from under the card header to a small centered footer at the very bottom of the month's list. Client-only. Verified in headless Chromium at 360px with a stubbed timestamp: it is the card's last element. **After TestFlight/deploy:** scroll to the end of Transactions and look for the line.
+
