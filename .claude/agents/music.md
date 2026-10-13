@@ -22,6 +22,13 @@ There are **two unrelated "music" things** in this repo:
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `music-*.js`, `media-provider-music.js`, `netlify/functions/apple-music-token.js`
+- state: `musicLibrary`, `appleMusic`
+
 ## Your scope (edit these)
 - **The page is called Listen now** (MEDIA_SPLIT_DESIGN.md): visible labels say
   Listen, but `activeAppArea` stays `"media"`, the page-access key stays `read`, and

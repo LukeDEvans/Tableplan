@@ -156,6 +156,22 @@ source of truth for boundaries; this table maps the parallel-work domains to the
 code. Read **Architecture Decisions** (below the table) before working calendar,
 the recipes cluster (recipes / meal-plan / groceries / cook), or health.
 
+**Keeping agents current (Luke, 2026-10-13) — update them as you go, not in audits.**
+Every PR that changes a domain also updates its agent in `.claude/agents/` in the
+**same PR**:
+- **Mechanical changes are enforced by CI.** Each domain agent has an
+  `## Ownership (checked by CI)` section (`- files:` and `- state:` lines).
+  `test/architecture-agent-coverage.test.js` fails when a module, `calendar/` file,
+  Netlify function or `STATE_SECTIONS` key is claimed by no agent, when an ownership
+  entry matches nothing (renamed or removed), or when agent text names a file that
+  doesn't exist. Fix it in the owning agent; genuinely cross-domain files and keys go in
+  the test's `SHARED_FILES` / `SHARED_STATE` with a reason. Never loosen the checks.
+- **Decisions are on you.** When Luke makes a decision about a domain (behavior, a rule,
+  something removed or moved), add it to that agent's text in the same PR, and fix its
+  `description:` line if it no longer describes the domain. A new page or domain gets a
+  new agent and a row in the table below.
+- The **reviewer** checks both.
+
 | Domain | Dedicated modules | `app.js` area (`activeAppArea`) | Data home |
 |---|---|---|---|
 | **finance** | `finance-ui.js` (`createFinanceModule(deps)` — the whole finance UI: services, transactions + review deck, txn-receipts, budget/accounts/income, insights) + pure logic in `finance-actuals.js` / `finance-csv.js` / `finance-sync.js` / `finance-review-gesture.js`; `receipt-*.js` shared with Shop — `app.js` keeps only `showFinanceApp`. ⚠️ **sync/hydration gate stays in app.js** (see below) | `"finance"` | `tableplan_states` JSONB (`state.finance*`) — **Supabase-only, never localStorage** — **plus the relational `finance_transactions` ledger** (durable bank/CSV/manual rows; `finance-transactions.js` pure core, `finance-txn-store.js` client data module, `netlify/functions/_finance-ingest.js` server ingest; read path gated by `state.financeTxnSource` — see FINANCE_TRANSACTIONS_DESIGN.md). **Cross-domain:** Calendar reads `financePaydaysInRange` + `formatFinMoney` (payday dots / bill display); state-sync calls `invalidateFinanceLabeled`; receipts come from Shop's `state.receipts` via injected interface (RECEIPTS.md) — `finreceipts_` is only the email/extension inbox |
@@ -208,7 +224,7 @@ is HELD** — the read-compat shim has a delete-resurrection gap that needs a sc
 `mergeStates` tombstone-routing fix first, and there is **no** `STATE_SCHEMA_VERSION`
 bump (it's finance-only). Full record + the prerequisite fix: **[CALENDAR_AUTHORITY_FLIP.md](CALENDAR_AUTHORITY_FLIP.md)**.
 
-**Google Calendar two-way sync (approved direction, 2026-10-12; Phase 1 built on `claude/gcal-sync`):** Google is the
+**Google Calendar two-way sync (approved direction, 2026-10-12; Phase 1 merged in #90, not yet deployed):** Google is the
 authority for Google-backed calendars through the transition, fetched per device and never written
 into synced state (so it does **not** touch the held authority flip). The app becomes the master copy
 later via a planned severance. Plan, decisions, and readiness criteria:

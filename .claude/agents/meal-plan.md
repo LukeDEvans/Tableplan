@@ -17,6 +17,13 @@ complete). Make focused changes to Meal-plan only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. This domain has
   **zero UI test coverage** (below).
 
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `mealplan-ui.js`, `meal-plan-*.js`
+- state: `plans`, `publishedWeeks`, `mealPlanConfig`, `autoGenerateRules`, `mealPlanSharedEvents`
+
 ## Your scope (edit these)
 - **`mealplan-ui.js`** — the whole domain as `createMealplanModule(deps)` (~246 fns): the
   planner (`renderPlanner`, carousel, meal-context), the **meal-entry + auto-rule drag/drop +

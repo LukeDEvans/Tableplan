@@ -16,6 +16,13 @@ changes to the Watch page only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `media-provider-tmdb.js`, `media-provider-youtube.js`, `media-provider-jellyfin.js`, `media-availability.js`, `media-deeplink.js`, `media-watch-adapter.js`, `media-search-scope.js`, `netlify/functions/tmdb-*.js`, `netlify/functions/youtube-search.js`, `netlify/functions/showtimes.js`
+- state: `watch*`, `jellyfin`, `mediaServices`
+
 ## Your scope (edit these)
 - **Page:** `#watchMainPage` holding `#watchPagePanel`; `showWatchApp` sets
   `activeAppArea = "watch"`, gated by the `watch` page-access key. Watch **is on the

@@ -1,6 +1,6 @@
 ---
 name: travel
-description: Use for changes scoped to the Travel domain — trips, itineraries, bookings/ingest, geo & transitions, route optimization, and Travel Mode. Owns travel-*.js and the "explore" area of app.js.
+description: Use for changes scoped to the Travel domain — trips, itineraries, bookings/ingest, geo & transitions, route optimization, and Travel Mode. Explore opens from the Travel card in Recreate. Owns travel-*.js and the "explore" area of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -15,6 +15,13 @@ changes to the Travel domain only. (In the UI this domain is surfaced as
   conventions; don't invent new patterns.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
+
+## Ownership (checked by CI)
+<!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
+     from the repo root; `*` matches within one name. When you add, rename or remove a
+     module, function or state key in this domain, update these lines in the same PR. -->
+- files: `travel-*.js`, `booking-scan.js`, `netlify/functions/travel-time.js`, `netlify/functions/scan-booking.js`, `netlify/functions/maps-static.js`
+- state: `trips`, `travelIdeas`, `travelHome`
 
 ## Your scope (edit these)
 - **Modules:** `travel-geo.js`, `travel-ingest.js`, `travel-interpret.js`,

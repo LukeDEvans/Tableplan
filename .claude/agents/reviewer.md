@@ -45,7 +45,12 @@ fix them and you do **not** halt the main line of work.
    say correctly whether the change needs a Netlify deploy (anything under `netlify/`),
    a TestFlight build (client or native `ios/` changes Luke needs on his phone), or
    both? Are its post-deploy steps things Luke can actually do?
-7. **Simplification** — materially simpler or clearer approaches, dead code left behind.
+7. **Agents kept current** — if the change touched a domain, did its agent in
+   `.claude/agents/` change with it? Mechanical drift fails
+   `test/architecture-agent-coverage.test.js`; you check what the test can't: a new
+   decision by Luke, a removed or moved feature, or a `description:` line that no longer
+   matches the domain. A missing agent update is a **P2**.
+8. **Simplification** — materially simpler or clearer approaches, dead code left behind.
 
 Prefer a few high-signal, concrete findings over a long list of nits. A finding you
 can't tie to a real failure scenario is a nit — mark it as such or drop it.
