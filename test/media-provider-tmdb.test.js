@@ -38,6 +38,19 @@ describe("createTmdbProvider — availability aggregator, not a streamer", () =>
     expect(items[1].subtitle).toBe("TV series");
   });
 
+  // Regression: netlify/functions/tmdb-search.js returns `tmdbId`, not `id`.
+  // Reading only `id` dropped every result → Watch search showed "No results."
+  it("search accepts the tmdb-search function's real shape (tmdbId)", async () => {
+    const real = { results: [
+      { tmdbId: 438631, type: "movie", title: "Dune", year: "2021", posterPath: "/d.jpg", overview: "", totalSeasons: null },
+      { tmdbId: 136315, type: "tv", title: "The Bear", year: "2022", posterPath: null, overview: "", totalSeasons: 3 },
+    ] };
+    const p = createTmdbProvider(cfg, { fetchJson: async () => real });
+    const items = await p.search("dune");
+    expect(items.map((i) => i.id)).toEqual(["tmdb_438631", "tmdb_136315"]);
+    expect(items[1].meta).toMatchObject({ tmdbId: "136315", tmdbType: "tv" });
+  });
+
   it("availability() resolves the actual services (Max/Netflix/Apple TV)", async () => {
     const refs = await tmdb.availability("438631", "movie");
     const ids = refs.map((r) => r.providerId);
