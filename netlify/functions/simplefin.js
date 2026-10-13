@@ -13,6 +13,7 @@
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const { ingestFeed, remapAccount, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } = require("./_finance-ingest.js");
 const { loadFinanceCategories } = require("./_finance-categories.js");
+const { receiptPrompt, modelText, receiptFromModel, receiptFingerprint, saveImportedReceipt } = require("./_receipt-extract.js");
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return cors(json(200, {}));
@@ -262,76 +263,6 @@ exports.handler = async (event) => {
 function numOrNull(v) {
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : null;
-}
-
-// ── Receipt extraction helpers (shared by scanReceipt / importReceipt) ──────
-
-function receiptPrompt(sourceKind, categories) {
-  return [
-    `You extract itemized purchase receipts from ${sourceKind} for a household budget app.`,
-    'Reply with ONLY valid JSON, no markdown: {"receipt": {...}} or {"receipt": null} if no readable receipt.',
-    'Receipt shape: {"merchant": "...", "date": "YYYY-MM-DD", "total": 12.34, "items": [{"name": "...", "price": 1.23, "category": "<key>" or null}]}',
-    "total = the final amount charged (after tax and discounts).",
-    "Assign each item the best-fitting budget category key from this list; use null when unsure:",
-    categories.map((c) => `${c.key} = ${c.name}`).join("\n")
-  ].join("\n");
-}
-
-async function modelText(aiResponse) {
-  const data = await aiResponse.json().catch(() => null);
-  return data?.content?.map((c) => c.text || "").join("") || "";
-}
-
-// Parses the model reply and normalizes into { merchant, date, total, items,
-// portions } — per-category item sums plus one unlabeled remainder portion
-// (tax/shipping/uncertain items) so portions always cover the total.
-function receiptFromModel(text, categories) {
-  const jm = String(text || "").match(/\{[\s\S]*\}/);
-  let parsed = null;
-  try { parsed = jm ? JSON.parse(jm[0]) : null; } catch { return null; }
-  const r = parsed?.receipt;
-  if (!r || !Number(r.total)) return null;
-  const validKeys = new Set(categories.map((c) => c.key));
-  const items = (Array.isArray(r.items) ? r.items : []).slice(0, 80).map((it) => ({
-    name: String(it.name || "").slice(0, 80),
-    price: Math.round((Number(it.price) || 0) * 100) / 100,
-    category: validKeys.has(it.category) ? it.category : ""
-  }));
-  const byCat = {};
-  let assigned = 0;
-  for (const it of items) {
-    if (!it.category || !it.price) continue;
-    byCat[it.category] = Math.round(((byCat[it.category] || 0) + it.price) * 100) / 100;
-    assigned += it.price;
-  }
-  const portions = Object.entries(byCat).map(([label, amount]) => ({ label, amount }));
-  const remainder = Math.round((Number(r.total) - assigned) * 100) / 100;
-  if (remainder > 0.02) portions.push({ label: "", amount: remainder });
-  return {
-    merchant: String(r.merchant || "").slice(0, 60),
-    date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : "",
-    total: Math.round(Number(r.total) * 100) / 100,
-    items,
-    portions,
-    at: new Date().toISOString()
-  };
-}
-
-// Stable id from merchant+date+total, so re-importing the same receipt
-// replaces it instead of adding a duplicate.
-function receiptFingerprint(receipt) {
-  let h = 0;
-  const fp = `${receipt.merchant}|${receipt.date}|${receipt.total}`;
-  for (let i = 0; i < fp.length; i++) h = (h * 31 + fp.charCodeAt(i)) | 0;
-  return Math.abs(h).toString(36);
-}
-
-async function saveImportedReceipt(serviceKey, groupId, receipt) {
-  const { updateRawRow } = require("./_state-sections.js");
-  await updateRawRow(serviceKey, `finreceipts_${groupId}`, (s) => {
-    const existing = s.receipts || [];
-    return { receipts: [receipt, ...existing.filter((r) => r.id !== receipt.id)].slice(0, 40) };
-  });
 }
 
 function splitAccessUrl(accessUrl) {
