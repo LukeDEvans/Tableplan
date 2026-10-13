@@ -16,6 +16,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
+- [ ] **[P1] Daily briefing push goes to every user's devices** (notifications · netlify/functions/daily-briefing.js loadSubscriptions · 2026-10-13)
+      `loadSubscriptions()` reads every row of `live_push_subscriptions` with no `user_id` filter, and the prompt is hard-coded to Luke. → If Luke's wife ever subscribes a browser, she gets Luke's briefing. No exposure today as far as known (only Luke subscribes). Planned fix: Luke decided (2026-10-13) to retire the briefing entirely in notifications Phase 2 (IOS_NOTIFICATIONS_DESIGN.md §3), keeping the function's TTS cleanup + finance snapshot as `daily-maintenance`. Verdict: CONFIRMED (by reading).
 - [ ] **[P1] NYT sign-in with Apple in the app stalls after Face ID** (news · ios/App/App/ArticleReaderPlugin.swift ArticleLoginViewController · 2026-10-08)
       Luke, on the 2026-10-08 build: Face ID completes, then nothing happens and the NYT doesn't sign in. The Economist signs in fine in the same sheet. Cause not known: the cloud session can't load the NYT or Apple pages. Shipped with PR #80: the sheet now identifies as Safari (a bare WKWebView user agent can make sign-in pages take an embedded-browser path) and records each step (host + path), sent with the status report and kept as `lastTrail` in the `mailnewssubs_<user>` row. **Next:** after Luke's next NYT attempt, read that row's `lastTrail` to see where it stops. Workaround meanwhile: paste the NYT-S cookie from Chrome on the laptop (News → Sync Settings), or give the NYT account a password and sign in with email. Verdict: OBSERVED by Luke; cause INFERRED at best.
 - [x] **[P1] Scores: ESPN did not answer from Netlify on the first deploy preview** (scores · netlify/functions/scores.mjs · 2026-10-07)
@@ -124,6 +126,8 @@ _(none)_
 
 
 ## P2
+- [ ] **[P2] Reminders: not yet tried on an iPhone** (calendar · calendar/reminders-native.js · 2026-10-13)
+      Phase 1 of IOS_NOTIFICATIONS_DESIGN.md is verified by unit tests (mock plugin), `scripts/qa-reminders.mjs` (web paths) and a Postgres check of the migration, but no TestFlight build has run it: iOS permission prompt, delivery with the app killed, survival across a reboot, and tap → event are UNVERIFIED. Also needs `npm run ios:sync` on the Mac (Podfile.lock). Verdict: UNVERIFIED until a build is on the phone.
 - [ ] **[P2] Google-backed plan events still use title-based ids** (calendar · app.js getPlanEventsForRange Google projection · 2026-10-12)
       Phase 1 kept `gcal:<cal>:<date>:<title>` so hides/renames made on the iCal feed keep working after a calendar switches to the Google API. Consequence: renaming an event in Google orphans a local hide/rename for it (same as before the switch). Phase 2 (editing) needs ids keyed by the Google event id anyway — re-key existing `planExternalExclusions`/`planExternalOverrides` then (match date + title once). Verdict: KNOWN GAP, deliberate.
 

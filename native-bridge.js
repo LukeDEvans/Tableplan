@@ -109,6 +109,25 @@ export function nativeDocumentScanner() {
   return _documentScanner;
 }
 
+// Native local notifications (@capacitor/local-notifications — the npm package is a
+// dependency so `cap sync` adds its native pod; JS reaches it through this proxy
+// rather than the package's web fallback). Used for event reminders
+// (calendar/reminders-native.js). null in a browser/PWA, or in an app build from
+// before the plugin was added → reminders stay in-app toasts as before.
+let _localNotifications;
+export function nativeLocalNotifications() {
+  if (_localNotifications !== undefined) return _localNotifications;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _localNotifications = null;
+      return _localNotifications;
+    }
+    const p = registerPlugin("LocalNotifications");
+    _localNotifications = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("LocalNotifications")) ? p : null;
+  } catch { _localNotifications = null; }
+  return _localNotifications;
+}
+
 // Base64 JPEG pages from the native scanner → File objects the scan pipeline
 // takes. Decoded by hand: fetch(data:) can be intercepted by CapacitorHttp.
 export function scannedPagesToFiles(pages, stamp = Date.now()) {

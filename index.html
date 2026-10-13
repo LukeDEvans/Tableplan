@@ -2882,6 +2882,7 @@
           </button>
         </div>
         <div class="gcal-panel" data-gcal-panel></div>
+        <div class="reminder-device-panel" id="reminderDevicePanel" hidden></div>
         <div class="calendar-editor">
           <label>
             <span>Calendar name</span>
@@ -3387,7 +3388,7 @@
           </div>
           <div class="form-field plan-reminder-field" id="planEventReminderRow">
             <span class="plan-reminder-icon" aria-hidden="true">🔔</span>
-            <select class="plan-cal-select" id="planEventReminder" aria-label="Reminder">
+            <select class="plan-cal-select" id="planEventReminder" aria-label="Remind me" title="Only you get this reminder">
               <option value="">No reminder</option>
               <option value="0">At time of event</option>
               <option value="5">5 minutes before</option>
