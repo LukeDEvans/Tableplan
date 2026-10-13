@@ -1258,6 +1258,7 @@ body {
    keep them flush to the window-border (no buffer). */
 #mailMainPage.planner-column,
 #mediaMainPage.planner-column,
+#watchMainPage.planner-column,
 #planMainPage.planner-column { padding: 0; }
 
 .side-stack {
@@ -9528,7 +9529,7 @@ body.touch-drag-active * {
    region. Without this the watch list was clipped and couldn't scroll on
    mobile — the core of the "disaster on mobile". Scoped to #watchPlannerGrid so
    the Tasks planner (same .planner-grid class, different element) is untouched. */
-#mediaWatchPanel #watchPlannerGrid:not([hidden]) {
+#watchPagePanel #watchPlannerGrid:not([hidden]) {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -9536,8 +9537,8 @@ body.touch-drag-active * {
   gap: 0;
   overflow: hidden;
 }
-#mediaWatchPanel #watchPlannerGrid .watch-category-bar { flex-shrink: 0; }
-#mediaWatchPanel #watchPlannerGrid .watch-list-panel {
+#watchPagePanel #watchPlannerGrid .watch-category-bar { flex-shrink: 0; }
+#watchPagePanel #watchPlannerGrid .watch-list-panel {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -9795,9 +9796,11 @@ body.touch-drag-active * {
 }
 /* Watch tab = search head (fixed) + watchlist grid OR search results (each a
    direct scroll-child of the overflow:hidden panel, toggled by [hidden]). */
-#mediaWatchPanel > .planner-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start; }
+#watchPagePanel > .planner-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start; }
 .media-search-discover-row { display: flex; align-items: center; gap: 10px; width: 100%; font: inherit; font-size: 0.9rem; font-weight: 600; text-align: left; padding: 12px 14px; margin: 2px 0 8px; border: 1px solid var(--line, #e4e0d8); border-radius: 12px; background: var(--surface-2, #f0ece3); color: var(--ink); cursor: pointer; }
 .media-search-discover-row:hover { border-color: var(--ink); }
+/* Listen's own online search (podcasts, music, radio) opens in place under the row. */
+.listen-discover-results { flex: none; overflow: visible; margin: 0 0 12px; }
 .media-search-discover-row svg { flex: 0 0 auto; color: var(--muted); }
 .discover-services-list { display: flex; flex-direction: column; }
 .discover-service-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 2px; border-bottom: 1px solid var(--line, #e4e0d8); font-size: 0.9rem; }
@@ -15597,6 +15600,14 @@ body:has(#mediaMainPage:not([hidden])) { overflow: hidden; height: 100dvh; }
 body:has(#mediaMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
 body:has(#mediaMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Watch page (its own page again — MEDIA_SPLIT_DESIGN.md): same viewport lock,
+   so the search head stays put and only the watchlist / results scroll. */
+body:has(#watchMainPage:not([hidden])) { overflow: hidden; height: 100dvh; }
+body:has(#watchMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#watchMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+#watchMainPage .article-page-inner { min-height: 0; }
+.watch-page-panel { width: 100%; max-width: 1100px; margin: 0 auto; box-sizing: border-box; padding: 10px 14px 0; }
 /* The All and Archive lists scroll within their panels, like .article-list */
 #mediaAllList, #mediaArchiveList { flex: 1; min-height: 0; overflow-y: auto; }
 
@@ -18220,7 +18231,7 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
    rules in the (hover:none) block below own them). Without this exclusion the id
    here out-specifies the swipe-hide and the buttons sit there permanently. */
 @media (max-width: 680px) {
-  #mediaMainPage .article-row:not(.podcast-episode-row) .article-row-actions { display: flex; }
+  :is(#mediaMainPage, #newsMainPage) .article-row:not(.podcast-episode-row) .article-row-actions { display: flex; }
 }
 /* …except the Playlist rows, which hide their quick-actions until a swipe-left
    reveals them (a clean tap plays/opens; long-press reorders). */
@@ -18268,16 +18279,23 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 #shopMainPage #groceryStoreTabBar,
 #exploreMainPage .travel-detail-header,
 #mediaMainPage .media-all-header,
-#mediaMainPage .article-reader-topbar {
+#newsMainPage .article-reader-topbar {
   padding-right: 12px;
   gap: 10px;
 }
-/* Reading an article is a focused view — hide the Media search/menu/notifications
-   top bar while the reader is open (the reader has its own Back button). */
-#mediaMainPage:has(#articleReaderPanel:not([hidden])) .media-topbar { display: none; }
+/* Reading an article is a focused view — hide the News search/settings top bar
+   while the reader is open (the reader has its own Back button). The reader lives
+   in News (MEDIA_SPLIT_DESIGN.md): it takes the content area's place. */
+#newsMainPage:has(#articleReaderPanel:not([hidden])) .news-topbar { display: none; }
+#newsMainPage .article-layout { position: relative; }
+#newsMainPage .article-layout:has(> #articleReaderPanel:not([hidden])) > #newsContent { display: none; }
+/* The saved-articles list (former Media → Publications) inside News. */
+.news-saved { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.news-saved > .news-head { padding: 14px clamp(12px, 3vw, 24px) 0; }
+.news-saved-mount { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* Icon-only play/pause beside the speed control (Stop, the text label and the
    trash button were removed to give the speed control room). */
-#mediaMainPage .article-reader-actions .listen-play-btn { width: 40px; height: 40px; }
+#newsMainPage .article-reader-actions .listen-play-btn { width: 40px; height: 40px; }
 /* The old top-right scope toggle is now hidden (it moved to Settings → View),
    so the podcast tab bar no longer reserves room for it — let the search and
    archive buttons sit flush against the right edge of the window. */

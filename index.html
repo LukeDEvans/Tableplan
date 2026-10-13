@@ -268,7 +268,7 @@
         <section class="planner-column do-column" id="playMainPage" aria-label="Exercise plan" hidden>
           <div class="planner-grid" id="playPlannerGrid"></div>
         </section>
-        <section class="planner-column do-column article-read-page" id="mediaMainPage" aria-label="Media" hidden>
+        <section class="planner-column do-column article-read-page" id="mediaMainPage" aria-label="Listen" hidden>
           <div class="article-page-inner">
             <div class="mail-topbar media-topbar">
               <button class="icon-btn mail-sidebar-toggle" type="button" id="mediaSidebarToggle" title="Toggle menu" aria-label="Toggle folders menu">
@@ -276,7 +276,7 @@
               </button>
               <div class="mail-search-wrap">
                 <svg class="mail-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-                <input class="mail-search-input" id="mediaSearchInput" type="search" placeholder="Search media" aria-label="Search all media" />
+                <input class="mail-search-input" id="mediaSearchInput" type="search" placeholder="Search Listen" aria-label="Search podcasts, music and books" />
               </div>
               <div class="mail-topbar-right">
                 <button class="icon-btn mail-notifications-btn" type="button" id="mediaNotificationsBtn" title="Notifications" aria-label="Notifications">
@@ -303,14 +303,6 @@
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 10h16a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z"/><circle cx="8" cy="15" r="2.4"/><line x1="14" y1="13.5" x2="19" y2="13.5"/><line x1="14" y1="16.5" x2="17" y2="16.5"/><path d="M7 10l10-5"/></svg>
                   <span>Radio</span>
                 </button>
-                <button class="article-sidebar-tab" type="button" data-media-tab="watch" role="tab" aria-selected="false">
-                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                  <span>Watch</span>
-                </button>
-                <button class="article-sidebar-tab" type="button" data-media-tab="all" role="tab" aria-selected="false">
-                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 4h13a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H4z"/><path d="M19 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="8" x2="14" y2="8"/><line x1="7" y1="12" x2="14" y2="12"/><line x1="7" y1="16" x2="11" y2="16"/></svg>
-                  <span>Publications</span>
-                </button>
                 <button class="article-sidebar-tab" type="button" data-media-tab="books" role="tab" aria-selected="false">
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                   <span>Books</span>
@@ -334,47 +326,6 @@
                   </div>
                   <div class="planner-grid" id="readingPlannerGrid"></div>
                 </div>
-                <div class="article-list-panel" id="articleListPanel" hidden>
-                  <div class="podcast-playlist-bar article-pub-bar">
-                    <div class="watch-category-tabs" id="mediaPubTabs" role="tablist" aria-label="Saved article publications"></div>
-                    <div class="podcast-tabs-actions">
-                      <button class="podcast-tabs-action-btn" type="button" id="articleScanBtn" title="Scan a printed article" aria-label="Scan a printed article">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></svg>
-                      </button>
-                      <button class="podcast-tabs-action-btn" type="button" id="articleSearchBtn" title="Search articles" aria-label="Search articles">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-                      </button>
-                      <button class="podcast-tabs-action-btn" type="button" id="articleArchiveBtn" title="Archived articles" aria-label="Archived articles">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
-                      </button>
-                      <button class="podcast-tabs-action-btn" type="button" id="articleSyncBtn" title="Sync saved articles" aria-label="Sync from NYT and Economist" hidden>
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                      </button>
-                      <button class="podcast-tabs-action-btn" type="button" id="articleSyncSettingsBtn" title="Sync settings" aria-label="Configure sync settings" hidden>
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                      </button>
-                    </div>
-                  </div>
-                  <div class="article-list" id="articleList"></div>
-                </div>
-                <div class="article-reader-panel" id="articleReaderPanel" hidden>
-                  <div class="article-reader-topbar">
-                    <button class="icon-btn" type="button" id="articleReaderCloseBtn" title="Back" aria-label="Back to list">
-                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                    </button>
-                    <div class="article-reader-actions">
-                      <button class="icon-btn listen-play-btn" type="button" id="listenPlayPauseBtn" aria-label="Play / pause">
-                        <svg viewBox="0 0 24 24" aria-hidden="true" id="listenBtnIcon" width="20" height="20"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                      </button>
-                      <div class="speed-stepper" id="listenSpeedStepper" role="group" aria-label="Playback speed"><button class="speed-step-btn" type="button" data-speed-step="-1" aria-label="Slower">&minus;</button><span class="speed-step-val" aria-live="polite">1×</span><button class="speed-step-btn" type="button" data-speed-step="1" aria-label="Faster">+</button></div>
-                    </div>
-                  </div>
-                  <div class="article-reader-body" id="articleReaderBody">
-                    <h2 class="article-reader-title" id="articleReaderTitle"></h2>
-                    <div class="article-reader-meta" id="articleReaderMeta"></div>
-                    <div class="article-reader-text" id="articleReaderText"></div>
-                  </div>
-                </div>
                 <div class="podcast-panel" id="mediaArchivePanel" hidden>
                   <div id="mediaArchiveList"></div>
                 </div>
@@ -383,17 +334,6 @@
                 </div>
                 <div class="podcast-panel" id="mediaMusicPanel" hidden></div>
                 <div class="podcast-panel" id="mediaRadioPanel" hidden></div>
-                <div class="podcast-panel" id="mediaWatchPanel" hidden>
-                  <div class="discover-head">
-                    <input type="search" class="discover-search-input" id="discoverSearchInput" placeholder="Search movies, shows, videos…" aria-label="Search all media" autocomplete="off" />
-                    <div class="discover-filter">
-                    <button class="icon-btn discover-filter-btn" id="discoverFilterBtn" type="button" title="Filter search" aria-label="Filter search scope" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
-                    <div class="discover-filter-menu" id="discoverFilterMenu" role="menu" hidden></div>
-                  </div>
-                  </div>
-                  <div class="discover-results" id="discoverResults" hidden></div>
-                  <div class="planner-grid" id="watchPlannerGrid"></div>
-                </div>
                 <div class="podcast-panel" id="mediaPodcastsPanel" hidden>
                   <div class="podcast-playlist-bar" id="podcastPlaylistBar"></div>
                   <div class="podcast-content" id="podcastContent">
@@ -451,6 +391,21 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+        <section class="planner-column do-column watch-page" id="watchMainPage" aria-label="Watch" hidden>
+          <div class="article-page-inner">
+            <div class="podcast-panel watch-page-panel" id="watchPagePanel">
+              <div class="discover-head">
+                <input type="search" class="discover-search-input" id="discoverSearchInput" placeholder="Search movies, shows, videos…" aria-label="Search all media" autocomplete="off" />
+                <div class="discover-filter">
+                <button class="icon-btn discover-filter-btn" id="discoverFilterBtn" type="button" title="Filter search" aria-label="Filter search scope" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                <div class="discover-filter-menu" id="discoverFilterMenu" role="menu" hidden></div>
+              </div>
+              </div>
+              <div class="discover-results" id="discoverResults" hidden></div>
+              <div class="planner-grid" id="watchPlannerGrid"></div>
             </div>
           </div>
         </section>
@@ -734,6 +689,48 @@
             <div class="article-layout">
               <nav class="article-sidebar news-sidebar" id="newsSidebar" aria-label="News sections"></nav>
               <div class="article-content news-content" id="newsContent"></div>
+              <div class="article-reader-panel" id="articleReaderPanel" hidden>
+                <div class="article-reader-topbar">
+                  <button class="icon-btn" type="button" id="articleReaderCloseBtn" title="Back" aria-label="Back to list">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                  </button>
+                  <div class="article-reader-actions">
+                    <button class="icon-btn listen-play-btn" type="button" id="listenPlayPauseBtn" aria-label="Play / pause">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" id="listenBtnIcon" width="20" height="20"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    </button>
+                    <div class="speed-stepper" id="listenSpeedStepper" role="group" aria-label="Playback speed"><button class="speed-step-btn" type="button" data-speed-step="-1" aria-label="Slower">&minus;</button><span class="speed-step-val" aria-live="polite">1×</span><button class="speed-step-btn" type="button" data-speed-step="1" aria-label="Faster">+</button></div>
+                  </div>
+                </div>
+                <div class="article-reader-body" id="articleReaderBody">
+                  <h2 class="article-reader-title" id="articleReaderTitle"></h2>
+                  <div class="article-reader-meta" id="articleReaderMeta"></div>
+                  <div class="article-reader-text" id="articleReaderText"></div>
+                </div>
+              </div>
+              <!-- Saved articles (the former Media → Publications list). News mounts it
+                   into its "Saved articles" view; it waits here otherwise. -->
+              <div id="newsSavedParking" hidden>
+                <div class="article-list-panel" id="articleListPanel">
+                  <div class="podcast-playlist-bar article-pub-bar">
+                    <div class="watch-category-tabs" id="mediaPubTabs" role="tablist" aria-label="Saved article publications"></div>
+                    <div class="podcast-tabs-actions">
+                      <button class="podcast-tabs-action-btn" type="button" id="articleScanBtn" title="Scan a printed article" aria-label="Scan a printed article">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></svg>
+                      </button>
+                      <button class="podcast-tabs-action-btn" type="button" id="articleArchiveBtn" title="Archived articles" aria-label="Archived articles">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                      </button>
+                      <button class="podcast-tabs-action-btn" type="button" id="articleSyncBtn" title="Sync saved articles" aria-label="Sync from NYT and Economist" hidden>
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                      </button>
+                      <button class="podcast-tabs-action-btn" type="button" id="articleSyncSettingsBtn" title="Sync settings" aria-label="Configure sync settings" hidden>
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="article-list" id="articleList"></div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
