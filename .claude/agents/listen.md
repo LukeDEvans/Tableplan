@@ -75,8 +75,8 @@ mini-player** (`miniPlayerInfoBtn`), where its notification dot also sits.
 every player), `media-provider.js` and the rest of the media hub are used by **music**
 and **Watch** too (CLAUDE.md lists them as shared infra). You may change them for
 Listen work, but say in your report what music and Watch would see, and run their
-tests. A provider that owns its own playback (`CAP.OWNS_PLAYBACK`; none today since
-Apple Music was dropped) is never routed through the engine.
+tests. Apple Music owns its own playback (`CAP.OWNS_PLAYBACK`) — don't route it
+through the engine.
 
 ## Domain landmines (do NOT change without flagging)
 - **Now-playing and idle-play invariants are tested** (`media-nowplaying-invariant`,

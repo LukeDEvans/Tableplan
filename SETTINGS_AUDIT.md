@@ -110,7 +110,7 @@ Multiple settings agents would overlap with the domain agents. A recurring audit
 3. **Display:** Light / Dark / Auto comes back soon, together with **festive theming**. Build the Display screen so seasonal themes slot in beside the mode.
 4. **Household / Personal view: keep** in some form. Luke is still working out how household and personal overlap, so the capability (`setAllScopes`, section scopes) stays; whether a switch is exposed now waits on that design.
 5. **Legacy iCal calendars:** fine to lose; Luke can re-add any that were still on that path. Delete the iCal dialog and fetch path.
-6. **In-app Apple Music: drop for now.** Other music subscriptions may come in about a year; handle them then.
+6. **Apple Music stays; its settings go.** (Corrected 2026-10-14: the first reading, "drop in-app Apple Music", was a misunderstanding and shipped in #101; #105 restores it.) Apple Music is the app's only streaming service, so it is always on with no switch, and Settings has no Apple Music panel. Sign-in happens in Listen › Music › Discover. Other music subscriptions may come in about a year; handle them then.
 7. **Siri / Alexa voice commands: removed** (2026-10-14). Not used; the notes in §9 record what they did, in case they come back.
 8. **Trash → "Recently deleted"** (2026-10-14): a small view inside the Recipe Box; deleted recipes are kept 30 days, then purged.
 9. **AI Notes: removed** (2026-10-14). Luke doesn't use the assistant yet and will rebuild it fresh. The panel's other settings stay under Settings › Assistant until the new structure gives them a home.
@@ -119,7 +119,7 @@ Still open: Mail AI recipe toggles (move to Meal Plan, or stay in Mail AI with a
 
 ## 8. Build order
 
-1. **Delete dead code** (§3) plus the iCal calendar path and in-app Apple Music.
+1. **Delete dead code** (§3) plus the iCal calendar path, and the Apple Music settings panel (Apple Music itself stays, always on).
 2. **Registry + CI check + settings agent** (§6).
 3. **New structure** (§5), group by group, each domain agent moving its own rows. Remove the misfiled settings from "AI Notes" into their groups.
 4. **Display + festive theming** (separate design).

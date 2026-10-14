@@ -33,8 +33,11 @@ describe("PROVIDER_CATALOG — honest capabilities", () => {
       expect(hasCapability(p, MEDIA_CAP.AVAILABILITY)).toBe(true);
     }
   });
-  it("no longer lists Apple Music (dropped 2026-10-14) or the retired Jamendo", () => {
-    expect(reg.get("applemusic")).toBeNull();
+  it("lists Apple Music (search behind auth) and no longer the retired Jamendo", () => {
+    const a = reg.get("applemusic");
+    expect(a?.kind).toBe("music");
+    expect(hasCapability(a, MEDIA_CAP.SEARCH)).toBe(true);
+    expect(hasCapability(a, MEDIA_CAP.AUTH)).toBe(true);
     expect(reg.get("jamendo")).toBeNull();
   });
   it("TMDB is the availability aggregator that powers video search (not a streamer API)", () => {
