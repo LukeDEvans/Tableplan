@@ -2350,40 +2350,67 @@
       </div>
     </dialog>
 
-    <dialog class="recipe-dialog profile-dialog" id="profileDialog">
+    <!-- Profile: opens read-only; the small Edit button switches to the form. -->
+    <dialog class="recipe-dialog std-form-dialog profile-dialog" id="profileDialog" data-mode="view">
       <div class="recipe-form">
-        <div class="dialog-head">
-          <h2>User</h2>
+        <div class="recipe-form-head profile-head">
+          <h2 id="profileTitle">Profile</h2>
+          <button class="profile-edit-btn" id="profileEditBtn" type="button" aria-label="Edit profile">Edit</button>
           <button class="icon-btn" id="closeProfileBtn" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
         </div>
-        <div class="profile-dialog-body">
-          <div class="profile-avatar-row">
-            <div class="profile-avatar-large"></div>
-            <div class="profile-identity">
-              <p id="profileEmailDisplay"></p>
+        <div class="recipe-form-body profile-dialog-body">
+          <section class="profile-view" id="profileView">
+            <div class="profile-hero">
+              <div class="profile-avatar profile-avatar--xl" id="profileViewAvatar" aria-hidden="true"></div>
+              <p class="profile-hero-name" id="profileViewName"></p>
+              <p class="profile-hero-sub" id="profileViewSub"></p>
             </div>
-          </div>
-          <label class="profile-field-label">
-            Name
-            <input type="text" id="profileNameInput" class="config-input" autocomplete="off" placeholder="Your name" />
-          </label>
-          <label class="profile-field-label">
-            Birthday
-            <input type="date" id="profileDobInput" class="config-input" />
-          </label>
-          <label class="profile-field-label">
-            Home address
-            <input type="text" id="profileHomeInput" class="config-input" autocomplete="off" placeholder="City or airport — trips start and finish here" />
-          </label>
+            <div class="profile-group">
+              <h3 class="profile-group-title">About</h3>
+              <div class="profile-rows" id="profileViewAbout"></div>
+            </div>
+            <div class="profile-group" id="profileViewHouseholdGroup">
+              <h3 class="profile-group-title">Household</h3>
+              <div class="profile-rows" id="profileViewHousehold"></div>
+            </div>
+            <div class="profile-group">
+              <h3 class="profile-group-title">Account</h3>
+              <div class="profile-rows" id="profileViewAccount"></div>
+            </div>
+          </section>
+
+          <section class="profile-edit" id="profileEdit" hidden>
+            <div class="profile-photo-edit">
+              <div class="profile-avatar profile-avatar--xl" id="profileEditAvatar" aria-hidden="true"></div>
+              <div class="profile-photo-actions">
+                <button type="button" class="secondary-btn" id="profilePhotoPickBtn">Add photo</button>
+                <button type="button" class="link-btn profile-photo-remove" id="profilePhotoRemoveBtn" hidden>Remove</button>
+              </div>
+              <input type="file" id="profilePhotoInput" accept="image/*" hidden />
+              <p class="profile-field-hint" id="profilePhotoStatus" role="status"></p>
+            </div>
+            <label class="form-field profile-field">
+              <span>Name</span>
+              <input type="text" id="profileNameInput" autocomplete="name" placeholder="Your name" />
+            </label>
+            <label class="form-field profile-field">
+              <span>Birthday</span>
+              <input type="date" id="profileDobInput" />
+              <small class="profile-field-hint">Finance uses your birth year for retirement targets.</small>
+            </label>
+            <label class="form-field profile-field">
+              <span>Home</span>
+              <input type="text" id="profileHomeInput" autocomplete="off" placeholder="City or airport" />
+              <small class="profile-field-hint">Explore starts and ends trips here.</small>
+            </label>
+          </section>
         </div>
-        <div class="dialog-actions">
+        <div class="dialog-actions profile-actions" id="profileEditActions" hidden>
+          <span></span>
           <div>
-            <button class="secondary-btn" type="button" id="profileLogOutBtn" hidden>Log out</button>
-            <button class="secondary-btn" type="button" id="profileLogInBtn">Log in</button>
-          </div>
-          <div>
+            <button class="secondary-btn" type="button" id="cancelProfileEditBtn">Cancel</button>
             <button class="primary-btn" type="button" id="saveProfileBtn">Save</button>
           </div>
         </div>

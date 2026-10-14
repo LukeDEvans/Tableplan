@@ -15,6 +15,7 @@ import { categoriesFor, categoryById, resolveGenreId, filterSavedLibrary, filter
 import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
+import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, loadAvatar, resizeImageToAvatar, uploadAvatar, removeAvatar } from './profile.js';
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule } from './news-ui.js';
 import { createScoresModule } from './scores-ui.js';
@@ -2419,10 +2420,7 @@ function bindEvents() {
     input.value = ""; // same photo can be picked again
     scanReceiptFromHeader(files);
   }));
-  document.querySelector("#closeProfileBtn").addEventListener("click", () => elements.profileDialog.close());
-  document.querySelector("#saveProfileBtn").addEventListener("click", saveProfile);
-  document.querySelector("#profileLogOutBtn").addEventListener("click", () => { elements.profileDialog.close(); toggleAuth(); });
-  document.querySelector("#profileLogInBtn").addEventListener("click", () => { elements.profileDialog.close(); toggleAuth(); });
+  bindProfileDialog();
   document.querySelector("#closeAdminUsersBtn").addEventListener("click", () => elements.adminUsersDialog.close());
   document.querySelector("#closeAdminHouseholdsBtn").addEventListener("click", () => elements.adminHouseholdsDialog.close());
   elements.sendLoginBtn.addEventListener("click", handleAuthFormSubmit);
@@ -3455,68 +3453,286 @@ async function signInLocalDev() {
   render();
 }
 
+// ── Profile window ────────────────────────────────────────────────────────────
+// Opens read-only; the small Edit pill switches to the form, Save/Cancel return
+// to the view. Pure helpers + the photo client live in profile.js (the photo is
+// stored in Storage, never in synced state — see the note at the top of it).
+let profileAvatarDataUrl = "";   // this user's photo as a data URL, "" = none
+let profileAvatarLoad = null;    // in-flight loadAvatar, so opens never stack fetches
+let profilePhotoDraft = null;    // { blob, dataUrl } picked, "remove", or null
+let profileSaving = false;
+
+function bindProfileDialog() {
+  const dlg = elements.profileDialog;
+  if (!dlg) return;
+  dlg.querySelector("#closeProfileBtn").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#profileEditBtn").addEventListener("click", () => setProfileMode("edit"));
+  dlg.querySelector("#cancelProfileEditBtn").addEventListener("click", () => setProfileMode("view"));
+  dlg.querySelector("#saveProfileBtn").addEventListener("click", saveProfile);
+  dlg.querySelector("#profilePhotoPickBtn").addEventListener("click", () => dlg.querySelector("#profilePhotoInput").click());
+  dlg.querySelector("#profilePhotoRemoveBtn").addEventListener("click", () => {
+    profilePhotoDraft = "remove";
+    setProfilePhotoStatus("");
+    renderProfileEditPhoto();
+  });
+  dlg.querySelector("#profilePhotoInput").addEventListener("change", onProfilePhotoPicked);
+  // View rows carry their action in data-profile-action.
+  dlg.querySelector("#profileView").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-profile-action]");
+    if (!btn) return;
+    const action = btn.dataset.profileAction;
+    if (action === "edit-field") {
+      setProfileMode("edit");
+      dlg.querySelector(`#${btn.dataset.field}`)?.focus();
+    } else if (action === "household") {
+      dlg.close();
+      openContextSettingsDialog("family");
+    } else if (action === "auth") {
+      dlg.close();
+      toggleAuth();
+    }
+  });
+  dlg.addEventListener("close", () => { profilePhotoDraft = null; });
+}
+
 function openProfileDialog() {
   closeFloatingMenus();
-  renderProfileDialog();
+  profilePhotoDraft = null;
+  setProfileMode("view");
   elements.profileDialog.showModal();
+  // Show the device copy straight away; fetch only if the photo's version changed.
+  refreshProfileAvatar().then(() => {
+    if (elements.profileDialog.open) renderProfileDialog();
+  });
+}
+
+function profileAvatarVersion() {
+  return authSession?.user?.user_metadata?.avatar_v || "";
+}
+
+function refreshProfileAvatar() {
+  const userId = authSession?.user?.id;
+  if (!userId) { profileAvatarDataUrl = ""; return Promise.resolve(); }
+  if (localDevMode) { // no Storage locally: the device copy is the photo
+    profileAvatarDataUrl = readCachedAvatar(userId)?.dataUrl || "";
+    return Promise.resolve();
+  }
+  if (!profileAvatarLoad) {
+    profileAvatarLoad = loadAvatar({ baseUrl: supabaseBaseUrl(), userId, version: profileAvatarVersion() })
+      .then((url) => { profileAvatarDataUrl = url; })
+      .finally(() => { profileAvatarLoad = null; });
+  }
+  return profileAvatarLoad;
+}
+
+function paintProfileAvatar(el, name, dataUrl) {
+  if (!el) return;
+  el.classList.toggle("has-photo", !!dataUrl);
+  el.style.backgroundImage = dataUrl ? `url("${dataUrl}")` : "";
+  el.textContent = dataUrl ? "" : (profileInitials(name) || "?");
+}
+
+function setProfileMode(mode) {
+  const dlg = elements.profileDialog;
+  const editing = mode === "edit";
+  dlg.dataset.mode = editing ? "edit" : "view";
+  dlg.querySelector("#profileView").hidden = editing;
+  dlg.querySelector("#profileEdit").hidden = !editing;
+  dlg.querySelector("#profileEditActions").hidden = !editing;
+  dlg.querySelector("#profileTitle").textContent = editing ? "Edit profile" : "Profile";
+  if (!editing) profilePhotoDraft = null;
+  setProfilePhotoStatus("");
+  renderProfileDialog();
+}
+
+function profileDisplayName() {
+  const member = getCurrentProfileMember();
+  const email = authSession?.user?.email || "";
+  return member?.label || userGroup?.display_name || email.split("@")[0] || "";
+}
+
+function profileRowHtml({ iconName, label, value, detail = "", empty = false, trail = "", action = "", field = "" }) {
+  const tag = action ? "button" : "div";
+  const attrs = action ? ` type="button" data-profile-action="${action}"${field ? ` data-field="${field}"` : ""}` : "";
+  return `<${tag} class="profile-row"${attrs}>
+    <span class="profile-row-icon">${ldeIcon(iconName, { size: 20 })}</span>
+    <span class="profile-row-text">
+      <span class="profile-row-label">${escapeHtml(label)}</span>
+      <span class="profile-row-value${empty ? " is-empty" : ""}">${value}</span>
+      ${detail ? `<span class="profile-row-detail">${escapeHtml(detail)}</span>` : ""}
+    </span>
+    ${trail ? `<span class="profile-row-trail${action ? " is-action" : ""}">${escapeHtml(trail)}</span>` : ""}
+  </${tag}>`;
 }
 
 function renderProfileDialog() {
+  const dlg = elements.profileDialog;
+  if (!dlg) return;
+  if (dlg.dataset.mode === "edit") { renderProfileEdit(); return; }
+
   const member = getCurrentProfileMember();
   const isLoggedIn = !!authSession?.access_token;
   const email = authSession?.user?.email || "";
-  const name = member?.label || userGroup?.display_name || email.split("@")[0] || "";
-  const initials = name.trim().split(/\s+/).map(w => w[0]?.toUpperCase() || "").slice(0, 2).join("");
+  const name = profileDisplayName();
 
-  elements.profileDialog.querySelector(".profile-avatar-large").textContent = initials || "?";
-  elements.profileDialog.querySelector("#profileNameInput").value = member?.label || userGroup?.display_name || "";
-  elements.profileDialog.querySelector("#profileDobInput").value = member?.dob || "";
-  const homeInput = elements.profileDialog.querySelector("#profileHomeInput");
-  if (homeInput) homeInput.value = state.travelHome || "";
+  paintProfileAvatar(dlg.querySelector("#profileViewAvatar"), name, profileAvatarDataUrl);
+  dlg.querySelector("#profileViewName").textContent = name || "Your profile";
+  dlg.querySelector("#profileViewSub").textContent = isLoggedIn ? email : "Not signed in";
+  dlg.querySelector("#profileEditBtn").hidden = !isLoggedIn && !localDevMode;
 
-  const emailEl = elements.profileDialog.querySelector("#profileEmailDisplay");
-  emailEl.textContent = email || (isLoggedIn ? "" : "Not signed in");
-  emailEl.hidden = !email && isLoggedIn;
+  // About
+  const bday = birthdaySummary(member?.dob);
+  const home = String(state.travelHome || "").trim();
+  dlg.querySelector("#profileViewAbout").innerHTML = [
+    bday
+      ? profileRowHtml({ iconName: "birthday", label: "Birthday", value: escapeHtml(bday.dateLabel), detail: bday.detail })
+      : profileRowHtml({ iconName: "birthday", label: "Birthday", value: "Not set", empty: true, trail: "Add", action: "edit-field", field: "profileDobInput" }),
+    home
+      ? profileRowHtml({ iconName: "home", label: "Home", value: escapeHtml(home), detail: "Trips start and end here" })
+      : profileRowHtml({ iconName: "home", label: "Home", value: "Not set", empty: true, trail: "Add", action: "edit-field", field: "profileHomeInput" }),
+  ].join("");
 
-  elements.profileDialog.querySelector("#profileLogOutBtn").hidden = !isLoggedIn;
-  elements.profileDialog.querySelector("#profileLogInBtn").hidden = isLoggedIn;
+  // Household — who shares this app with you, and your role in it.
+  const members = isLoggedIn ? normalizeMealPlanConfig(state.mealPlanConfig).members : [];
+  const myId = authSession?.user?.id;
+  const myRole = groupMembers.find((gm) => gm.user_id === myId)?.role || userGroup?.role || "";
+  const roleLabel = myRole === "admin" ? "Admin" : myRole === "hoh" ? "Head of household" : myRole ? "Member" : "";
+  const chips = members.map((m) => {
+    const isMe = myId && m.linkedUserId === myId;
+    const photo = isMe ? profileAvatarDataUrl : "";
+    const av = `<span class="profile-avatar${photo ? " has-photo" : ""}"${photo ? ` style="background-image:url('${escapeHtml(photo)}')"` : ""}>${photo ? "" : escapeHtml(profileInitials(m.label) || "?")}</span>`;
+    return `<span class="profile-member">${av}${escapeHtml(isMe ? `${m.label} (you)` : m.label)}</span>`;
+  }).join("");
+  const householdGroup = dlg.querySelector("#profileViewHouseholdGroup");
+  householdGroup.hidden = !members.length;
+  dlg.querySelector("#profileViewHousehold").innerHTML = members.length
+    ? profileRowHtml({
+        iconName: "group",
+        label: `${members.length} ${members.length === 1 ? "person" : "people"}`,
+        value: `<span class="profile-members">${chips}</span>`,
+        detail: roleLabel ? `You're ${roleLabel === "Admin" ? "the admin" : roleLabel.toLowerCase()}` : "",
+        trail: "Manage",
+        action: "household",
+      })
+    : "";
+
+  // Account
+  dlg.querySelector("#profileViewAccount").innerHTML = [
+    email ? profileRowHtml({ iconName: "email", label: "Signed in as", value: escapeHtml(email) }) : "",
+    `<button type="button" class="profile-row profile-row--center${isLoggedIn ? " profile-row--danger" : " is-action"}" data-profile-action="auth">${isLoggedIn ? "Sign out" : "Sign in"}</button>`,
+  ].join("");
 }
 
-function saveProfile() {
+function renderProfileEdit() {
+  const dlg = elements.profileDialog;
+  const member = getCurrentProfileMember();
+  dlg.querySelector("#profileNameInput").value = member?.label || userGroup?.display_name || "";
+  dlg.querySelector("#profileDobInput").value = member?.dob || "";
+  dlg.querySelector("#profileHomeInput").value = state.travelHome || "";
+  renderProfileEditPhoto();
+}
+
+function renderProfileEditPhoto() {
+  const dlg = elements.profileDialog;
+  const shown = profilePhotoDraft === "remove" ? "" : (profilePhotoDraft?.dataUrl || profileAvatarDataUrl);
+  const typedName = dlg.querySelector("#profileNameInput")?.value || profileDisplayName();
+  paintProfileAvatar(dlg.querySelector("#profileEditAvatar"), typedName, shown);
+  dlg.querySelector("#profilePhotoPickBtn").textContent = shown ? "Change photo" : "Add photo";
+  dlg.querySelector("#profilePhotoRemoveBtn").hidden = !shown;
+}
+
+function setProfilePhotoStatus(text) {
+  const el = elements.profileDialog?.querySelector("#profilePhotoStatus");
+  if (el) el.textContent = text;
+}
+
+async function onProfilePhotoPicked(e) {
+  const file = e.target.files?.[0];
+  e.target.value = ""; // the same photo can be picked again
+  if (!file) return;
+  setProfilePhotoStatus("Preparing photo…");
+  try {
+    profilePhotoDraft = await resizeImageToAvatar(file);
+    setProfilePhotoStatus("");
+  } catch (err) {
+    setProfilePhotoStatus(err?.message || "Couldn't use that photo.");
+  }
+  renderProfileEditPhoto();
+}
+
+function saveProfileFields() {
   const dialog = elements.profileDialog;
   const newName = dialog.querySelector("#profileNameInput").value.trim();
   const newDob = dialog.querySelector("#profileDobInput").value.trim();
 
-  // Home address (used by Explore as each trip's start/finish anchor).
+  // Home (used by Explore as each trip's start/finish anchor).
   const newHome = (dialog.querySelector("#profileHomeInput")?.value || "").trim();
   if (newHome !== (state.travelHome || "")) { state.travelHome = newHome; persist(); }
 
+  // A signed-in user with no household entry yet gets one, so their name and
+  // birthday have somewhere to live (previously they were silently dropped).
+  if (!getCurrentProfileMember() && authSession?.user?.id) maybeAutoLinkProfile();
   const member = getCurrentProfileMember();
-  if (member && newName) {
-    const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
-    state.mealPlanConfig = normalizeMealPlanConfig({
-      ...state.mealPlanConfig,
-      members: members.map(m => m.id === member.id ? { ...m, label: newName, dob: newDob } : m)
-    });
-    persist();
-    render();
-    updateAuthUi();
-    if (supabaseClient && authSession?.access_token) {
-      supabaseClient.auth.updateUser({ data: { dob: newDob } }).catch(() => {});
-    }
-  } else if (member && newDob !== (member.dob || "")) {
-    const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
-    state.mealPlanConfig = normalizeMealPlanConfig({
-      ...state.mealPlanConfig,
-      members: members.map(m => m.id === member.id ? { ...m, dob: newDob } : m)
-    });
-    persist();
-    if (supabaseClient && authSession?.access_token) {
-      supabaseClient.auth.updateUser({ data: { dob: newDob } }).catch(() => {});
-    }
+  if (!member) return;
+  const nameChanged = newName && newName !== member.label;
+  const dobChanged = newDob !== (member.dob || "");
+  if (!nameChanged && !dobChanged) return;
+  const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
+  state.mealPlanConfig = normalizeMealPlanConfig({
+    ...state.mealPlanConfig,
+    members: members.map((m) => m.id === member.id ? { ...m, label: nameChanged ? newName : m.label, dob: newDob } : m)
+  });
+  persist();
+  if (nameChanged) { render(); updateAuthUi(); }
+  if (dobChanged && supabaseClient && authSession?.access_token) {
+    supabaseClient.auth.updateUser({ data: { dob: newDob } }).catch(() => {});
   }
+}
 
-  dialog.close();
+// Upload or remove the photo. Returns false (with a status line) on failure so
+// the form stays open with the draft still in place.
+async function saveProfilePhoto() {
+  if (!profilePhotoDraft) return true;
+  const userId = authSession?.user?.id;
+  if (!userId) return true;
+  try {
+    if (localDevMode) {
+      const url = profilePhotoDraft === "remove" ? "" : profilePhotoDraft.dataUrl;
+      writeCachedAvatar(userId, url ? "local" : "", url);
+      profileAvatarDataUrl = url;
+    } else if (profilePhotoDraft === "remove") {
+      setProfilePhotoStatus("Removing photo…");
+      await removeAvatar({ supabaseClient, userId });
+      if (authSession.user.user_metadata) authSession.user.user_metadata.avatar_v = null;
+      writeCachedAvatar(userId, "", "");
+      profileAvatarDataUrl = "";
+    } else {
+      setProfilePhotoStatus("Uploading photo…");
+      const version = await uploadAvatar({ supabaseClient, userId, blob: profilePhotoDraft.blob });
+      authSession.user.user_metadata = { ...(authSession.user.user_metadata || {}), avatar_v: version };
+      writeCachedAvatar(userId, version, profilePhotoDraft.dataUrl);
+      profileAvatarDataUrl = profilePhotoDraft.dataUrl;
+    }
+    profilePhotoDraft = null;
+    return true;
+  } catch (err) {
+    setProfilePhotoStatus(`Photo not saved: ${err?.message || "try again"}. Your other changes were saved.`);
+    return false;
+  }
+}
+
+async function saveProfile() {
+  if (profileSaving) return;
+  profileSaving = true;
+  const btn = elements.profileDialog.querySelector("#saveProfileBtn");
+  btn.disabled = true;
+  try {
+    saveProfileFields();
+    if (await saveProfilePhoto()) setProfileMode("view");
+  } finally {
+    profileSaving = false;
+    btn.disabled = false;
+  }
 }
 
 // Gather the live runtime values into a diagnostics snapshot (pure normalization
