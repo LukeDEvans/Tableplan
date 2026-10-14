@@ -134,3 +134,32 @@ None is sent by default (ESPN refused a custom one); `SCORES_USER_AGENT` sets on
   reproduced (ISSUES.md).
 - **Not verified:** the iPhone app. ESPN's endpoints and field shapes were read
   from live responses while building.
+
+## 8. The dock ticker (2026-10-14)
+
+Luke: a ticker above the weather and media dock, a third of the dock's height,
+scrolling through major news stories and games for followed teams.
+
+- **Where:** `#dockTicker`, the top row of `#bottomDock`; `--dock-ticker-h` is
+  `--mini-player-h / 3` while it shows (`body.has-dock-ticker`), and `--dock-h`
+  includes it, so every window that stops above the dock stops above the ticker.
+  Hidden when there is nothing to show (or News is off for the user).
+- **What, in order:** News's lead stories (`recentLeads` — the Front page's leads
+  from the last ~36 h, at most 8), then each **followed team's** games: before noon
+  (local) yesterday's and today's, from noon today's and tomorrow's. Today runs
+  live, upcoming, finished.
+- **How (Luke's answers):** one item at a time — the next rises from below; a line
+  too long for the strip scrolls through once first. Swipe sideways to skip; hover
+  or touch holds it. A tap opens the story in the reader (as on the Front page), or
+  the game in News → Sports → Scores on its day, expanded.
+- **Data and cost:** `news-ticker.js` reads only through News (`tickerLeads`) and
+  Scores (`getBoard`). Scores: the Scores view's own scoreboard request (same URL,
+  so the CDN serves both), refreshed every 30 s while a followed game is on or
+  about to start, otherwise every 10 min. News: the Front page News already has
+  if under 15 min old, else a one-row Front page request (the server still adds the
+  recent leads) — at most every 15 min. One timer, foreground only, re-checked at
+  noon and midnight; nothing runs while the app is in the background.
+- **Verify:** `test/news-ticker.test.js` (days around noon, which games, order,
+  wording) and `npm run qa:ticker` (the real app at 360 px and 1280 px dark with
+  seeded news and scores: placement and height, order, taps, no sideways scroll).
+

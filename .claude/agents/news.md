@@ -1,6 +1,6 @@
 ---
 name: news
-description: Use for changes scoped to the News page — paper stories and sections, Briefings, the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), and the Sports section's Scores. Owns news-ui.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" area of app.js.
+description: Use for changes scoped to the News page — paper stories and sections, Briefings, the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), the Sports section's Scores, and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" area of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -38,6 +38,12 @@ changes to the News page (including Sports → Scores) only.
   league catalog, canonical Game/Team, favorites, arrangement — shared with the server),
   `netlify/functions/scores.mjs` with adapters `_scores-espn.mjs` /
   `_scores-thesportsdb.mjs` behind `_scores-providers.mjs`.
+- **Dock ticker:** `news-ticker.js` (`createNewsTickerModule`, `_newsTicker` in app.js)
+  — the strip along the top of the bottom dock (`#dockTicker`, a third of the dock's
+  height). It reads only through News (`tickerLeads` — a one-row Front page request at
+  most every 15 min, or the Front page News already loaded; `openStory`) and Scores
+  (`getBoard` — the same CDN-cached scoreboard request as the view; `showGame`). Pure
+  helpers tested in `test/news-ticker.test.js`; browser check `npm run qa:ticker`.
 - **Paper sign-ins on the phone:** `news-device-signin.js` (the phone checks sign-in
   status and reports **only a status, never a cookie**, via `verifyNewsSignIns`),
   `article-native-reader.js` + `ios/App/App/ArticleReaderPlugin.swift` (full
@@ -82,6 +88,11 @@ changes to the News page (including Sports → Scores) only.
 - **Scores works like the ESPN app's Scores tab**: a broad board plus per-user
   favorites the app puts first. It must survive losing ESPN — **only an adapter may
   know a vendor's URLs or JSON**; everything else speaks the canonical model.
+- **Dock ticker** (2026-10-14): above the weather / player slides, **a third of the
+  dock's height**, **one item at a time**. **News first** (the Front page's lead
+  stories), **then scores**: every game of a followed team on the days in view —
+  **before noon, yesterday's and today's; from noon, today's and tomorrow's**. A tap
+  opens the story in the reader, or the game in Sports → Scores on its day.
 - Google sign-in refuses in-app browsers; Apple sign-in is the supported path in the
   iPhone app.
 
@@ -101,7 +112,7 @@ changes to the News page (including Sports → Scores) only.
 
 ## Verify
 `npx vitest run` (`news-ui`, `news-device-signin`, `news-device-report`,
-`mail-news-*`, `scores-providers`, `sports-model`, `media-reader-return`),
+`mail-news-*`, `scores-providers`, `sports-model`, `news-ticker`, `media-reader-return`),
 `npm run check:boot` (it renders News), and headless Chromium at phone width against
 `npm run dev:local` for UI. Scores needs a real deploy preview to hit ESPN; sign-ins and
 the native reader need the iPhone app.

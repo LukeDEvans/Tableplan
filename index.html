@@ -3373,12 +3373,18 @@
 
     <!-- Pinned (not @2): an unreviewed SDK release must not reach prod on its own. Bump deliberately. -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2"></script>
-    <!-- Bottom dock: a permanent, swipeable ticker along the bottom of the app.
+    <!-- Bottom dock: a permanent, swipeable ticker along the bottom of the app,
+         with the headlines-and-scores strip on top.
          Slides: the mini-player (always) and a weather summary; more can be added
          as further .dock-slide elements (see DOCK_SLIDES in app.js). It advances on its
          own every few seconds; swiping left or right cycles through them circularly. It's in the page from the first paint
          (the sign-in gate covers it until the app unlocks). -->
     <div class="bottom-dock" id="bottomDock">
+      <!-- Headlines and scores, one at a time, along the dock's top (news-ticker.js).
+           Hidden until there is something to show; a third of the dock's height. -->
+      <div class="dock-ticker" id="dockTicker" role="region" aria-label="Headlines and scores" hidden>
+        <div class="dtk-stage" id="dockTickerStage"></div>
+      </div>
       <div class="dock-track" id="dockTrack">
     <div class="dock-slide mini-player is-idle" id="miniPlayer" data-dock-slide="player" data-dock-active aria-label="Now playing" role="region">
       <!-- Thin non-interactive progress line across the very top -->

@@ -66,11 +66,18 @@ export function articlesForView(articles, view, query = "") {
 // The lead story plus the rest, in display order (Q3): newsletter leads from the
 // last ~36 h first (most recent lead on top), then everything else newest first.
 export function arrangeFront(list, nowMs = Date.now()) {
-  const isLead = (a) => a.lead && nowMs - ms(a.lead) <= LEAD_WINDOW_MS;
-  const leads = list.filter(isLead).sort((a, b) => ms(b.lead) - ms(a.lead));
-  const rest = list.filter((a) => !isLead(a));
+  const leads = recentLeads(list, nowMs);
+  const rest = list.filter((a) => !leads.includes(a));
   const ordered = [...leads, ...rest];
   return { lead: ordered[0] || null, rest: ordered.slice(1) };
+}
+
+// The newsletter leads from the last ~36 h, most recent lead first — the Front
+// page's lead stories, and what the dock's ticker shows (news-ticker.js).
+export function recentLeads(list, nowMs = Date.now()) {
+  return (list || [])
+    .filter((a) => a && a.id && a.lead && nowMs - ms(a.lead) <= LEAD_WINDOW_MS)
+    .sort((a, b) => ms(b.lead) - ms(a.lead));
 }
 
 // Unread counts per section, per paper, and overall.
@@ -757,8 +764,53 @@ export function createNewsModule(deps) {
     if (view.kind !== kind || view.key !== key) setView({ kind, key });
   }
 
+  // Sports → Scores (the dock ticker opens a game there). Call after enter().
+  function showScores() {
+    if (!scores) return;
+    if (sportsTab !== "scores") {
+      sportsTab = "scores";
+      try { localStorage.setItem(SPORTS_TAB_KEY, sportsTab); } catch { /* private mode */ }
+    }
+    if (view.kind !== "section" || view.key !== "sports") setView({ kind: "section", key: "sports" });
+    else renderContent();
+  }
+
+  // ── The dock ticker's headlines (news-ticker.js) ──
+  // The Front page's lead stories. Reuses the Front page when News has loaded it
+  // recently; otherwise asks for the Front page with a one-row page (the server
+  // adds the recent leads to a first Front page whatever the limit), so the
+  // ticker costs a small request every `maxAgeMs` at most. Never polls by itself.
+  let tickerList = null, tickerAt = 0, tickerLoading = null;
+  const TICKER_PAGE = "ticker::"; // not a view: lets Open / patch / hide find these cards
+  async function tickerLeads({ maxAgeMs = 15 * 60_000 } = {}) {
+    if (seeded) return recentLeads(seeded);
+    const front = pages.get(viewKey({ kind: "front" }, ""));
+    if (front && Date.now() - front.loadedAt < maxAgeMs) return recentLeads(front.articles);
+    if (tickerList && Date.now() - tickerAt < maxAgeMs) return recentLeads(pages.get(TICKER_PAGE)?.articles || tickerList);
+    if (!isSignedIn?.()) return [];
+    if (!tickerLoading) {
+      tickerLoading = (async () => {
+        const d = await callGmailApi({ action: "newsFeed", view: { kind: "front" }, limit: 1 });
+        if (!Array.isArray(d?.articles)) return;
+        tickerList = applyLocalDecisions(d.articles, [...inflight, ...queue]);
+        tickerAt = Date.now();
+        pages.set(TICKER_PAGE, { articles: tickerList, nextBefore: null, loadedAt: tickerAt });
+        if (d.counts) { counts = d.counts; updateDot(); }
+        if (d.signIns) { signIns = d.signIns; signInsLoaded = true; }
+      })().catch(() => {}).finally(() => { tickerLoading = null; });
+    }
+    await tickerLoading;
+    return recentLeads(pages.get(TICKER_PAGE)?.articles || tickerList || []);
+  }
+  // Open a ticker headline the way a tap on the Front page does.
+  function openStory(id) {
+    if (!cardFor(id)) return false;
+    open(id);
+    return true;
+  }
+
   return {
-    enter, leave, load, verifySignIns, render, seed, setDeviceTrail, showView,
+    enter, leave, load, verifySignIns, render, seed, setDeviceTrail, showView, showScores, tickerLeads, openStory,
     deviceStatus: () => lastDeviceStatus,
     signInStatus: () => (signInsLoaded ? signIns : null)
   };
