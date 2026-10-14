@@ -115,6 +115,8 @@ found this way unless it's genuinely trivial.
 
 **Toggle switches:** the house toggle is `<input type="checkbox" class="live-toggle">` — a 36×20 pill with sliding knob, defined in styles.css (search "House toggle switch"). Use it for every new on/off control instead of inventing a style. Beware the `.recipe-form label` grid rule: labels containing a toggle must be added to its `:not(...)` exclusion list or laid out with their own flex row.
 
+**Colors and themes** (Luke, 2026-10-14): new CSS uses the color tokens (`--ink`, `--surface`, `--accent`, `--on-accent`…), never literal colors, so every theme reaches it. Mode (Light/Dark/Auto) and theme are per person and resolved in `theme.js`; CSS only sees `data-theme="light|dark"` and `data-palette`. Visibility comes first: every theme passes `test/theme-contrast.test.js` (4.5:1). See [THEMES_DESIGN.md](THEMES_DESIGN.md).
+
 **Notifications windows** (Luke, 2026-10-06 — the standard for every bell): a notifications window is **never open with nothing in it**. (1) Tapping a bell with nothing to review does **not** open the window — show the "You're all caught up." toast instead (a bell whose count isn't loaded yet may load it first, then open only if there is something). (2) When the **last item is addressed** (added, dismissed, approved, reviewed), the window **closes by itself** — no "all caught up" screen with a button. (3) If a refresh empties an open window, it closes too. Current windows: Meal Plan recipes (`mealplan-ui.js`), Recipe Box review (`recipes-ui.js`), Mail suggestions and Explore proposals (`app.js`), Finance review deck (`finance-ui.js`). A new bell follows the same three rules.
 
 ## Settings must sync by their own stamp

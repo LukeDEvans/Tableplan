@@ -174,6 +174,24 @@ export function nativeShareToken() {
   return _shareToken;
 }
 
+// Home-screen icon (AppIcon plugin): get() → { name }, set({ name }) where name
+// "" = the default icon, "AppIconHalloween" = the seasonal one. null in a
+// browser/PWA or an app build from before the plugin existed. theme.js decides
+// which icon the chosen theme wants.
+let _appIcon;
+export function nativeAppIcon() {
+  if (_appIcon !== undefined) return _appIcon;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _appIcon = null;
+      return _appIcon;
+    }
+    const p = registerPlugin("AppIcon");
+    _appIcon = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("AppIcon")) ? p : null;
+  } catch { _appIcon = null; }
+  return _appIcon;
+}
+
 // The iPhone app runs at capacitor://localhost, so app.js's canUseLocalBackend()
 // (a hostname check) is TRUE there and URL helpers pick their local-dev-server
 // paths (/api/<name>, served by server.js on a laptop). The live site only routes

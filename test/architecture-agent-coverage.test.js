@@ -34,6 +34,7 @@ const SHARED_FILES = {
   "app.js": "the shared shell; each agent owns only its domain's sections",
   "server.js": "local dev server",
   "sw.js": "service worker",
+  "theme.js": "display mode + themes — design tokens are shared infra (THEMES_DESIGN.md)",
   "vite.config.mjs": "build config",
   "vitest.config.mjs": "test config",
   "supabase-config.js": "Supabase client config",
@@ -82,7 +83,8 @@ const SHARED_FILES = {
 const SHARED_STATE = {
   tombstones: "sync",
   familyMembers: "household profile, read by every domain",
-  themeMode: "app setting",
+  themeMode: "app setting (legacy household display mode; displayPrefs replaces it per person)",
+  displayPrefs: "app setting (per-person display mode + theme, theme.js)",
   locationSharingEnabled: "app setting",
   collapsedSections: "app setting",
   appName: "app setting",

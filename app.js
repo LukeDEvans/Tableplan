@@ -19,6 +19,7 @@ import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule } from './news-ui.js';
 import { createScoresModule } from './scores-ui.js';
 import { normalizeSportsPrefs } from './sports-model.js';
+import { THEMES, THEME_CHOICES, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonEnds } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
@@ -40,7 +41,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
@@ -323,7 +324,7 @@ const STATE_SECTIONS = {
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "sportsPrefs", "recreateSettingStamps"],
+  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "sportsPrefs", "displayPrefs", "recreateSettingStamps"],
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
@@ -4927,6 +4928,10 @@ function defaultState() {
     // Scores (News → Sports): this person's favorite teams and league choices.
     // In `recreate` because that section is always per user (SPORTS_SCORES_DESIGN.md §5).
     sportsPrefs: normalizeSportsPrefs(),
+    // Display mode + theme (theme.js). Per person: `recreate` is always personal.
+    // Only explicit choices are stored; until this person picks a mode, the old
+    // household-wide `themeMode` still applies (THEMES_DESIGN.md).
+    displayPrefs: {},
     pianoSongs: [],
     // Cadence canonical metadata (bytes live in the cadence-blobs bucket).
     cadenceWorks: [],
@@ -5114,6 +5119,7 @@ function normalizeState(parsed) {
     pianoLog: normalizePianoLog(parsed?.pianoLog),
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
     sportsPrefs: normalizeSportsPrefs(parsed?.sportsPrefs),
+    displayPrefs: cleanDisplayPrefs(parsed?.displayPrefs),
     pianoSongs: normalizePianoSongs(parsed?.pianoSongs),
     // Cadence records are re-normalized by the music/* domain factories when the
     // subsystem loads; here we only guard the container shape (keep it dumb/sync).
@@ -6107,20 +6113,57 @@ function syncIngredientOptionGlobals(targetState = state) {
   prepOptions = [...options.prep];
 }
 
+// Display mode + theme (theme.js, THEMES_DESIGN.md). Per person in
+// state.displayPrefs; the legacy household `themeMode` is only the fallback mode
+// until this person picks one. Called at module load (above), so no module-level
+// let/const here (TDZ) — the one-time listeners hang off the function itself.
+function currentDisplayPrefs() {
+  return normalizeDisplayPrefs(state.displayPrefs, normalizeThemeMode(state.themeMode));
+}
+
 function applyThemeMode() {
-  const mode = normalizeThemeMode(state.themeMode);
-  state.themeMode = mode;
-  document.body.dataset.theme = mode;
-  document.documentElement.style.colorScheme = mode === "dark" ? "dark" : mode === "light" ? "light" : "light dark";
+  const prefs = currentDisplayPrefs();
+  const systemDark = Boolean(window.matchMedia?.("(prefers-color-scheme: dark)")?.matches);
+  const resolved = resolveTheme(prefs, { systemDark, now: new Date() });
+  applyResolvedTheme(resolved, document);
   elements.themeModeInputs?.forEach((input) => {
-    input.checked = input.value === mode;
+    input.checked = input.value === prefs.mode;
   });
+  if (!applyThemeMode.listening) {
+    applyThemeMode.listening = true;
+    // Auto follows the device live; the seasonal theme re-checks the date when
+    // the app comes back to the front (no timers).
+    try { window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => applyThemeMode()); } catch { /* old WebKit */ }
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) applyThemeMode(); });
+  }
+  syncAppIcon(resolved.icon);
+  return resolved;
+}
+
+// iPhone only: point the home-screen icon at the active theme's icon. iOS shows
+// its own "icon changed" alert, so only ever ask when it really differs (the
+// plugin also no-ops when it's already that icon) and never before sign-in has
+// had a chance to load this person's prefs.
+function syncAppIcon(name) {
+  const plugin = nativeAppIcon();
+  if (!plugin) return;
+  const want = name || "";
+  if (syncAppIcon.last === want) return;
+  syncAppIcon.last = want;
+  plugin.get().then(({ name: current }) => {
+    if ((current || "") === want) return;
+    return plugin.set({ name: want });
+  }).catch(() => { syncAppIcon.last = undefined; });
+}
+
+function setDisplayPref(key, value) {
+  state.displayPrefs = cleanDisplayPrefs({ ...(state.displayPrefs || {}), [key]: value });
+  applyThemeMode();
+  persist();
 }
 
 function setThemeMode(mode) {
-  state.themeMode = normalizeThemeMode(mode);
-  applyThemeMode();
-  persist();
+  setDisplayPref("mode", normalizeThemeMode(mode));
 }
 
 function setPageVisibility(page, enabled) {
@@ -6634,6 +6677,7 @@ function mergeStates(newer, older) {
   // ── Shallow object merges: older provides base, newer keys win ────────────
   merged.recreateHobbies = { ...(older.recreateHobbies || {}), ...(newer.recreateHobbies || {}) };
   merged.sportsPrefs = { ...(older.sportsPrefs || {}), ...(newer.sportsPrefs || {}) }; // each field then goes by its own stamp
+  merged.displayPrefs = { ...(older.displayPrefs || {}), ...(newer.displayPrefs || {}) }; // each field then goes by its own stamp
   merged.articleSync = { ...(older.articleSync || {}), ...(newer.articleSync || {}) };
   merged.groceryPricingSettings = { ...(older.groceryPricingSettings || {}), ...(newer.groceryPricingSettings || {}) };
   merged.collapsedSections = { ...(older.collapsedSections || {}), ...(newer.collapsedSections || {}) };
@@ -16398,7 +16442,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music", "notifications"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music", "notifications", "display"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16621,6 +16665,64 @@ async function previewVoice(voiceId, btn) {
   audio.play().catch(done);
 }
 
+function displaySettingsTemplate() {
+  const prefs = currentDisplayPrefs();
+  const now = new Date();
+  const seasonNow = seasonalTheme(now);
+  const ends = seasonEnds(now);
+  const endsLabel = ends ? ends.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+  const modes = [["light", "Light"], ["dark", "Dark"], ["auto", "Auto"]];
+  const themeDesc = {
+    classic: "The everyday look.",
+    halloween: "Orange and black.",
+    seasonal: seasonNow === "classic"
+      ? "Halloween every October, Classic the rest of the year."
+      : `${THEMES[seasonNow].label} now, Classic from ${escapeHtml(endsLabel)}.`,
+  };
+  const swatch = (key) => {
+    const colors = THEMES[key === "seasonal" ? (seasonNow === "classic" ? "halloween" : seasonNow) : key].swatch;
+    return `<span class="display-swatch" aria-hidden="true">${colors.map((c) => `<i style="background:${c}"></i>`).join("")}</span>`;
+  };
+  const iconRow = nativeAppIcon() ? `
+      <div class="mail-ai-feature-row display-icon-row">
+        <div class="mail-ai-feature-text">
+          <span class="mail-ai-feature-label">Change the app icon too</span>
+          <span class="mail-ai-feature-desc">The iPhone icon follows the theme (Halloween is orange on black). iPhone shows a short notice each time it changes.</span>
+        </div>
+        <input type="checkbox" class="live-toggle" aria-label="Change the app icon with the theme" data-display-icon ${prefs.icon ? "checked" : ""}>
+      </div>` : "";
+  return `
+    <div class="display-settings">
+      <section class="display-group">
+        <h3 class="display-group-title">Mode</h3>
+        <div class="display-seg" role="radiogroup" aria-label="Mode">
+          ${modes.map(([v, label]) => `
+            <label class="display-seg-opt">
+              <input type="radio" name="displayMode" value="${v}" ${prefs.mode === v ? "checked" : ""} />
+              <span>${label}</span>
+            </label>`).join("")}
+        </div>
+        <p class="display-hint">Auto follows your device's light or dark setting.</p>
+      </section>
+      <section class="display-group">
+        <h3 class="display-group-title">Theme</h3>
+        <div class="display-themes" role="radiogroup" aria-label="Theme">
+          ${THEME_CHOICES.map((key) => `
+            <label class="display-theme-card">
+              <input type="radio" name="displayTheme" value="${key}" ${prefs.theme === key ? "checked" : ""} />
+              ${swatch(key)}
+              <span class="display-theme-text">
+                <span class="display-theme-name">${key === "seasonal" ? "Seasonal" : THEMES[key].label}</span>
+                <span class="display-theme-desc">${themeDesc[key]}</span>
+              </span>
+            </label>`).join("")}
+        </div>
+      </section>
+      ${iconRow}
+      <p class="display-hint">Your mode and theme are just yours. They don't change what anyone else in the household sees.</p>
+    </div>`;
+}
+
 function renderContextSettingsDialog(kind) {
   if (kind !== "voice") stopVoicePreview(); // leaving the Voice panel silences any preview
   contextSettingsKind = kind;
@@ -16645,7 +16747,8 @@ function renderContextSettingsDialog(kind) {
     "voice": "Voice",
     "podcasts": "Podcasts",
     "apple-music": "Apple Music",
-    "notifications": "Notifications"
+    "notifications": "Notifications",
+    "display": "Display"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
@@ -16654,6 +16757,7 @@ function renderContextSettingsDialog(kind) {
     const isAdmin = !authSession?.access_token || userGroup?.role === "admin";
     elements.contextSettingsBody.innerHTML = `
       <div class="settings-action-grid">
+        <button type="button" data-context-settings-action="display">Display</button>
         <button type="button" data-context-settings-action="notifications">Notifications</button>
         <button type="button" data-context-settings-action="pages">Pages</button>
         <button type="button" data-context-settings-action="location-services">Location Services</button>
@@ -16683,6 +16787,12 @@ function renderContextSettingsDialog(kind) {
         </div>
       ` : ""}
     `;
+    return;
+  }
+
+  // Display mode + theme (THEMES_DESIGN.md). Per person; saves as you tap.
+  if (kind === "display") {
+    elements.contextSettingsBody.innerHTML = displaySettingsTemplate();
     return;
   }
 
@@ -17725,8 +17835,15 @@ function handleContextSettingsChange(event) {
     refreshFinanceSettingsIfOpen();
     return;
   }
-  const themeInput = event.target.closest?.("input[name='contextThemeMode']");
-  if (themeInput) setThemeMode(themeInput.value);
+  const displayModeInput = event.target.closest?.("input[name='displayMode']");
+  if (displayModeInput) setDisplayPref("mode", displayModeInput.value);
+  const displayThemeInput = event.target.closest?.("input[name='displayTheme']");
+  if (displayThemeInput) {
+    setDisplayPref("theme", displayThemeInput.value);
+    renderContextSettingsDialog("display"); // the seasonal line and swatches follow the choice
+  }
+  const displayIconInput = event.target.closest?.("[data-display-icon]");
+  if (displayIconInput) setDisplayPref("icon", displayIconInput.checked);
   const pageVisibilityInput = event.target.closest?.("[data-page-visibility]");
   if (pageVisibilityInput) setPageVisibility(pageVisibilityInput.dataset.pageVisibility, pageVisibilityInput.checked);
   const adminPageInput = event.target.closest?.("[data-admin-page-visibility]");
@@ -17776,6 +17893,7 @@ function handleContextSettingsAction(event) {
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
     "notifications": () => renderContextSettingsDialog("notifications"),
+    "display": () => renderContextSettingsDialog("display"),
     "mail-reading": () => renderContextSettingsDialog("mail-reading"),
     "voice": () => renderContextSettingsDialog("voice"),
     "apple-music": () => renderContextSettingsDialog("apple-music"),
