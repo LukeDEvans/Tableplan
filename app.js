@@ -16398,7 +16398,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music", "notifications"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16644,7 +16644,8 @@ function renderContextSettingsDialog(kind) {
     "mail-reading": "Mail Reading",
     "voice": "Voice",
     "podcasts": "Podcasts",
-    "apple-music": "Apple Music"
+    "apple-music": "Apple Music",
+    "notifications": "Notifications"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
@@ -16653,6 +16654,7 @@ function renderContextSettingsDialog(kind) {
     const isAdmin = !authSession?.access_token || userGroup?.role === "admin";
     elements.contextSettingsBody.innerHTML = `
       <div class="settings-action-grid">
+        <button type="button" data-context-settings-action="notifications">Notifications</button>
         <button type="button" data-context-settings-action="pages">Pages</button>
         <button type="button" data-context-settings-action="location-services">Location Services</button>
         <button type="button" data-context-settings-action="weekly-email">Email</button>
@@ -16681,6 +16683,15 @@ function renderContextSettingsDialog(kind) {
         </div>
       ` : ""}
     `;
+    return;
+  }
+
+  // Event reminders on this device (IOS_NOTIFICATIONS_DESIGN.md §5).
+  if (kind === "notifications") {
+    elements.contextSettingsBody.innerHTML = `
+      <div class="reminder-device-panel" data-reminder-device-panel></div>
+      <p class="muted-note">Set a reminder on any timed event (or on a Google event's details) and only you get it. Google Calendar's own notifications can be turned off in its app.</p>`;
+    renderReminderDevicePanel();
     return;
   }
 
@@ -17764,6 +17775,7 @@ function handleContextSettingsAction(event) {
     "calendars": () => closeAndRun(openPlanCalDialog),
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
+    "notifications": () => renderContextSettingsDialog("notifications"),
     "mail-reading": () => renderContextSettingsDialog("mail-reading"),
     "voice": () => renderContextSettingsDialog("voice"),
     "apple-music": () => renderContextSettingsDialog("apple-music"),
@@ -20467,6 +20479,7 @@ function renderGcalPanels() {
     el.innerHTML = gcalPanelHtml();
     el.onclick = onGcalPanelClick;
   });
+  renderReminderDevicePanel(); // shown beside the Google panel
 }
 
 function gcalPanelHtml() {
@@ -25816,10 +25829,12 @@ async function ensureReminderPermission() {
     renderReminderDevicePanel();
     return result;
   }
+  let result = window.Notification?.permission || "denied";
   if (window.Notification && Notification.permission === "default") {
-    try { return await Notification.requestPermission(); } catch { return "denied"; }
+    try { result = await Notification.requestPermission(); } catch { result = "denied"; }
   }
-  return window.Notification?.permission || "denied";
+  renderReminderDevicePanel();
+  return result;
 }
 
 // A tapped reminder opens its event (or at least its day) in the calendar.
@@ -25918,25 +25933,41 @@ function setGoogleReminderChoice(key, value) {
   if (value !== "google" && value !== "") ensureReminderPermission();
 }
 
-// Settings → Calendars: whether this iPhone will show reminders (native only).
+// "Reminders on this device" — Settings (gear) → Notifications, the calendar's
+// Add Calendar window, and Settings page → General → Calendars. On the iPhone it
+// is iOS notification permission; in a browser, the browser's (reminders there
+// show only while Live is open).
 function renderReminderDevicePanel() {
-  const el = document.getElementById("reminderDevicePanel");
-  if (!el) return;
+  const els = [...document.querySelectorAll("[data-reminder-device-panel]")];
+  if (!els.length) return;
   const native = reminderNative();
-  if (!native) { el.hidden = true; return; }
-  el.hidden = false;
+  const webSupported = !native && typeof window !== "undefined" && "Notification" in window;
   const render = (permission) => {
     const on = permission === "granted";
-    el.innerHTML = `<div class="reminder-device-row">
-      <span><strong>Reminders on this iPhone</strong><small>${on
-        ? "On — your event reminders and Google's arrive as notifications, even when the app is closed."
-        : (permission === "denied" ? "Off — turn on notifications for Live in iPhone Settings." : "Off — allow notifications so your event reminders reach you when the app is closed.")}</small></span>
-      ${on ? "" : `<button class="secondary-btn" type="button" data-reminder-enable>Turn on</button>`}
+    const where = native ? "this iPhone" : "this browser";
+    const detail = native
+      ? (on ? "On — your event reminders and Google's arrive as notifications, even when the app is closed."
+        : (permission === "denied" ? "Off — turn on notifications for Live in iPhone Settings → Live → Notifications." : "Off — allow notifications so your event reminders reach you when the app is closed."))
+      : (!webSupported ? "This browser can't show notifications; reminders appear as messages in the app."
+        : on ? "On — reminders show as notifications while Live is open in this browser."
+        : (permission === "denied" ? "Blocked — allow notifications for this site in the browser's settings." : "Off — allow notifications so reminders show while Live is open."));
+    const canAsk = (native || webSupported) && !on && permission !== "denied";
+    const html = `<div class="reminder-device-row">
+      <span><strong>Reminders on ${where}</strong><small>${detail}</small></span>
+      ${canAsk ? `<button class="secondary-btn" type="button" data-reminder-enable>Turn on</button>` : ""}
     </div>`;
-    el.querySelector("[data-reminder-enable]")?.addEventListener("click", () => ensureReminderPermission());
+    for (const el of els) {
+      el.hidden = false;
+      el.innerHTML = html;
+      el.querySelector("[data-reminder-enable]")?.addEventListener("click", () => ensureReminderPermission());
+    }
   };
-  render(native.permission());
-  native.checkPermission().then(render);
+  if (native) {
+    render(native.permission());
+    native.checkPermission().then(render);
+  } else {
+    render(webSupported ? Notification.permission : "unsupported");
+  }
 }
 
 function initEventReminders() {

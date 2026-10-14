@@ -90,6 +90,22 @@ async function main() {
   const qa = (fn, ...args) => page.evaluate(([f, a]) => window.__liveQA[f](...a), [fn, args]);
   const now = await page.evaluate(() => Date.now());
 
+  // ── 0. The reminders switch is reachable the way a person looks for it ──────
+  // Gear → Settings → Notifications (the page-level Settings → General → Calendars
+  // route isn't reachable from the phone's UI).
+  await page.click("#appMenuBtn");
+  await page.click("#generalSettingsMenuBtn");
+  await page.waitForSelector('#contextSettingsDialog[open] [data-context-settings-action="notifications"]', { timeout: 5000 }).catch(() => {});
+  const hasNotifBtn = await page.evaluate(() => Boolean(document.querySelector('#contextSettingsDialog[open] [data-context-settings-action="notifications"]')));
+  check(hasNotifBtn, "gear → Settings shows a Notifications button");
+  if (hasNotifBtn) await page.click('[data-context-settings-action="notifications"]');
+  const notifPanel = await page.evaluate(() => {
+    const el = document.querySelector('#contextSettingsDialog[open] [data-reminder-device-panel]');
+    return el && !el.hidden ? { text: el.innerText.replace(/\s+/g, " ").trim(), title: document.getElementById("contextSettingsTitle")?.textContent } : null;
+  });
+  check(notifPanel && notifPanel.title === "Notifications" && /Reminders on this browser/.test(notifPanel.text), "…which shows the reminders switch for this device", JSON.stringify(notifPanel));
+  await page.evaluate(() => document.getElementById("contextSettingsDialog")?.close());
+
   // ── 1. Legacy shared reminder folds once into the admin's own prefs ─────────
   const legacyId = `qa-legacy-${Date.now()}`;
   await qa("reminderSeedLegacy", { id: legacyId, title: "Legacy call", date: TOMORROW, startTime: "14:00", allDay: false, reminder: 15, createdAt: new Date().toISOString() });
