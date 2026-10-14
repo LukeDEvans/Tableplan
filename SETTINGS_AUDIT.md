@@ -1,6 +1,6 @@
 # Settings audit — what's there, what to cut, how to reorganize
 
-Status: **AUDIT — recommendations only, nothing changed.** Read from code on `main` @ `bb2bc33` (2026-10-13). Findings are from reading `index.html` / `app.js`, not from tapping through the app, so "unreachable" means *no code path opens it*; a quick look on the phone should confirm before anything is deleted.
+Status: **APPROVED DIRECTION (Luke, 2026-10-13); not started.** Read from code on `main` @ `bb2bc33` (2026-10-13). Findings are from reading `index.html` / `app.js`, not from tapping through the app, so "unreachable" means *no code path opens it*; a quick look on the phone should confirm before anything is deleted.
 
 ---
 
@@ -103,18 +103,30 @@ Multiple settings agents would overlap with the domain agents. A recurring audit
 
 ---
 
-## 7. Decisions needed from Luke
+## 7. Decisions (Luke, 2026-10-13)
 
-1. Household / Personal view: restore it, or cut it?
-2. Legacy iCal calendars: any still in use? If not, delete the iCal path.
-3. In-app Apple Music: keep, or drop in favour of the native player direction?
-4. Siri/Alexa voice commands: still used?
-5. Mail AI recipe toggles: move to Meal Plan, or stay in Mail AI with a link?
-6. Gear menu: the three-item version (§5), or keep direct page items?
+1. **Structure (§5): approved.**
+2. **Dead code (§3): approved for removal.**
+3. **Display:** Light / Dark / Auto comes back soon, together with **festive theming**. Build the Display screen so seasonal themes slot in beside the mode.
+4. **Household / Personal view: keep** in some form. Luke is still working out how household and personal overlap, so the capability (`setAllScopes`, section scopes) stays; whether a switch is exposed now waits on that design.
+5. **Legacy iCal calendars:** fine to lose; Luke can re-add any that were still on that path. Delete the iCal dialog and fetch path.
+6. **In-app Apple Music: drop for now.** Other music subscriptions may come in about a year; handle them then.
+7. **Siri / voice commands:** not used today, but keep the option open depending on what they can do (see §9).
+8. **Trash and AI Notes:** Luke leans toward removing both. Open points before doing so are in §9.
 
-## 8. Suggested order
+Still open: Mail AI recipe toggles (move to Meal Plan, or stay in Mail AI with a link).
 
-1. **Quick fixes** (one PR): restore Display + View in the Settings dialog, add Trash and Version rows, fix the Theaters title, split "AI Notes".
-2. **Delete dead code** (one PR) after confirming §3 on the phone.
-3. **Registry + CI check + settings agent.**
-4. **New structure** (§5), page by page, each domain agent moving its own rows.
+## 8. Build order
+
+1. **Delete dead code** (§3) plus the iCal calendar path and in-app Apple Music.
+2. **Registry + CI check + settings agent** (§6).
+3. **New structure** (§5), group by group, each domain agent moving its own rows. Remove the misfiled settings from "AI Notes" into their groups.
+4. **Display + festive theming** (separate design).
+
+## 9. Notes on the open items
+
+**Siri voice commands, what they do today.** A Siri Shortcut sends the dictated sentence plus a household passphrase to `voice-command.js`, which runs it through the same assistant as in-app chat (fast model), with the same memory, and replies with one spoken sentence. It can: add or complete a task, add or remove a grocery item, set a meal, log a meal, add an event, add to the watchlist or mark watched, add a book or update its status, log a workout, add a piano song, and write a note. It can't delete anything. Setup is one Shortcut on the phone. Alexa isn't actually built; only the label mentions it. Recommendation: keep it under Connections as "Siri Shortcut", drop "Alexa" from the copy.
+
+**Trash is the recipe trash.** It only holds deleted recipes (`trashedRecipes`), with restore and delete-forever, and nothing ever empties it automatically. Removing just the screen would leave every deleted recipe in synced state forever. Options: (a) delete recipes permanently after a confirm, and drop trash entirely; or (b) a "Recently deleted" view inside the Recipe Box with automatic purge after 30 days. Recommendation: (b) if recipes get deleted by accident ever; otherwise (a).
+
+**AI Notes is the assistant's memory.** The chat assistant and Siri write notes about preferences, app gaps and patterns (`state.aiNotes`) and read them as context on every request. The panel is the only place to see, edit or clear them. Removing the panel leaves the memory working but invisible; removing the feature makes the assistant forget. Recommendation: keep the memory, and keep a small "What the assistant remembers" row under AI; move the four misfiled settings out.
