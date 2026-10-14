@@ -5,6 +5,12 @@ shipped yet is listed in [UNDEPLOYED.md](UNDEPLOYED.md).) When deploying, move e
 UNDEPLOYED.md entry's "After deploying" steps here under a heading for that deploy.
 Tick items off as they're done; delete a deploy's section once it's all ticked.
 
+## 2026-10-14 deploy #2 (Apple Music restored)
+Web deploy only; no TestFlight build needed (the iPhone app still has the Apple Music plugin). Service worker cache bumped to v46, so hard-refresh once. Apple Music env vars confirmed present in Netlify before the deploy.
+
+- **Restore Apple Music, always on, no Settings panel** · PR #105 · Reverts the Apple Music removal from #101 (Luke: that was a misunderstanding). Apple Music is always on with no switch; Settings has no Apple Music panel; sign-in is the banner in Listen › Music › Discover. **Brings back the `apple-music-token` function, so it needs a deploy.** The `APPLE_MUSIC_*` Netlify env vars must still be set (couldn't confirm from the cloud session). **After deploy:** play a saved Apple Music song (it no longer says "isn't streamable"); if Discover shows "Apple Music isn't reachable", check the env vars; if it shows the Sign in banner, sign in there; check gear → Settings has no Apple Music row.
+
+
 ## 2026-10-14 deploy (Display + Halloween theme, profile redesign, settings cleanup, reminders switch, Amazon PDF receipts)
 Web deploy plus a TestFlight build from `main` (#103 adds the app-icon plugin; #97 and #100 have native or phone-side parts). Service worker cache bumped to v45, so hard-refresh once. Profile migration (`2026-10-13-profile-avatars.sql`) was applied 2026-10-14, before this deploy. **Update both phones to the new TestFlight build soon:** an older build drops `memberDiets` when it saves (PR #100).
 
