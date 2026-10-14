@@ -850,6 +850,45 @@ button.profile-row:hover { background: color-mix(in srgb, var(--accent) 7%, tran
   border-bottom-color: var(--line); font-size: 1rem; color: var(--ink);
 }
 .profile-field-hint { font-size: 0.74rem; font-weight: 500; color: var(--muted); margin: 0; }
+.profile-home-field { display: flex; flex-direction: column; gap: 4px; position: relative; }
+.profile-home-field label { display: block; }
+.std-form-dialog .profile-home-field label > span { color: var(--muted); font-size: 0.74rem; font-weight: 700; }
+.profile-home-results {
+  display: flex; flex-direction: column; margin-top: 2px;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: var(--window-bg); box-shadow: var(--shadow);
+}
+.profile-home-results button {
+  border: 0; border-radius: 0; background: transparent; box-shadow: none;
+  text-align: left; padding: 10px 12px; min-height: 40px; color: var(--ink); font: inherit; font-size: 0.9rem; cursor: pointer;
+}
+.profile-home-results button + button { border-top: 1px solid var(--line); }
+.profile-home-results button:hover, .profile-home-results button:focus-visible { background: var(--accent-soft); outline: none; }
+.profile-home-results .profile-home-empty { padding: 10px 12px; font-size: 0.82rem; color: var(--muted); }
+.profile-field-hint.is-ok { color: var(--accent-dark); }
+
+.profile-food { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; border-top: 1px solid var(--line); }
+.profile-food .profile-group-title { margin: 8px 0 0; }
+.profile-chip-field { display: flex; flex-direction: column; gap: 6px; }
+.profile-chip-label { font-size: 0.74rem; font-weight: 700; color: var(--muted); }
+.profile-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.profile-chip {
+  min-height: 32px; padding: 4px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; box-shadow: none;
+  color: var(--ink); font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer;
+}
+.profile-chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-dark); }
+.profile-chips--allergy .profile-chip[aria-pressed="true"] { background: var(--tomato-soft); border-color: var(--tomato); color: var(--tomato); }
+
+/* Recipe view: heads-up when an ingredient conflicts with someone's diet/allergy. */
+.recipe-diet-warning {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 12px; border-radius: 12px;
+  background: var(--tomato-soft); color: var(--ink); font-size: 0.86rem;
+}
+.recipe-diet-warning .live-icon { color: var(--tomato); flex-shrink: 0; margin-top: 1px; }
+.recipe-diet-warning ul { margin: 2px 0 0; padding-left: 18px; }
+.recipe-diet-warning small { display: block; margin-top: 4px; color: var(--muted); }
 .profile-field-hint:empty { display: none; }
 
 .prep-window-copy {

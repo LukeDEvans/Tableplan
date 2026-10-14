@@ -1,4 +1,6 @@
 // Headless QA for the Profile window: opens read-only, Edit switches to the form,
+// Home is picked from the city search (stubbed) and saved as the Weather "home"
+// place, Food chips toggle and save with a stamp,
 // an empty "Add" row jumps to its field, Cancel discards, Save returns to the view,
 // a picked photo is resized and shown, and nothing overflows a 360px phone.
 // Run against the dev server (npm run dev:local) in local-dev mode, on a fresh
@@ -49,6 +51,11 @@ for (const scheme of ["light", "dark"]) {
   const context = await browser.newContext({ viewport: { width: 360, height: 740 }, colorScheme: scheme, timezoneId: "America/Chicago" });
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(String(e)));
+  // The city search goes to the weather function; answer it here (no network in QA).
+  await page.route(/\/(\.netlify\/functions|api)\/weather\?.*action=search/, (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ results: [{ id: "5037649", label: "Minneapolis, Minnesota, USA", latitude: 44.98, longitude: -93.26, timezone: "America/Chicago" }] }),
+  }));
   await page.goto(URL, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.classList.contains("app-authed") || !document.getElementById("lockDevSignInBtn")?.hidden, null, { timeout: 30000 });
   if (!(await page.evaluate(() => document.body.classList.contains("app-authed")))) await page.click("#lockDevSignInBtn");
@@ -87,7 +94,18 @@ for (const scheme of ["light", "dark"]) {
   // Save: fields + photo.
   await page.click("#profileEditBtn");
   await page.fill("#profileDobInput", "1990-11-02");
-  await page.fill("#profileHomeInput", "Minneapolis, MN");
+  await page.fill("#profileHomeInput", "Minnea");
+  await page.waitForSelector("#profileHomeResults [data-home-index]", { timeout: 5000 });
+  ok(await page.evaluate(() => /Pick your city/.test(document.querySelector("#profileHomeHint").textContent)), "typed Home asks to pick a city");
+  await page.click("#profileHomeResults [data-home-index='0']");
+  ok(await page.evaluate(() => document.querySelector("#profileHomeHint").classList.contains("is-ok")), "picking a city confirms Weather/stores will use it");
+  // Food chips toggle.
+  await page.click('#profileDietChips [data-diet-id="vegetarian"]');
+  await page.click('#profileAllergyChips [data-diet-id="peanuts"]');
+  await page.click('#profileAllergyChips [data-diet-id="peanuts"]');
+  await page.click('#profileAllergyChips [data-diet-id="shellfish"]');
+  ok(await page.getAttribute('#profileAllergyChips [data-diet-id="peanuts"]', "aria-pressed") === "false", "a chip toggles off again");
+  await page.fill("#profileFoodOtherInput", "no mushrooms");
   await page.setInputFiles("#profilePhotoInput", await makeTestImage(page));
   await page.waitForFunction(() => document.querySelector("#profileEditAvatar")?.classList.contains("has-photo"), null, { timeout: 10000 });
   ok((await page.textContent("#profilePhotoPickBtn")) === "Change photo", "picked photo previews, button says Change photo");
@@ -96,7 +114,14 @@ for (const scheme of ["light", "dark"]) {
   await page.click("#saveProfileBtn");
   await page.waitForSelector("#profileView:not([hidden])");
   const about = await page.textContent("#profileViewAbout");
-  ok(about.includes("November 2, 1990") && about.includes("Minneapolis, MN"), "Save returns to the view with the new values");
+  ok(about.includes("November 2, 1990") && about.includes("Minneapolis, Minnesota, USA"), "Save returns to the view with the new values");
+  ok(about.includes("Weather, store search and trips use this"), "Home row says what uses it");
+  const food = await page.textContent("#profileViewFood");
+  ok(food.includes("Shellfish") && food.includes("Vegetarian") && food.includes("no mushrooms") && !food.includes("Peanuts"), "Food rows show diet, allergies, notes");
+  await page.waitForTimeout(600); // persist() mirrors to localStorage on a short debounce
+  const saved = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("tableplan-state-v1") || "null"); } catch { return null; } });
+  ok(saved?.weatherLocations?.[0]?.id === "home" && saved.weatherLocations[0].latitude === 44.98, "Home is saved as the first Weather place");
+  ok(Object.values(saved?.memberDiets || {}).some((d) => d.diets?.includes("vegetarian") && d.allergies?.includes("shellfish") && d.updatedAt), "diet saved with a stamp");
   ok(await page.evaluate(() => document.querySelector("#profileViewAvatar").classList.contains("has-photo")), "photo shows in the view");
   const size = await page.evaluate(() => {
     const v = JSON.parse(localStorage.getItem("live_avatar_local-dev") || "{}");

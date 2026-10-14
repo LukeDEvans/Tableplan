@@ -2371,6 +2371,10 @@
               <h3 class="profile-group-title">About</h3>
               <div class="profile-rows" id="profileViewAbout"></div>
             </div>
+            <div class="profile-group">
+              <h3 class="profile-group-title">Food</h3>
+              <div class="profile-rows" id="profileViewFood"></div>
+            </div>
             <div class="profile-group" id="profileViewHouseholdGroup">
               <h3 class="profile-group-title">Household</h3>
               <div class="profile-rows" id="profileViewHousehold"></div>
@@ -2400,11 +2404,29 @@
               <input type="date" id="profileDobInput" />
               <small class="profile-field-hint">Finance uses your birth year for retirement targets.</small>
             </label>
-            <label class="form-field profile-field">
-              <span>Home</span>
-              <input type="text" id="profileHomeInput" autocomplete="off" placeholder="City or airport" />
-              <small class="profile-field-hint">Explore starts and ends trips here.</small>
-            </label>
+            <div class="form-field profile-field profile-home-field">
+              <label for="profileHomeInput"><span>Home</span></label>
+              <input type="text" id="profileHomeInput" autocomplete="off" placeholder="Search your city" role="combobox" aria-autocomplete="list" aria-controls="profileHomeResults" aria-expanded="false" />
+              <div class="profile-home-results" id="profileHomeResults" role="listbox" hidden></div>
+              <small class="profile-field-hint" id="profileHomeHint">Shared with your household. Weather, store search and Explore use it.</small>
+            </div>
+
+            <div class="profile-food">
+              <h3 class="profile-group-title">Food</h3>
+              <p class="profile-field-hint">Recipes warn when an ingredient conflicts, and the assistant keeps these in mind. Shared with your household.</p>
+              <div class="profile-chip-field">
+                <span class="profile-chip-label">Diet</span>
+                <div class="profile-chips" id="profileDietChips"></div>
+              </div>
+              <div class="profile-chip-field">
+                <span class="profile-chip-label">Allergies</span>
+                <div class="profile-chips" id="profileAllergyChips"></div>
+              </div>
+              <label class="form-field profile-field">
+                <span>Anything else</span>
+                <input type="text" id="profileFoodOtherInput" maxlength="200" autocomplete="off" placeholder="e.g. no mushrooms, low sodium" />
+              </label>
+            </div>
           </section>
         </div>
         <div class="dialog-actions profile-actions" id="profileEditActions" hidden>
