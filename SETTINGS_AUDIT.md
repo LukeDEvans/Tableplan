@@ -1,6 +1,6 @@
 # Settings audit — what's there, what to cut, how to reorganize
 
-Status: **APPROVED DIRECTION (Luke, 2026-10-13); not started.** Read from code on `main` @ `bb2bc33` (2026-10-13). Findings are from reading `index.html` / `app.js`, not from tapping through the app, so "unreachable" means *no code path opens it*; a quick look on the phone should confirm before anything is deleted.
+Status: **APPROVED DIRECTION (Luke, 2026-10-13). Step 1 (removals + Recently deleted) done 2026-10-14; steps 2–4 not started.** Read from code on `main` @ `bb2bc33` (2026-10-13). Findings are from reading `index.html` / `app.js`, not from tapping through the app, so "unreachable" means *no code path opens it*; a quick look on the phone should confirm before anything is deleted.
 
 ---
 
@@ -68,7 +68,7 @@ Plus an **orphaned fifth**: the old full-page Settings (`#settingsMainPage`), on
 
 1. **You**: Profile & sign-out · Display (Light/Dark/Auto) · Notifications · Voice & read-aloud · Location
 2. **Household**: Members & invites · Household / Personal view · Pages I see · *Admin:* Global pages, Users, Households
-3. **Connections** (one place to see what's linked and what's broken; the Phase 2 connection alerts land here): Google Calendar · Gmail · Bank (SimpleFIN) · Newspaper sign-ins · Apple Music · Siri / voice commands
+3. **Connections** (one place to see what's linked and what's broken; the Phase 2 connection alerts land here): Google Calendar · Gmail · Bank (SimpleFIN) · Newspaper sign-ins
 4. **Pages** (one row per page, in page-menu order, each opening that page's settings):
    - Calendar: calendars, recurring tasks, reminders
    - Meal Plan: meal types, auto-fill rules, nutrition goals, ingredient options, recipe tags, recipe sources
@@ -80,7 +80,7 @@ Plus an **orphaned fifth**: the old full-page Settings (`#settingsMainPage`), on
    - Recreate: hobbies, workouts, workout auto-fill
    - Mail: reading, AI features
 5. **AI**: Assistant suggestions · Assistant can read Finance / Email · AI notes · Weekly email · API usage (admin)
-6. **Data & safety**: Export · Backup health · Restore · Trash · Version (build + "Reload" when newer)
+6. **Data & safety**: Export · Backup health · Restore · Version (recipe trash lives in the Recipe Box as Recently deleted) (build + "Reload" when newer)
 
 **Conventions for every settings screen:**
 - Settings save as you change them (house toggle, `persist()`); no Save/Cancel on preference screens. Keep Save only for forms that edit a list item.
@@ -111,8 +111,9 @@ Multiple settings agents would overlap with the domain agents. A recurring audit
 4. **Household / Personal view: keep** in some form. Luke is still working out how household and personal overlap, so the capability (`setAllScopes`, section scopes) stays; whether a switch is exposed now waits on that design.
 5. **Legacy iCal calendars:** fine to lose; Luke can re-add any that were still on that path. Delete the iCal dialog and fetch path.
 6. **In-app Apple Music: drop for now.** Other music subscriptions may come in about a year; handle them then.
-7. **Siri / voice commands:** not used today, but keep the option open depending on what they can do (see §9).
-8. **Trash and AI Notes:** Luke leans toward removing both. Open points before doing so are in §9.
+7. **Siri / Alexa voice commands: removed** (2026-10-14). Not used; the notes in §9 record what they did, in case they come back.
+8. **Trash → "Recently deleted"** (2026-10-14): a small view inside the Recipe Box; deleted recipes are kept 30 days, then purged.
+9. **AI Notes: removed** (2026-10-14). Luke doesn't use the assistant yet and will rebuild it fresh. The panel's other settings stay under Settings › Assistant until the new structure gives them a home.
 
 Still open: Mail AI recipe toggles (move to Meal Plan, or stay in Mail AI with a link).
 
@@ -123,7 +124,7 @@ Still open: Mail AI recipe toggles (move to Meal Plan, or stay in Mail AI with a
 3. **New structure** (§5), group by group, each domain agent moving its own rows. Remove the misfiled settings from "AI Notes" into their groups.
 4. **Display + festive theming** (separate design).
 
-## 9. Notes on the open items
+## 9. Background on the decided items (kept for reference)
 
 **Siri voice commands, what they do today.** A Siri Shortcut sends the dictated sentence plus a household passphrase to `voice-command.js`, which runs it through the same assistant as in-app chat (fast model), with the same memory, and replies with one spoken sentence. It can: add or complete a task, add or remove a grocery item, set a meal, log a meal, add an event, add to the watchlist or mark watched, add a book or update its status, log a workout, add a piano song, and write a note. It can't delete anything. Setup is one Shortcut on the phone. Alexa isn't actually built; only the label mentions it. Recommendation: keep it under Connections as "Siri Shortcut", drop "Alexa" from the copy.
 

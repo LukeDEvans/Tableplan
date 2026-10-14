@@ -145,6 +145,15 @@ export function normalizeCookLog(log) {
     .sort((a, b) => Date.parse(b.cookedAt) - Date.parse(a.cookedAt));
 }
 
+// Recently deleted (SETTINGS_AUDIT.md; Luke, 2026-10-14): a deleted recipe is kept
+// for TRASH_RETENTION_DAYS, then purged for good. Pure, so it's testable.
+export const TRASH_RETENTION_DAYS = 30;
+export function isTrashExpired(item, now = Date.now(), days = TRASH_RETENTION_DAYS) {
+  const at = Date.parse(item?.deletedAt || "");
+  if (!Number.isFinite(at)) return false; // no usable date: keep it rather than lose it
+  return now - at > days * 24 * 60 * 60 * 1000;
+}
+
 export function normalizeTrashedRecipe(item) {
   const recipe = normalizeRecipe(item?.recipe || item);
   return {
@@ -726,6 +735,7 @@ function openRecipeBoxPage() {
       ? `Choose ${displayMealName(getPendingAutoRuleRecipeSelection().meal)} rule`
       : "Recipe Box");
   setRecipeReviewPanelOpen(false);
+  renderRecentlyDeletedLink();
   if (!elements.recipeBoxPageDialog.open) elements.recipeBoxPageDialog.showModal();
   refreshRecipeReviewQueue();
   requestAnimationFrame(() => elements.recipeSearch.focus());
@@ -1243,6 +1253,7 @@ function renderFolders() {
   elements.recipeList.innerHTML = recipeTileGridTemplate(visibleRecipes);
   bindRecipeCards(elements.recipeList);
   renderRecipeFolderOptions();
+  renderRecentlyDeletedLink();
 }
 
 function recipeBoxTags() {
@@ -1614,10 +1625,39 @@ function removeRecipeTag(tag) {
   renderRecipes();
 }
 
+// Recipes deleted in the last TRASH_RETENTION_DAYS (what the Recently deleted view shows).
+function recentlyDeletedRecipes() {
+  const now = Date.now();
+  return trashedRecipes().filter((entry) => !isTrashExpired(entry, now));
+}
+
+// Drop trash older than TRASH_RETENTION_DAYS for good. Runs when a recipe is deleted
+// and when Recently deleted opens (never at boot, before the cloud copy has loaded).
+function purgeExpiredTrash() {
+  const now = Date.now();
+  const expired = trashedRecipes().filter((entry) => isTrashExpired(entry, now));
+  if (!expired.length) return 0;
+  expired.forEach((entry) => recordDeletion("trashedRecipes", entry.id));
+  const gone = new Set(expired.map((entry) => entry.id));
+  state.trashedRecipes = trashedRecipes().filter((entry) => !gone.has(entry.id));
+  persist();
+  return expired.length;
+}
+
+// The "Recently deleted (N)" link under the Recipe Box list; hidden when empty.
+function renderRecentlyDeletedLink() {
+  const btn = elements.recentlyDeletedRecipesBtn;
+  if (!btn) return;
+  const n = recentlyDeletedRecipes().length;
+  btn.hidden = n === 0;
+  btn.textContent = `Recently deleted (${n})`;
+}
+
 function renderTrash() {
-  const items = trashedRecipes();
+  const items = recentlyDeletedRecipes();
+  renderRecentlyDeletedLink();
   if (!items.length) {
-    elements.trashList.innerHTML = `<div class="empty-state">Trash is empty.</div>`;
+    elements.trashList.innerHTML = `<div class="empty-state">No recently deleted recipes.</div>`;
     return;
   }
 
@@ -1648,7 +1688,7 @@ function restoreTrashedRecipe(trashId) {
 
 async function permanentlyDeleteTrashedRecipe(trashId) {
   const item = trashedRecipes().find((entry) => entry.id === trashId);
-  if (!item || !window.confirm(`Permanently delete "${item.recipe.name || "this recipe"}"?`)) return;
+  if (!item || !window.confirm(`Delete "${item.recipe.name || "this recipe"}" now? It can't be restored after this.`)) return;
   if (!(await tryPreChangeBackup("permanently deleting a trashed recipe"))) return;
   recordDeletion("trashedRecipes", trashId);
   state.trashedRecipes = trashedRecipes().filter((entry) => entry.id !== trashId);
@@ -3425,6 +3465,7 @@ async function deleteRecipeById(id) {
     deletedAt: new Date().toISOString(),
     recipe
   });
+  purgeExpiredTrash();
   Object.values(state.plans).forEach((week) => {
     removeRecipeFromMealSlots(week.slots, id);
     removeRecipeFromMealSlots(week.publishedSlots, id);
@@ -3818,6 +3859,7 @@ function initRecipeTimer() {
     renderRecipes,
     renderTagLibrary,
     renderTrash,
+    purgeExpiredTrash,
     replaceScanRecipeFiles,
     saveFolderRow,
     saveNutritionEstimate,

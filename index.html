@@ -937,6 +937,7 @@
               <button class="secondary-btn folder-add-btn" id="addFolderBtn" type="button">Add</button>
             </form>
             <div class="recipe-list recipe-tile-list" id="recipeList"></div>
+            <button class="text-btn recently-deleted-link" type="button" id="recentlyDeletedRecipesBtn" hidden>Recently deleted</button>
           </div>
         </aside>
       </dialog>
@@ -2899,13 +2900,14 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <p class="muted-label">Safety</p>
-            <h2>Trash</h2>
+            <p class="muted-label">Recipes</p>
+            <h2>Recently deleted</h2>
           </div>
           <button class="icon-btn" id="closeTrashBtn" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
         </div>
+        <p class="muted-note">Deleted recipes stay here for 30 days, then they're gone for good.</p>
         <div class="trash-list" id="trashList"></div>
         <div class="dialog-actions">
           <span></span>

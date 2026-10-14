@@ -1089,6 +1089,7 @@ const elements = {
   addFolderBtn: document.querySelector("#addFolderBtn"),
   folderList: document.querySelector("#folderList"),
   recipeList: document.querySelector("#recipeList"),
+  recentlyDeletedRecipesBtn: document.querySelector("#recentlyDeletedRecipesBtn"),
   activeCookingSection: document.querySelector("#activeCookingSection"),
   activeCookingList: document.querySelector("#activeCookingList"),
   plannerGrid: document.querySelector("#plannerGrid"),
@@ -2044,6 +2045,7 @@ const {
   renderRecipes,
   renderTagLibrary,
   renderTrash,
+  purgeExpiredTrash,
   replaceScanRecipeFiles,
   saveFolderRow,
   saveNutritionEstimate,
@@ -2908,6 +2910,7 @@ function bindEvents() {
   elements.cancelRestoreBtn.addEventListener("click", closeRestoreDialog);
   elements.closeTrashBtn.addEventListener("click", () => elements.trashDialog.close());
   elements.doneTrashBtn.addEventListener("click", () => elements.trashDialog.close());
+  elements.recentlyDeletedRecipesBtn?.addEventListener("click", openTrashDialog);
   elements.closeImportBtn.addEventListener("click", () => elements.importDialog.close());
   elements.cancelImportBtn.addEventListener("click", () => elements.importDialog.close());
   elements.fetchRecipeBtn.addEventListener("click", importRecipeFromUrl);
@@ -3840,6 +3843,11 @@ function setupDiagnostics() {
   // persist/merge + boot-empty guards + auto-rule dedup directly, instead of
   // fragile gesture/UI simulation.
   window.__liveQA = {
+    // Recently deleted recipes (scripts/qa-settings.mjs): seed the trash with given
+    // deletedAt dates and read back which entries are left.
+    trashSeed: (items) => { if (!localDevMode) return null; state.trashedRecipes = items.map(normalizeTrashedRecipe); return true; },
+    trashIds: () => (localDevMode ? (state.trashedRecipes || []).map((t) => t.id) : null),
+    openRecipeBox: () => { if (!localDevMode) return null; openRecipeBoxPage(); return true; },
     // Google Calendar (scripts/qa-gcal.mjs): local dev has no Netlify functions, so
     // the QA script mocks /.netlify/functions/gcal-* and flips this on to run the
     // real client paths (discovery, linking, event load, panel) against the mocks.
@@ -17752,7 +17760,6 @@ function handleContextSettingsAction(event) {
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
     "admin-users": () => closeAndRun(openAdminUsersDialog),
     "admin-households": () => closeAndRun(openAdminHouseholdsDialog),
-    "trash": () => closeAndRun(openTrashDialog),
     "auto-rules": () => closeAndRun(openAutoRulesDialog),
     "tags": () => closeAndRun(openTagsDialog),
     "grocery-list": () => closeAndRun(openGroceryStoresDialog),
@@ -18507,6 +18514,7 @@ function backupHealthTemplate(status) {
 function openTrashDialog(event) {
   event?.stopPropagation();
   closeSettingsMenu();
+  purgeExpiredTrash();
   renderTrash();
   elements.trashDialog.showModal();
 }
@@ -18537,11 +18545,11 @@ function trashItemTemplate(item) {
     <article class="trash-item">
       <div>
         <strong>${escapeHtml(item.recipe.name || "Untitled recipe")}</strong>
-        <span>Deleted ${escapeHtml(new Date(item.deletedAt).toLocaleString())}</span>
+        <span>Deleted ${escapeHtml(new Date(item.deletedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</span>
       </div>
       <div>
         <button class="secondary-btn" type="button" data-restore-trash="${escapeHtml(item.id)}">Restore</button>
-        <button class="danger-btn" type="button" data-delete-trash="${escapeHtml(item.id)}">Delete permanently</button>
+        <button class="danger-btn" type="button" data-delete-trash="${escapeHtml(item.id)}">Delete now</button>
       </div>
     </article>
   `;

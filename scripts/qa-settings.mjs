@@ -96,6 +96,30 @@ for (const p of pages) {
   }
 }
 
+// Recipe Box › Recently deleted: shows the last 30 days, purges older entries on open,
+// and restores a recipe.
+await visit("eat");
+const day = 24 * 60 * 60 * 1000;
+await page.evaluate((d) => window.__liveQA.trashSeed([
+  { id: "trash-new", deletedAt: new Date(Date.now() - 2 * d).toISOString(), recipe: { id: "qa-rd-1", name: "QA Soup" } },
+  { id: "trash-old", deletedAt: new Date(Date.now() - 45 * d).toISOString(), recipe: { id: "qa-rd-2", name: "QA Old Stew" } },
+]), day);
+await page.evaluate(() => window.__liveQA.openRecipeBox());
+await page.waitForTimeout(400);
+const link = await page.evaluate(() => { const b = document.getElementById("recentlyDeletedRecipesBtn"); return { hidden: b?.hidden, text: b?.textContent }; });
+check(link.hidden === false && link.text === "Recently deleted (1)", "Recipe Box shows 'Recently deleted (1)' (the 45-day-old one is past 30 days)", JSON.stringify(link));
+await page.evaluate(() => document.getElementById("recentlyDeletedRecipesBtn")?.click());
+await page.waitForTimeout(300);
+const view = await page.evaluate(() => ({ open: document.getElementById("trashDialog")?.open, text: document.getElementById("trashList")?.innerText || "" }));
+check(view.open && /QA Soup/.test(view.text) && !/QA Old Stew/.test(view.text), "Recently deleted lists only the last 30 days", JSON.stringify(view));
+const left = await page.evaluate(() => window.__liveQA.trashIds());
+check(JSON.stringify(left) === JSON.stringify(["trash-new"]), "opening it purges entries older than 30 days", JSON.stringify(left));
+await page.evaluate(() => document.querySelector('[data-restore-trash="trash-new"]')?.click());
+await page.waitForTimeout(400);
+const after = await page.evaluate(() => ({ ids: window.__liveQA.trashIds(), empty: /No recently deleted/.test(document.getElementById("trashList")?.innerText || ""), linkHidden: document.getElementById("recentlyDeletedRecipesBtn")?.hidden }));
+check(after.ids.length === 0 && after.empty && after.linkHidden, "restoring empties the view and hides the link", JSON.stringify(after));
+await page.evaluate(() => document.querySelectorAll("dialog[open]").forEach((d) => d.close()));
+
 // An old #settings link opens the Settings dialog.
 await visit("settings");
 const viaHash = await page.evaluate(() => document.getElementById("contextSettingsDialog")?.open);

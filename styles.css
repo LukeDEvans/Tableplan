@@ -8634,6 +8634,26 @@ textarea {
   font-size: 0.82rem;
 }
 
+/* Recipe Box → "Recently deleted (N)" link under the list (hidden when empty). */
+.recently-deleted-link {
+  display: block;
+  margin: 14px auto 4px;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.86rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.recently-deleted-link[hidden] { display: none; }
+
+@media (max-width: 520px) {
+  .trash-item { grid-template-columns: 1fr; }
+}
+
 .empty-state {
   padding: 18px;
   border: 1px dashed var(--line);
