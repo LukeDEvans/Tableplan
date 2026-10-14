@@ -276,8 +276,6 @@ _(none)_
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
-- [ ] **[P3] Leftovers from dropping Apple Music** (music · ios/App/App/AppleMusicPlugin.swift · Netlify env · 2026-10-14)
-      The web side of Apple Music is gone (Luke, 2026-10-14), but `AppleMusicPlugin.swift` and its Xcode project entries still ship in the iOS app (nothing calls it), and the Netlify env vars `APPLE_MUSIC_PRIVATE_KEY` / `APPLE_MUSIC_KEY_ID` / `APPLE_MUSIC_TEAM_ID` are now unused. → Remove the plugin in the next Mac session (then the iOS compile check) and delete the three env vars in Netlify. Verdict: CONFIRMED.
 - [x] **[P3] News paging: the inclusive `lte` cursor stops paging when ≥ a page of stories share one timestamp** (news · netlify/functions/_news-store.js:178 · 2026-10-06)
       `nextBefore` is null when a page's last `published_at` equals the cursor, so a tie group of ≥150 rows ends paging and older stories can't be reached via "Load more". Ties are common because email cards store the URL date at **midnight UTC** (every NYT/Economist email story of a day shares one timestamp; an Economist weekly edition alone is ~80). Smaller tie groups re-fetch rows already loaded, wasting page slots. Suggested direction: a keyset cursor on `(published_at, id)` (`or=(published_at.lt.X,and(published_at.eq.X,id.lt.Y))`). Verdict: PLAUSIBLE (needs ≥150 ties on a view; never observed).
       → Fixed: keyset cursor on (published_at, id). Tested. (2026-10-06)

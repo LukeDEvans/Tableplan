@@ -58,6 +58,7 @@ const MERGE_NEWER_WINS_KEYS = {
   aiSettings: "settings object",
   jellyfin: "settings object",
   mediaServices: "settings object",
+  appleMusic: "settings object",
   financeAlertPrefs: "settings object",
   planMealPlanCalendars: "settings object (per-calendar \"Show on Meal Plan\" switches, each stamped on its own)",
   apiUsage: "usage counters; a per-device approximation is acceptable",

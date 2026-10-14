@@ -66,14 +66,32 @@ untouched whenever no owns-playback track is active. The active owner is chosen
 by config (`registry.activePlaybackProvider(id)`), so a second streamer is a new
 adapter + a config flip.
 
-**Apple Music was dropped (Luke, 2026-10-14).** The MusicKit provider, its native
-iOS facade, the `apple-music-token` function, `state.appleMusic` and Settings → Apple
-Music are gone (see git history before that date to bring them back). Other
-subscriptions may come in about a year; the provider-agnostic seams they would use
-stay: `CAP.OWNS_PLAYBACK` + `startOwnedMusicTrack` (a provider may set
-`queuesNatively`), the `CAP.BROWSE` category contract, and portable refs (saved
-`applemusic:` refs stay in the library, unresolvable for now). The native
-`AppleMusicPlugin.swift` still ships in the iOS project until a Mac session removes it.
+**Apple Music** (`music-provider-applemusic.js`): all MusicKit specifics
+(SDK load, `/v1/catalog`+`/v1/me` paths, event names, `playbackState` ints,
+artwork templates) are confined to that file; the instance is injected
+(`deps.getInstance`) for tests. Registered in `getMusicProviders()` when
+`state.appleMusic.enabled`. The developer token (ES256 JWT) is minted server-side
+by `netlify/functions/apple-music-token.js` from `APPLE_MUSIC_PRIVATE_KEY` /
+`APPLE_MUSIC_KEY_ID` / `APPLE_MUSIC_TEAM_ID` — until those env vars are set it
+returns `{configured:false}` and the provider stays inert (`isAvailable()=false`).
+Prereqs outside the code: an Apple Developer membership + MusicKit key, and an
+Apple Music subscription on the listening device.
+
+**Apple Music is the primary catalog when enabled (2026-09-24).** Discover renders
+Apple results first in sections — Songs · Works (classical songs Apple tags with
+`composerName`/`workName`/`movementName`, consolidated under the Work) · Albums ·
+Artists · Playlists — with the free sources in a collapsible "Free & open sources"
+section below. The Discover home shows Apple shelves from `provider.getHome()`:
+charts always; recommendations + recently played once signed in (loaded once per
+session, 30-min in-memory TTL — never polled). Search covers songs, albums, artists
+and playlists; `getItem` expands albums, playlists (catalog `pl.…` and library
+`p.…`) and artists (top songs). The storefront is the signed-in user's
+(`music.storefrontId`) unless `state.appleMusic.storefront` is set. Saved Apple
+recordings play via `resolveRef()` → an **owned** (URL-less) source that the
+resolver accepts and `startRecordingResolved` routes to the transport. Settings →
+Apple Music runs `checkCatalog()` to tell "key missing" / "key rejected" / "ok"
+apart. `sw.js` skips `apple.com` + `mzstatic.com` so MusicKit API/DRM/HLS traffic
+is never cached.
 
 `createMusicProviderRegistry(providers)` exposes `search(query)` = **aggregated, isolated** search: every SEARCH-capable available provider runs under `Promise.allSettled`, results merge, and per-provider failures are reported in `providerStatuses` **without breaking the others**. HTTP clients are **injected** (`deps.fetchJson`) so providers are testable and a Netlify proxy can slot in later without touching callers.
 
