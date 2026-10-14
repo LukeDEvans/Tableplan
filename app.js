@@ -42,7 +42,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
@@ -331,7 +331,7 @@ const STATE_SECTIONS = {
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -5280,9 +5280,6 @@ function normalizeState(parsed) {
     jellyfin: (parsed?.jellyfin && typeof parsed.jellyfin === "object") ? parsed.jellyfin : null,
     // Streaming services the household subscribes to → "Your services" in Discover.
     mediaServices: Array.isArray(parsed?.mediaServices) ? parsed.mediaServices.map(String) : [],
-    // Apple Music config (enabled/storefront). Its OWN key — it can't live on the
-    // mediaServices array (JSON drops named props on arrays, so it never persisted).
-    appleMusic: (parsed?.appleMusic && typeof parsed.appleMusic === "object" && !Array.isArray(parsed.appleMusic)) ? parsed.appleMusic : {},
     inventoryBoxes: ensureDefaultInventoryRooms(normalizeInventoryBoxes(parsed?.inventoryBoxes, createId)),
     inventoryItems: normalizeInventoryItems(parsed?.inventoryItems, createId),
     inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
@@ -16552,7 +16549,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "location-services", "admin-pages", "read-sync", "assistant", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music", "notifications"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "location-services", "admin-pages", "read-sync", "assistant", "finance-accounts", "finance-emergency", "podcasts", "radio", "notifications"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16661,29 +16658,6 @@ const MAIL_AI_FEATURES = [
 let contextSettingsKind = null; // which sub-panel the settings dialog is showing
 // Re-render the Finance settings panel in place (used after an account edit
 // made through the delegated finance handlers, so the change shows at once).
-// Reflect the Apple Music auth + subscription state into the settings row.
-// All provider/MusicKit specifics stay behind the provider's normalized methods.
-async function refreshAppleMusicStatus() {
-  const el = document.getElementById("appleMusicStatus");
-  if (!el) return;
-  try {
-    const reg = await getMusicProviders();
-    const p = reg.get("applemusic");
-    if (!p) { el.textContent = "Not enabled."; return; }
-    // First: can the server's developer token read Apple's catalog at all? This
-    // tells "key missing" / "key rejected" apart from "just not signed in".
-    const cat = p.checkCatalog ? await p.checkCatalog() : { ok: true };
-    if (cat.state === "not-configured") { el.textContent = "Server key not configured yet — finish the checklist below."; return; }
-    if (cat.state === "load-failed") { el.textContent = "Couldn’t load Apple’s MusicKit script — check your connection or content blockers."; return; }
-    if (cat.state === "rejected") { el.textContent = "Apple rejected the server key — check it’s a MusicKit key and the Key ID / Team ID match."; return; }
-    const auth = await p.getAuthStatus();
-    const sf = cat.storefront ? ` · storefront ${String(cat.storefront).toUpperCase()}` : "";
-    if (!auth.authorized) { el.textContent = `Catalog connected${sf} · not signed in — sign in to play full tracks.`; return; }
-    const sub = await p.getSubscriptionStatus();
-    el.textContent = sub.canPlay ? `Signed in · subscription active${sf}.` : `Signed in · ${sub.reason || "no active subscription"}`;
-  } catch { el.textContent = "Unavailable right now."; }
-}
-
 // ── Settings → AI → Voice: preview + preference helpers ──────────────────────
 const VOICE_PLAY_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`;
 const VOICE_STOP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
@@ -16796,7 +16770,6 @@ function renderContextSettingsDialog(kind) {
     "mail-reading": "Mail Reading",
     "voice": "Voice",
     "podcasts": "Podcasts",
-    "apple-music": "Apple Music",
     "notifications": "Notifications"
   };
   const isSubPanel = !["general", "watch", "radio", "recreate", "read-sync"].includes(kind);
@@ -16813,7 +16786,6 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="mail-reading">Mail Reading</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
-        <button type="button" data-context-settings-action="apple-music">Apple Music</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
         <button type="button" data-context-settings-action="assistant">Assistant</button>
@@ -16869,54 +16841,6 @@ function renderContextSettingsDialog(kind) {
         if (activeAppArea === "finance") renderFinancePage();
       });
     });
-    return;
-  }
-
-  if (kind === "apple-music") {
-    const cfg = (state.appleMusic && typeof state.appleMusic === "object" && !Array.isArray(state.appleMusic)) ? state.appleMusic : {};
-    const enabled = !!cfg.enabled;
-    elements.contextSettingsBody.innerHTML = `
-      <p class="settings-hint">Play Apple Music in the app (MusicKit). Needs your own Apple Developer key configured in the server environment — see the checklist. Playing full tracks also requires an active Apple Music subscription on this device.</p>
-      <label class="fin-set-row">
-        <span>Enable Apple Music</span>
-        <input type="checkbox" class="live-toggle" data-am-setting="enabled" ${enabled ? "checked" : ""} aria-label="Enable Apple Music" />
-      </label>
-      <div id="appleMusicAuthBlock" ${enabled ? "" : "hidden"}>
-        <div class="fin-set-row"><span>Status</span><span id="appleMusicStatus" class="settings-hint">Checking…</span></div>
-        <button class="secondary-btn" type="button" data-am-action="authorize">Sign in to Apple Music</button>
-      </div>
-      <p class="settings-hint" id="appleMusicDiag" style="margin-top:8px">${escapeHtml(appleMusicDiagnostic())}</p>
-      <details class="settings-details" style="margin-top:12px">
-        <summary>Setup checklist</summary>
-        <ol class="settings-hint" style="padding-left:1.2em; line-height:1.5">
-          <li>Apple Developer portal → <b>Certificates, Identifiers &amp; Profiles → Keys</b> → <b>+</b>, tick <b>MusicKit</b> (create/select a <b>Media ID</b> when prompted), register, then <b>download the .p8 (one time only)</b> and note the <b>Key ID</b>.</li>
-          <li>Note your <b>Team ID</b> (Membership page, top-right).</li>
-          <li>In <b>Netlify → Site settings → Environment variables</b>, set <code>APPLE_MUSIC_PRIVATE_KEY</code> (the .p8 file's contents), <code>APPLE_MUSIC_KEY_ID</code>, and <code>APPLE_MUSIC_TEAM_ID</code>, then redeploy.</li>
-          <li>Turn on the toggle above, tap <b>Sign in to Apple Music</b>, and approve. No bundle ID or redirect URL is needed for the web (MusicKit JS).</li>
-        </ol>
-      </details>`;
-    const toggle = elements.contextSettingsBody.querySelector('[data-am-setting="enabled"]');
-    toggle?.addEventListener("change", () => {
-      if (!state.appleMusic || typeof state.appleMusic !== "object" || Array.isArray(state.appleMusic)) state.appleMusic = {};
-      state.appleMusic = { ...state.appleMusic, enabled: toggle.checked };
-      musicProviderRegistry = null; // rebuild the registry with/without Apple Music
-      resetAppleMusicHome();
-      persist();
-      renderContextSettingsDialog("apple-music");
-    });
-    elements.contextSettingsBody.querySelector('[data-am-action="authorize"]')?.addEventListener("click", async () => {
-      try {
-        // Keep the popup inside the click's user activation (Safari): the status
-        // refresh below already loaded the registry, so don't await it again.
-        const reg = musicProviderRegistry || await getMusicProviders();
-        const p = reg.get("applemusic");
-        if (!p) { alert("Enable Apple Music first."); return; }
-        await p.authorize();
-      } catch (e) { alert("Apple Music sign-in failed: " + (e?.message || e)); }
-      resetAppleMusicHome(); // signed-in shelves (recommendations) differ
-      refreshAppleMusicStatus();
-    });
-    if (enabled) refreshAppleMusicStatus();
     return;
   }
 
@@ -17822,7 +17746,6 @@ function handleContextSettingsAction(event) {
     "notifications": () => renderContextSettingsDialog("notifications"),
     "mail-reading": () => renderContextSettingsDialog("mail-reading"),
     "voice": () => renderContextSettingsDialog("voice"),
-    "apple-music": () => renderContextSettingsDialog("apple-music"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
     "export-data": () => closeAndRun(exportMyData),
@@ -29197,7 +29120,7 @@ let musicProviderRegistry = null;
 // Owns-playback session (Apple Music / any CAP.OWNS_PLAYBACK provider). NON-NULL
 // only while such a track is actively playing — every guard below keys off this,
 // so the existing engine-based music/podcast/radio/TTS paths are untouched
-// whenever it is null (which is always, until Apple Music is configured).
+// whenever it is null (always, today: no owns-playback provider is registered).
 let musicPlaybackProvider = null;
 let musicOwnedNP = null;    // last normalized NowPlaying snapshot from the provider
 let musicOwnedUnsub = null; // provider.onChange() unsubscribe
@@ -33119,7 +33042,7 @@ function teardownOwnedMusic() {
   musicOwnedNP = null;
 }
 
-// Play a track whose provider OWNS its transport (Apple Music/MusicKit): there is
+// Play a track whose provider OWNS its transport (e.g. a subscription SDK): there is
 // no URL for the shared engine, so we drive the provider directly and mirror its
 // now-playing into the same mini-player / MediaSession / history the URL path uses.
 // Queue advance reuses the existing musicQueueRest machinery: each track is a
@@ -33137,11 +33060,11 @@ async function startOwnedMusicTrack(canonical, provider, gen = musicStartGen) {
   };
   const desc = ownedDesc(canonical);
   musicCurTrack = desc;
-  // In the iOS app the next Apple songs go into the native queue too, so music
-  // keeps going with the phone locked (the web app is paused then). Only the run
-  // of Apple songs straight after this one; anything else still plays from here.
+  // A provider that queues natively (an iOS-native player) gets the run of its own
+  // songs straight after this one, so music keeps going with the phone locked;
+  // anything else still plays from here.
   const upcoming = [];
-  if (nativeAppleMusic()) {
+  if (provider.queuesNatively) {
     for (const it of musicQueueRest) {
       if (it.kind !== "stream" || it.track?.provider !== provider.id || upcoming.length >= 25) break;
       upcoming.push(it.track);
@@ -33178,8 +33101,8 @@ async function startOwnedMusicTrack(canonical, provider, gen = musicStartGen) {
     await provider.play(canonical, { upcoming }); // sets the provider's queue to this track (+ upcoming), then plays
   } catch (e) {
     if (gen !== musicStartGen) return false; // superseded — the newer start owns the session; don't tear it down
-    console.warn("apple music play failed", e);
-    showVoiceToast("Couldn't play this Apple Music track");
+    console.warn("owned-transport play failed", e);
+    showVoiceToast("Couldn't play this track");
     teardownOwnedMusic();
     return false;
   }
@@ -33409,7 +33332,6 @@ function initMusicPanel() {
       // ── Discover actions ──
       if (e.target.closest("[data-music-back]")) { closeMusicItem(); return; }
       if (e.target.closest("[data-music-cat-back]")) { musicDiscoverCategory = null; updateMusicBody(); return; }
-      if (e.target.closest("[data-music-am-signin]")) { signInAppleMusicFromDiscover(); return; }
       const browse = e.target.closest("[data-music-browse]");
       if (browse) { openMusicCategory(browse.dataset.musicBrowse); return; }
       const replay = e.target.closest("[data-music-replay]");
@@ -33480,7 +33402,6 @@ function initMusicPanel() {
       if (e.target.id === "musicPlInlineInput" && !e.target.value.trim()) setTimeout(() => { if (musicPlTabInputActive) { musicPlTabInputActive = false; renderMusicPanel(); } }, 150);
     });
     panel.addEventListener("toggle", (e) => {
-      if (e.target.classList?.contains("music-free-sources")) musicFreeSourcesOpen = e.target.open;
     }, true);
     panel.addEventListener("change", (e) => {
       const inp = e.target.closest("#musicFileInput");
@@ -33608,7 +33529,7 @@ function renderMusicPanel() {
 
 const musicActiveQuery = () => (musicTabMode === "discover" ? musicSearchQuery : musicLocalQuery);
 function musicSearchPlaceholder() {
-  if (musicTabMode === "discover") return musicAppleEnabled() ? "Artists, songs, albums, playlists" : "Composers, works, moods";
+  if (musicTabMode === "discover") return "Composers, works, moods";
   if (musicTabMode === "saved") return "Search your saved music";
   if (musicTabMode === "library") return "Search your library";
   return "Search this playlist";
@@ -33802,18 +33723,6 @@ async function saveJellyfinConfig(cfg) {
 // The provider registry (music-streaming.js + adapters) is lazy-loaded on first
 // Discover use so none of it — nor any provider request — happens for users who
 // only use the local Library.
-// Settings → Apple Music diagnostic line: which path Apple Music will take on this
-// device (native MusicKit plugin vs MusicKit JS) and which web bundle is running,
-// so a TestFlight build can be told apart from an older one.
-function appleMusicDiagnostic() {
-  let plugins = [];
-  try { plugins = (globalThis.Capacitor?.PluginHeaders || []).map((h) => h.name).filter((n) => /^(AppleMusic|LiveTts)$/.test(n)); } catch { /* none */ }
-  const bundle = (document.querySelector('script[type="module"][src*="index-"]')?.getAttribute("src") || "dev").split("/").pop();
-  const native = isNativeApp();
-  const path = !native ? "web (MusicKit JS)" : nativeAppleMusic() ? "native MusicKit" : "native app, but the Apple Music plugin is missing";
-  return `Using: ${path} · plugins: ${plugins.join(", ") || "none"} · bundle: ${bundle}`;
-}
-
 async function getMusicProviders() {
   if (musicProviderRegistry) return musicProviderRegistry;
   const [stream, ia] = await Promise.all([
@@ -33822,24 +33731,6 @@ async function getMusicProviders() {
   ]);
   musicStreamMod = stream;
   const providers = [];
-  // Apple Music is a playback-owning provider and, when enabled, the PRIMARY
-  // catalog (Discover renders it first; the free sources sit below). It self-
-  // gates via isAvailable() (false until the developer token is configured), so
-  // search/playback silently exclude it until then. Storefront: an explicit
-  // config wins, else the signed-in user's own (detected by the provider).
-  const amCfg = state.appleMusic;
-  // Inside the iOS app, MusicKit JS's sign-in stalls (Apple's web popup can't
-  // complete in the web view), so Apple Music there needs the native plugin.
-  const amUsable = !isNativeApp() || !!nativeAppleMusic();
-  if (amCfg && amCfg.enabled && !amUsable) console.warn("Apple Music: native plugin not registered in this build");
-  if (amCfg && amCfg.enabled && amUsable) {
-    const am = await import("./music-provider-applemusic.js");
-    // In the iOS app, Apple's native MusicKit does sign-in and playback (MusicKit
-    // JS can't sign in or play reliably inside the app's web view).
-    const nativeAm = nativeAppleMusic();
-    const deps = nativeAm ? { getInstance: (await import("./music-applemusic-native.js")).nativeMusicKitLoader(nativeAm) } : {};
-    providers.push(am.createAppleMusicProvider({ storefront: amCfg.storefront || null }, deps));
-  }
   providers.push(ia.createInternetArchiveProvider(), ia.createMusopenProvider());
   musicProviderRegistry = stream.createMusicProviderRegistry(providers);
   return musicProviderRegistry;
@@ -33896,7 +33787,6 @@ function musicToggleFav(type, entity) {
 }
 
 const MUSIC_PROVIDER_LABELS = { applemusic: "Apple Music", internetarchive: "Internet Archive", musopen: "Musopen" };
-const musicAppleEnabled = () => !!(state.appleMusic && state.appleMusic.enabled);
 // A per-render lookup so DOM handlers resolve an item by id without embedding JSON.
 let musicViewIndex = new Map();
 const indexMusicItem = (it) => { if (it && it.id) musicViewIndex.set(it.id, it); return it; };
@@ -34082,16 +33972,13 @@ function musicOpenItemHtml() {
 // played, ranked top songs, top albums) → Browse categories. Without a browse-
 // capable catalog (no Apple Music) it's recents + the free-source categories.
 function musicDiscoverHomeHtml() {
-  const full = musicAppleEnabled();
-  if (full) ensureAppleMusicHome();
   const hist = getRecentMedia({ kind: "music", limit: 6 });
   const jump = hist.length ? `<section class="md-sec"><h3 class="md-h">Jump back in</h3><div class="md-quick">${hist.map(musicQuickTile).join("")}</div></section>` : "";
-  const parts = full ? musicBrowseHomeParts() : { top: "", rest: "" };
-  const tiles = `<section class="md-sec"><h3 class="md-h">Browse categories</h3><div class="md-tiles">${categoriesFor({ fullCatalog: full }).map(musicCategoryTile).join("")}</div></section>`;
-  const hint = full ? "" : `<p class="music-empty-sub music-discover-hint">Streaming free &amp; open music from the Internet Archive and Musopen. Connect Apple Music in Settings → Apple Music for charts, new music and picks for you.</p>`;
+  const tiles = `<section class="md-sec"><h3 class="md-h">Browse categories</h3><div class="md-tiles">${categoriesFor({ fullCatalog: false }).map(musicCategoryTile).join("")}</div></section>`;
+  const hint = `<p class="music-empty-sub music-discover-hint">Streaming free &amp; open music from the Internet Archive and Musopen.</p>`;
   return `<div class="md-home">
       <h2 class="md-greeting">${escapeHtml(greetingFor())}</h2>
-      ${parts.top}${jump}${parts.rest}${tiles}${hint}
+      ${jump}${tiles}${hint}
     </div>`;
 }
 
@@ -34148,9 +34035,11 @@ function musicRankedRow(item, i, key) {
 }
 
 // ── Browse categories (Discover → a category page) ─────────────────────────────
-// The first available BROWSE-capable provider (Apple Music today) supplies the
-// shelves; a provider swap needs no change here. Loaded on tap, cached in memory
-// for APPLE_HOME_TTL_MS — never polled. A failed load isn't cached.
+// The first available BROWSE-capable provider supplies the shelves (none today:
+// Apple Music was dropped 2026-10-14, so a category runs a search on the free
+// sources); a provider swap needs no change here. Loaded on tap, cached in memory
+// for MUSIC_BROWSE_TTL_MS — never polled. A failed load isn't cached.
+const MUSIC_BROWSE_TTL_MS = 30 * 60 * 1000;
 async function musicBrowseProvider() {
   const reg = await getMusicProviders();
   for (const p of reg.withCapability(musicStreamMod.CAP.BROWSE)) {
@@ -34170,7 +34059,7 @@ async function openMusicCategory(id) {
   updateMusicBody();
   document.getElementById("mediaMusicPanel")?.scrollIntoView({ block: "start", behavior: "smooth" });
   const c = musicCategoryCache.get(id);
-  if (c && (c.loading || (!c.error && Date.now() - c.at < APPLE_HOME_TTL_MS))) return;
+  if (c && (c.loading || (!c.error && Date.now() - c.at < MUSIC_BROWSE_TTL_MS))) return;
   musicCategoryCache.set(id, { loading: true, shelves: [], at: Date.now() });
   try {
     let genres = null;
@@ -34200,33 +34089,6 @@ function musicCategoryPageHtml() {
   return `<div class="md-cat">${banner}${body}</div>`;
 }
 
-// ── Apple Music Discover home (recommendations / recently played / charts) ─────
-// Loaded once per session on first Discover-home view and kept in memory for
-// APPLE_HOME_TTL_MS — a handful of Apple API calls, never a polling loop.
-const APPLE_HOME_TTL_MS = 30 * 60 * 1000;
-let musicAppleHome = null;        // { shelves[], authorized, at, error? } | null
-let musicAppleHomeLoading = false;
-let musicFreeSourcesOpen = false; // remembered open state of the "Free & open sources" section
-function resetAppleMusicHome() { musicAppleHome = null; }
-async function ensureAppleMusicHome() {
-  if (musicAppleHomeLoading) return;
-  if (musicAppleHome && Date.now() - musicAppleHome.at < APPLE_HOME_TTL_MS) return;
-  musicAppleHomeLoading = true;
-  try {
-    const reg = await getMusicProviders();
-    const p = reg.get("applemusic");
-    if (!p || !(await p.isAvailable())) { musicAppleHome = { shelves: [], authorized: false, at: Date.now(), error: "unavailable" }; return; }
-    const auth = await p.getAuthStatus();
-    const shelves = await p.getHome({ perShelf: 12 });
-    musicAppleHome = { shelves, authorized: !!auth.authorized, at: Date.now() };
-  } catch (e) {
-    console.warn("apple music home failed", e);
-    musicAppleHome = { shelves: [], authorized: false, at: Date.now(), error: "failed" };
-  } finally {
-    musicAppleHomeLoading = false;
-    if (musicTabMode === "discover" && !musicSearchResults && !musicOpenItem && !musicSearchLoading) updateDiscoverResults();
-  }
-}
 function musicShelfCard(item) {
   indexMusicItem(item);
   const sub = item.entity === "track" ? (item.artists?.[0]?.name || "") : (item.artist || "");
@@ -34236,35 +34098,6 @@ function musicShelfCard(item) {
       <span class="music-card-title">${escapeHtml(item.title)}</span>
       ${sub ? `<span class="music-card-sub">${escapeHtml(sub)}</span>` : ""}
     </div>`;
-}
-// Home shelves split so the hero shelf leads the page and the rest follow
-// "Jump back in".
-function musicBrowseHomeParts() {
-  const h = musicAppleHome;
-  if (!h) return { top: `<p class="music-status">Loading Apple Music…</p>`, rest: "" };
-  if (h.error === "unavailable") return { top: `<p class="music-provider-note">Apple Music isn’t reachable — check Settings → Apple Music.</p>`, rest: "" };
-  const signIn = !h.authorized
-    ? `<div class="music-am-signin"><span>Sign in to Apple Music for full-length playback and picks for you.</span><button class="secondary-btn" type="button" data-music-am-signin>Sign in</button></div>`
-    : "";
-  const shelves = h.shelves || [];
-  const hero = shelves.filter((sh) => sh.style === "hero").map((sh) => musicShelfHtml(sh, "home")).join("");
-  const rest = shelves.filter((sh) => sh.style !== "hero").map((sh) => musicShelfHtml(sh, "home")).join("");
-  return { top: signIn + hero, rest };
-}
-async function signInAppleMusicFromDiscover() {
-  try {
-    // Safari only lets MusicKit open Apple's sign-in popup while the click's user
-    // activation is still live, so don't wait on anything avoidable first. The
-    // Sign in button only renders after the Apple home loaded, i.e. the registry
-    // and MusicKit instance already exist — use the registry synchronously and
-    // call authorize() straight from the click (its getInstance() is cached).
-    const reg = musicProviderRegistry || await getMusicProviders();
-    const p = reg.get("applemusic");
-    if (!p) return;
-    await p.authorize();
-  } catch (e) { alert("Apple Music sign-in failed: " + (e?.message || e)); }
-  resetAppleMusicHome();
-  updateDiscoverResults();
 }
 function musicHistoryRow(h) {
   return `<div class="music-row" data-music-replay="${escapeHtml(h.id)}" role="button" tabindex="0">
@@ -34283,16 +34116,7 @@ function discoverResultsHtml() {
     const failed = (providerStatuses || []).filter((s) => !s.ok);
     const note = failed.length ? `<p class="music-provider-note">${failed.map((s) => escapeHtml(MUSIC_PROVIDER_LABELS[s.provider] || s.provider)).join(", ")} unavailable — showing the rest.</p>` : "";
     if (!items.length) return note + `<p class="music-status">No results for “${escapeHtml(musicSearchQuery)}”.</p>`;
-    // Apple Music is the primary catalog when connected: its results lead, and the
-    // free/open sources follow in a collapsible section. Without Apple, the free
-    // sources render exactly as before.
-    const apple = items.filter((i) => i.provider === "applemusic");
-    const free = items.filter((i) => i.provider !== "applemusic");
-    if (!apple.length) return note + musicConsolidatedHtml(free);
-    const freeHtml = free.length
-      ? `<details class="music-free-sources"${musicFreeSourcesOpen ? " open" : ""}><summary class="music-section-h">Free &amp; open sources (${free.length})</summary>${musicConsolidatedHtml(free)}</details>`
-      : "";
-    return note + musicAppleResultsHtml(apple) + freeHtml;
+    return note + musicConsolidatedHtml(items);
   }
   return musicDiscoverCategory ? musicCategoryPageHtml() : musicDiscoverHomeHtml();
 }
@@ -34306,30 +34130,6 @@ function musicConsolidatedHtml(items) {
     return g + l;
   }
   return `<div class="music-results">${items.map(musicResultRow).join("")}</div>`;
-}
-
-// Apple results in Apple-Music-like sections. Classical songs Apple tags with a
-// work (composer/work/movement) group under the Work first; the rest split into
-// Songs / Albums / Artists / Playlists, each capped so the page stays scannable.
-function musicAppleResultsHtml(items) {
-  let works = "", rest = items;
-  if (musicCanonMod) {
-    const { groups } = musicCanonMod.consolidateSearchResults(items.filter((i) => i.entity === "track" && i.work));
-    works = groups.map(musicWorkGroupHtml).join("");
-    const grouped = new Set(groups.flatMap((g) => g.items.map((i) => i.id)));
-    rest = items.filter((i) => !grouped.has(i.id));
-  }
-  const section = (title, list, cap) => list.length
-    ? `<h4 class="music-section-h">${title}</h4><div class="music-results">${list.slice(0, cap).map(musicResultRow).join("")}</div>`
-    : "";
-  const of = (kind) => rest.filter((i) => i.entity === "album" && (i.kind || "album") === kind);
-  return `<div class="music-apple-results">
-      ${section("Songs", rest.filter((i) => i.entity === "track"), 10)}
-      ${works ? `<h4 class="music-section-h">Works</h4>${works}` : ""}
-      ${section("Albums", of("album"), 10)}
-      ${section("Artists", of("artist"), 5)}
-      ${section("Playlists", of("playlist"), 8)}
-    </div>`;
 }
 
 function renderMusicDiscoverBody() {

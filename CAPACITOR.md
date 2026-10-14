@@ -133,21 +133,11 @@ before it appears in TestFlight. If a step fails, the run log shows the
 private repos. The free 2,000 min/month comes to roughly 200 macOS minutes,
 about 8–12 TestFlight builds, less whatever the compile check uses.
 
-## Native Apple Music
+## Native Apple Music (dropped)
 
-In the app, Apple Music runs on Apple's native MusicKit (`AppleMusicPlugin.swift`)
-instead of MusicKit JS: sign-in is Apple's own permission prompt (no popup), songs
-play natively, and music keeps going with the phone locked. The browser/PWA still
-uses MusicKit JS. The web side is `music-applemusic-native.js`.
-
-**One-time setup:** developer.apple.com → Certificates, Identifiers & Profiles →
-Identifiers → `com.mrlukedevans.live` → **App Services** tab → tick **MusicKit** →
-Save. Without it the Apple Music API calls fail with an authorization error.
-(Already enabled for `com.mrlukedevans.live` — Luke, 2026-09-30.)
-
-**Check on the phone after a TestFlight build:** Settings → Apple Music → turn it on
-→ Sign in (Apple's prompt appears) → play a Discover song; lock the phone and let it
-run into the next song; use the lock-screen play/pause and next buttons.
+Apple Music was dropped on 2026-10-14 (MUSIC.md). The web side is gone; the native
+`AppleMusicPlugin.swift` is still in the Xcode project and nothing calls it. Remove
+it (and its project entries) in the next Mac session, then run the iOS compile check.
 
 ## Signing in to Liv with Apple or Google
 
