@@ -16,4 +16,8 @@ Each entry: what shipped · PR · post-deploy steps.
 - Tap a game → Scores opens on that day with it expanded; tap a headline → the reader opens and closing it returns you.
 - During a live game the score updates within ~30 s; windows (notifications, Finance review, Meal Plan trash…) still stop above the dock, now above the strip too.
 
+**Dock ticker: patina in light mode, team logos** · #110 · Light mode strip is patina with midnight-blue text (dark mode unchanged); each team's logo sits beside its abbreviation. Web + iPhone app code.
+- After deploy / TestFlight: in light mode the strip is patina with midnight-blue text; in dark mode it stays dock blue.
+- A game shows both teams' logos next to their abbreviations (ESPN logos — not testable in the sandbox).
+
 _Last deploy: 2026-10-14 (Apple Music restored)._
