@@ -60,11 +60,10 @@ import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnos
 import { describeCapabilities } from './platform-capabilities.js';
 import { projectToday } from './today-projection.js';
 import { buildAgentContext } from './ai-context.js';
-import { toolAllowed, requiresConfirmation, isReadTool, AI_NOTE_CATEGORIES } from './assistant-tools.js';
+import { toolAllowed, requiresConfirmation, isReadTool } from './assistant-tools.js';
 import { normalizeDateRange, formatCalendarRange, formatTaskList, findContacts, formatContacts, summarizeTransactions, formatWeather, formatMailSearch, formatMailThread, addDaysKey, daysUntilAnnual, weekdayLabel } from './assistant-queries.js';
 import { captureBefore, captureAfter, canUndo, buildUndo } from './assistant-undo.js';
 import { computeSuggestions, pruneDismissed } from './assistant-suggestions.js';
-import { normalizeAiNotes, addNote, updateNote, forgetNote, formatNotesContext, AI_NOTE_LABELS } from './assistant-memory.js';
 import { indexFromState, search as searchIndexQuery } from './search-index.js';
 import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
@@ -332,7 +331,7 @@ const STATE_SECTIONS = {
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -5231,7 +5230,6 @@ function defaultState() {
     travelHome: "",
     tombstones: {},
     apiUsage: {},
-    aiNotes: { userPreferences: [], appGaps: [], suggestions: [], patterns: [] },
     aiSettings: { dailyBriefingEnabled: true },
     stateUpdatedAt: ""
   };
@@ -16554,7 +16552,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "location-services", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music", "notifications"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "location-services", "admin-pages", "read-sync", "assistant", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music", "notifications"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16793,7 +16791,7 @@ function renderContextSettingsDialog(kind) {
     "finance-accounts": "Accounts",
     "finance-emergency": "Emergency Savings",
     "api-usage": "API Usage",
-    "ai-notes": "AI Notes",
+    "assistant": "Assistant",
     "mail-ai": "Mail AI",
     "mail-reading": "Mail Reading",
     "voice": "Voice",
@@ -16818,7 +16816,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="apple-music">Apple Music</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
-        <button type="button" data-context-settings-action="ai-notes">AI Notes</button>
+        <button type="button" data-context-settings-action="assistant">Assistant</button>
         <button type="button" data-context-settings-action="import-ai">Import from AI Chat</button>
         <button type="button" data-context-settings-action="api-usage">API Usage</button>
         <button type="button" data-context-settings-action="export-data">Export My Data</button>
@@ -17352,31 +17350,9 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
-  if (kind === "ai-notes") {
-    const notes = normalizeAiNotes(state.aiNotes);
-    const categories = AI_NOTE_CATEGORIES.map((key) => ({ key, label: AI_NOTE_LABELS[key].label, hint: AI_NOTE_LABELS[key].hint }));
-    const fmt = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
-    const totalNotes = categories.reduce((s, c) => s + (Array.isArray(notes[c.key]) ? notes[c.key].length : 0), 0);
-    const sections = categories.map(({ key, label, hint }) => {
-      const entries = Array.isArray(notes[key]) ? notes[key] : [];
-      const rows = entries.length
-        ? entries.map((n) => `
-            <div class="ai-note-row" data-note-id="${escapeHtml(n.id)}" data-note-cat="${escapeHtml(key)}">
-              <span class="ai-note-text">${escapeHtml(n.text)}</span>
-              <span class="ai-note-date">${fmt(n.updatedAt || n.timestamp)}</span>
-              <button class="ai-note-edit" type="button" aria-label="Edit note" data-note-id="${escapeHtml(n.id)}">✎</button>
-              <button class="ai-note-delete" type="button" aria-label="Delete note" data-note-id="${escapeHtml(n.id)}" data-note-cat="${escapeHtml(key)}">✕</button>
-            </div>`).join("")
-        : `<p class="muted-label ai-note-empty">Nothing noted yet</p>`;
-      return `
-        <div class="ai-notes-category">
-          <div class="ai-notes-cat-header">
-            <strong>${escapeHtml(label)}</strong>
-            <span class="ai-notes-cat-hint">${escapeHtml(hint)}</span>
-          </div>
-          <div class="ai-notes-rows">${rows}</div>
-        </div>`;
-    }).join("");
+  // Assistant settings (SETTINGS_AUDIT.md). AI Notes, the assistant's saved memory,
+  // was removed 2026-10-14 (Luke: the assistant will be rebuilt fresh).
+  if (kind === "assistant") {
     const briefingOn = state.aiSettings?.dailyBriefingEnabled !== false;
     const financeAccessOn = state.aiSettings?.assistantFinanceRead === true;
     const suggestionsOn = state.aiSettings?.assistantSuggestionsEnabled !== false;
@@ -17432,25 +17408,20 @@ function renderContextSettingsDialog(kind) {
         </div>
         <p class="muted-label" style="margin:10px 0 0;font-size:0.78rem">Email access: ${mailAccessOn ? "on" : "off"} — change it in Settings → Mail AI.</p>
       </div>
-      <p class="muted-label" style="margin:16px 0 10px;font-size:0.82rem">
-        Notes the AI assistant has saved about you and the app. Included in every conversation so the assistant remembers context across sessions.
-      </p>
-      ${sections}
-      ${totalNotes ? `<button type="button" class="secondary-btn" style="margin-top:14px" id="aiNotesClearBtn">Clear all notes</button>` : ""}
     `;
     document.getElementById("dailyBriefingToggle")?.addEventListener("change", (e) => {
       if (!state.aiSettings) state.aiSettings = {};
       state.aiSettings.dailyBriefingEnabled = e.target.checked;
       persist();
-      renderContextSettingsDialog("ai-notes");
+      renderContextSettingsDialog("assistant");
     });
     document.getElementById("pushEnableBtn")?.addEventListener("click", async () => {
       await enablePushNotifications();
-      renderContextSettingsDialog("ai-notes");
+      renderContextSettingsDialog("assistant");
     });
     document.getElementById("pushDisableBtn")?.addEventListener("click", async () => {
       await disablePushNotifications();
-      renderContextSettingsDialog("ai-notes");
+      renderContextSettingsDialog("assistant");
     });
     document.getElementById("assistantSuggestionsToggle")?.addEventListener("change", (e) => {
       if (!state.aiSettings) state.aiSettings = {};
@@ -17461,34 +17432,6 @@ function renderContextSettingsDialog(kind) {
       if (!state.aiSettings) state.aiSettings = {};
       state.aiSettings.assistantFinanceRead = e.target.checked;
       persist();
-    });
-    elements.contextSettingsBody.querySelectorAll(".ai-note-delete").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const { notes } = forgetNote(state.aiNotes, btn.dataset.noteId);
-        if (notes === state.aiNotes) return;
-        state.aiNotes = notes;
-        persist();
-        renderContextSettingsDialog("ai-notes");
-      });
-    });
-    elements.contextSettingsBody.querySelectorAll(".ai-note-edit").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const current = normalizeAiNotes(state.aiNotes);
-        const note = AI_NOTE_CATEGORIES.flatMap((c) => current[c]).find((n) => n.id === btn.dataset.noteId);
-        if (!note) return;
-        const text = window.prompt("Edit note", note.text);
-        if (text == null || !text.trim() || text.trim() === note.text) return;
-        const { notes } = updateNote(state.aiNotes, note.id, text, { now: new Date().toISOString() });
-        state.aiNotes = notes;
-        persist();
-        renderContextSettingsDialog("ai-notes");
-      });
-    });
-    document.getElementById("aiNotesClearBtn")?.addEventListener("click", () => {
-      if (!confirm("Clear all AI notes? This cannot be undone.")) return;
-      state.aiNotes = normalizeAiNotes({});
-      persist();
-      renderContextSettingsDialog("ai-notes");
     });
     return;
   }
@@ -17905,7 +17848,7 @@ function handleContextSettingsAction(event) {
     "pages": () => renderContextSettingsDialog("pages"),
     "location-services": () => renderContextSettingsDialog("location-services"),
     "ai-log": () => renderContextSettingsDialog("ai-log"),
-    "ai-notes": () => renderContextSettingsDialog("ai-notes"),
+    "assistant": () => renderContextSettingsDialog("assistant"),
     "import-ai": () => closeAndRun(openImportAiDialog),
     "api-usage": () => renderContextSettingsDialog("api-usage"),
     "paper-signin": () => signInToArticlePaper(SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper)),
@@ -40502,7 +40445,7 @@ async function runAssistantToolCall(name, input = {}) {
     const msg = name === "search_mail" || name === "read_mail_thread"
       ? "Email access is switched off (Settings → Mail AI → “Assistant can read email”)."
       : name === "query_transactions"
-        ? "Finance access is switched off (Settings → AI Notes → “Assistant can read Finance”)."
+        ? "Finance access is switched off (Settings → Assistant → “Assistant can read Finance”)."
         : `Unknown tool: ${name}`;
     appendChatBubble("tool", `✕ ${msg}`);
     return msg;
@@ -41042,12 +40985,6 @@ async function executeChatTool(name, input) {
         return lines.join("\n");
       }
 
-      case "write_note": {
-        const { notes, message } = addNote(state.aiNotes, String(input.category || "").trim(), input.note, { makeId: () => createId("note"), now: new Date().toISOString() });
-        if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
-        return message;
-      }
-
       case "add_workout": {
         const title = String(input.title || "").trim();
         if (!title) return "No workout name provided.";
@@ -41070,18 +41007,6 @@ async function executeChatTool(name, input) {
         state.pianoSongs.push({ id: createId("piano"), title, learned: false, sheetMusicUrl: "" });
         persist();
         return `Added "${title}" to the piano practice list.`;
-      }
-
-      case "update_note": {
-        const { notes, message } = updateNote(state.aiNotes, input.note_id, input.note, { now: new Date().toISOString() });
-        if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
-        return message;
-      }
-
-      case "forget_note": {
-        const { notes, message } = forgetNote(state.aiNotes, input.note_id);
-        if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
-        return message;
       }
 
       // ── Cross-domain lookups (read-only) ──────────────────────────────────
@@ -41237,10 +41162,6 @@ async function executeChatTool(name, input) {
 
 // ── Chat context serializers ───────────────────────────────────────────────────
 
-function buildAiNotesContext() {
-  return formatNotesContext(state.aiNotes);
-}
-
 // ── Push notifications ─────────────────────────────────────────────────────────
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
@@ -41299,8 +41220,6 @@ function buildBriefingContext() {
     weekday: "long", month: "long", day: "numeric", year: "numeric"
   });
   const parts = [`Today: ${today}`];
-  const notesCtx = buildAiNotesContext();
-  if (notesCtx) parts.push(notesCtx);
   try { parts.push(buildChatEatContext()); }   catch { /* skip */ }
   try { parts.push(buildChatDoContext()); }    catch { /* skip */ }
   try { parts.push(buildChatPlanContext()); }  catch { /* skip */ }
@@ -46186,8 +46105,6 @@ function buildChatContext(section) {
     weekday: "long", month: "long", day: "numeric", year: "numeric"
   });
   let ctx = `Today: ${today}\nSection open: ${section || "home"}\n\n`;
-  const notesCtx = buildAiNotesContext();
-  if (notesCtx) ctx += notesCtx + "\n\n";
   // Every conversation sees every area (not just the open page), so "what's my
   // week look like?" works from anywhere; the open page adds its detail below.
   try {

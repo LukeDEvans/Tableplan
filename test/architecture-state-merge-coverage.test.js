@@ -80,7 +80,6 @@ const MERGE_NEWER_WINS_KEYS = {
   radioFavorites: "FOLLOW-UP: stable station ids + permanent tombstones would block re-favouriting; needs timestamped tombstones",
   radioFollowedPrograms: "FOLLOW-UP: same as radioFavorites",
   musicLibrary: "FOLLOW-UP: {favorites, playlists}; un-favourite needs tombstones in music-library model",
-  aiNotes: "FOLLOW-UP: lists are cleared wholesale by the AI tool; union would resurrect cleared notes",
 };
 
 describe("mergeStates covers every synced key (INF-5)", () => {
