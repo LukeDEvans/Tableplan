@@ -29,6 +29,11 @@ async function run(browser, { width, height, dark }) {
   console.log(`▸ ${width}px${dark ? " (dark)" : ""}`);
   const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: dark ? "dark" : "light", hasTouch: width < 600 });
   const page = await ctx.newPage();
+  // Team logos: served locally so the check doesn't depend on a vendor's CDN.
+  await page.route("https://logos.test/**", (route) => {
+    const dark = route.request().url().includes("-dark");
+    route.fulfill({ contentType: "image/svg+xml", body: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="${dark ? "#ffd166" : "#4f2683"}"/></svg>` });
+  });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource|favicon/i.test(m.text())) errors.push(m.text()); });
@@ -44,7 +49,7 @@ async function run(browser, { width, height, dark }) {
     const key = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     const now = new Date();
     const day = (n) => { const d = new Date(now); d.setDate(d.getDate() + n); return d; };
-    const t = (name, abbr) => ({ name, short: name.split(" ").pop(), abbr, refs: {} });
+    const t = (name, abbr) => ({ name, short: name.split(" ").pop(), abbr, refs: {}, logo: `https://logos.test/${abbr}.svg`, logoDark: `https://logos.test/${abbr}-dark.svg` });
     const vikings = t("Minnesota Vikings", "MIN"), packers = t("Green Bay Packers", "GB"), wild = t("Minnesota Wild", "MIN"), stars = t("Dallas Stars", "DAL");
     const ajax = t("Ajax", "AJX"), psv = t("PSV", "PSV"), bears = t("Chicago Bears", "CHI"), lions = t("Detroit Lions", "DET");
     qa.sportsSetPrefs({ teams: [{ ...vikings, scope: "nfl", league: "nfl" }, { ...wild, scope: "nhl", league: "nhl" }, { ...ajax, scope: "soccer", league: "eredivisie" }] });
@@ -99,6 +104,24 @@ async function run(browser, { width, height, dark }) {
   await page.waitForTimeout(450);
   if (OUT) await page.screenshot({ path: `${OUT}/ticker-${width}${dark ? "-dark" : ""}-game.png`, clip: { x: 0, y: geo.tickTop - 40, width, height: geo.dock + 40 } });
   check(await page.evaluate(() => document.querySelectorAll("#dockTickerStage .dtk-item").length === 1), "one item on stage after the transition");
+  // The local dev state may pin a mode; CSS only reads the resolved data-theme.
+  await page.evaluate((d) => { document.body.dataset.theme = d ? "dark" : "light"; }, !!dark);
+  await page.waitForTimeout(300);
+  const look = await page.evaluate(() => {
+    const item = document.querySelector("#dockTickerStage .dtk-item");
+    const shown = [...item.querySelectorAll(".dtk-logo img")].filter((i) => getComputedStyle(i).display !== "none");
+    const lum = (c) => { const [r, g, b] = c.match(/\d+(\.\d+)?/g).map(Number); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; };
+    return {
+      logos: shown.length, loaded: shown.every((i) => i.complete && i.naturalWidth > 0), darkVariant: shown.every((i) => i.src.includes("-dark")),
+      ink: lum(getComputedStyle(item.querySelector(".dtk-side.is-fav")).color),
+      strip: getComputedStyle(document.getElementById("dockTicker")).backgroundColor, text: getComputedStyle(item.querySelector(".dtk-side.is-fav")).color,
+      ...(() => { const probe = document.createElement("i"); document.body.append(probe); probe.style.color = "var(--accent)"; const accent = getComputedStyle(probe).color; probe.style.color = "var(--window-border)"; const midnight = getComputedStyle(probe).color; probe.remove(); return { accent, midnight }; })(),
+    };
+  });
+  check(look.logos === 2 && look.loaded, "a logo beside each team");
+  check(look.darkVariant === !!dark, `${dark ? "dark" : "light"}-background logos in ${dark ? "dark" : "light"} mode`);
+  if (!dark) check(look.strip === look.accent && look.text === look.midnight, `light mode: patina strip, midnight-blue text (${look.strip} / ${look.text})`);
+  else check(look.ink > 0.9, "dark mode: light text on the dock blue");
   await page.click('#dockTickerStage [data-dtk-key="g:t-live"]');
   await page.waitForTimeout(600);
   const opened = await page.evaluate(() => ({

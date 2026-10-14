@@ -82,6 +82,8 @@ export function gameTicker(entry, { locale } = {}) {
   const scored = game.home.score !== null && game.away.score !== null;
   const sides = order.map((w) => ({
     abbr: game[w].team.abbr || game[w].team.short,
+    logo: game[w].team.logo || "",
+    logoDark: game[w].team.logoDark || "",
     score: scored ? game[w].score : null,
     fav: !!fav?.[w],
   }));
@@ -229,7 +231,13 @@ export function createNewsTickerModule(deps) {
         <span class="dtk-text"><span class="dtk-run">${esc(it.text)}</span></span>
       </button>`;
     }
-    const side = (s) => `<span class="dtk-side${s.fav ? " is-fav" : ""}">${esc(s.abbr)}${s.score !== null ? ` <b>${esc(String(s.score))}</b>` : ""}</span>`;
+    // The logo for a light background, plus the dark-background one when the feed
+    // has it (CSS shows the one that suits the mode). A logo that fails to load goes.
+    const img = (src, cls) => `<img class="${cls}" src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`;
+    const logo = (s) => (s.logo || s.logoDark
+      ? `<span class="dtk-logo" aria-hidden="true">${s.logo ? img(s.logo, `dtk-logo-l${s.logoDark ? " has-dark" : ""}`) : ""}${s.logoDark ? img(s.logoDark, "dtk-logo-d") : ""}</span>`
+      : "");
+    const side = (s) => `<span class="dtk-side${s.fav ? " is-fav" : ""}">${logo(s)}${esc(s.abbr)}${s.score !== null ? ` <b>${esc(String(s.score))}</b>` : ""}</span>`;
     const mid = it.joiner ? `<span class="dtk-join">${esc(it.joiner)}</span>` : '<span class="dtk-join" aria-hidden="true">·</span>';
     return `<button type="button" class="dtk-item is-game${it.live ? " is-live" : ""}" data-dtk-key="${esc(it.key)}" aria-label="${esc(it.label)}">
       <span class="dtk-tag">${esc(it.league)}</span>

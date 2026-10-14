@@ -90,7 +90,7 @@ describe("gameTicker", () => {
   it("a result: visitor first, scores, the followed side marked", () => {
     const t = gameTicker({ game: final, rel: 0, fav: { away: true, home: false } });
     expect(t.league).toBe("NFL");
-    expect(t.sides).toEqual([{ abbr: "MIN", score: 24, fav: true }, { abbr: "GB", score: 17, fav: false }]);
+    expect(t.sides).toEqual([{ abbr: "MIN", logo: "", logoDark: "", score: 24, fav: true }, { abbr: "GB", logo: "", logoDark: "", score: 17, fav: false }]);
     expect(t.status).toBe("Final");
     expect(t.joiner).toBe("");
   });
@@ -111,6 +111,12 @@ describe("gameTicker", () => {
   it("an unset time keeps the feed's wording", () => {
     expect(gameTicker({ game: pre, rel: 0, fav: {} }).status).toBe("TBD");
     expect(gameTicker({ game: pre, rel: 0, fav: {} }).joiner).toBe("at");
+  });
+  it("carries each side's logos", () => {
+    const [g] = cleanGames([game("l", "nfl", { ...vikings, logo: "https://x.test/min.png", logoDark: "https://x.test/min-d.png" }, packers)]);
+    const t = gameTicker({ game: g, rel: 0, fav: {} });
+    expect(t.sides[0]).toMatchObject({ logo: "https://x.test/min.png", logoDark: "https://x.test/min-d.png" });
+    expect(t.sides[1]).toMatchObject({ logo: "", logoDark: "" });
   });
   it("reads well aloud", () => {
     expect(gameTicker({ game: final, rel: 0, fav: {} }).label).toBe("Minnesota Vikings at Green Bay Packers, 24 to 17, Final");
