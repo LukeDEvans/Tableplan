@@ -145,14 +145,14 @@ Luke plans a significantly reworked version later. Nothing here needs preserving
   - event details show the viewer's own reminder, and a **Remind me** picker for Google events (Google's reminder / none / a time);
   - the web minute tick uses the same instances;
   - on the iPhone, iOS's pending notifications are kept in sync on persist, focus and the minute tick;
-  - Settings → Calendars has a "Reminders on this iPhone" row (native only) to turn notifications on.
+  - A "Reminders on this iPhone / this browser" row turns notifications on. It's at gear → Settings → **Notifications**, and also in the calendar's Add Calendar window. (PR #95 first put it only in the page-level Settings → General → Calendars dialog, which the phone UI can't reach; PR #99 fixed that.)
 - The legacy fold waits until the device has read the server copy, so a new device that starts offline can't re-add reminders turned off elsewhere.
 - QA: `test/calendar-reminders.test.js` (38 tests), `test/calendar-gcal-server.test.js` (ownership + fields), and `scripts/qa-reminders.mjs` (23 checks through the real editor/detail/prefs/tick paths with mocked Google; the picker fits 360px). `scripts/qa-gcal.mjs` still passes 20/20.
 - **Before it works in production (Luke):**
   1. apply the migration;
   2. merge + deploy (Netlify: `gcal-events`/`_gcal.js` + web app);
   3. `npm run ios:sync` on the Mac and ship a TestFlight build;
-  4. on the phone: Settings → Calendars → "Reminders on this iPhone" → Turn on;
+  4. on the phone: gear → Settings → **Notifications** → Turn on (or choose a reminder on an event, which prompts too);
   5. then turn off notifications in the Google Calendar app.
 
 *Original plan:*
