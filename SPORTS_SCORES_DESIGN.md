@@ -152,8 +152,7 @@ scrolling through major news stories and games for followed teams.
   too long for the strip scrolls through once first. Swipe sideways to skip; hover
   or touch holds it. A tap opens the story in the reader (as on the Front page), or
   the game in News → Sports → Scores on its day, expanded.
-- **Look (Luke, 2026-10-14):** light mode is patina (`--accent`) with midnight-blue
-  text (`--window-border`); dark mode keeps the dock's blue with white text. Each
+- **Look (Luke, 2026-10-14):** light mode is white with text in the dock's own blue; dark mode keeps the dock's blue with white text. Each
   team's logo sits beside its abbreviation (the feed's dark-background logo in dark
   mode); a logo that fails to load is simply left out.
 - **Data and cost:** `news-ticker.js` reads only through News (`tickerLeads`) and

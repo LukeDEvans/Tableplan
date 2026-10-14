@@ -115,12 +115,11 @@ async function run(browser, { width, height, dark }) {
       logos: shown.length, loaded: shown.every((i) => i.complete && i.naturalWidth > 0), darkVariant: shown.every((i) => i.src.includes("-dark")),
       ink: lum(getComputedStyle(item.querySelector(".dtk-side.is-fav")).color),
       strip: getComputedStyle(document.getElementById("dockTicker")).backgroundColor, text: getComputedStyle(item.querySelector(".dtk-side.is-fav")).color,
-      ...(() => { const probe = document.createElement("i"); document.body.append(probe); probe.style.color = "var(--accent)"; const accent = getComputedStyle(probe).color; probe.style.color = "var(--window-border)"; const midnight = getComputedStyle(probe).color; probe.remove(); return { accent, midnight }; })(),
     };
   });
   check(look.logos === 2 && look.loaded, "a logo beside each team");
   check(look.darkVariant === !!dark, `${dark ? "dark" : "light"}-background logos in ${dark ? "dark" : "light"} mode`);
-  if (!dark) check(look.strip === look.accent && look.text === look.midnight, `light mode: patina strip, midnight-blue text (${look.strip} / ${look.text})`);
+  if (!dark) check(look.strip === "rgb(255, 255, 255)" && look.text === "rgb(43, 63, 99)", `light mode: white strip, dock-blue text (${look.strip} / ${look.text})`);
   else check(look.ink > 0.9, "dark mode: light text on the dock blue");
   await page.click('#dockTickerStage [data-dtk-key="g:t-live"]');
   await page.waitForTimeout(600);

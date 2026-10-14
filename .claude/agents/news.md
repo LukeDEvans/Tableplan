@@ -93,7 +93,7 @@ changes to the News page (including Sports → Scores) only.
   stories), **then scores**: every game of a followed team on the days in view —
   **before noon, yesterday's and today's; from noon, today's and tomorrow's**. A tap
   opens the story in the reader, or the game in Sports → Scores on its day.
-  Light mode: patina background, midnight-blue text; team logos beside abbreviations.
+  Light mode: white background, dock-blue text; team logos beside abbreviations.
 - Google sign-in refuses in-app browsers; Apple sign-in is the supported path in the
   iPhone app.
 

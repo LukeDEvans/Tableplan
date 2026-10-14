@@ -23164,9 +23164,7 @@ body:not(.app-authed) .bottom-dock { display: none; }
 /* Headlines-and-scores strip (news-ticker.js): along the dock's top edge, a
    third of the dock's height, one item at a time — the next rises from below.
    Dark mode: the dock's blue, a shade deeper, with a hairline under it.
-   Light mode (Luke, 2026-10-14): patina (--accent) with midnight-blue text
-   (--window-border) — every line in the full midnight blue, since a softened
-   blue drops under 4.5:1 on patina; weight carries the emphasis instead. */
+   Light mode (Luke, 2026-10-14): white, with text in the dock's own blue. */
 .dock-ticker {
   --tk-ink: var(--dock-ink);
   --tk-ink-soft: var(--dock-ink-soft);
@@ -23180,12 +23178,12 @@ body:not(.app-authed) .bottom-dock { display: none; }
   touch-action: pan-y;
 }
 body[data-theme="light"] .dock-ticker {
-  --tk-ink: var(--window-border);
-  --tk-ink-soft: var(--window-border);
-  --tk-chip: color-mix(in srgb, var(--window-border) 14%, transparent);
-  --tk-live: var(--window-border);
-  background: var(--accent);
-  border-bottom-color: color-mix(in srgb, var(--window-border) 22%, transparent);
+  --tk-ink: var(--dock-bg2);
+  --tk-ink-soft: var(--dock-bg1);
+  --tk-chip: color-mix(in srgb, var(--dock-bg2) 10%, transparent);
+  --tk-live: var(--tomato);
+  background: var(--surface-strong);
+  border-bottom-color: color-mix(in srgb, var(--dock-bg2) 18%, transparent);
 }
 .dock-ticker[hidden] { display: none; }
 .dtk-stage { position: relative; height: 100%; }
