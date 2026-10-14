@@ -24,6 +24,9 @@ almost all your work is there. Make focused changes to the Groceries domain only
 - state: `grocery*`, `pantry`, `persistentManualGroceries`, `persistentManualGroceryStamps`, `checkedGroceries`, `receipts`, `receiptItemMappings`, `priceHistory`, `nextStopItems`, `instacartOrders`, `dailyDozenTagSeedVersion`
 
 ## Your scope (edit these)
+- **Store search near Home (Luke, 2026-10-13):** when location sharing is off or the device's
+  position can't be had, store autocomplete biases to Home from the Profile (injected
+  `getHomeLocation`, the Weather "home" place) instead of searching nowhere in particular.
 - **`groceries-ui.js`** — the whole grocery UI as `createGroceriesModule(deps)` (290
   functions): shopping list + item rows/menus/drag, stores + layout + pricing + Places
   search, **receipts** (scan/edit/review + price trends), the **checklist** + **next-stop**,

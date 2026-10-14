@@ -21,10 +21,19 @@ complete). Make focused changes to Meal-plan only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `mealplan-ui.js`, `meal-plan-*.js`
-- state: `plans`, `publishedWeeks`, `mealPlanConfig`, `autoGenerateRules`, `mealPlanSharedEvents`
+- files: `mealplan-ui.js`, `meal-plan-*.js`, `food-restrictions.js`
+- state: `plans`, `publishedWeeks`, `mealPlanConfig`, `memberDiets`, `autoGenerateRules`, `mealPlanSharedEvents`
 
 ## Your scope (edit these)
+- **Diets & allergies (Luke, 2026-10-13):** each household member's dietary restrictions and
+  food allergies live in `state.memberDiets` (eat section), keyed by meal-plan member id, and
+  merge per member by `updatedAt` (`food-restrictions.js`, pure + tested). Edited in Profile →
+  Edit → Food; a user's own entry is mirrored to auth metadata `diet` and restored on boot if an
+  older build drops it. Consumers: the recipe view's heads-up (`recipeDietWarningTemplate`, a
+  warning only — never blocks) and the assistant overview (`foodRestrictionsContext`). Matching is
+  by ingredient name; extend `WORDS`/`STRIP`/`SKIP` with tests rather than special-casing callers.
+- **Restaurant search** falls back to Home (Profile) via injected `getHomeLocation` when the
+  device's location isn't available.
 - **`mealplan-ui.js`** — the whole domain as `createMealplanModule(deps)` (~246 fns): the
   planner (`renderPlanner`, carousel, meal-context), the **meal-entry + auto-rule drag/drop +
   pointer-delete machinery**, meal-entry menus + editing, **auto-rules** (UI + logic),

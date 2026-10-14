@@ -523,9 +523,6 @@
                       <button class="icon-btn" type="button" id="exArticleSyncBtn" title="Sync saved articles" aria-label="Sync from NYT and Economist" hidden>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                       </button>
-                      <button class="icon-btn" type="button" id="exArticleSyncSettingsBtn" title="Sync settings" aria-label="Configure sync settings" hidden>
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                      </button>
                       <button class="icon-btn" type="button" id="exArticleAddBtn" title="Save article URL" aria-label="Save article by URL">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
                       </button>
@@ -723,9 +720,6 @@
                       <button class="podcast-tabs-action-btn" type="button" id="articleSyncBtn" title="Sync saved articles" aria-label="Sync from NYT and Economist" hidden>
                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                       </button>
-                      <button class="podcast-tabs-action-btn" type="button" id="articleSyncSettingsBtn" title="Sync settings" aria-label="Configure sync settings" hidden>
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                      </button>
                     </div>
                   </div>
                   <div class="article-list" id="articleList"></div>
@@ -872,175 +866,6 @@
             </div>
           </div>
         </section>
-        <section class="planner-column settings-page" id="settingsMainPage" aria-label="Settings" hidden>
-          <div class="settings-page-list">
-            <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="generalSettingsBtn" aria-expanded="false" aria-controls="generalSettingsMenu">
-                <span>General</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <div class="settings-page-body" id="generalSettingsMenu" hidden>
-                <fieldset class="theme-setting" aria-label="Display mode">
-                  <legend>Display</legend>
-                  <label>
-                    <input type="radio" name="themeMode" value="light" />
-                    Light
-                  </label>
-                  <label>
-                    <input type="radio" name="themeMode" value="dark" />
-                    Dark
-                  </label>
-                  <label>
-                    <input type="radio" name="themeMode" value="auto" />
-                    Auto
-                  </label>
-                </fieldset>
-                <fieldset class="theme-setting" aria-label="Household or personal view">
-                  <legend>View</legend>
-                  <label>
-                    <input type="radio" name="globalScope" value="household" />
-                    Household
-                  </label>
-                  <label>
-                    <input type="radio" name="globalScope" value="personal" />
-                    Personal
-                  </label>
-                </fieldset>
-                <div class="settings-action-grid">
-                  <button type="button" id="openCalendarsBtn">Calendars</button>
-                  <button type="button" id="openWeeklyEmailBtn">Email</button>
-                  <button type="button" id="openBackupHealthBtn">Backup Health</button>
-                  <button type="button" id="openRestoreBackupBtn">Restore Backup</button>
-                  <button type="button" id="openExportDataBtn">Export My Data</button>
-                  <button type="button" id="openTrashBtn">Trash</button>
-                  <button type="button" id="openFamilyMembersBtn">Family Members</button>
-                </div>
-              </div>
-            </section>
-
-
-            <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="eatSettingsBtn" aria-expanded="false" aria-controls="eatSettingsMenu">
-                <span>Meal Plan</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <div class="settings-page-body" id="eatSettingsMenu" hidden>
-                <div class="settings-action-grid">
-                  <button type="button" id="openAutoRulesBtn">Auto-Fill Rules</button>
-                  <button type="button" id="openTagsBtn">Recipe Tags</button>
-                  <button type="button" id="openGroceryLibraryBtn">Grocery Items</button>
-                  <button type="button" id="openIngredientOptionsBtn">Ingredient Options</button>
-                  <button type="button" id="openFoodHealthSettingsBtn">Nutrition</button>
-                  <button type="button" id="openMealPlanSettingsBtn">Meals</button>
-                </div>
-              </div>
-            </section>
-
-            <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="doSettingsBtn" aria-expanded="false" aria-controls="doSettingsMenu">
-                <span>Tasks</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <div class="settings-page-body" id="doSettingsMenu" hidden>
-                <div class="settings-action-grid">
-                  <button type="button" id="openRecurringTasksBtn">Recurring Tasks</button>
-                </div>
-              </div>
-            </section>
-
-            <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="playSettingsBtn" aria-expanded="false" aria-controls="playSettingsMenu">
-                <span>Exercise</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <div class="settings-page-body" id="playSettingsMenu" hidden>
-                <div class="settings-action-grid">
-                  <button type="button" id="openWorkoutLibraryBtn">Workouts</button>
-                  <button type="button" id="openWorkoutLogsBtn">Workout Logs</button>
-                  <button type="button" id="openPastWorkoutBtn">Log Past Date</button>
-                </div>
-              </div>
-            </section>
-
-            <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="watchSettingsBtn" aria-expanded="false" aria-controls="watchSettingsMenu">
-                <span>Watch</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <div class="settings-page-body" id="watchSettingsMenu" hidden></div>
-            </section>
-
-            <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="readListenSettingsBtn" aria-expanded="false" aria-controls="readListenSettingsMenu">
-                <span>Read &amp; Listen</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <div class="settings-page-body" id="readListenSettingsMenu" hidden>
-                <div class="read-listen-settings">
-                  <p class="settings-hint">Paste your session cookies below to sync saved articles from the New York Times and The Economist. News also uses them: it collects articles only from papers you're signed in to (The Athletic uses your NYT sign-in). Cookies are stored securely in your account and used only on your behalf.</p>
-                  <div class="settings-field-row">
-                    <label class="settings-field-label" for="nytCookieInput">New York Times <span class="settings-field-key">NYT-S</span></label>
-                    <div class="settings-field-input-row">
-                      <input class="settings-field-input" type="password" id="nytCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your NYT-S cookie value" />
-                      <button class="secondary-btn" type="button" id="saveNytCookieBtn">Save</button>
-                    </div>
-                  </div>
-                  <div class="settings-field-row">
-                    <label class="settings-field-label" for="economistCookieInput">The Economist <span class="settings-field-key">blaize_session</span></label>
-                    <div class="settings-field-input-row">
-                      <input class="settings-field-input" type="password" id="economistCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your blaize_session cookie value" />
-                      <button class="secondary-btn" type="button" id="saveEconomistCookieBtn">Save</button>
-                    </div>
-                  </div>
-                  <div class="settings-field-row">
-                    <label class="settings-field-label" for="stribCookieInput">Star Tribune <span class="settings-field-key">session cookie</span></label>
-                    <div class="settings-field-input-row">
-                      <input class="settings-field-input" type="password" id="stribCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your Star Tribune session cookie" />
-                      <button class="secondary-btn" type="button" id="saveStribCookieBtn">Save</button>
-                    </div>
-                  </div>
-                  <div class="settings-field-row settings-field-row--action">
-                    <button class="primary-btn" type="button" id="syncArticlesSettingsBtn">Sync now</button>
-                    <span class="settings-sync-status" id="articleSyncStatus"></span>
-                  </div>
-                  <p class="settings-hint settings-hint--small">To find your cookie: open the browser DevTools (F12) → Application → Cookies → select the site → copy the <em>Value</em> of the named cookie.</p>
-                </div>
-              </div>
-            </section>
-
-            <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="voiceSettingsBtn" aria-expanded="false" aria-controls="voiceSettingsMenu">
-                <span>Voice Commands</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <div class="settings-page-body" id="voiceSettingsMenu" hidden>
-                <div class="voice-setup">
-                  <p class="voice-setup-hint">Set a passphrase to authenticate voice commands from Siri or Alexa. You'll paste this into your Shortcut once.</p>
-                  <div class="voice-setup-row">
-                    <label for="voiceSecretInput">Passphrase</label>
-                    <div class="voice-setup-input-row">
-                      <input type="text" id="voiceSecretInput" placeholder="e.g. sunshine-lake-42" autocomplete="off" spellcheck="false" />
-                      <button class="primary-btn" type="button" id="saveVoiceSecretBtn">Save</button>
-                    </div>
-                  </div>
-                  <div class="voice-setup-shortcut" id="voiceSetupShortcut" hidden>
-                    <p class="voice-setup-label">Siri Shortcut — paste this into the "Get Contents of URL" body:</p>
-                    <pre class="voice-setup-json" id="voiceSetupJson"></pre>
-                    <button class="secondary-btn" type="button" id="copyVoiceSetupBtn">Copy</button>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section class="settings-page-section" id="groupSettingsSection">
-              <button class="settings-section-toggle" type="button" id="groupSettingsBtn" aria-expanded="false" aria-controls="groupSettingsMenu">
-                <span>Household</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <div class="settings-page-body" id="groupSettingsMenu" hidden></div>
-            </section>
-          </div>
-        </section>
       </main>
 
       <dialog class="recipe-dialog auth-dialog context-settings-dialog" id="contextSettingsDialog">
@@ -1112,6 +937,7 @@
               <button class="secondary-btn folder-add-btn" id="addFolderBtn" type="button">Add</button>
             </form>
             <div class="recipe-list recipe-tile-list" id="recipeList"></div>
+            <button class="text-btn recently-deleted-link" type="button" id="recentlyDeletedRecipesBtn" hidden>Recently deleted</button>
           </div>
         </aside>
       </dialog>
@@ -1223,47 +1049,6 @@
             <button class="secondary-btn" type="button" id="cancelPdfImportBtn">Cancel</button>
             <button class="primary-btn" type="button" id="confirmPdfImportBtn">Import</button>
           </div>
-        </div>
-      </dialog>
-
-      <dialog class="recipe-dialog article-sync-settings-dialog" id="articleSyncSettingsDialog">
-        <div class="recipe-form">
-          <div class="dialog-head">
-            <h2>Sync Settings</h2>
-            <button class="icon-btn" id="closeArticleSyncSettingsBtn" type="button" aria-label="Close">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
-          </div>
-          <div class="article-sync-settings-body">
-            <p class="article-save-hint">Paste session cookies to sync your saved articles. Open DevTools → Application → Cookies, find the site, copy the cookie <em>Value</em>.</p>
-            <div class="sync-settings-field">
-              <label class="sync-settings-label" for="dialogNytCookieInput">New York Times <span class="settings-field-key">NYT-S</span></label>
-              <div class="settings-field-input-row">
-                <input class="settings-field-input" type="password" id="dialogNytCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste NYT-S cookie value" />
-                <button class="secondary-btn" type="button" id="dialogSaveNytCookieBtn">Save</button>
-              </div>
-            </div>
-            <div class="sync-settings-field">
-              <label class="sync-settings-label" for="dialogEconomistCookieInput">The Economist <span class="settings-field-key">blaize_session</span></label>
-              <div class="settings-field-input-row">
-                <input class="settings-field-input" type="password" id="dialogEconomistCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste blaize_session cookie value" />
-                <button class="secondary-btn" type="button" id="dialogSaveEconomistCookieBtn">Save</button>
-              </div>
-            </div>
-            <div class="sync-settings-field">
-              <label class="sync-settings-label" for="dialogStribCookieInput">Star Tribune <span class="settings-field-key">session cookie</span></label>
-              <div class="settings-field-input-row">
-                <input class="settings-field-input" type="password" id="dialogStribCookieInput" autocomplete="off" spellcheck="false" placeholder="Paste your Star Tribune session cookie" />
-                <button class="secondary-btn" type="button" id="dialogSaveStribCookieBtn">Save</button>
-              </div>
-            </div>
-            <p class="article-save-hint">News collects articles only from papers you're signed in to here. The Athletic uses your New York Times sign-in.</p>
-          </div>
-          <div class="dialog-actions">
-            <button class="secondary-btn" type="button" id="cancelArticleSyncSettingsBtn">Close</button>
-            <button class="primary-btn" type="button" id="dialogSyncNowBtn">Sync now</button>
-          </div>
-          <p class="sync-settings-status-row"><span class="settings-sync-status" id="dialogSyncStatus"></span></p>
         </div>
       </dialog>
 
@@ -1626,27 +1411,6 @@
           </div>
           <div class="tasks-overlay-body" id="tasksOverlayBody"></div>
         </section>
-      </dialog>
-
-      <dialog class="recipe-dialog auth-dialog" id="doSettingsDialog">
-        <div class="recipe-form">
-          <div class="dialog-head">
-            <div>
-              <p class="muted-label">Do</p>
-              <h2>Settings</h2>
-            </div>
-            <button class="icon-btn" id="closeDoSettingsBtn" type="button" title="Close" aria-label="Close">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-            </button>
-          </div>
-          <div class="empty-state">Do settings will live here as we add more task features.</div>
-          <div class="dialog-actions">
-            <span></span>
-            <div>
-              <button class="primary-btn" type="button" id="doneDoSettingsBtn">Done</button>
-            </div>
-          </div>
-        </div>
       </dialog>
 
       <dialog class="recipe-dialog auto-rules-dialog" id="recurringTasksDialog">
@@ -2350,40 +2114,89 @@
       </div>
     </dialog>
 
-    <dialog class="recipe-dialog profile-dialog" id="profileDialog">
+    <!-- Profile: opens read-only; the small Edit button switches to the form. -->
+    <dialog class="recipe-dialog std-form-dialog profile-dialog" id="profileDialog" data-mode="view">
       <div class="recipe-form">
-        <div class="dialog-head">
-          <h2>User</h2>
+        <div class="recipe-form-head profile-head">
+          <h2 id="profileTitle">Profile</h2>
+          <button class="profile-edit-btn" id="profileEditBtn" type="button" aria-label="Edit profile">Edit</button>
           <button class="icon-btn" id="closeProfileBtn" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
         </div>
-        <div class="profile-dialog-body">
-          <div class="profile-avatar-row">
-            <div class="profile-avatar-large"></div>
-            <div class="profile-identity">
-              <p id="profileEmailDisplay"></p>
+        <div class="recipe-form-body profile-dialog-body">
+          <section class="profile-view" id="profileView">
+            <div class="profile-hero">
+              <div class="profile-avatar profile-avatar--xl" id="profileViewAvatar" aria-hidden="true"></div>
+              <p class="profile-hero-name" id="profileViewName"></p>
+              <p class="profile-hero-sub" id="profileViewSub"></p>
             </div>
-          </div>
-          <label class="profile-field-label">
-            Name
-            <input type="text" id="profileNameInput" class="config-input" autocomplete="off" placeholder="Your name" />
-          </label>
-          <label class="profile-field-label">
-            Birthday
-            <input type="date" id="profileDobInput" class="config-input" />
-          </label>
-          <label class="profile-field-label">
-            Home address
-            <input type="text" id="profileHomeInput" class="config-input" autocomplete="off" placeholder="City or airport — trips start and finish here" />
-          </label>
+            <div class="profile-group">
+              <h3 class="profile-group-title">About</h3>
+              <div class="profile-rows" id="profileViewAbout"></div>
+            </div>
+            <div class="profile-group">
+              <h3 class="profile-group-title">Food</h3>
+              <div class="profile-rows" id="profileViewFood"></div>
+            </div>
+            <div class="profile-group" id="profileViewHouseholdGroup">
+              <h3 class="profile-group-title">Household</h3>
+              <div class="profile-rows" id="profileViewHousehold"></div>
+            </div>
+            <div class="profile-group">
+              <h3 class="profile-group-title">Account</h3>
+              <div class="profile-rows" id="profileViewAccount"></div>
+            </div>
+          </section>
+
+          <section class="profile-edit" id="profileEdit" hidden>
+            <div class="profile-photo-edit">
+              <div class="profile-avatar profile-avatar--xl" id="profileEditAvatar" aria-hidden="true"></div>
+              <div class="profile-photo-actions">
+                <button type="button" class="secondary-btn" id="profilePhotoPickBtn">Add photo</button>
+                <button type="button" class="link-btn profile-photo-remove" id="profilePhotoRemoveBtn" hidden>Remove</button>
+              </div>
+              <input type="file" id="profilePhotoInput" accept="image/*" hidden />
+              <p class="profile-field-hint" id="profilePhotoStatus" role="status"></p>
+            </div>
+            <label class="form-field profile-field">
+              <span>Name</span>
+              <input type="text" id="profileNameInput" autocomplete="name" placeholder="Your name" />
+            </label>
+            <label class="form-field profile-field">
+              <span>Birthday</span>
+              <input type="date" id="profileDobInput" />
+              <small class="profile-field-hint">Finance uses your birth year for retirement targets.</small>
+            </label>
+            <div class="form-field profile-field profile-home-field">
+              <label for="profileHomeInput"><span>Home</span></label>
+              <input type="text" id="profileHomeInput" autocomplete="off" placeholder="Search your city" role="combobox" aria-autocomplete="list" aria-controls="profileHomeResults" aria-expanded="false" />
+              <div class="profile-home-results" id="profileHomeResults" role="listbox" hidden></div>
+              <small class="profile-field-hint" id="profileHomeHint">Shared with your household. Weather, store search and Explore use it.</small>
+            </div>
+
+            <div class="profile-food">
+              <h3 class="profile-group-title">Food</h3>
+              <p class="profile-field-hint">Recipes warn when an ingredient conflicts, and the assistant keeps these in mind. Shared with your household.</p>
+              <div class="profile-chip-field">
+                <span class="profile-chip-label">Diet</span>
+                <div class="profile-chips" id="profileDietChips"></div>
+              </div>
+              <div class="profile-chip-field">
+                <span class="profile-chip-label">Allergies</span>
+                <div class="profile-chips" id="profileAllergyChips"></div>
+              </div>
+              <label class="form-field profile-field">
+                <span>Anything else</span>
+                <input type="text" id="profileFoodOtherInput" maxlength="200" autocomplete="off" placeholder="e.g. no mushrooms, low sodium" />
+              </label>
+            </div>
+          </section>
         </div>
-        <div class="dialog-actions">
+        <div class="dialog-actions profile-actions" id="profileEditActions" hidden>
+          <span></span>
           <div>
-            <button class="secondary-btn" type="button" id="profileLogOutBtn" hidden>Log out</button>
-            <button class="secondary-btn" type="button" id="profileLogInBtn">Log in</button>
-          </div>
-          <div>
+            <button class="secondary-btn" type="button" id="cancelProfileEditBtn">Cancel</button>
             <button class="primary-btn" type="button" id="saveProfileBtn">Save</button>
           </div>
         </div>
@@ -2871,44 +2684,6 @@
       </div>
     </dialog>
 
-    <dialog class="recipe-dialog auth-dialog" id="calendarsDialog">
-      <div class="recipe-form">
-        <div class="dialog-head">
-          <div>
-            <h2>Calendars</h2>
-          </div>
-          <button class="icon-btn" id="closeCalendarsBtn" type="button" title="Close" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-          </button>
-        </div>
-        <div class="gcal-panel" data-gcal-panel></div>
-        <div class="reminder-device-panel" id="reminderDevicePanel" data-reminder-device-panel hidden></div>
-        <div class="calendar-editor">
-          <label>
-            <span>Calendar name</span>
-            <input id="calendarNameInput" placeholder="Birthdays, Holidays, School" />
-          </label>
-          <label>
-            <span>Google Calendar iCal URL</span>
-            <input id="calendarUrlInput" type="url" placeholder="https://calendar.google.com/calendar/ical/..." />
-          </label>
-          <label class="calendar-color-field">
-            <span>Calendar color</span>
-            <input id="calendarColorInput" type="color" value="#e5e9ff" />
-          </label>
-          <div class="calendar-list" id="calendarList"></div>
-          <p class="muted-note">Use Google Calendar secret iCal URLs. Enabled calendars appear in Meal Plan tabs with the calendar color.</p>
-          <p class="muted-note" id="calendarStatus"></p>
-        </div>
-        <div class="dialog-actions">
-          <button class="secondary-btn" type="button" id="syncCalendarsBtn">Sync now</button>
-          <div>
-            <button class="primary-btn" type="button" id="saveCalendarsBtn">Save and close</button>
-          </div>
-        </div>
-      </div>
-    </dialog>
-
     <dialog class="recipe-dialog auth-dialog" id="groceryReviewDialog">
       <div class="recipe-form">
         <div class="dialog-head">
@@ -3125,13 +2900,14 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <p class="muted-label">Safety</p>
-            <h2>Trash</h2>
+            <p class="muted-label">Recipes</p>
+            <h2>Recently deleted</h2>
           </div>
           <button class="icon-btn" id="closeTrashBtn" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
         </div>
+        <p class="muted-note">Deleted recipes stay here for 30 days, then they're gone for good.</p>
         <div class="trash-list" id="trashList"></div>
         <div class="dialog-actions">
           <span></span>
@@ -3567,28 +3343,6 @@
         <div class="dialog-actions">
           <button class="danger-btn" type="button" id="contactViewDeleteBtn">Delete</button>
           <button class="primary-btn" type="button" id="contactViewEditBtn">Edit</button>
-        </div>
-      </div>
-    </dialog>
-
-    <dialog class="recipe-dialog auth-dialog" id="familyMembersDialog">
-      <div class="recipe-form">
-        <div class="dialog-head">
-          <div><h2>Family Members</h2></div>
-          <button class="icon-btn" id="closeFamilyMembersBtn" type="button" title="Close" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-          </button>
-        </div>
-        <div class="config-dialog-body">
-          <div data-members-list class="config-list"></div>
-          <button type="button" class="secondary-btn" id="addFamilyMemberBtn">+ Add Member</button>
-        </div>
-        <div class="dialog-actions">
-          <span></span>
-          <div>
-            <button type="button" class="secondary-btn" id="cancelFamilyMembersBtn">Cancel</button>
-            <button type="button" class="primary-btn" id="saveFamilyMembersBtn">Save</button>
-          </div>
         </div>
       </div>
     </dialog>

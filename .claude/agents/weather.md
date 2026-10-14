@@ -24,6 +24,11 @@ Weather domain only.
 - state: `weather*`
 
 ## Your scope (edit these)
+- **Home place (Luke, 2026-10-13):** Profile → Home stores its picked city as the saved place
+  with `id: "home"`, always first in `state.weatherLocations`, so it's the fallback wherever the
+  page/ticker/assistant use `saved[0]`. Shown as "Home" (`wxPlaceName`). The module also returns
+  `searchWeatherLocations` for the Profile's city search. Removing it in Weather clears Home's
+  coordinates; that's expected.
 - **`weather-ui.js`** — the whole domain: the normalized service (`weatherRequest`,
   `getWeatherSnapshot`, `getCurrentConditions`, `searchWeatherLocations`), page
   rendering (`renderWeatherPage` + the `wx*` builders), handlers (`wireWeatherPage`,

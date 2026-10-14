@@ -449,7 +449,7 @@ export function baseGroceryItemKey(item) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createGroceriesModule(deps) {
   const {
-    state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp,
+    state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp, getHomeLocation,
   } = deps;
   _appState = state; // wire the module-scope live-state ref used by pure exports
 
@@ -804,17 +804,21 @@ function acquireGroceryStoreSearchLocation({ settingsInput = null } = {}) {
 
 async function searchGroceryStoreLocations(query) {
   try {
+    // Near the device when location sharing is on; otherwise (or if that fails)
+    // near Home from the profile, so results are still local.
+    const home = getHomeLocation?.() || null;
     if (state.locationSharingEnabled && !groceryStoreSearchLocation) {
       setGroceryStoreSearchStatus("Finding stores near your current location...");
       const location = await acquireGroceryStoreSearchLocation();
       if (elements.groceryStoreInput.value.trim() !== query) return;
-      if (!location) return;
+      if (!location && !home) return;
     }
+    const near = groceryStoreSearchLocation || home;
     const response = await fetch(groceryPlacesApiUrl({
       action: "autocomplete",
       input: query,
       sessionToken: groceryStoreSearchSessionToken,
-      ...(groceryStoreSearchLocation || {})
+      ...(near ? { latitude: near.latitude, longitude: near.longitude } : {})
     }), groceryPlacesRequestOptions());
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "Store search is unavailable.");

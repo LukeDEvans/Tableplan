@@ -14,6 +14,7 @@
     "qa:p0p1": "node scripts/qa-p0p1.mjs",
     "qa:p0p1-extended": "node scripts/qa-p0p1-extended.mjs",
     "qa:reminders": "node scripts/qa-reminders.mjs",
+    "qa:settings": "node scripts/qa-settings.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },

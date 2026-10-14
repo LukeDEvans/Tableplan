@@ -59,7 +59,7 @@
 # assistant-tools.js …). The default bundler ships those files as-is, and
 # Netlify's Node 22 runtime (AWS Lambda) turns off Node's ES-module detection,
 # so the import failed with "Unexpected token 'export'". esbuild bundles them
-# into the function instead. Same setting on simplefin and voice-command below.
+# into the function instead. Same setting on simplefin below.
 [functions."scan-receipt"]
   node_bundler = "esbuild"
 
@@ -109,11 +109,6 @@
   status = 200
 
 [[redirects]]
-  from = "/api/voice-command"
-  to = "/.netlify/functions/voice-command"
-  status = 200
-
-[[redirects]]
   from = "/api/admin-data"
   to = "/.netlify/functions/admin-data"
   status = 200
@@ -152,8 +147,3 @@
 [functions."chat"]
   included_files = ["assistant-tools.js"]
 
-# voice-command (Siri → the assistant) dynamically imports the shared tool
-# registry, grocery stamps and assistant memory from the repo root.
-[functions."voice-command"]
-  node_bundler = "esbuild"
-  included_files = ["assistant-tools.js", "assistant-memory.js", "grocery-list-stamps.js"]

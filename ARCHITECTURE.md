@@ -49,7 +49,7 @@ move off Supabase to a home server + local-first storage without a rewrite.
 │  Postgres + RLS           │     │  Integration/proxy layer + jobs:      │
 │  tableplan_states (JSONB  │     │   tmdb-*, youtube-search, weather,    │
 │    app-state blob/section)│     │   google-*, simplefin, showtimes…     │
-│  eat_recipes/eat_folders  │◀────│  AI: chat.js, voice-command,_claude.js│
+│  eat_recipes/eat_folders  │◀────│  AI: chat.js, _claude.js              │
 │  mail_* (jobs, hardened)  │ svc │  Background: sweep-background, gmail-  │
 │  live_group_* (sharing)   │ role│    webhook, import-pdf-background      │
 │  Auth (JWT, email-scoped) │     │  Cron: scheduled-email(15m), daily-   │
@@ -213,13 +213,13 @@ per-notification unbounded reads.
 - The AI acts **only through the typed tool layer** — one registry,
   `assistant-tools.js` (shared by `netlify/functions/chat.js`, which sends the specs,
   and `app.js`, which applies calls): each tool is a bounded, validated action
-  (`add_task`, `set_meal`, `add_event`, `write_note`, …) or a bounded read
+  (`add_task`, `set_meal`, `add_event`, …) or a bounded read
   (`get_calendar_range`, `list_tasks`, `find_contact`, `get_weather`,
   `query_transactions`, `search_mail`, …). Each tool declares `access` (read/write),
   `risk` (destructive → confirmation card before it runs), and an optional `gate`.
   **No arbitrary AI-generated SQL/DB writes.**
 - **Opt-in domains:** email (`state.mailAiSettings.assistantMailRead`, Settings → Mail
-  AI) and finance (`state.aiSettings.assistantFinanceRead`, Settings → AI Notes) are
+  AI) and finance (`state.aiSettings.assistantFinanceRead`, Settings → Assistant) are
   OFF by default. `chat.js` reads both flags from the household config row (two JSON
   paths only) and offers gated tools only when on; the client refuses gated calls too.
 - **Undo:** every write tool is snapshotted (`assistant-undo.js`); its chat bubble
@@ -229,8 +229,8 @@ per-notification unbounded reads.
 - **Context:** every conversation gets a cross-domain OVERVIEW (tasks, meals, next
   7 days of calendar, trips, birthdays, access flags) plus detail for the open page,
   refreshed on page change and every 30 min. Pure formatters live in
-  `assistant-queries.js`; memory ops (id-addressable, deduped, bounded notes incl.
-  `openThreads`) in `assistant-memory.js`.
+  `assistant-queries.js`. The assistant keeps no memory between conversations: AI
+  Notes (`assistant-memory.js`) was removed 2026-10-14 ahead of a fresh rebuild.
 - **Suggestions:** `assistant-suggestions.js` — pure rules over a snapshot the shell
   builds from each domain's readers, recomputed when the chat panel opens (never on a
   timer; no model call). Accepting one sends a prompt or runs one typed tool.

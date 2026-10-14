@@ -95,11 +95,16 @@ async function main() {
   await page.waitForFunction(() => document.body.classList.contains("app-authed"), { timeout: 10000 });
   await page.waitForTimeout(1500);
 
-  // Legacy iCal calendar for Luke's Google calendar, added the old way.
+  // Legacy iCal calendar for Luke's Google calendar, added the old way (a Google
+  // iCal URL in the sidebar's Add Calendar dialog lands in the linked store).
+  await page.evaluate(() => document.getElementById("homePlanBtn")?.click());
+  await page.waitForSelector("[data-add-cal]", { state: "attached", timeout: 8000 });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => document.querySelector("[data-add-cal]")?.click());
   await page.evaluate((url) => {
-    document.getElementById("calendarNameInput").value = "Luke (iCal)";
-    document.getElementById("calendarUrlInput").value = url;
-    document.getElementById("saveCalendarsBtn").click();
+    document.getElementById("planNewCalName").value = "Luke (iCal)";
+    document.getElementById("planNewCalUrl").value = url;
+    document.getElementById("addPlanCalBtn").click();
   }, LEGACY_URL);
   await page.waitForTimeout(800);
   const legacyId = await page.evaluate(async () => (await window.__liveQA.gcalSyncNow()).calendars.find((c) => c.url)?.id);
@@ -167,9 +172,10 @@ async function main() {
 
   // Remove the wife calendar from the app → server link disabled, never re-added.
   await page.evaluate(() => document.getElementById("closePlanAddCalBtn")?.click());
-  await page.evaluate(() => document.getElementById("openCalendarsBtn")?.click());
-  await page.waitForTimeout(500);
-  await page.evaluate((id) => document.querySelector(`[data-remove-calendar="${id}"]`)?.click(), wife.id);
+  await page.waitForTimeout(300);
+  await page.evaluate((id) => document.querySelector(`[data-cal-edit="${CSS.escape(id)}"]`)?.click(), wife.id);
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.getElementById("planCalDialogDeleteBtn")?.click());
   await page.waitForTimeout(800);
   check(server.posts.some((p) => p.action === "unlink" && p.appCalendarId === wife.id), "removing a Google calendar tells the server (unlink)");
   const afterRemove = await page.evaluate(() => window.__liveQA.gcalSyncNow());
@@ -191,13 +197,13 @@ async function main() {
   const mealEvents = await page.evaluate(() => window.__liveQA.gcalMealPlanEvents());
   const mealShift = (mealEvents || []).find((e) => e.title === "Work shift");
   check(mealShift && mealShift.startTime === "08:00" && mealShift.endTime === "16:00" && mealShift.allDay === false, "switched-on Google calendar puts its timed events on the meal plan", JSON.stringify(mealEvents));
-  await page.evaluate(() => document.getElementById("openCalendarsBtn")?.click());
+  await page.evaluate(() => document.querySelector("[data-add-cal]")?.click());
   await page.waitForTimeout(400);
 
-  // Severance dry run from the Settings panel.
-  await page.evaluate(() => document.querySelector('#calendarsDialog [data-gcal-action="report"]')?.click());
-  await page.waitForFunction(() => /Dry run|import cleanly/.test(document.querySelector("#calendarsDialog .gcal-report")?.innerText || ""), { timeout: 5000 }).catch(() => {});
-  const report = await page.evaluate(() => document.querySelector("#calendarsDialog .gcal-report")?.innerText || "");
+  // Severance dry run from the Google panel (sidebar's Add Calendar dialog).
+  await page.evaluate(() => document.querySelector('#planAddCalGcal [data-gcal-action="report"]')?.click());
+  await page.waitForFunction(() => /Dry run|import cleanly/.test(document.querySelector("#planAddCalGcal .gcal-report")?.innerText || ""), { timeout: 5000 }).catch(() => {});
+  const report = await page.evaluate(() => document.querySelector("#planAddCalGcal .gcal-report")?.innerText || "");
   check(/Pay bills/.test(report) && /several days/.test(report) && /repeating series/.test(report), "dry-run report lists what wouldn't import exactly", report.slice(0, 300));
   check(server.eventCalls.some((b) => b.mode === "masters"), "dry run reads unexpanded series (masters mode)");
 

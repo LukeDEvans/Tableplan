@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   ASSISTANT_TOOLS, toolSpecsForRequest, toolAllowed, requiresConfirmation, isReadTool,
-  assistantTool, AI_NOTE_CATEGORIES,
+  assistantTool,
 } from "../assistant-tools.js";
 import {
   normalizeDateRange, formatCalendarRange, formatTaskList, findContacts, formatContacts,
@@ -10,13 +10,12 @@ import {
 } from "../assistant-queries.js";
 import { UNDO_KEYS, captureBefore, captureAfter, canUndo, buildUndo } from "../assistant-undo.js";
 import { computeSuggestions, pruneDismissed } from "../assistant-suggestions.js";
-import { normalizeAiNotes, addNote, updateNote, forgetNote, formatNotesContext } from "../assistant-memory.js";
 
 describe("assistant-tools registry", () => {
   it("keeps every existing tool and gives each unique name + schema", () => {
     const names = ASSISTANT_TOOLS.map((t) => t.name);
     expect(new Set(names).size).toBe(names.length);
-    for (const n of ["add_task", "delete_event", "search_recipes", "write_note", "generate_packing_list"]) {
+    for (const n of ["add_task", "delete_event", "search_recipes", "generate_packing_list"]) {
       expect(names).toContain(n);
     }
     for (const t of ASSISTANT_TOOLS) {
@@ -56,8 +55,8 @@ describe("assistant-tools registry", () => {
     expect(toolAllowed("nope", { mail: true })).toBe(false);
   });
 
-  it("write_note accepts every memory category", () => {
-    expect(assistantTool("write_note").input_schema.properties.category.enum).toEqual(AI_NOTE_CATEGORIES);
+  it("has no memory-note tools (AI Notes removed 2026-10-14)", () => {
+    for (const n of ["write_note", "update_note", "forget_note"]) expect(assistantTool(n)).toBeFalsy();
   });
 
   it("every write tool is undoable, and no read tool claims undo keys", () => {
@@ -283,42 +282,5 @@ describe("assistant-suggestions", () => {
 
   it("prunes old dismissals", () => {
     expect(pruneDismissed({ a: "2026-01-01", b: "2026-09-30", c: 5 }, "2026-10-01")).toEqual({ b: "2026-09-30" });
-  });
-});
-
-describe("assistant-memory", () => {
-  let i = 0;
-  const opts = { makeId: () => `note-${++i}`, now: "2026-10-01T00:00:00Z" };
-
-  it("adds, dedupes, updates and forgets notes without mutating input", () => {
-    const start = normalizeAiNotes(null);
-    const a = addNote(start, "userPreferences", "Luke prefers metric units.", opts);
-    expect(a.message).toMatch(/saved/);
-    expect(start.userPreferences).toEqual([]);
-    const id = a.notes.userPreferences[0].id;
-    const dup = addNote(a.notes, "patterns", "luke prefers METRIC units", opts);
-    expect(dup.message).toMatch(/Already noted/);
-    expect(dup.notes).toBe(a.notes);
-    const u = updateNote(a.notes, id, "Luke prefers imperial units.", opts);
-    expect(u.notes.userPreferences[0].text).toBe("Luke prefers imperial units.");
-    const f = forgetNote(u.notes, id);
-    expect(f.notes.userPreferences).toEqual([]);
-    expect(forgetNote(f.notes, "missing").message).toMatch(/No note/);
-    expect(addNote(start, "bogus", "x", opts).message).toMatch(/Invalid category/);
-  });
-
-  it("keeps each category bounded and exposes ids in the context block", () => {
-    let notes = normalizeAiNotes({});
-    for (let k = 0; k < 45; k++) notes = addNote(notes, "openThreads", `Thread number ${k}`, opts).notes;
-    expect(notes.openThreads.length).toBe(40);
-    expect(notes.openThreads[0].text).toBe("Thread number 5");
-    const ctx = formatNotesContext(notes);
-    expect(ctx).toMatch(/^ASSISTANT MEMORY/);
-    expect(ctx).toContain(`[${notes.openThreads[0].id}] Thread number 5`);
-    expect(formatNotesContext({})).toBe("");
-  });
-
-  it("preserves unknown keys from other clients", () => {
-    expect(normalizeAiNotes({ futureKey: [1] }).futureKey).toEqual([1]);
   });
 });

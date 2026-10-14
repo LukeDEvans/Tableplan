@@ -117,7 +117,7 @@ export function groceryMealSlotId(item, servings = 1) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createMealplanModule(deps) {
   const {
-    state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getMealPlanCalendarEvents, getMealPlanMemberLabel, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, escapeHtml, focusGroceryLibraryInput, folderName, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog, openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
+    state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getMealPlanCalendarEvents, getMealPlanMemberLabel, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, escapeHtml, focusGroceryLibraryInput, folderName, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog, openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount, getHomeLocation,
   } = deps;
   _appState = state;
 
@@ -1045,6 +1045,12 @@ function openRestaurantSearchDialog(day, meal, index) {
   }
 }
 
+// Near the device when we have its location; otherwise near Home (profile).
+function restaurantSearchOrigin() {
+  const near = getGroceryStoreSearchLocation() || getHomeLocation?.() || null;
+  return near ? { latitude: near.latitude, longitude: near.longitude } : {};
+}
+
 async function searchRestaurantLocations(query) {
   try {
     if (state.locationSharingEnabled && !getGroceryStoreSearchLocation()) {
@@ -1054,7 +1060,7 @@ async function searchRestaurantLocations(query) {
       action: "restaurant-autocomplete",
       input: query,
       sessionToken: restaurantSearchSessionToken,
-      ...(getGroceryStoreSearchLocation() || {})
+      ...restaurantSearchOrigin()
     }), groceryPlacesRequestOptions());
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "Restaurant search is unavailable.");
@@ -1138,28 +1144,6 @@ function clearMealRestaurant(day, meal, index) {
   if (!specialMeal) return;
   entries[index] = specialMealSlotId(specialMeal.type, specialMeal.note);
   setMeal(day, meal, compactMealSlotEntries(entries, meal));
-}
-
-function saveMealPlanMembers() {
-  const rows = elements.familyMembersDialog.querySelectorAll("[data-member-row]");
-  const newMembers = [];
-  rows.forEach(row => {
-    const id = row.dataset.memberId;
-    const linkedUserId = row.dataset.memberLinkedUserId || null;
-    const label = (row.querySelector("input[type='text']")?.value || "").trim();
-    const dob = (row.querySelector("[data-member-dob]")?.value || "").trim();
-    if (label) newMembers.push({ id, label, dob, linkedUserId: linkedUserId || null });
-  });
-  if (!newMembers.length) { alert("At least one family member is required."); return; }
-  const oldConfig = normalizeMealPlanConfig(state.mealPlanConfig);
-  state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, members: newMembers });
-  const newConfig = normalizeMealPlanConfig(state.mealPlanConfig);
-  recomputeMealPlanLayout();
-  applyMealPlanConfigChange(oldConfig, newConfig);
-  persist();
-  render();
-  if (getActiveAppArea() === "home") setPageTitle(getAppName());
-  elements.familyMembersDialog.close();
 }
 
 function openMealPlanSettingsDialog() {
@@ -3891,7 +3875,6 @@ function recipeOrCustomMealValue(value, dayId = "", meal = "") {
     renderRestaurantSuggestions,
     restoreMealPlanSwipeScroll,
     saveMealPlanMealTypes,
-    saveMealPlanMembers,
     searchRestaurantLocations,
     selectPlannerDay,
     setMeal,

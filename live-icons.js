@@ -238,6 +238,9 @@ const EXTRA_PATHS = {
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7"/><circle cx="12" cy="16.5" r="1" fill="currentColor" stroke="none"/>',
   translate: '<path d="M4 6h8"/><path d="M8 4v2c0 4-2 7-5 8"/><path d="M6 9c0 2.5 2.5 4.5 5 5"/><path d="M13 20l3.5-9 3.5 9"/><line x1="14.2" y1="17" x2="18.8" y2="17"/>',
   checklist: '<polyline points="4 7 6 9 9 5"/><polyline points="4 15 6 17 9 13"/><line x1="12" y1="7" x2="20" y2="7"/><line x1="12" y1="15" x2="20" y2="15"/>',
+  home: '<path d="M4 11 12 4l8 7"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5h4v5"/>',
+  birthday: '<rect x="4" y="12" width="16" height="8" rx="2"/><path d="M4 16c2 1.2 4 1.2 5.3 0 1.4-1.2 4-1.2 5.4 0 1.3 1.2 3.3 1.2 5.3 0"/><line x1="12" y1="12" x2="12" y2="8"/><path d="M12 4.5c.9 1 .9 2 0 2.6-.9-.6-.9-1.6 0-2.6z"/>',
+  camera: '<path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
 };
 
 Object.assign(PATHS, EXTRA_PATHS);

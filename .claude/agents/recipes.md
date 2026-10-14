@@ -49,6 +49,13 @@ Tableplan** — a single-page, vanilla-ESM web app. Recipes has been **extracted
 - **`app.js` (glue only):** `showEatApp` nav, the `createRecipesModule({...})` instantiation +
   destructure, and the `bindEvents` wiring (which calls the exposed `onRecipeViewDialogClose`).
 
+## Decisions (Luke)
+- **Recently deleted, not Trash (2026-10-14):** a deleted recipe goes to `trashedRecipes` and
+  shows in the Recipe Box's "Recently deleted (N)" view (link under the list, hidden when
+  empty) for `TRASH_RETENTION_DAYS` (30). Older entries are purged when a recipe is deleted
+  or the view opens — never at boot, before the cloud copy has loaded. There is no Trash
+  entry in Settings. Guarded by test/recipe-recently-deleted.test.js and `npm run qa:settings`.
+
 ## Data model
 - **Recipes are the app's one RELATIONAL domain:** `state.recipes`/`state.folders` (JSONB
   `eat` section) are mirrored to Postgres tables **`eat_recipes`/`eat_folders`** via direct
