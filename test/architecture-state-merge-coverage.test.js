@@ -58,7 +58,6 @@ const MERGE_NEWER_WINS_KEYS = {
   aiSettings: "settings object",
   jellyfin: "settings object",
   mediaServices: "settings object",
-  appleMusic: "settings object",
   financeAlertPrefs: "settings object",
   planMealPlanCalendars: "settings object (per-calendar \"Show on Meal Plan\" switches, each stamped on its own)",
   apiUsage: "usage counters; a per-device approximation is acceptable",
@@ -80,7 +79,6 @@ const MERGE_NEWER_WINS_KEYS = {
   radioFavorites: "FOLLOW-UP: stable station ids + permanent tombstones would block re-favouriting; needs timestamped tombstones",
   radioFollowedPrograms: "FOLLOW-UP: same as radioFavorites",
   musicLibrary: "FOLLOW-UP: {favorites, playlists}; un-favourite needs tombstones in music-library model",
-  aiNotes: "FOLLOW-UP: lists are cleared wholesale by the AI tool; union would resurrect cleared notes",
 };
 
 describe("mergeStates covers every synced key (INF-5)", () => {

@@ -42,7 +42,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
@@ -60,11 +60,10 @@ import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnos
 import { describeCapabilities } from './platform-capabilities.js';
 import { projectToday } from './today-projection.js';
 import { buildAgentContext } from './ai-context.js';
-import { toolAllowed, requiresConfirmation, isReadTool, AI_NOTE_CATEGORIES } from './assistant-tools.js';
+import { toolAllowed, requiresConfirmation, isReadTool } from './assistant-tools.js';
 import { normalizeDateRange, formatCalendarRange, formatTaskList, findContacts, formatContacts, summarizeTransactions, formatWeather, formatMailSearch, formatMailThread, addDaysKey, daysUntilAnnual, weekdayLabel } from './assistant-queries.js';
 import { captureBefore, captureAfter, canUndo, buildUndo } from './assistant-undo.js';
 import { computeSuggestions, pruneDismissed } from './assistant-suggestions.js';
-import { normalizeAiNotes, addNote, updateNote, forgetNote, formatNotesContext, AI_NOTE_LABELS } from './assistant-memory.js';
 import { indexFromState, search as searchIndexQuery } from './search-index.js';
 import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
@@ -332,7 +331,7 @@ const STATE_SECTIONS = {
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -470,9 +469,9 @@ const PAGE_SCOPE_SECTION = {
 
 let scopeToggleWired = false;
 
-// The per-page header toggle has moved into Settings → General → View, which
-// switches every page at once. Keep this stub so callers stay valid; it just
-// keeps the old header control hidden and refreshes the Settings radios.
+// The per-page header toggle was replaced by one app-wide switch (setAllScopes).
+// That switch has no control right now: Luke is redesigning how household and
+// personal overlap (SETTINGS_AUDIT.md §7). Keep this stub so callers stay valid.
 function updateScopeToggleUi() {
   const wrap = document.getElementById("scopeToggle");
   if (wrap) wrap.hidden = true;
@@ -1090,6 +1089,7 @@ const elements = {
   addFolderBtn: document.querySelector("#addFolderBtn"),
   folderList: document.querySelector("#folderList"),
   recipeList: document.querySelector("#recipeList"),
+  recentlyDeletedRecipesBtn: document.querySelector("#recentlyDeletedRecipesBtn"),
   activeCookingSection: document.querySelector("#activeCookingSection"),
   activeCookingList: document.querySelector("#activeCookingList"),
   plannerGrid: document.querySelector("#plannerGrid"),
@@ -1112,7 +1112,6 @@ const elements = {
   foodHealthMeals: document.querySelector("#foodHealthMeals"),
   addFoodLogBtn: document.querySelector("#addFoodLogBtn"),
   ateRecipeBtn: document.querySelector("#ateRecipeBtn"),
-  settingsMainPage: document.querySelector("#settingsMainPage"),
   playMainPage: document.querySelector("#playMainPage"),
   playPlannerGrid: document.querySelector("#playPlannerGrid"),
   watchPlannerGrid: document.querySelector("#watchPlannerGrid"), // on the Watch page (#watchMainPage)
@@ -1264,23 +1263,9 @@ const elements = {
   readingArchiveDialog: document.querySelector("#readingArchiveDialog"),
   readingArchiveBody: document.querySelector("#readingArchiveBody"),
   closeReadingArchiveBtn: document.querySelector("#closeReadingArchiveBtn"),
-  generalSettingsBtn: document.querySelector("#generalSettingsBtn"),
-  generalSettingsMenu: document.querySelector("#generalSettingsMenu"),
-  eatSettingsBtn: document.querySelector("#eatSettingsBtn"),
-  eatSettingsMenu: document.querySelector("#eatSettingsMenu"),
-  doSettingsBtn: document.querySelector("#doSettingsBtn"),
-  doSettingsMenu: document.querySelector("#doSettingsMenu"),
-  watchSettingsBtn: document.querySelector("#watchSettingsBtn"),
-  watchSettingsMenu: document.querySelector("#watchSettingsMenu"),
-  playSettingsBtn: document.querySelector("#playSettingsBtn"),
-  playSettingsMenu: document.querySelector("#playSettingsMenu"),
-  openRecurringTasksBtn: document.querySelector("#openRecurringTasksBtn"),
-  openWorkoutLibraryBtn: document.querySelector("#openWorkoutLibraryBtn"),
-  openWorkoutLogsBtn: document.querySelector("#openWorkoutLogsBtn"),
   openPlayAutoRulesBtn: document.querySelector("#openPlayAutoRulesBtn"),
   openDoListBtn: document.querySelector("#openDoListBtn"),
   openTasksPageBtn: document.querySelector("#openTasksPageBtn"),
-  openDoSettingsBtn: document.querySelector("#openDoSettingsBtn"),
   doMainPage: document.querySelector("#doMainPage"),
   doPlannerGrid: document.querySelector("#doPlannerGrid"),
   addTaskDialog: document.querySelector("#addTaskDialog"),
@@ -1317,9 +1302,6 @@ const elements = {
   tasksPageTaskForm: document.querySelector("#tasksPageTaskForm"),
   tasksPageTaskInput: document.querySelector("#tasksPageTaskInput"),
   tasksPageTaskList: document.querySelector("#tasksPageTaskList"),
-  doSettingsDialog: document.querySelector("#doSettingsDialog"),
-  closeDoSettingsBtn: document.querySelector("#closeDoSettingsBtn"),
-  doneDoSettingsBtn: document.querySelector("#doneDoSettingsBtn"),
   recurringTasksDialog: document.querySelector("#recurringTasksDialog"),
   closeRecurringTasksBtn: document.querySelector("#closeRecurringTasksBtn"),
   doneRecurringTasksBtn: document.querySelector("#doneRecurringTasksBtn"),
@@ -1387,20 +1369,7 @@ const elements = {
   pastWorkoutSelect: document.querySelector("#pastWorkoutSelect"),
   pastWorkoutDate: document.querySelector("#pastWorkoutDate"),
   startPastWorkoutBtn: document.querySelector("#startPastWorkoutBtn"),
-  openPastWorkoutBtn: document.querySelector("#openPastWorkoutBtn"),
-  themeModeInputs: document.querySelectorAll("input[name='themeMode']"),
-  openAutoRulesBtn: document.querySelector("#openAutoRulesBtn"),
-  openTagsBtn: document.querySelector("#openTagsBtn"),
-  openGroceryLibraryBtn: document.querySelector("#openGroceryLibraryBtn"),
-  openIngredientOptionsBtn: document.querySelector("#openIngredientOptionsBtn"),
-  openFoodHealthSettingsBtn: document.querySelector("#openFoodHealthSettingsBtn"),
   menuMealPlanSettingsBtn: document.querySelector("#menuMealPlanSettingsBtn"),
-  openCalendarsBtn: document.querySelector("#openCalendarsBtn"),
-  openWeeklyEmailBtn: document.querySelector("#openWeeklyEmailBtn"),
-  openBackupHealthBtn: document.querySelector("#openBackupHealthBtn"),
-  openRestoreBackupBtn: document.querySelector("#openRestoreBackupBtn"),
-  openExportDataBtn: document.querySelector("#openExportDataBtn"),
-  openTrashBtn: document.querySelector("#openTrashBtn"),
   autoRulesDialog: document.querySelector("#autoRulesDialog"),
   mealAutoFillDialog: document.querySelector("#mealAutoFillDialog"),
   autoRuleTrashTarget: document.querySelector("#autoRuleTrashTarget"),
@@ -1521,15 +1490,6 @@ const elements = {
   ingredientQtyOptions: document.querySelector("#ingredientQtyOptions"),
   ingredientItemOptions: document.querySelector("#ingredientItemOptions"),
   ingredientPrepOptions: document.querySelector("#ingredientPrepOptions"),
-  calendarsDialog: document.querySelector("#calendarsDialog"),
-  closeCalendarsBtn: document.querySelector("#closeCalendarsBtn"),
-  saveCalendarsBtn: document.querySelector("#saveCalendarsBtn"),
-  syncCalendarsBtn: document.querySelector("#syncCalendarsBtn"),
-  calendarNameInput: document.querySelector("#calendarNameInput"),
-  calendarUrlInput: document.querySelector("#calendarUrlInput"),
-  calendarColorInput: document.querySelector("#calendarColorInput"),
-  calendarList: document.querySelector("#calendarList"),
-  calendarStatus: document.querySelector("#calendarStatus"),
   weeklyEmailDialog: document.querySelector("#weeklyEmailDialog"),
   closeWeeklyEmailBtn: document.querySelector("#closeWeeklyEmailBtn"),
   closeWeeklyEmailBtn2: document.querySelector("#closeWeeklyEmailBtn2"),
@@ -1673,9 +1633,6 @@ const elements = {
   trashList: document.querySelector("#trashList"),
   closeTrashBtn: document.querySelector("#closeTrashBtn"),
   doneTrashBtn: document.querySelector("#doneTrashBtn"),
-  openFamilyMembersBtn: document.querySelector("#openFamilyMembersBtn"),
-  familyMembersDialog: document.querySelector("#familyMembersDialog"),
-  openMealPlanSettingsBtn: document.querySelector("#openMealPlanSettingsBtn"),
   mealPlanSettingsDialog: document.querySelector("#mealPlanSettingsDialog")
 };
 
@@ -2088,6 +2045,7 @@ const {
   renderRecipes,
   renderTagLibrary,
   renderTrash,
+  purgeExpiredTrash,
   replaceScanRecipeFiles,
   saveFolderRow,
   saveNutritionEstimate,
@@ -2193,7 +2151,6 @@ const {
   renderRestaurantSuggestions,
   restoreMealPlanSwipeScroll,
   saveMealPlanMealTypes,
-  saveMealPlanMembers,
   searchRestaurantLocations,
   selectPlannerDay,
   setMeal,
@@ -2688,7 +2645,6 @@ function bindEvents() {
   elements.openMealPlanBtn?.addEventListener("click", showEatApp);
   elements.openDoListBtn?.addEventListener("click", showDoApp);
   elements.openTasksPageBtn?.addEventListener("click", openTasksPage);
-  elements.openDoSettingsBtn?.addEventListener("click", openDoSettingsDialog);
   elements.closeWatchSearchBtn.addEventListener("click", () => elements.watchSearchDialog.close());
   elements.watchSearchDialog.addEventListener("click", closeDialogOnBackdropClick);
   elements.watchSearchDialog.addEventListener("close", () => {
@@ -2725,8 +2681,6 @@ function bindEvents() {
   elements.planTasksBtn?.addEventListener("click", openTasksPage);
   elements.tasksOverlayPrevWeek?.addEventListener("click", () => stepPlanTasksWeek(-1));
   elements.tasksOverlayNextWeek?.addEventListener("click", () => stepPlanTasksWeek(1));
-  elements.closeDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
-  elements.doneDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
   elements.closeRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
   elements.doneRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
   elements.tasksPageTaskForm?.addEventListener("submit", addDoTaskFromTasksPage);
@@ -2804,25 +2758,6 @@ function bindEvents() {
   document.addEventListener("drop", handleDocumentMealDrop, true);
   document.addEventListener("mousemove", handleDocumentAutoRuleMouseMove);
   document.addEventListener("mouseup", handleDocumentAutoRuleMouseUp);
-  elements.generalSettingsBtn.addEventListener("click", toggleGeneralSettingsMenu);
-  elements.eatSettingsBtn.addEventListener("click", toggleEatSettingsMenu);
-  elements.doSettingsBtn.addEventListener("click", toggleDoSettingsMenu);
-  elements.playSettingsBtn.addEventListener("click", togglePlaySettingsMenu);
-  elements.watchSettingsBtn.addEventListener("click", toggleWatchSettingsMenu);
-  document.getElementById("readListenSettingsBtn")?.addEventListener("click", toggleReadListenSettingsMenu);
-  document.getElementById("saveNytCookieBtn")?.addEventListener("click", saveNytCookie);
-  document.getElementById("saveEconomistCookieBtn")?.addEventListener("click", saveEconomistCookie);
-  document.getElementById("saveStribCookieBtn")?.addEventListener("click", saveStribCookie);
-  document.getElementById("syncArticlesSettingsBtn")?.addEventListener("click", () => syncSavedArticles("settings"));
-  document.getElementById("closeArticleSyncSettingsBtn")?.addEventListener("click", closeSyncSettingsDialog);
-  document.getElementById("cancelArticleSyncSettingsBtn")?.addEventListener("click", closeSyncSettingsDialog);
-  document.getElementById("dialogSaveNytCookieBtn")?.addEventListener("click", saveDialogNytCookie);
-  document.getElementById("dialogSaveEconomistCookieBtn")?.addEventListener("click", saveDialogEconomistCookie);
-  document.getElementById("dialogSaveStribCookieBtn")?.addEventListener("click", saveDialogStribCookie);
-  document.getElementById("dialogSyncNowBtn")?.addEventListener("click", () => syncSavedArticles("dialog"));
-  elements.openRecurringTasksBtn.addEventListener("click", openRecurringTasksDialog);
-  elements.openWorkoutLibraryBtn.addEventListener("click", openWorkoutLibraryDialog);
-  elements.openWorkoutLogsBtn.addEventListener("click", openWorkoutLogsDialog);
   elements.openPlayAutoRulesBtn?.addEventListener("click", openPlayAutoRulesDialog);
   elements.closeWorkoutLibraryBtn.addEventListener("click", () => elements.workoutLibraryDialog.close());
   elements.doneWorkoutLibraryBtn.addEventListener("click", () => elements.workoutLibraryDialog.close());
@@ -2862,32 +2797,8 @@ function bindEvents() {
   elements.repMoodDialog.querySelectorAll("[data-rep-mood]").forEach((btn) => {
     btn.addEventListener("click", () => selectRepMood(btn.dataset.repMood));
   });
-  elements.openPastWorkoutBtn.addEventListener("click", openPastWorkoutDialog);
   elements.closePastWorkoutBtn.addEventListener("click", () => elements.pastWorkoutDialog.close());
   elements.startPastWorkoutBtn.addEventListener("click", startPastWorkout);
-  elements.themeModeInputs.forEach((input) => {
-    input.addEventListener("change", () => setThemeMode(input.value));
-  });
-  document.querySelectorAll('input[name="globalScope"]').forEach((input) => {
-    input.addEventListener("change", () => { if (input.checked) setAllScopes(input.value); });
-  });
-  elements.openAutoRulesBtn.addEventListener("click", openAutoRulesDialog);
-  elements.openTagsBtn.addEventListener("click", openTagsDialog);
-  elements.openGroceryLibraryBtn.addEventListener("click", openGroceryLibraryDialog);
-  elements.openIngredientOptionsBtn.addEventListener("click", openIngredientOptionsDialog);
-  elements.openFoodHealthSettingsBtn.addEventListener("click", openFoodHealthSettingsDialog);
-  elements.openCalendarsBtn.addEventListener("click", openCalendarsDialog);
-  elements.openWeeklyEmailBtn.addEventListener("click", openWeeklyEmailDialog);
-  elements.openBackupHealthBtn.addEventListener("click", openBackupHealthDialog);
-  elements.openRestoreBackupBtn.addEventListener("click", openRestoreDialog);
-  elements.openExportDataBtn?.addEventListener("click", exportMyData);
-  elements.openTrashBtn.addEventListener("click", openTrashDialog);
-  elements.openFamilyMembersBtn.addEventListener("click", openFamilyMembersDialog);
-  elements.openMealPlanSettingsBtn.addEventListener("click", openMealPlanSettingsDialog);
-  document.querySelector("#closeFamilyMembersBtn").addEventListener("click", () => elements.familyMembersDialog.close());
-  document.querySelector("#cancelFamilyMembersBtn").addEventListener("click", () => elements.familyMembersDialog.close());
-  document.querySelector("#saveFamilyMembersBtn").addEventListener("click", saveMealPlanMembers);
-  document.querySelector("#addFamilyMemberBtn").addEventListener("click", addFamilyMember);
   document.querySelector("#closeMealPlanSettingsBtn").addEventListener("click", () => elements.mealPlanSettingsDialog.close());
   document.querySelector("#cancelMealPlanSettingsBtn").addEventListener("click", () => elements.mealPlanSettingsDialog.close());
   document.querySelector("#saveMealTypesBtn").addEventListener("click", saveMealPlanMealTypes);
@@ -2956,9 +2867,6 @@ function bindEvents() {
   elements.closeIngredientOptionsBtn.addEventListener("click", () => elements.ingredientOptionsDialog.close());
   elements.saveIngredientOptionsBtn.addEventListener("click", saveIngredientOptions);
   elements.resetIngredientOptionsBtn.addEventListener("click", resetIngredientOptions);
-  elements.closeCalendarsBtn.addEventListener("click", () => elements.calendarsDialog.close());
-  elements.saveCalendarsBtn.addEventListener("click", saveCalendarSettings);
-  elements.syncCalendarsBtn.addEventListener("click", syncCalendarsNow);
   elements.closeWeeklyEmailBtn.addEventListener("click", () => elements.weeklyEmailDialog.close());
   elements.closeWeeklyEmailBtn2.addEventListener("click", () => elements.weeklyEmailDialog.close());
   elements.previewWeeklyEmailBtn.addEventListener("click", generateWeeklyEmailPreview);
@@ -3002,6 +2910,7 @@ function bindEvents() {
   elements.cancelRestoreBtn.addEventListener("click", closeRestoreDialog);
   elements.closeTrashBtn.addEventListener("click", () => elements.trashDialog.close());
   elements.doneTrashBtn.addEventListener("click", () => elements.trashDialog.close());
+  elements.recentlyDeletedRecipesBtn?.addEventListener("click", openTrashDialog);
   elements.closeImportBtn.addEventListener("click", () => elements.importDialog.close());
   elements.cancelImportBtn.addEventListener("click", () => elements.importDialog.close());
   elements.fetchRecipeBtn.addEventListener("click", importRecipeFromUrl);
@@ -3164,32 +3073,6 @@ function bindEvents() {
     restaurantSearchTimer = window.setTimeout(() => searchRestaurantLocations(query), 300);
   });
   document.querySelector("#groupSetupForm")?.addEventListener("submit", submitGroupSetup);
-  document.querySelector("#groupSettingsBtn")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const menu = document.getElementById("groupSettingsMenu");
-    if (!menu) return;
-    const willOpen = menu.hidden;
-    menu.hidden = !willOpen;
-    document.getElementById("groupSettingsBtn").setAttribute("aria-expanded", String(willOpen));
-    if (willOpen) renderGroupSettingsSection();
-  });
-
-  document.querySelector("#voiceSettingsBtn")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const menu = document.getElementById("voiceSettingsMenu");
-    if (!menu) return;
-    const willOpen = menu.hidden;
-    menu.hidden = !willOpen;
-    document.getElementById("voiceSettingsBtn").setAttribute("aria-expanded", String(willOpen));
-    if (willOpen) renderVoiceSettings();
-  });
-
-  document.querySelector("#saveVoiceSecretBtn")?.addEventListener("click", saveVoiceSecret);
-  document.querySelector("#copyVoiceSetupBtn")?.addEventListener("click", () => {
-    const pre = document.getElementById("voiceSetupJson");
-    if (!pre) return;
-    copyText(pre.textContent, document.getElementById("copyVoiceSetupBtn"), "Copied!");
-  });
 }
 
 function closeDialogOnBackdropClick(event) {
@@ -3266,7 +3149,7 @@ function handleHashNavigation() {
     contacts: showContactsApp,
     weather: showWeatherApp,
     news: showNewsApp,
-    settings: showSettingsApp,
+    settings: () => { showHomeApp(); openContextSettingsDialog("general"); }, // the old Settings page is gone
     home: showHomeApp,
     read: showMediaApp,
     listen: showMediaApp,
@@ -3411,7 +3294,6 @@ function syncShareTokenForSession(signedIn) {
 // `message` (optional) is shown on the sign-in gate's status line — used for
 // boot failures, so a signed-out user sees WHY instead of a generic prompt.
 function updateAuthUi(message) {
-  updateGroupSettingsSection();
   if (message) {
     const status = document.getElementById("lockStatus");
     if (status) status.textContent = message;
@@ -3961,6 +3843,11 @@ function setupDiagnostics() {
   // persist/merge + boot-empty guards + auto-rule dedup directly, instead of
   // fragile gesture/UI simulation.
   window.__liveQA = {
+    // Recently deleted recipes (scripts/qa-settings.mjs): seed the trash with given
+    // deletedAt dates and read back which entries are left.
+    trashSeed: (items) => { if (!localDevMode) return null; state.trashedRecipes = items.map(normalizeTrashedRecipe); return true; },
+    trashIds: () => (localDevMode ? (state.trashedRecipes || []).map((t) => t.id) : null),
+    openRecipeBox: () => { if (!localDevMode) return null; openRecipeBoxPage(); return true; },
     // Google Calendar (scripts/qa-gcal.mjs): local dev has no Netlify functions, so
     // the QA script mocks /.netlify/functions/gcal-* and flips this on to run the
     // real client paths (discovery, linking, event load, panel) against the mocks.
@@ -4633,7 +4520,6 @@ async function runLoadOrCreateUserGroup() {
         userGroup = { id: member.group_id, disabled_pages: group?.disabled_pages || [], role: member.role, display_name: member.display_name };
         personalDisabledPages = member.personal_disabled_pages || [];
         await loadGroupMembers();
-        updateGroupSettingsSection();
         return;
       }
       openGroupSetupDialog(); // confirmed: signed in, no membership → new user
@@ -4753,7 +4639,6 @@ async function submitGroupSetup(event) {
     dialog.close();
     sessionStorage.removeItem("live_invite_token");
     pendingInviteToken = null;
-    updateGroupSettingsSection();
   } catch (e) {
     errorEl.textContent = e.message || "Something went wrong. Please try again.";
   } finally {
@@ -4813,82 +4698,6 @@ async function sendGroupInvite(email) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Could not send invite.");
   return data;
-}
-
-function updateGroupSettingsSection() {
-  const section = document.getElementById("groupSettingsSection");
-  if (!section) return;
-  if (authSession?.access_token !== undefined) {
-    section.hidden = !authSession.access_token;
-  }
-  if (!authSession?.access_token || !userGroup) return;
-  const menu = document.getElementById("groupSettingsMenu");
-  if (menu && !menu.hidden) renderGroupSettingsSection();
-}
-
-function renderGroupSettingsSection() {
-  const body = document.getElementById("groupSettingsMenu");
-  if (!body || !userGroup) return;
-  const isAdmin = userGroup.role === "admin";
-  const canManageHousehold = isAdmin || userGroup.role === "hoh";
-  const roleLabel = (r) => r === "admin" ? "Admin" : r === "hoh" ? "HoH" : "Member";
-  const memberHtml = groupMembers.map((m) => `
-    <div class="config-row group-member-row">
-      <span>${escapeHtml(m.display_name || m.user_id)}</span>
-      <span class="muted-label">${escapeHtml(roleLabel(m.role))}</span>
-    </div>
-  `).join("");
-  const inviteHtml = isAdmin ? `
-    <div class="group-invite-form">
-      <p class="settings-subheading">Invite someone</p>
-      <div class="inline-form">
-        <input type="email" id="groupInviteEmail" placeholder="email@example.com" autocomplete="email" />
-        <button class="secondary-btn" type="button" id="sendGroupInviteBtn">Send invite</button>
-      </div>
-      <p class="import-status" id="groupInviteStatus"></p>
-    </div>
-  ` : "";
-  const pages = MANAGED_PAGES;
-  const pageAccessHtml = canManageHousehold ? `
-    <div class="group-page-access">
-      <p class="settings-subheading">Members can access</p>
-      ${pages.map((p) => `
-        <label class="group-page-toggle-row">
-          <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
-            ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
-          ${escapeHtml(p.label)}
-        </label>
-      `).join("")}
-    </div>
-  ` : "";
-  body.innerHTML = `
-    <div class="group-members-list">${memberHtml || '<p class="muted-label">No members yet.</p>'}</div>
-    ${inviteHtml}
-    ${pageAccessHtml}
-  `;
-  if (isAdmin) {
-    document.getElementById("sendGroupInviteBtn")?.addEventListener("click", async () => {
-      const emailInput = document.getElementById("groupInviteEmail");
-      const status = document.getElementById("groupInviteStatus");
-      const email = emailInput?.value.trim();
-      if (!email) return;
-      status.textContent = "Sending…";
-      try {
-        const result = await sendGroupInvite(email);
-        status.innerHTML = result.emailSent === false
-          ? `Invite created, but the email could not be delivered — share the link directly: <a href="${escapeHtml(result.inviteUrl)}" target="_blank" rel="noopener">invite link</a> (copy and text it).`
-          : `Invite sent to ${escapeHtml(email)}.${result.inviteUrl ? ` <a href="${escapeHtml(result.inviteUrl)}" target="_blank" rel="noopener">Open link</a>` : ""}`;
-        if (emailInput) emailInput.value = "";
-      } catch (e) {
-        status.textContent = e.message;
-      }
-    });
-  }
-  if (canManageHousehold) {
-    body.querySelectorAll("[data-group-page]").forEach((checkbox) => {
-      checkbox.addEventListener("change", () => setGroupPageVisibility(checkbox.dataset.groupPage, !checkbox.checked));
-    });
-  }
 }
 
 async function setGroupPageVisibility(page, disabled) {
@@ -5427,10 +5236,8 @@ function defaultState() {
     emailPrefs: "",
     appName: "",
     travelHome: "",
-    voiceCommandSecret: "",
     tombstones: {},
     apiUsage: {},
-    aiNotes: { userPreferences: [], appGaps: [], suggestions: [], patterns: [] },
     aiSettings: { dailyBriefingEnabled: true },
     stateUpdatedAt: ""
   };
@@ -5481,9 +5288,6 @@ function normalizeState(parsed) {
     jellyfin: (parsed?.jellyfin && typeof parsed.jellyfin === "object") ? parsed.jellyfin : null,
     // Streaming services the household subscribes to → "Your services" in Discover.
     mediaServices: Array.isArray(parsed?.mediaServices) ? parsed.mediaServices.map(String) : [],
-    // Apple Music config (enabled/storefront). Its OWN key — it can't live on the
-    // mediaServices array (JSON drops named props on arrays, so it never persisted).
-    appleMusic: (parsed?.appleMusic && typeof parsed.appleMusic === "object" && !Array.isArray(parsed.appleMusic)) ? parsed.appleMusic : {},
     inventoryBoxes: ensureDefaultInventoryRooms(normalizeInventoryBoxes(parsed?.inventoryBoxes, createId)),
     inventoryItems: normalizeInventoryItems(parsed?.inventoryItems, createId),
     inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
@@ -5646,7 +5450,6 @@ function normalizeState(parsed) {
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
     travelHome: typeof parsed?.travelHome === "string" ? parsed.travelHome.trim() : "",
     emailPrefs: String(parsed?.emailPrefs || ""),
-    voiceCommandSecret: typeof parsed?.voiceCommandSecret === "string" ? parsed.voiceCommandSecret : "",
     tombstones: normalizeTombstones(parsed?.tombstones),
     apiUsage: (parsed?.apiUsage && typeof parsed.apiUsage === "object" && !Array.isArray(parsed.apiUsage)) ? parsed.apiUsage : {},
     stateUpdatedAt: typeof parsed?.stateUpdatedAt === "string" ? parsed.stateUpdatedAt : "",
@@ -6492,9 +6295,6 @@ function applyThemeMode() {
   state.themeMode = mode;
   document.body.dataset.theme = mode;
   document.documentElement.style.colorScheme = mode === "dark" ? "dark" : mode === "light" ? "light" : "light dark";
-  elements.themeModeInputs?.forEach((input) => {
-    input.checked = input.value === mode;
-  });
 }
 
 function setThemeMode(mode) {
@@ -7061,7 +6861,6 @@ function mergeStates(newer, older) {
   // personal preference list, not id-merged history).
   merged.weatherLocations = newer.weatherLocations || older.weatherLocations || [];
   merged.weatherActiveLocationId = newer.weatherActiveLocationId || older.weatherActiveLocationId || "";
-  merged.voiceCommandSecret = newer.voiceCommandSecret || older.voiceCommandSecret || "";
 
   // ── Email schedule: preserve configured schedule over fresh-device defaults
   merged.weeklyEmailSettings = mergeWeeklyEmailSettings(newer.weeklyEmailSettings, older.weeklyEmailSettings);
@@ -8452,7 +8251,6 @@ function hideAllPages() {
     if (!elements.newsMainPage.hidden) leaveNewsPage(); // send any queued read/send/hide now
     elements.newsMainPage.hidden = true;
   }
-  elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
   document.getElementById("exploreMainPage").hidden = true;
 }
@@ -8676,20 +8474,6 @@ function leaveMailContactsMode() {
   setPageHash("mail");
   renderMailConnectState();
   if (!mailPageInitialized) initMailPage(); // arrived at Contacts directly (e.g. #contacts)
-}
-
-function showSettingsApp(event) {
-  event?.stopPropagation();
-  activeAppArea = "settings";
-  hideAllPages();
-  elements.settingsMainPage.hidden = false;
-  elements.weekLabel.closest(".week-tools").hidden = true;
-  elements.activeCookingSection.hidden = true;
-  setPageTitle("Settings");
-  setPageHash("settings");
-  initReadListenSettings();
-  closePageTitleMenu();
-  closeAppMenu();
 }
 
 function showHomeApp(event) {
@@ -12156,7 +11940,6 @@ function currentMainPageTitle() {
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Recreate";
   if (activeAppArea === "finance") return "Finance";
-  if (activeAppArea === "settings") return "Settings";
   if (activeAppArea === "mail") return "Mail";
   if (activeAppArea === "explore") return "Explore";
   return "Meal Plan";
@@ -12197,12 +11980,6 @@ function stepPlanTasksWeek(delta) {
   currentWeek = tasksWeekSession ? stepTasksWeek(tasksWeekSession, delta) : addDays(currentWeek, delta * 7);
   renderDoPlanner();
   updatePlanTasksWeekLabel();
-}
-
-function openDoSettingsDialog(event) {
-  event?.stopPropagation();
-  closeFloatingMenus();
-  elements.doSettingsDialog.showModal();
 }
 
 function openRecurringTasksDialog(event) {
@@ -16780,7 +16557,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music", "notifications"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "location-services", "admin-pages", "read-sync", "assistant", "finance-accounts", "finance-emergency", "podcasts", "radio", "notifications"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16889,29 +16666,6 @@ const MAIL_AI_FEATURES = [
 let contextSettingsKind = null; // which sub-panel the settings dialog is showing
 // Re-render the Finance settings panel in place (used after an account edit
 // made through the delegated finance handlers, so the change shows at once).
-// Reflect the Apple Music auth + subscription state into the settings row.
-// All provider/MusicKit specifics stay behind the provider's normalized methods.
-async function refreshAppleMusicStatus() {
-  const el = document.getElementById("appleMusicStatus");
-  if (!el) return;
-  try {
-    const reg = await getMusicProviders();
-    const p = reg.get("applemusic");
-    if (!p) { el.textContent = "Not enabled."; return; }
-    // First: can the server's developer token read Apple's catalog at all? This
-    // tells "key missing" / "key rejected" apart from "just not signed in".
-    const cat = p.checkCatalog ? await p.checkCatalog() : { ok: true };
-    if (cat.state === "not-configured") { el.textContent = "Server key not configured yet — finish the checklist below."; return; }
-    if (cat.state === "load-failed") { el.textContent = "Couldn’t load Apple’s MusicKit script — check your connection or content blockers."; return; }
-    if (cat.state === "rejected") { el.textContent = "Apple rejected the server key — check it’s a MusicKit key and the Key ID / Team ID match."; return; }
-    const auth = await p.getAuthStatus();
-    const sf = cat.storefront ? ` · storefront ${String(cat.storefront).toUpperCase()}` : "";
-    if (!auth.authorized) { el.textContent = `Catalog connected${sf} · not signed in — sign in to play full tracks.`; return; }
-    const sub = await p.getSubscriptionStatus();
-    el.textContent = sub.canPlay ? `Signed in · subscription active${sf}.` : `Signed in · ${sub.reason || "no active subscription"}`;
-  } catch { el.textContent = "Unavailable right now."; }
-}
-
 // ── Settings → AI → Voice: preview + preference helpers ──────────────────────
 const VOICE_PLAY_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`;
 const VOICE_STOP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
@@ -17008,28 +16762,25 @@ function renderContextSettingsDialog(kind) {
   contextSettingsKind = kind;
   const titles = {
     general: "Settings",
-    eat: "Meal Plan",
-    do: "Tasks",
-    play: "Exercise",
+    watch: "Watch",
+    radio: "Radio",
     family: "Household",
     recreate: "Recreate",
     pages: "Pages",
     "location-services": "Location Services",
-    "voice-commands": "Voice Commands",
     "admin-pages": "Global Pages",
     "read-sync": "Sync Settings",
     "finance-accounts": "Accounts",
     "finance-emergency": "Emergency Savings",
     "api-usage": "API Usage",
-    "ai-notes": "AI Notes",
+    "assistant": "Assistant",
     "mail-ai": "Mail AI",
     "mail-reading": "Mail Reading",
     "voice": "Voice",
     "podcasts": "Podcasts",
-    "apple-music": "Apple Music",
     "notifications": "Notifications"
   };
-  const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
+  const isSubPanel = !["general", "watch", "radio", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
   elements.contextSettingsTitle.textContent = titles[kind] || "Settings";
   if (kind === "general") {
@@ -17043,11 +16794,9 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="mail-reading">Mail Reading</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
-        <button type="button" data-context-settings-action="apple-music">Apple Music</button>
         <button type="button" data-context-settings-action="family">Household</button>
-        <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
-        <button type="button" data-context-settings-action="ai-notes">AI Notes</button>
+        <button type="button" data-context-settings-action="assistant">Assistant</button>
         <button type="button" data-context-settings-action="import-ai">Import from AI Chat</button>
         <button type="button" data-context-settings-action="api-usage">API Usage</button>
         <button type="button" data-context-settings-action="export-data">Export My Data</button>
@@ -17100,54 +16849,6 @@ function renderContextSettingsDialog(kind) {
         if (activeAppArea === "finance") renderFinancePage();
       });
     });
-    return;
-  }
-
-  if (kind === "apple-music") {
-    const cfg = (state.appleMusic && typeof state.appleMusic === "object" && !Array.isArray(state.appleMusic)) ? state.appleMusic : {};
-    const enabled = !!cfg.enabled;
-    elements.contextSettingsBody.innerHTML = `
-      <p class="settings-hint">Play Apple Music in the app (MusicKit). Needs your own Apple Developer key configured in the server environment — see the checklist. Playing full tracks also requires an active Apple Music subscription on this device.</p>
-      <label class="fin-set-row">
-        <span>Enable Apple Music</span>
-        <input type="checkbox" class="live-toggle" data-am-setting="enabled" ${enabled ? "checked" : ""} aria-label="Enable Apple Music" />
-      </label>
-      <div id="appleMusicAuthBlock" ${enabled ? "" : "hidden"}>
-        <div class="fin-set-row"><span>Status</span><span id="appleMusicStatus" class="settings-hint">Checking…</span></div>
-        <button class="secondary-btn" type="button" data-am-action="authorize">Sign in to Apple Music</button>
-      </div>
-      <p class="settings-hint" id="appleMusicDiag" style="margin-top:8px">${escapeHtml(appleMusicDiagnostic())}</p>
-      <details class="settings-details" style="margin-top:12px">
-        <summary>Setup checklist</summary>
-        <ol class="settings-hint" style="padding-left:1.2em; line-height:1.5">
-          <li>Apple Developer portal → <b>Certificates, Identifiers &amp; Profiles → Keys</b> → <b>+</b>, tick <b>MusicKit</b> (create/select a <b>Media ID</b> when prompted), register, then <b>download the .p8 (one time only)</b> and note the <b>Key ID</b>.</li>
-          <li>Note your <b>Team ID</b> (Membership page, top-right).</li>
-          <li>In <b>Netlify → Site settings → Environment variables</b>, set <code>APPLE_MUSIC_PRIVATE_KEY</code> (the .p8 file's contents), <code>APPLE_MUSIC_KEY_ID</code>, and <code>APPLE_MUSIC_TEAM_ID</code>, then redeploy.</li>
-          <li>Turn on the toggle above, tap <b>Sign in to Apple Music</b>, and approve. No bundle ID or redirect URL is needed for the web (MusicKit JS).</li>
-        </ol>
-      </details>`;
-    const toggle = elements.contextSettingsBody.querySelector('[data-am-setting="enabled"]');
-    toggle?.addEventListener("change", () => {
-      if (!state.appleMusic || typeof state.appleMusic !== "object" || Array.isArray(state.appleMusic)) state.appleMusic = {};
-      state.appleMusic = { ...state.appleMusic, enabled: toggle.checked };
-      musicProviderRegistry = null; // rebuild the registry with/without Apple Music
-      resetAppleMusicHome();
-      persist();
-      renderContextSettingsDialog("apple-music");
-    });
-    elements.contextSettingsBody.querySelector('[data-am-action="authorize"]')?.addEventListener("click", async () => {
-      try {
-        // Keep the popup inside the click's user activation (Safari): the status
-        // refresh below already loaded the registry, so don't await it again.
-        const reg = musicProviderRegistry || await getMusicProviders();
-        const p = reg.get("applemusic");
-        if (!p) { alert("Enable Apple Music first."); return; }
-        await p.authorize();
-      } catch (e) { alert("Apple Music sign-in failed: " + (e?.message || e)); }
-      resetAppleMusicHome(); // signed-in shelves (recommendations) differ
-      refreshAppleMusicStatus();
-    });
-    if (enabled) refreshAppleMusicStatus();
     return;
   }
 
@@ -17474,33 +17175,6 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
-  if (kind === "voice-commands") {
-    const secret = state.voiceCommandSecret || "";
-    const hid = userGroup?.id;
-    const endpoint = `${window.location.origin}/api/voice-command`;
-    const previewHtml = (secret && hid) ? `
-      <div class="voice-setup-shortcut">
-        <p class="voice-setup-label">Siri Shortcut — paste into "Get Contents of URL" body:</p>
-        <pre class="voice-setup-json" id="voiceSetupJsonDialog">${escapeHtml(`POST ${endpoint}\n\n${JSON.stringify({transcript:"{{Dictated Text}}", householdId: hid, secret}, null, 2)}`)}</pre>
-        <button class="secondary-btn" type="button" data-context-settings-action="copy-voice-setup">Copy</button>
-      </div>
-    ` : "";
-    elements.contextSettingsBody.innerHTML = `
-      <div class="voice-setup">
-        <p class="voice-setup-hint">Set a passphrase to authenticate voice commands from Siri or Alexa. You'll paste the generated JSON into your Shortcut once.</p>
-        <div class="voice-setup-row">
-          <label for="voiceSecretInputDialog">Passphrase</label>
-          <div class="voice-setup-input-row">
-            <input type="text" id="voiceSecretInputDialog" placeholder="e.g. sunshine-lake-42" autocomplete="off" spellcheck="false" value="${escapeHtml(secret)}" />
-            <button class="primary-btn" type="button" data-context-settings-action="save-voice-secret">Save</button>
-          </div>
-        </div>
-        ${previewHtml}
-      </div>
-    `;
-    return;
-  }
-
   if (kind === "ai-log") {
     const log = state.aiActionLog || [];
     const fmt = (ts) => { try { return new Date(ts).toLocaleString(); } catch { return ts; } };
@@ -17608,31 +17282,9 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
-  if (kind === "ai-notes") {
-    const notes = normalizeAiNotes(state.aiNotes);
-    const categories = AI_NOTE_CATEGORIES.map((key) => ({ key, label: AI_NOTE_LABELS[key].label, hint: AI_NOTE_LABELS[key].hint }));
-    const fmt = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
-    const totalNotes = categories.reduce((s, c) => s + (Array.isArray(notes[c.key]) ? notes[c.key].length : 0), 0);
-    const sections = categories.map(({ key, label, hint }) => {
-      const entries = Array.isArray(notes[key]) ? notes[key] : [];
-      const rows = entries.length
-        ? entries.map((n) => `
-            <div class="ai-note-row" data-note-id="${escapeHtml(n.id)}" data-note-cat="${escapeHtml(key)}">
-              <span class="ai-note-text">${escapeHtml(n.text)}</span>
-              <span class="ai-note-date">${fmt(n.updatedAt || n.timestamp)}</span>
-              <button class="ai-note-edit" type="button" aria-label="Edit note" data-note-id="${escapeHtml(n.id)}">✎</button>
-              <button class="ai-note-delete" type="button" aria-label="Delete note" data-note-id="${escapeHtml(n.id)}" data-note-cat="${escapeHtml(key)}">✕</button>
-            </div>`).join("")
-        : `<p class="muted-label ai-note-empty">Nothing noted yet</p>`;
-      return `
-        <div class="ai-notes-category">
-          <div class="ai-notes-cat-header">
-            <strong>${escapeHtml(label)}</strong>
-            <span class="ai-notes-cat-hint">${escapeHtml(hint)}</span>
-          </div>
-          <div class="ai-notes-rows">${rows}</div>
-        </div>`;
-    }).join("");
+  // Assistant settings (SETTINGS_AUDIT.md). AI Notes, the assistant's saved memory,
+  // was removed 2026-10-14 (Luke: the assistant will be rebuilt fresh).
+  if (kind === "assistant") {
     const briefingOn = state.aiSettings?.dailyBriefingEnabled !== false;
     const financeAccessOn = state.aiSettings?.assistantFinanceRead === true;
     const suggestionsOn = state.aiSettings?.assistantSuggestionsEnabled !== false;
@@ -17688,25 +17340,20 @@ function renderContextSettingsDialog(kind) {
         </div>
         <p class="muted-label" style="margin:10px 0 0;font-size:0.78rem">Email access: ${mailAccessOn ? "on" : "off"} — change it in Settings → Mail AI.</p>
       </div>
-      <p class="muted-label" style="margin:16px 0 10px;font-size:0.82rem">
-        Notes the AI assistant has saved about you and the app. Included in every conversation so the assistant remembers context across sessions.
-      </p>
-      ${sections}
-      ${totalNotes ? `<button type="button" class="secondary-btn" style="margin-top:14px" id="aiNotesClearBtn">Clear all notes</button>` : ""}
     `;
     document.getElementById("dailyBriefingToggle")?.addEventListener("change", (e) => {
       if (!state.aiSettings) state.aiSettings = {};
       state.aiSettings.dailyBriefingEnabled = e.target.checked;
       persist();
-      renderContextSettingsDialog("ai-notes");
+      renderContextSettingsDialog("assistant");
     });
     document.getElementById("pushEnableBtn")?.addEventListener("click", async () => {
       await enablePushNotifications();
-      renderContextSettingsDialog("ai-notes");
+      renderContextSettingsDialog("assistant");
     });
     document.getElementById("pushDisableBtn")?.addEventListener("click", async () => {
       await disablePushNotifications();
-      renderContextSettingsDialog("ai-notes");
+      renderContextSettingsDialog("assistant");
     });
     document.getElementById("assistantSuggestionsToggle")?.addEventListener("change", (e) => {
       if (!state.aiSettings) state.aiSettings = {};
@@ -17717,34 +17364,6 @@ function renderContextSettingsDialog(kind) {
       if (!state.aiSettings) state.aiSettings = {};
       state.aiSettings.assistantFinanceRead = e.target.checked;
       persist();
-    });
-    elements.contextSettingsBody.querySelectorAll(".ai-note-delete").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const { notes } = forgetNote(state.aiNotes, btn.dataset.noteId);
-        if (notes === state.aiNotes) return;
-        state.aiNotes = notes;
-        persist();
-        renderContextSettingsDialog("ai-notes");
-      });
-    });
-    elements.contextSettingsBody.querySelectorAll(".ai-note-edit").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const current = normalizeAiNotes(state.aiNotes);
-        const note = AI_NOTE_CATEGORIES.flatMap((c) => current[c]).find((n) => n.id === btn.dataset.noteId);
-        if (!note) return;
-        const text = window.prompt("Edit note", note.text);
-        if (text == null || !text.trim() || text.trim() === note.text) return;
-        const { notes } = updateNote(state.aiNotes, note.id, text, { now: new Date().toISOString() });
-        state.aiNotes = notes;
-        persist();
-        renderContextSettingsDialog("ai-notes");
-      });
-    });
-    document.getElementById("aiNotesClearBtn")?.addEventListener("click", () => {
-      if (!confirm("Clear all AI notes? This cannot be undone.")) return;
-      state.aiNotes = normalizeAiNotes({});
-      persist();
-      renderContextSettingsDialog("ai-notes");
     });
     return;
   }
@@ -17797,31 +17416,6 @@ function renderContextSettingsDialog(kind) {
         if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
       });
     }
-    return;
-  }
-
-  if (kind === "eat") {
-    elements.contextSettingsBody.innerHTML = `
-      <div class="settings-action-grid">
-        <button type="button" data-context-settings-action="auto-rules">Auto-Fill Rules</button>
-        <button type="button" data-context-settings-action="tags">Tags</button>
-        <button type="button" data-context-settings-action="grocery-list">Grocery List</button>
-        <button type="button" data-context-settings-action="grocery-pricing">Receipts &amp; Price History</button>
-        <button type="button" data-context-settings-action="grocery-items">Grocery Items</button>
-        <button type="button" data-context-settings-action="ingredient-options">Ingredient Options</button>
-        <button type="button" data-context-settings-action="food-health-settings">Nutrition Settings</button>
-        <button type="button" data-context-settings-action="meal-plan-settings">Meal Plan Settings</button>
-      </div>
-    `;
-    return;
-  }
-
-  if (kind === "do") {
-    elements.contextSettingsBody.innerHTML = `
-      <div class="settings-action-grid">
-        <button type="button" data-context-settings-action="recurring-tasks">Recurring Tasks</button>
-      </div>
-    `;
     return;
   }
 
@@ -18160,14 +17754,12 @@ function handleContextSettingsAction(event) {
     "notifications": () => renderContextSettingsDialog("notifications"),
     "mail-reading": () => renderContextSettingsDialog("mail-reading"),
     "voice": () => renderContextSettingsDialog("voice"),
-    "apple-music": () => renderContextSettingsDialog("apple-music"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
     "export-data": () => closeAndRun(exportMyData),
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
     "admin-users": () => closeAndRun(openAdminUsersDialog),
     "admin-households": () => closeAndRun(openAdminHouseholdsDialog),
-    "trash": () => closeAndRun(openTrashDialog),
     "auto-rules": () => closeAndRun(openAutoRulesDialog),
     "tags": () => closeAndRun(openTagsDialog),
     "grocery-list": () => closeAndRun(openGroceryStoresDialog),
@@ -18185,9 +17777,8 @@ function handleContextSettingsAction(event) {
     "family": () => renderContextSettingsDialog("family"),
     "pages": () => renderContextSettingsDialog("pages"),
     "location-services": () => renderContextSettingsDialog("location-services"),
-    "voice-commands": () => renderContextSettingsDialog("voice-commands"),
     "ai-log": () => renderContextSettingsDialog("ai-log"),
-    "ai-notes": () => renderContextSettingsDialog("ai-notes"),
+    "assistant": () => renderContextSettingsDialog("assistant"),
     "import-ai": () => closeAndRun(openImportAiDialog),
     "api-usage": () => renderContextSettingsDialog("api-usage"),
     "paper-signin": () => signInToArticlePaper(SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper)),
@@ -18218,18 +17809,6 @@ function handleContextSettingsAction(event) {
     "sync-now-context": () => {
       elements.contextSettingsDialog.close();
       syncSavedArticles("read");
-    },
-    "save-voice-secret": () => {
-      const input = document.getElementById("voiceSecretInputDialog");
-      if (!input) return;
-      state.voiceCommandSecret = input.value.trim();
-      persist();
-      renderContextSettingsDialog("voice-commands");
-    },
-    "copy-voice-setup": () => {
-      const jsonEl = document.getElementById("voiceSetupJsonDialog");
-      if (!jsonEl) return;
-      navigator.clipboard.writeText(jsonEl.textContent).catch(() => {});
     },
     "add-family-member": () => {
       const list = elements.contextSettingsBody.querySelector("[data-family-members-list]");
@@ -18335,130 +17914,6 @@ function toggleDoMenu(event) {
   showDoApp(event);
 }
 
-function toggleGeneralSettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.generalSettingsMenu.hidden;
-  elements.generalSettingsMenu.hidden = !willOpen;
-  elements.generalSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-}
-
-
-function toggleEatSettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.eatSettingsMenu.hidden;
-  elements.eatSettingsMenu.hidden = !willOpen;
-  elements.eatSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-}
-
-function toggleDoSettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.doSettingsMenu.hidden;
-  elements.doSettingsMenu.hidden = !willOpen;
-  elements.doSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-}
-
-function togglePlaySettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.playSettingsMenu.hidden;
-  elements.playSettingsMenu.hidden = !willOpen;
-  elements.playSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-}
-
-function toggleWatchSettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.watchSettingsMenu.hidden;
-  elements.watchSettingsMenu.hidden = !willOpen;
-  elements.watchSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-  if (willOpen) renderWatchSettingsMenu();
-}
-
-function renderWatchSettingsMenu() {
-  const theaters = state.watchSettings?.theaters || [];
-  const categories = state.watchSettings?.categories || [];
-  elements.watchSettingsMenu.innerHTML = `
-    <div class="watch-theater-settings">
-      <div class="watch-theater-settings-head">Watch Tabs</div>
-      <p class="watch-theater-settings-hint">Tabs appear above the watch list to filter movies and shows by category.</p>
-      ${categories.length ? `<ul class="watch-theater-list">
-        ${categories.map((c) => `
-          <li class="watch-theater-item">
-            <span class="watch-theater-name">${escapeHtml(c.name)}</span>
-            <button class="icon-btn watch-theater-delete" type="button" data-delete-category="${escapeHtml(c.id)}" aria-label="Remove ${escapeHtml(c.name)}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
-          </li>`).join("")}
-      </ul>` : ""}
-      <form class="watch-theater-add-form" id="watchCategoryAddForm">
-        <input class="watch-theater-input" id="watchCategoryNameInput" type="text" placeholder="Tab name (e.g. Sci-Fi)" autocomplete="off" required />
-        <button class="primary-btn" type="submit">Add Tab</button>
-      </form>
-    </div>
-    <div class="watch-theater-settings">
-      <div class="watch-theater-settings-head">Movie Theaters</div>
-      <p class="watch-theater-settings-hint">Saved theaters appear as showtime links for movies currently in theaters.</p>
-      ${theaters.length ? `<ul class="watch-theater-list">
-        ${theaters.map((t) => `
-          <li class="watch-theater-item">
-            <span class="watch-theater-name">${escapeHtml(t.name)}</span>
-            ${t.url ? `<a class="watch-theater-url-preview" href="${escapeHtml(t.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(t.url)}">link</a>` : ""}
-            <button class="icon-btn watch-theater-delete" type="button" data-delete-theater="${escapeHtml(t.id)}" aria-label="Remove ${escapeHtml(t.name)}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
-          </li>`).join("")}
-      </ul>` : ""}
-      <form class="watch-theater-add-form" id="watchTheaterAddForm">
-        <input class="watch-theater-input" id="watchTheaterNameInput" type="text" placeholder="Theater name" autocomplete="off" required />
-        <input class="watch-theater-input watch-theater-url-input" id="watchTheaterUrlInput" type="url" placeholder="Website URL (optional)" autocomplete="off" />
-        <button class="primary-btn" type="submit">Add Theater</button>
-      </form>
-    </div>
-  `;
-  elements.watchSettingsMenu.querySelector("#watchCategoryAddForm")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const name = elements.watchSettingsMenu.querySelector("#watchCategoryNameInput")?.value.trim();
-    if (!name) return;
-    if (!state.watchSettings) state.watchSettings = { theaters: [], categories: [] };
-    if (!state.watchSettings.categories) state.watchSettings.categories = [];
-    state.watchSettings.categories.push({ id: createId("wcat"), name });
-    persist();
-    renderWatchSettingsMenu();
-    renderWatchPlanner();
-  });
-  elements.watchSettingsMenu.querySelectorAll("[data-delete-category]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.deleteCategory;
-      if (state.watchSettings?.categories) {
-        recordDeletion("watchSettings.categories", id);
-        state.watchSettings.categories = state.watchSettings.categories.filter((c) => c.id !== id);
-        if (activeWatchCategory === id) activeWatchCategory = "all";
-        persist();
-        renderWatchSettingsMenu();
-        renderWatchPlanner();
-      }
-    });
-  });
-  elements.watchSettingsMenu.querySelector("#watchTheaterAddForm")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const name = elements.watchSettingsMenu.querySelector("#watchTheaterNameInput")?.value.trim();
-    const url = elements.watchSettingsMenu.querySelector("#watchTheaterUrlInput")?.value.trim();
-    if (!name) return;
-    if (!state.watchSettings) state.watchSettings = { theaters: [], categories: [] };
-    state.watchSettings.theaters.push({ id: createId("theater"), name, url: url || "" });
-    persist();
-    renderWatchSettingsMenu();
-  });
-  elements.watchSettingsMenu.querySelectorAll("[data-delete-theater]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.deleteTheater;
-      if (state.watchSettings?.theaters) {
-        recordDeletion("watchSettings.theaters", id);
-        state.watchSettings.theaters = state.watchSettings.theaters.filter((t) => t.id !== id);
-        persist();
-        renderWatchSettingsMenu();
-      }
-    });
-  });
-}
 
 function closeDirectorySubmenus() {
 }
@@ -18709,110 +18164,6 @@ function resetIngredientOptions() {
   populateIngredientOptionsEditor();
   persist();
   renderIngredientSuggestions();
-}
-
-function openCalendarsDialog(event) {
-  event?.stopPropagation();
-  closeSettingsMenu();
-  elements.calendarNameInput.value = "";
-  elements.calendarUrlInput.value = "";
-  elements.calendarColorInput.value = normalizeCalendarColor("", state.calendars.length);
-  renderCalendarList();
-  renderGcalPanels();
-  renderReminderDevicePanel();
-  elements.calendarStatus.textContent = calendarEvents.length
-    ? `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced.`
-    : "No calendars synced yet.";
-  elements.calendarsDialog.showModal();
-}
-
-function saveCalendarSettings() {
-  addCalendarFromEditor();
-  persist();
-  elements.calendarsDialog.close();
-  refreshAllCalendarSources({ kinds: ["linked"] });
-}
-
-async function syncCalendarsNow() {
-  addCalendarFromEditor();
-  persist();
-  elements.calendarStatus.textContent = "Syncing calendars...";
-  renderCalendarList();
-  await refreshAllCalendarSources({ kinds: ["linked"], force: true, statusElement: elements.calendarStatus });
-}
-
-function addCalendarFromEditor() {
-  const url = elements.calendarUrlInput.value.trim();
-  if (!url) return;
-  const name = elements.calendarNameInput.value.trim() || "Calendar";
-  const color = normalizeCalendarColor(elements.calendarColorInput.value, state.calendars.length);
-  state.calendars = normalizeLinkedCalendars([
-    ...state.calendars,
-    { id: createId("cal"), name, url, color, enabled: true }
-  ]);
-  elements.calendarNameInput.value = "";
-  elements.calendarUrlInput.value = "";
-  elements.calendarColorInput.value = normalizeCalendarColor("", state.calendars.length);
-  renderCalendarList();
-}
-
-function renderCalendarList() {
-  state.calendars = normalizeLinkedCalendars(state.calendars);
-  if (!state.calendars.length) {
-    elements.calendarList.innerHTML = `<div class="empty-state">No linked calendars yet.</div>`;
-    return;
-  }
-  elements.calendarList.innerHTML = state.calendars.map((calendar) => `
-    <article class="calendar-list-item">
-      <div class="calendar-list-main">
-        <strong>${escapeHtml(calendar.name)}</strong>
-        <small>${escapeHtml(calendar.url || (calendar.googleCalendarId ? "Google Calendar (connected account)" : ""))}</small>
-      </div>
-      <div class="calendar-list-controls">
-        <label>
-          <input type="checkbox" data-calendar-enabled="${escapeHtml(calendar.id)}" ${calendar.enabled ? "checked" : ""} />
-          <span>Display</span>
-        </label>
-        <label>
-          <span>Color</span>
-          <input class="calendar-color-input" type="color" value="${escapeHtml(calendar.color)}" data-calendar-color="${escapeHtml(calendar.id)}" aria-label="Color for ${escapeHtml(calendar.name)}" />
-        </label>
-        <button type="button" data-remove-calendar="${escapeHtml(calendar.id)}" aria-label="Remove ${escapeHtml(calendar.name)}">×</button>
-      </div>
-    </article>
-  `).join("");
-  elements.calendarList.querySelectorAll("[data-calendar-enabled]").forEach((checkbox) => {
-    checkbox.addEventListener("change", () => {
-      state.calendars = state.calendars.map((calendar) => (
-        calendar.id === checkbox.dataset.calendarEnabled ? { ...calendar, enabled: checkbox.checked } : calendar
-      ));
-      persist();
-      renderPlanner();
-    });
-  });
-  elements.calendarList.querySelectorAll("[data-calendar-color]").forEach((input) => {
-    input.addEventListener("change", () => {
-      state.calendars = state.calendars.map((calendar) => (
-        calendar.id === input.dataset.calendarColor ? { ...calendar, color: normalizeCalendarColor(input.value) } : calendar
-      ));
-      const recolored = calendarEvents.map((event) => (
-        event.calendarId === input.dataset.calendarColor ? { ...event, calendarColor: normalizeCalendarColor(input.value) } : event
-      ));
-      persist();
-      writeCalendarSourceCache({ source: "linked" }, recolored); // Phase 3: linked cache write via the facade
-      renderPlanner();
-    });
-  });
-  elements.calendarList.querySelectorAll("[data-remove-calendar]").forEach((button) => {
-    button.addEventListener("click", () => {
-      recordDeletion("calendars", button.dataset.removeCalendar);
-      gcalUnlinkQuietly(state.calendars.find((calendar) => calendar.id === button.dataset.removeCalendar));
-      state.calendars = state.calendars.filter((calendar) => calendar.id !== button.dataset.removeCalendar);
-      persist();
-      renderCalendarList();
-      refreshAllCalendarSources({ kinds: ["linked"] });
-    });
-  });
 }
 
 const COMMON_TIMEZONES = [
@@ -19163,66 +18514,9 @@ function backupHealthTemplate(status) {
 function openTrashDialog(event) {
   event?.stopPropagation();
   closeSettingsMenu();
+  purgeExpiredTrash();
   renderTrash();
   elements.trashDialog.showModal();
-}
-
-function openFamilyMembersDialog() {
-  closeSettingsMenu();
-  renderFamilyMembersList();
-  elements.familyMembersDialog.showModal();
-}
-
-function renderFamilyMembersList() {
-  const config = normalizeMealPlanConfig(state.mealPlanConfig);
-  const existingNames = new Set(config.members.map(m => m.label.trim().toLowerCase()));
-
-  // Auto-include group members not already in the list
-  const autoMembers = groupMembers
-    .filter(gm => gm.display_name && !existingNames.has(gm.display_name.trim().toLowerCase()))
-    .map(gm => ({ id: createId("member"), label: gm.display_name, dob: "", linkedUserId: gm.user_id }));
-
-  const allMembers = [...config.members, ...autoMembers];
-  const currentUserId = authSession?.user?.id;
-
-  const list = elements.familyMembersDialog.querySelector("[data-members-list]");
-  list.innerHTML = allMembers.map(m => {
-    const isLinked = !!m.linkedUserId;
-    const isCurrentUser = currentUserId && m.linkedUserId === currentUserId;
-    return `
-      <div class="config-row" data-member-row data-member-id="${escapeHtml(m.id)}" data-member-linked-user-id="${escapeHtml(m.linkedUserId || "")}">
-        <input type="text" class="config-input${isLinked ? " config-input-readonly" : ""}" value="${escapeHtml(m.label)}" placeholder="Name" ${isLinked ? "readonly" : ""} />
-        <input type="date" class="config-input config-dob-input${isLinked ? " config-input-readonly" : ""}" data-member-dob value="${escapeHtml(m.dob || "")}" title="${isLinked ? "Edit via profile" : "Date of birth"}" ${isLinked ? "readonly" : ""} />
-        ${isCurrentUser ? "" : `
-          <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
-        `}
-      </div>
-    `;
-  }).join("");
-  list.querySelectorAll("[data-remove-member]").forEach(btn => {
-    btn.addEventListener("click", () => btn.closest("[data-member-row]").remove());
-  });
-}
-
-function addFamilyMember() {
-  const list = elements.familyMembersDialog.querySelector("[data-members-list]");
-  const id = createId("member");
-  const div = document.createElement("div");
-  div.className = "config-row";
-  div.setAttribute("data-member-row", "");
-  div.setAttribute("data-member-id", id);
-  div.innerHTML = `
-    <input type="text" class="config-input" value="" placeholder="Name" />
-    <input type="date" class="config-input config-dob-input" data-member-dob value="" title="Date of birth" />
-    <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-    </button>
-  `;
-  div.querySelector("[data-remove-member]").addEventListener("click", () => div.remove());
-  list.appendChild(div);
-  div.querySelector("input").focus();
 }
 
 
@@ -19251,11 +18545,11 @@ function trashItemTemplate(item) {
     <article class="trash-item">
       <div>
         <strong>${escapeHtml(item.recipe.name || "Untitled recipe")}</strong>
-        <span>Deleted ${escapeHtml(new Date(item.deletedAt).toLocaleString())}</span>
+        <span>Deleted ${escapeHtml(new Date(item.deletedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</span>
       </div>
       <div>
         <button class="secondary-btn" type="button" data-restore-trash="${escapeHtml(item.id)}">Restore</button>
-        <button class="danger-btn" type="button" data-delete-trash="${escapeHtml(item.id)}">Delete permanently</button>
+        <button class="danger-btn" type="button" data-delete-trash="${escapeHtml(item.id)}">Delete now</button>
       </div>
     </article>
   `;
@@ -20854,7 +20148,7 @@ function gcalUnlinkQuietly(calendar) {
     .catch(() => { /* reconcile retries the unlink from the tombstone */ });
 }
 
-// ── Google Calendar panel (Settings → Calendars, and the sidebar's Add Calendar) ──
+// ── Google Calendar panel (the Calendar sidebar's Add Calendar dialog) ──
 
 function renderGcalPanels() {
   document.querySelectorAll("[data-gcal-panel]").forEach((el) => {
@@ -28956,7 +28250,6 @@ function wireSavedArticles() {
   document.getElementById("articleReaderDeleteBtn")?.addEventListener("click", deleteOpenArticle);
   document.getElementById("articleAddBtn")?.addEventListener("click", openArticleSaveDialog);
   document.getElementById("articleSyncBtn")?.addEventListener("click", () => syncSavedArticles("read"));
-  document.getElementById("articleSyncSettingsBtn")?.addEventListener("click", () => openSyncSettingsDialog("read"));
   document.getElementById("listenPlayPauseBtn")?.addEventListener("click", toggleReaderListen);
   document.getElementById("listenStopBtn")?.addEventListener("click", stopListen);
   document.getElementById("closeArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
@@ -29835,7 +29128,7 @@ let musicProviderRegistry = null;
 // Owns-playback session (Apple Music / any CAP.OWNS_PLAYBACK provider). NON-NULL
 // only while such a track is actively playing — every guard below keys off this,
 // so the existing engine-based music/podcast/radio/TTS paths are untouched
-// whenever it is null (which is always, until Apple Music is configured).
+// whenever it is null (always, today: no owns-playback provider is registered).
 let musicPlaybackProvider = null;
 let musicOwnedNP = null;    // last normalized NowPlaying snapshot from the provider
 let musicOwnedUnsub = null; // provider.onChange() unsubscribe
@@ -33757,7 +33050,7 @@ function teardownOwnedMusic() {
   musicOwnedNP = null;
 }
 
-// Play a track whose provider OWNS its transport (Apple Music/MusicKit): there is
+// Play a track whose provider OWNS its transport (e.g. a subscription SDK): there is
 // no URL for the shared engine, so we drive the provider directly and mirror its
 // now-playing into the same mini-player / MediaSession / history the URL path uses.
 // Queue advance reuses the existing musicQueueRest machinery: each track is a
@@ -33775,11 +33068,11 @@ async function startOwnedMusicTrack(canonical, provider, gen = musicStartGen) {
   };
   const desc = ownedDesc(canonical);
   musicCurTrack = desc;
-  // In the iOS app the next Apple songs go into the native queue too, so music
-  // keeps going with the phone locked (the web app is paused then). Only the run
-  // of Apple songs straight after this one; anything else still plays from here.
+  // A provider that queues natively (an iOS-native player) gets the run of its own
+  // songs straight after this one, so music keeps going with the phone locked;
+  // anything else still plays from here.
   const upcoming = [];
-  if (nativeAppleMusic()) {
+  if (provider.queuesNatively) {
     for (const it of musicQueueRest) {
       if (it.kind !== "stream" || it.track?.provider !== provider.id || upcoming.length >= 25) break;
       upcoming.push(it.track);
@@ -33816,8 +33109,8 @@ async function startOwnedMusicTrack(canonical, provider, gen = musicStartGen) {
     await provider.play(canonical, { upcoming }); // sets the provider's queue to this track (+ upcoming), then plays
   } catch (e) {
     if (gen !== musicStartGen) return false; // superseded — the newer start owns the session; don't tear it down
-    console.warn("apple music play failed", e);
-    showVoiceToast("Couldn't play this Apple Music track");
+    console.warn("owned-transport play failed", e);
+    showVoiceToast("Couldn't play this track");
     teardownOwnedMusic();
     return false;
   }
@@ -34047,7 +33340,6 @@ function initMusicPanel() {
       // ── Discover actions ──
       if (e.target.closest("[data-music-back]")) { closeMusicItem(); return; }
       if (e.target.closest("[data-music-cat-back]")) { musicDiscoverCategory = null; updateMusicBody(); return; }
-      if (e.target.closest("[data-music-am-signin]")) { signInAppleMusicFromDiscover(); return; }
       const browse = e.target.closest("[data-music-browse]");
       if (browse) { openMusicCategory(browse.dataset.musicBrowse); return; }
       const replay = e.target.closest("[data-music-replay]");
@@ -34118,7 +33410,6 @@ function initMusicPanel() {
       if (e.target.id === "musicPlInlineInput" && !e.target.value.trim()) setTimeout(() => { if (musicPlTabInputActive) { musicPlTabInputActive = false; renderMusicPanel(); } }, 150);
     });
     panel.addEventListener("toggle", (e) => {
-      if (e.target.classList?.contains("music-free-sources")) musicFreeSourcesOpen = e.target.open;
     }, true);
     panel.addEventListener("change", (e) => {
       const inp = e.target.closest("#musicFileInput");
@@ -34246,7 +33537,7 @@ function renderMusicPanel() {
 
 const musicActiveQuery = () => (musicTabMode === "discover" ? musicSearchQuery : musicLocalQuery);
 function musicSearchPlaceholder() {
-  if (musicTabMode === "discover") return musicAppleEnabled() ? "Artists, songs, albums, playlists" : "Composers, works, moods";
+  if (musicTabMode === "discover") return "Composers, works, moods";
   if (musicTabMode === "saved") return "Search your saved music";
   if (musicTabMode === "library") return "Search your library";
   return "Search this playlist";
@@ -34440,18 +33731,6 @@ async function saveJellyfinConfig(cfg) {
 // The provider registry (music-streaming.js + adapters) is lazy-loaded on first
 // Discover use so none of it — nor any provider request — happens for users who
 // only use the local Library.
-// Settings → Apple Music diagnostic line: which path Apple Music will take on this
-// device (native MusicKit plugin vs MusicKit JS) and which web bundle is running,
-// so a TestFlight build can be told apart from an older one.
-function appleMusicDiagnostic() {
-  let plugins = [];
-  try { plugins = (globalThis.Capacitor?.PluginHeaders || []).map((h) => h.name).filter((n) => /^(AppleMusic|LiveTts)$/.test(n)); } catch { /* none */ }
-  const bundle = (document.querySelector('script[type="module"][src*="index-"]')?.getAttribute("src") || "dev").split("/").pop();
-  const native = isNativeApp();
-  const path = !native ? "web (MusicKit JS)" : nativeAppleMusic() ? "native MusicKit" : "native app, but the Apple Music plugin is missing";
-  return `Using: ${path} · plugins: ${plugins.join(", ") || "none"} · bundle: ${bundle}`;
-}
-
 async function getMusicProviders() {
   if (musicProviderRegistry) return musicProviderRegistry;
   const [stream, ia] = await Promise.all([
@@ -34460,24 +33739,6 @@ async function getMusicProviders() {
   ]);
   musicStreamMod = stream;
   const providers = [];
-  // Apple Music is a playback-owning provider and, when enabled, the PRIMARY
-  // catalog (Discover renders it first; the free sources sit below). It self-
-  // gates via isAvailable() (false until the developer token is configured), so
-  // search/playback silently exclude it until then. Storefront: an explicit
-  // config wins, else the signed-in user's own (detected by the provider).
-  const amCfg = state.appleMusic;
-  // Inside the iOS app, MusicKit JS's sign-in stalls (Apple's web popup can't
-  // complete in the web view), so Apple Music there needs the native plugin.
-  const amUsable = !isNativeApp() || !!nativeAppleMusic();
-  if (amCfg && amCfg.enabled && !amUsable) console.warn("Apple Music: native plugin not registered in this build");
-  if (amCfg && amCfg.enabled && amUsable) {
-    const am = await import("./music-provider-applemusic.js");
-    // In the iOS app, Apple's native MusicKit does sign-in and playback (MusicKit
-    // JS can't sign in or play reliably inside the app's web view).
-    const nativeAm = nativeAppleMusic();
-    const deps = nativeAm ? { getInstance: (await import("./music-applemusic-native.js")).nativeMusicKitLoader(nativeAm) } : {};
-    providers.push(am.createAppleMusicProvider({ storefront: amCfg.storefront || null }, deps));
-  }
   providers.push(ia.createInternetArchiveProvider(), ia.createMusopenProvider());
   musicProviderRegistry = stream.createMusicProviderRegistry(providers);
   return musicProviderRegistry;
@@ -34534,7 +33795,6 @@ function musicToggleFav(type, entity) {
 }
 
 const MUSIC_PROVIDER_LABELS = { applemusic: "Apple Music", internetarchive: "Internet Archive", musopen: "Musopen" };
-const musicAppleEnabled = () => !!(state.appleMusic && state.appleMusic.enabled);
 // A per-render lookup so DOM handlers resolve an item by id without embedding JSON.
 let musicViewIndex = new Map();
 const indexMusicItem = (it) => { if (it && it.id) musicViewIndex.set(it.id, it); return it; };
@@ -34720,16 +33980,13 @@ function musicOpenItemHtml() {
 // played, ranked top songs, top albums) → Browse categories. Without a browse-
 // capable catalog (no Apple Music) it's recents + the free-source categories.
 function musicDiscoverHomeHtml() {
-  const full = musicAppleEnabled();
-  if (full) ensureAppleMusicHome();
   const hist = getRecentMedia({ kind: "music", limit: 6 });
   const jump = hist.length ? `<section class="md-sec"><h3 class="md-h">Jump back in</h3><div class="md-quick">${hist.map(musicQuickTile).join("")}</div></section>` : "";
-  const parts = full ? musicBrowseHomeParts() : { top: "", rest: "" };
-  const tiles = `<section class="md-sec"><h3 class="md-h">Browse categories</h3><div class="md-tiles">${categoriesFor({ fullCatalog: full }).map(musicCategoryTile).join("")}</div></section>`;
-  const hint = full ? "" : `<p class="music-empty-sub music-discover-hint">Streaming free &amp; open music from the Internet Archive and Musopen. Connect Apple Music in Settings → Apple Music for charts, new music and picks for you.</p>`;
+  const tiles = `<section class="md-sec"><h3 class="md-h">Browse categories</h3><div class="md-tiles">${categoriesFor({ fullCatalog: false }).map(musicCategoryTile).join("")}</div></section>`;
+  const hint = `<p class="music-empty-sub music-discover-hint">Streaming free &amp; open music from the Internet Archive and Musopen.</p>`;
   return `<div class="md-home">
       <h2 class="md-greeting">${escapeHtml(greetingFor())}</h2>
-      ${parts.top}${jump}${parts.rest}${tiles}${hint}
+      ${jump}${tiles}${hint}
     </div>`;
 }
 
@@ -34786,9 +34043,11 @@ function musicRankedRow(item, i, key) {
 }
 
 // ── Browse categories (Discover → a category page) ─────────────────────────────
-// The first available BROWSE-capable provider (Apple Music today) supplies the
-// shelves; a provider swap needs no change here. Loaded on tap, cached in memory
-// for APPLE_HOME_TTL_MS — never polled. A failed load isn't cached.
+// The first available BROWSE-capable provider supplies the shelves (none today:
+// Apple Music was dropped 2026-10-14, so a category runs a search on the free
+// sources); a provider swap needs no change here. Loaded on tap, cached in memory
+// for MUSIC_BROWSE_TTL_MS — never polled. A failed load isn't cached.
+const MUSIC_BROWSE_TTL_MS = 30 * 60 * 1000;
 async function musicBrowseProvider() {
   const reg = await getMusicProviders();
   for (const p of reg.withCapability(musicStreamMod.CAP.BROWSE)) {
@@ -34808,7 +34067,7 @@ async function openMusicCategory(id) {
   updateMusicBody();
   document.getElementById("mediaMusicPanel")?.scrollIntoView({ block: "start", behavior: "smooth" });
   const c = musicCategoryCache.get(id);
-  if (c && (c.loading || (!c.error && Date.now() - c.at < APPLE_HOME_TTL_MS))) return;
+  if (c && (c.loading || (!c.error && Date.now() - c.at < MUSIC_BROWSE_TTL_MS))) return;
   musicCategoryCache.set(id, { loading: true, shelves: [], at: Date.now() });
   try {
     let genres = null;
@@ -34838,33 +34097,6 @@ function musicCategoryPageHtml() {
   return `<div class="md-cat">${banner}${body}</div>`;
 }
 
-// ── Apple Music Discover home (recommendations / recently played / charts) ─────
-// Loaded once per session on first Discover-home view and kept in memory for
-// APPLE_HOME_TTL_MS — a handful of Apple API calls, never a polling loop.
-const APPLE_HOME_TTL_MS = 30 * 60 * 1000;
-let musicAppleHome = null;        // { shelves[], authorized, at, error? } | null
-let musicAppleHomeLoading = false;
-let musicFreeSourcesOpen = false; // remembered open state of the "Free & open sources" section
-function resetAppleMusicHome() { musicAppleHome = null; }
-async function ensureAppleMusicHome() {
-  if (musicAppleHomeLoading) return;
-  if (musicAppleHome && Date.now() - musicAppleHome.at < APPLE_HOME_TTL_MS) return;
-  musicAppleHomeLoading = true;
-  try {
-    const reg = await getMusicProviders();
-    const p = reg.get("applemusic");
-    if (!p || !(await p.isAvailable())) { musicAppleHome = { shelves: [], authorized: false, at: Date.now(), error: "unavailable" }; return; }
-    const auth = await p.getAuthStatus();
-    const shelves = await p.getHome({ perShelf: 12 });
-    musicAppleHome = { shelves, authorized: !!auth.authorized, at: Date.now() };
-  } catch (e) {
-    console.warn("apple music home failed", e);
-    musicAppleHome = { shelves: [], authorized: false, at: Date.now(), error: "failed" };
-  } finally {
-    musicAppleHomeLoading = false;
-    if (musicTabMode === "discover" && !musicSearchResults && !musicOpenItem && !musicSearchLoading) updateDiscoverResults();
-  }
-}
 function musicShelfCard(item) {
   indexMusicItem(item);
   const sub = item.entity === "track" ? (item.artists?.[0]?.name || "") : (item.artist || "");
@@ -34874,35 +34106,6 @@ function musicShelfCard(item) {
       <span class="music-card-title">${escapeHtml(item.title)}</span>
       ${sub ? `<span class="music-card-sub">${escapeHtml(sub)}</span>` : ""}
     </div>`;
-}
-// Home shelves split so the hero shelf leads the page and the rest follow
-// "Jump back in".
-function musicBrowseHomeParts() {
-  const h = musicAppleHome;
-  if (!h) return { top: `<p class="music-status">Loading Apple Music…</p>`, rest: "" };
-  if (h.error === "unavailable") return { top: `<p class="music-provider-note">Apple Music isn’t reachable — check Settings → Apple Music.</p>`, rest: "" };
-  const signIn = !h.authorized
-    ? `<div class="music-am-signin"><span>Sign in to Apple Music for full-length playback and picks for you.</span><button class="secondary-btn" type="button" data-music-am-signin>Sign in</button></div>`
-    : "";
-  const shelves = h.shelves || [];
-  const hero = shelves.filter((sh) => sh.style === "hero").map((sh) => musicShelfHtml(sh, "home")).join("");
-  const rest = shelves.filter((sh) => sh.style !== "hero").map((sh) => musicShelfHtml(sh, "home")).join("");
-  return { top: signIn + hero, rest };
-}
-async function signInAppleMusicFromDiscover() {
-  try {
-    // Safari only lets MusicKit open Apple's sign-in popup while the click's user
-    // activation is still live, so don't wait on anything avoidable first. The
-    // Sign in button only renders after the Apple home loaded, i.e. the registry
-    // and MusicKit instance already exist — use the registry synchronously and
-    // call authorize() straight from the click (its getInstance() is cached).
-    const reg = musicProviderRegistry || await getMusicProviders();
-    const p = reg.get("applemusic");
-    if (!p) return;
-    await p.authorize();
-  } catch (e) { alert("Apple Music sign-in failed: " + (e?.message || e)); }
-  resetAppleMusicHome();
-  updateDiscoverResults();
 }
 function musicHistoryRow(h) {
   return `<div class="music-row" data-music-replay="${escapeHtml(h.id)}" role="button" tabindex="0">
@@ -34921,16 +34124,7 @@ function discoverResultsHtml() {
     const failed = (providerStatuses || []).filter((s) => !s.ok);
     const note = failed.length ? `<p class="music-provider-note">${failed.map((s) => escapeHtml(MUSIC_PROVIDER_LABELS[s.provider] || s.provider)).join(", ")} unavailable — showing the rest.</p>` : "";
     if (!items.length) return note + `<p class="music-status">No results for “${escapeHtml(musicSearchQuery)}”.</p>`;
-    // Apple Music is the primary catalog when connected: its results lead, and the
-    // free/open sources follow in a collapsible section. Without Apple, the free
-    // sources render exactly as before.
-    const apple = items.filter((i) => i.provider === "applemusic");
-    const free = items.filter((i) => i.provider !== "applemusic");
-    if (!apple.length) return note + musicConsolidatedHtml(free);
-    const freeHtml = free.length
-      ? `<details class="music-free-sources"${musicFreeSourcesOpen ? " open" : ""}><summary class="music-section-h">Free &amp; open sources (${free.length})</summary>${musicConsolidatedHtml(free)}</details>`
-      : "";
-    return note + musicAppleResultsHtml(apple) + freeHtml;
+    return note + musicConsolidatedHtml(items);
   }
   return musicDiscoverCategory ? musicCategoryPageHtml() : musicDiscoverHomeHtml();
 }
@@ -34944,30 +34138,6 @@ function musicConsolidatedHtml(items) {
     return g + l;
   }
   return `<div class="music-results">${items.map(musicResultRow).join("")}</div>`;
-}
-
-// Apple results in Apple-Music-like sections. Classical songs Apple tags with a
-// work (composer/work/movement) group under the Work first; the rest split into
-// Songs / Albums / Artists / Playlists, each capped so the page stays scannable.
-function musicAppleResultsHtml(items) {
-  let works = "", rest = items;
-  if (musicCanonMod) {
-    const { groups } = musicCanonMod.consolidateSearchResults(items.filter((i) => i.entity === "track" && i.work));
-    works = groups.map(musicWorkGroupHtml).join("");
-    const grouped = new Set(groups.flatMap((g) => g.items.map((i) => i.id)));
-    rest = items.filter((i) => !grouped.has(i.id));
-  }
-  const section = (title, list, cap) => list.length
-    ? `<h4 class="music-section-h">${title}</h4><div class="music-results">${list.slice(0, cap).map(musicResultRow).join("")}</div>`
-    : "";
-  const of = (kind) => rest.filter((i) => i.entity === "album" && (i.kind || "album") === kind);
-  return `<div class="music-apple-results">
-      ${section("Songs", rest.filter((i) => i.entity === "track"), 10)}
-      ${works ? `<h4 class="music-section-h">Works</h4>${works}` : ""}
-      ${section("Albums", of("album"), 10)}
-      ${section("Artists", of("artist"), 5)}
-      ${section("Playlists", of("playlist"), 8)}
-    </div>`;
 }
 
 function renderMusicDiscoverBody() {
@@ -37286,7 +36456,7 @@ function returnToReaderOrigin(origin) {
     mail: () => showMailApp(), shop: showShopApp, inventory: showInventoryApp,
     finance: showFinanceApp, recreate: showRecreateApp, explore: showExploreApp,
     play: showPlayApp, weather: showWeatherApp, contacts: showContactsApp,
-    settings: showSettingsApp, home: showHomeApp, watch: showWatchApp,
+    home: showHomeApp, watch: showWatchApp,
   }[origin.area];
   if (!show) return;
   // Media comes back exactly as it was left (tab, search, open show); other
@@ -38038,16 +37208,9 @@ function maybeAutoSync(source) {
 }
 
 async function syncSavedArticles(source, silent = false) {
-  const syncBtn = source === "read"
-    ? document.getElementById("articleSyncBtn")
-    : source === "dialog"
-      ? document.getElementById("dialogSyncNowBtn")
-      : document.getElementById("syncArticlesSettingsBtn");
-  const statusElId = source === "dialog" ? "dialogSyncStatus" : "articleSyncStatus";
+  const syncBtn = source === "read" ? document.getElementById("articleSyncBtn") : null;
   const setStatus = (msg) => {
-    const el = document.getElementById(statusElId);
-    if (el) el.textContent = msg;
-    if (!silent && syncBtn && source !== "dialog") syncBtn.title = msg || "Sync saved articles";
+    if (!silent && syncBtn) syncBtn.title = msg || "Sync saved articles";
   };
 
   if (syncBtn) syncBtn.classList.add("spinning");
@@ -38095,135 +37258,11 @@ async function syncSavedArticles(source, silent = false) {
 
 // ─── Read & Listen settings ───────────────────────────────────────────────────
 
-function openSyncSettingsDialog(source) {
-  const dialog = document.getElementById("articleSyncSettingsDialog");
-  if (!dialog) return;
-  const nytInput = document.getElementById("dialogNytCookieInput");
-  const econInput = document.getElementById("dialogEconomistCookieInput");
-  const statusEl = document.getElementById("dialogSyncStatus");
-  if (nytInput) {
-    nytInput.value = "";
-    nytInput.placeholder = state.articleSync?.nytCookie ? "NYT-S cookie set ✓ — paste to update" : "Paste NYT-S cookie value";
-  }
-  if (econInput) {
-    econInput.value = "";
-    econInput.placeholder = state.articleSync?.economistCookie ? "blaize_session set ✓ — paste to update" : "Paste blaize_session cookie value";
-  }
-  const stribInput = document.getElementById("dialogStribCookieInput");
-  if (stribInput) {
-    stribInput.value = "";
-    stribInput.placeholder = state.articleSync?.stribCookie ? "Star Tribune sign-in set ✓ — paste to update" : "Paste your Star Tribune session cookie";
-  }
-  if (statusEl) statusEl.textContent = "";
-  dialog.dataset.source = source;
-  dialog.showModal();
-}
-
-
-function closeSyncSettingsDialog() {
-  document.getElementById("articleSyncSettingsDialog")?.close();
-}
-
-function saveDialogNytCookie() {
-  const val = document.getElementById("dialogNytCookieInput")?.value.trim();
-  if (!val) return;
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.nytCookie = val;
-  persist();
-  const input = document.getElementById("dialogNytCookieInput");
-  if (input) { input.value = ""; input.placeholder = "NYT-S cookie set ✓ — paste to update"; }
-  const el = document.getElementById("dialogSyncStatus");
-  if (el) { el.textContent = "NYT cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  const source = document.getElementById("articleSyncSettingsDialog")?.dataset.source || "read";
-  updateSyncButtons(source);
-  verifyNewsSignIns(); // News only collects from papers you're signed in to
-}
-
-function saveDialogEconomistCookie() {
-  const val = document.getElementById("dialogEconomistCookieInput")?.value.trim();
-  if (!val) return;
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.economistCookie = val;
-  persist();
-  const input = document.getElementById("dialogEconomistCookieInput");
-  if (input) { input.value = ""; input.placeholder = "blaize_session set ✓ — paste to update"; }
-  const el = document.getElementById("dialogSyncStatus");
-  if (el) { el.textContent = "Economist cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  const source = document.getElementById("articleSyncSettingsDialog")?.dataset.source || "read";
-  updateSyncButtons(source);
-  verifyNewsSignIns();
-}
-
-function saveDialogStribCookie() {
-  const val = document.getElementById("dialogStribCookieInput")?.value.trim();
-  if (!val) return;
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.stribCookie = val;
-  persist();
-  const input = document.getElementById("dialogStribCookieInput");
-  if (input) { input.value = ""; input.placeholder = "Star Tribune sign-in set ✓ — paste to update"; }
-  const el = document.getElementById("dialogSyncStatus");
-  if (el) { el.textContent = "Star Tribune sign-in saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  verifyNewsSignIns(); // News only collects from papers you're signed in to
-}
 
 function updateSyncButtons(source) {
   const pubs = getReadPublications();
   const syncBtn = document.getElementById("articleSyncBtn");
   if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeSavedPub) || !hasSyncCookies();
-}
-
-function initReadListenSettings() {
-  populateReadListenSettings();
-}
-
-function toggleReadListenSettingsMenu() {
-  const menu = document.getElementById("readListenSettingsMenu");
-  const btn = document.getElementById("readListenSettingsBtn");
-  if (!menu || !btn) return;
-  const willOpen = menu.hidden;
-  menu.hidden = !willOpen;
-  btn.setAttribute("aria-expanded", String(willOpen));
-  if (willOpen) populateReadListenSettings();
-}
-
-function saveNytCookie() {
-  const val = document.getElementById("nytCookieInput")?.value.trim();
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.nytCookie = val || "";
-  persist();
-  const el = document.getElementById("articleSyncStatus");
-  if (el) { el.textContent = "NYT cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  verifyNewsSignIns(); // News only collects from papers you're signed in to
-}
-
-function saveEconomistCookie() {
-  const val = document.getElementById("economistCookieInput")?.value.trim();
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.economistCookie = val || "";
-  persist();
-  const el = document.getElementById("articleSyncStatus");
-  if (el) { el.textContent = "Economist cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  verifyNewsSignIns();
-}
-
-function saveStribCookie() {
-  const val = document.getElementById("stribCookieInput")?.value.trim();
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.stribCookie = val || "";
-  persist();
-  const el = document.getElementById("articleSyncStatus");
-  if (el) { el.textContent = "Star Tribune sign-in saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  verifyNewsSignIns();
-}
-
-function populateReadListenSettings() {
-  const nytInput = document.getElementById("nytCookieInput");
-  const econInput = document.getElementById("economistCookieInput");
-  if (nytInput && state.articleSync?.nytCookie) nytInput.placeholder = "NYT-S cookie set ✓";
-  if (econInput && state.articleSync?.economistCookie) econInput.placeholder = "blaize_session cookie set ✓";
-  const stribInput = document.getElementById("stribCookieInput");
-  if (stribInput && state.articleSync?.stribCookie) stribInput.placeholder = "Star Tribune sign-in set ✓";
 }
 
 // ─── TTS audio ────────────────────────────────────────────────────────────────
@@ -40612,82 +39651,9 @@ async function copyText(text, button, label) {
   }, 900);
 }
 
-// ── Voice settings ────────────────────────────────────────────────────────────
-
-function renderVoiceSettings() {
-  const input = document.getElementById("voiceSecretInput");
-  if (!input) return;
-  input.value = state.voiceCommandSecret || "";
-  updateVoiceSetupPreview();
-}
-
-function saveVoiceSecret() {
-  const input = document.getElementById("voiceSecretInput");
-  if (!input) return;
-  state.voiceCommandSecret = input.value.trim();
-  persist();
-  updateVoiceSetupPreview();
-}
-
-function updateVoiceSetupPreview() {
-  const shortcut = document.getElementById("voiceSetupShortcut");
-  const jsonEl = document.getElementById("voiceSetupJson");
-  if (!shortcut || !jsonEl) return;
-  const secret = state.voiceCommandSecret;
-  const hid = userGroup?.id;
-  if (!secret || !hid) {
-    shortcut.setAttribute("hidden", "");
-    return;
-  }
-  const endpoint = `${window.location.origin}/api/voice-command`;
-  const body = JSON.stringify({ transcript: "{{Dictated Text}}", householdId: hid, secret }, null, 2);
-  jsonEl.textContent = `POST ${endpoint}\n\n${body}`;
-  shortcut.removeAttribute("hidden");
-}
-
-// ── Voice command (Siri / Alexa external path) ─────────────────────────────────
+// ── Assistant actions (setMeal), used by the chat assistant's set_meal tool ──
 
 let voiceToastTimer = null;
-
-async function sendVoiceCommand(transcript) {
-  trackUsage("claude_voice");
-  // Resolve today to a concrete prepDay id + week key
-  const todayDate = new Date();
-  todayDate.setHours(0, 0, 0, 0);
-  const todayWeekStart = startOfPrepWindow(todayDate);
-  const todayWeekKey = dateKeyFromDate(todayWeekStart);
-  let todayDayId = "backlog";
-  for (const day of doPrepDays) {
-    const d = addDays(todayWeekStart, day.offset);
-    d.setHours(0, 0, 0, 0);
-    if (d.getTime() === todayDate.getTime()) { todayDayId = day.id; break; }
-  }
-
-  const context = {
-    today: todayDate.toISOString().split("T")[0],
-    todayDayId,
-    todayWeekKey,
-    weekKey: weekKey(),
-    days: prepDays.map((d) => ({ id: d.id, name: d.name })),
-    recipes: activeRecipes().slice(0, 200).map((r) => ({ id: r.id, name: r.name }))
-  };
-
-  console.log("[voice] sending to server:", transcript);
-  const response = await fetch("/api/voice-command", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ transcript, context })
-  });
-
-  if (!response.ok) {
-    const errBody = await response.json().catch(() => ({}));
-    throw new Error(errBody.error || `Voice command failed: ${response.status}`);
-  }
-  const payload = await response.json();
-  console.log("[voice] actions from server:", payload.actions);
-  applyVoiceActions(payload.actions, transcript);
-  setVoiceState("idle");
-}
 
 function applyVoiceActions(actions, transcript) {
   console.log("[voice] applying actions:", actions);
@@ -41287,7 +40253,7 @@ async function runAssistantToolCall(name, input = {}) {
     const msg = name === "search_mail" || name === "read_mail_thread"
       ? "Email access is switched off (Settings → Mail AI → “Assistant can read email”)."
       : name === "query_transactions"
-        ? "Finance access is switched off (Settings → AI Notes → “Assistant can read Finance”)."
+        ? "Finance access is switched off (Settings → Assistant → “Assistant can read Finance”)."
         : `Unknown tool: ${name}`;
     appendChatBubble("tool", `✕ ${msg}`);
     return msg;
@@ -41827,12 +40793,6 @@ async function executeChatTool(name, input) {
         return lines.join("\n");
       }
 
-      case "write_note": {
-        const { notes, message } = addNote(state.aiNotes, String(input.category || "").trim(), input.note, { makeId: () => createId("note"), now: new Date().toISOString() });
-        if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
-        return message;
-      }
-
       case "add_workout": {
         const title = String(input.title || "").trim();
         if (!title) return "No workout name provided.";
@@ -41855,18 +40815,6 @@ async function executeChatTool(name, input) {
         state.pianoSongs.push({ id: createId("piano"), title, learned: false, sheetMusicUrl: "" });
         persist();
         return `Added "${title}" to the piano practice list.`;
-      }
-
-      case "update_note": {
-        const { notes, message } = updateNote(state.aiNotes, input.note_id, input.note, { now: new Date().toISOString() });
-        if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
-        return message;
-      }
-
-      case "forget_note": {
-        const { notes, message } = forgetNote(state.aiNotes, input.note_id);
-        if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
-        return message;
       }
 
       // ── Cross-domain lookups (read-only) ──────────────────────────────────
@@ -42022,10 +40970,6 @@ async function executeChatTool(name, input) {
 
 // ── Chat context serializers ───────────────────────────────────────────────────
 
-function buildAiNotesContext() {
-  return formatNotesContext(state.aiNotes);
-}
-
 // ── Push notifications ─────────────────────────────────────────────────────────
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
@@ -42084,8 +41028,6 @@ function buildBriefingContext() {
     weekday: "long", month: "long", day: "numeric", year: "numeric"
   });
   const parts = [`Today: ${today}`];
-  const notesCtx = buildAiNotesContext();
-  if (notesCtx) parts.push(notesCtx);
   try { parts.push(buildChatEatContext()); }   catch { /* skip */ }
   try { parts.push(buildChatDoContext()); }    catch { /* skip */ }
   try { parts.push(buildChatPlanContext()); }  catch { /* skip */ }
@@ -46971,8 +45913,6 @@ function buildChatContext(section) {
     weekday: "long", month: "long", day: "numeric", year: "numeric"
   });
   let ctx = `Today: ${today}\nSection open: ${section || "home"}\n\n`;
-  const notesCtx = buildAiNotesContext();
-  if (notesCtx) ctx += notesCtx + "\n\n";
   // Every conversation sees every area (not just the open page), so "what's my
   // week look like?" works from anywhere; the open page adds its detail below.
   try {

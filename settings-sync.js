@@ -48,7 +48,6 @@ export const TRACKED_SETTINGS = Object.freeze({
     mailAiSettings: "fields",
     mailReadingPrefs: "fields", // { blockRemoteImages } — Settings → Mail Reading
     aiSettings: "fields",
-    appleMusic: "fields",
     financeAlertPrefs: "fields",
     weeklyEmailSettings: "fields",
   }),

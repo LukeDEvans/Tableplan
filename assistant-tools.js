@@ -18,9 +18,6 @@
 // Netlify without a code change.
 export const ASSISTANT_CHAT_MODEL = "claude-sonnet-4-6";
 
-// Memory categories for write_note / the AI Notes settings page.
-export const AI_NOTE_CATEGORIES = ["userPreferences", "patterns", "openThreads", "appGaps", "suggestions"];
-
 const BASE_TOOLS = [
   {
     name: "add_task",
@@ -315,25 +312,6 @@ const BASE_TOOLS = [
     }
   },
   {
-    name: "write_note",
-    description: "Save a persistent note about Luke or the app that will be included in all future conversations. Use this proactively when you notice something worth remembering: a preference Luke expresses, a recurring pattern, something you can't do that he asked for, or an improvement idea. Write notes sparingly — only when the insight is genuinely reusable across future sessions.",
-    input_schema: {
-      type: "object",
-      properties: {
-        category: {
-          type: "string",
-          enum: ["userPreferences", "patterns", "appGaps", "suggestions"],
-          description: "userPreferences: how Luke likes things done. patterns: recurring behaviors or requests. appGaps: things Luke asked for that the assistant can't do yet. suggestions: app improvements worth building."
-        },
-        note: {
-          type: "string",
-          description: "A clear, concise, third-person fact. Write as if briefing a colleague who has never met Luke. E.g. 'Luke refers to his morning cycling session as his morning ride.' Not 'you said you like cycling.'"
-        }
-      },
-      required: ["category", "note"]
-    }
-  },
-  {
     name: "add_travel_idea",
     description: "Save a destination as a travel idea in Luke's bucket list.",
     input_schema: {
@@ -531,29 +509,6 @@ const EXTRA_TOOLS = [
       },
       required: ["thread_id"]
     }
-  },
-  {
-    name: "update_note",
-    description: "Rewrite one of your saved memory notes when it has become outdated or imprecise. Note ids are shown in ASSISTANT MEMORY as [id].",
-    input_schema: {
-      type: "object",
-      properties: {
-        note_id: { type: "string" },
-        note: { type: "string", description: "The corrected note text" }
-      },
-      required: ["note_id", "note"]
-    }
-  },
-  {
-    name: "forget_note",
-    description: "Delete one of your saved memory notes that is wrong, stale, or that Luke asks you to forget. Also use it to close an openThreads note once that thing is done.",
-    input_schema: {
-      type: "object",
-      properties: {
-        note_id: { type: "string" }
-      },
-      required: ["note_id"]
-    }
   }
 ];
 
@@ -573,16 +528,6 @@ const TOOL_META = {
   delete_event: { risk: "destructive" },
   remove_from_list: { risk: "destructive" },
 };
-
-// write_note gains the openThreads category (kept in sync with AI_NOTE_CATEGORIES).
-{
-  const wn = BASE_TOOLS.find((t) => t.name === "write_note");
-  if (wn) {
-    wn.input_schema.properties.category.enum = [...AI_NOTE_CATEGORIES];
-    wn.input_schema.properties.category.description +=
-      " openThreads: something Luke is in the middle of that you should follow up on (forget_note it once done).";
-  }
-}
 
 export const ASSISTANT_TOOLS = Object.freeze([...BASE_TOOLS, ...EXTRA_TOOLS].map((t) => Object.freeze({
   access: "write",

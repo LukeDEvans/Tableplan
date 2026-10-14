@@ -104,6 +104,11 @@ changes to the Calendar (and its sibling Tasks) domain only.
   `tableplan_states`. On the iPhone, scheduling is local (iOS holds ≤64; we keep the
   nearest 50 over 14 days) and re-synced on persist, focus and the minute tick, cheap
   when unchanged.
+- **Calendar settings live in the Calendar sidebar** (SETTINGS_AUDIT.md): the Google
+  panel, add/edit/delete and Show on Meal Plan are in the Add/Edit Calendar dialog; the
+  old Settings → Calendars dialog is gone. **Legacy iCal-linked Google calendars may be
+  dropped** (Luke, 2026-10-13: he can re-add any he still needs), so removing the
+  `google-ics` fetch path later is approved; it hasn't been done yet.
 - **Recurrence is mature and fully tested** (`calendar/recurrence.js`, incl. Feb-29 /
   month-end SKIP semantics). Extend with tests; don't rewrite.
 - **Do not change local-event timezone semantics** (naive local `YYYY-MM-DD` + local
