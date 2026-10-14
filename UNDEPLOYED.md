@@ -10,6 +10,10 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Last deploy: 2026-10-14 (Apple Music restored)._
+**Dock ticker — headlines and followed teams' games** · #109 · A strip along the top of the bottom dock (⅓ of its height), one item at a time: News's lead stories, then every game of a followed team (before noon yesterday's + today's, from noon today's + tomorrow's). Tap a story → reader; tap a game → News → Sports → Scores on that day, expanded. Web + iPhone app code (no server or DB change), so it needs a deploy for the browser and a TestFlight build for the phone.
+- After deploy / TestFlight: the strip shows above the weather / player slides with real headlines, then your teams' games (follow at least one team in News → Sports → Scores → Teams).
+- Before noon it shows yesterday's results; after noon tomorrow's games instead.
+- Tap a game → Scores opens on that day with it expanded; tap a headline → the reader opens and closing it returns you.
+- During a live game the score updates within ~30 s; windows (notifications, Finance review, Meal Plan trash…) still stop above the dock, now above the strip too.
 
-_(nothing undeployed)_
+_Last deploy: 2026-10-14 (Apple Music restored)._
