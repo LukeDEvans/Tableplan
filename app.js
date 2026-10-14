@@ -20,6 +20,7 @@ import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, 
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule } from './news-ui.js';
 import { createScoresModule } from './scores-ui.js';
+import { createNewsTickerModule } from './news-ticker.js';
 import { normalizeSportsPrefs } from './sports-model.js';
 import { THEMES, THEME_CHOICES, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonEnds } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
@@ -1739,7 +1740,7 @@ const _scores = createScoresModule({
   isNativeApp: () => isNativeApp(),
   getActiveAppArea: () => activeAppArea,
 });
-const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed: seedScores } = _scores;
+const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed: seedScores, getBoard: getScoresBoard, showGame: showScoresGame } = _scores;
 
 // ── News domain (news-ui.js, NEWS_PAGE_DESIGN.md) ──────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showNewsApp stays in
@@ -1778,7 +1779,22 @@ const _news = createNewsModule({
     };
   },
 });
-const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus, signInStatus: newsSignInStatus, setDeviceTrail: setNewsDeviceTrail } = _news;
+const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus, signInStatus: newsSignInStatus, setDeviceTrail: setNewsDeviceTrail, showScores: showNewsScores, tickerLeads: newsTickerLeads, openStory: openNewsStory } = _news;
+
+// ── Dock ticker (news-ticker.js) ────────────────────────────────────────
+// The headlines-and-scores strip along the top of the bottom dock: News's lead
+// stories, then the followed teams' games. Data only through News and Scores
+// above; a tap opens the story, or the game in News → Sports → Scores.
+const _newsTicker = createNewsTickerModule({
+  escapeHtml: (...a) => escapeHtml(...a),
+  getState: () => state,
+  isEnabled: () => !!authSession?.access_token && isPageEnabled("news"),
+  getLeads: (...a) => newsTickerLeads(...a),
+  getBoard: (...a) => getScoresBoard(...a),
+  openStory: (id) => { if (!openNewsStory(id)) showNewsApp(); },
+  openGame: (dateKey, id) => { showScoresGame(dateKey, id); showNewsApp(); showNewsScores(); },
+});
+const { init: initNewsTicker, refresh: refreshNewsTicker } = _newsTicker;
 
 // ── Inventory domain (extracted to inventory-ui.js) ────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
@@ -4040,6 +4056,16 @@ function setupDiagnostics() {
       if (!localDevMode) return null;
       return seedScores(board);
     },
+    // The dock ticker (news-ticker.js): re-read (after the two seeds above) and
+    // report what it shows; step to the next item.
+    tickerRefresh: async () => {
+      if (!localDevMode) return null;
+      await refreshNewsTicker();
+      return { items: _newsTicker.items(), current: _newsTicker.current() };
+    },
+    tickerNext: () => { if (!localDevMode) return null; _newsTicker.next(); return _newsTicker.current(); },
+    // Favorite teams for the Scores view and the ticker (state.sportsPrefs).
+    sportsSetPrefs: (prefs) => { if (!localDevMode) return null; state.sportsPrefs = prefs; return true; },
     mpSetSuggestions: (recipes) => {
       if (!localDevMode) return null;
       mealPlanRecipes = recipes;
@@ -8298,7 +8324,10 @@ function hideAllPages() {
   if (elements.weatherMainPage) elements.weatherMainPage.hidden = true;
   if (typeof stopWeatherRefreshLoop === "function") stopWeatherRefreshLoop(); // pause weather polling when leaving
   if (elements.newsMainPage) {
-    if (!elements.newsMainPage.hidden) leaveNewsPage(); // send any queued read/send/hide now
+    if (!elements.newsMainPage.hidden) {
+      leaveNewsPage(); // send any queued read/send/hide now
+      refreshNewsTicker(); // followed teams may have changed (re-reads cached boards)
+    }
     elements.newsMainPage.hidden = true;
   }
   elements.mailMainPage.hidden = true;
@@ -35574,6 +35603,7 @@ function refreshBottomDock() {
   dockShowActive();
   renderMiniPlayerIdle(); // the idle plan depends on synced state (history, queue, picks)
   dockSlides().forEach((d) => d.refresh?.());
+  refreshNewsTicker(); // the strip above the slides: headlines and followed teams' games
 }
 // Finger-tracking swipe: the active slide follows the finger and the neighbour on
 // the side being revealed comes with it. Past a quarter of the width (or a quick
@@ -35673,6 +35703,7 @@ function initBottomDock() {
   dock.addEventListener("pointerdown", holdDockAuto);
   dock.addEventListener("focusin", holdDockAuto);
   scheduleDockAuto();
+  initNewsTicker();
 }
 
 // ── Now-Playing modal: full info about the current audio, over any page ───────

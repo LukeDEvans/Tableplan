@@ -291,7 +291,7 @@ export function createScoresModule(deps) {
     rollToday();
     const today = dateKeyOf();
     const p = prefs();
-    const board = seeded || boards.get(selected);
+    const board = seeded ? (seeded.days ? { ...seeded, games: seeded.days[selected] || [] } : seeded) : boards.get(selected);
     const loading = inflight.has(selected);
     let body = "";
     if (!board) {
@@ -356,6 +356,12 @@ export function createScoresModule(deps) {
     const chosen = strip?.querySelector(".is-selected");
     if (strip && chosen) strip.scrollLeft = chosen.offsetLeft - strip.offsetLeft - (strip.clientWidth - chosen.clientWidth) / 2;
     if (focus) mountEl.querySelector(focus)?.focus({ preventScroll: true });
+    // Opened from the dock ticker: bring that game into view once it has drawn.
+    if (scrollToGame && board) {
+      const row = mountEl.querySelector(`[data-scores-game="${CSS.escape(scrollToGame)}"]`);
+      if (row) row.scrollIntoView({ block: "center" });
+      scrollToGame = "";
+    }
   }
 
   // A selector for the control that has focus, so a re-render can give it back.
@@ -568,14 +574,50 @@ export function createScoresModule(deps) {
     return loadBoard(selected, { force: true });
   }
 
+  // ── For the dock ticker (news-ticker.js) ──
+  // A day's games for the leagues this view asks for, from the same cache — the
+  // same request the Scores view makes, so the CDN answers both. Reuses a board
+  // loaded within `maxAgeMs`; on a failed request, the last board (or null).
+  async function getBoard(dateKey, { maxAgeMs = 60_000 } = {}) {
+    if (seeded) return seeded.days ? seeded.days[dateKey] || [] : seededDate === dateKey ? seeded.games : [];
+    const leagues = leaguesToRequest(prefs());
+    const requestKey = leagues.join(",");
+    const have = boards.get(dateKey);
+    if (have && have.requestKey === requestKey && Date.now() - have.loadedAt < maxAgeMs) return have.games;
+    if (!leagues.length) return [];
+    try {
+      const body = await request({ action: "scoreboard", date: dateKey, leagues: requestKey });
+      const board = { games: cleanGames(body?.games), leagues: body?.leagues || {}, loadedAt: Date.now(), requestKey };
+      boards.set(dateKey, board);
+      if (dateKey === selected) render();
+      return board.games;
+    } catch {
+      return have?.games || null;
+    }
+  }
+
+  // Open a day with one game expanded (and in view) — a tap on a ticker game.
+  // The view shows it on its next mount (news-ui.js showScores).
+  let scrollToGame = "";
+  function showGame(dateKey, gameId) {
+    selected = dateKey || dateKeyOf();
+    expandedId = gameId ? `mine|${gameId}` : null;
+    scrollToGame = expandedId || "";
+    render();
+  }
+
   // Local-dev only (window.__liveQA.scoresSetBoard): fill the view without a server.
+  // `board.days` ({ dateKey: games }) seeds several days at once.
+  let seededDate = "";
   function seed(board) {
-    seeded = board ? { games: cleanGames(board.games), leagues: board.leagues || {}, loadedAt: Date.now() } : null;
+    seededDate = board?.date || dateKeyOf();
+    seeded = board ? { games: cleanGames(board.games || board.days?.[seededDate]), leagues: board.leagues || {}, loadedAt: Date.now() } : null;
+    if (seeded && board.days) seeded.days = Object.fromEntries(Object.entries(board.days).map(([k, v]) => [k, cleanGames(v)]));
     if (board?.date) selected = board.date;
     if (board?.schedule) schedule = { key: "seed", loadedAt: Date.now(), byToken: board.schedule, loading: false };
     render();
     return seeded ? seeded.games.length : 0;
   }
 
-  return { mount, unmount, refresh, seed, openSettings: openDialog };
+  return { mount, unmount, refresh, seed, openSettings: openDialog, getBoard, showGame };
 }

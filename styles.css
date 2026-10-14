@@ -17327,7 +17327,7 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
    window ends --mini-player-gap above the bar, with a strip of page background
    between them. The bar sits flush to the screen bottom, but the body already
    pads by the safe-area inset, so that inset is subtracted here. */
-body.has-mini-player .app-shell { padding-bottom: max(0px, calc(var(--mini-player-h) + var(--mini-player-gap) - var(--safe-bottom))); }
+body.has-mini-player .app-shell { padding-bottom: max(0px, calc(var(--mini-player-h) + var(--dock-ticker-h) + var(--mini-player-gap) - var(--safe-bottom))); }
 
 @media (max-width: 640px) {
   :root { --mini-player-h: 88px; }
@@ -23083,6 +23083,7 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
   --dock-ink: #ffffff;
   --dock-ink-soft: color-mix(in srgb, var(--dock-ink) 78%, transparent);
   --dock-hover: color-mix(in srgb, var(--dock-ink) 14%, transparent);
+  --dock-live: #ff8a75; /* live-game dot: readable on the dock blue */
   position: fixed;
   left: 0;
   right: 0;
@@ -23160,6 +23161,74 @@ body:not(.app-authed) .bottom-dock { display: none; }
   .mini-player-expand-btn { display: none; }
 }
 
+/* Headlines-and-scores strip (news-ticker.js): along the dock's top edge, a
+   third of the dock's height, one item at a time — the next rises from below.
+   It keeps the dock's blue, a shade deeper, with a hairline under it. */
+.dock-ticker {
+  height: var(--dock-ticker-h);
+  overflow: hidden;
+  background: color-mix(in srgb, var(--dock-bg2) 55%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--dock-ink) 14%, transparent);
+  touch-action: pan-y;
+}
+.dock-ticker[hidden] { display: none; }
+.dtk-stage { position: relative; height: 100%; }
+.dtk-item {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--dock-ink);
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  will-change: transform;
+}
+.dtk-item:focus-visible { outline: 2px solid var(--dock-ink); outline-offset: -3px; }
+.dtk-tag {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--dock-ink) 16%, transparent);
+  font-size: 0.66rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.dtk-text { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+.dtk-run { display: inline-block; white-space: nowrap; font-weight: 600; }
+/* A long line scrolls through once; its edges fade instead of cutting off. */
+.dtk-item.is-long .dtk-text { -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 6px, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(90deg, transparent 0, #000 6px, #000 calc(100% - 16px), transparent); }
+.dtk-item.is-news.is-read .dtk-run { color: var(--dock-ink-soft); }
+@media (prefers-reduced-motion: reduce) {
+  .dtk-text { text-overflow: ellipsis; }
+  .dtk-run { display: inline; }
+}
+.dtk-side { font-weight: 550; color: var(--dock-ink-soft); }
+.dtk-side.is-fav { font-weight: 800; color: var(--dock-ink); }
+.dtk-side b { font-weight: 800; font-variant-numeric: tabular-nums; color: var(--dock-ink); }
+.dtk-join { margin: 0 6px; color: var(--dock-ink-soft); font-weight: 500; }
+.dtk-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.74rem;
+  font-weight: 650;
+  color: var(--dock-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.dtk-item.is-live .dtk-status { color: var(--dock-ink); }
+.dtk-live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dock-live); }
+
 /* Weather ticker — the weather page's hero, condensed to the bar's height. */
 .weather-ticker {
   display: flex;
@@ -23197,7 +23266,7 @@ body:not(.app-authed) .bottom-dock { display: none; }
 body.has-bottom-dock .voice-mic-btn,
 body.has-bottom-dock .voice-toast,
 body.has-bottom-dock .mail-toast,
-body.has-bottom-dock .sync-status { bottom: calc(var(--mini-player-h) + 26px); }
+body.has-bottom-dock .sync-status { bottom: calc(var(--mini-player-h) + var(--dock-ticker-h) + 26px); }
 
 /* ── Windows fit the screen above the dock ───────────────────────────────────
    --dock-h is the strip the dock takes off the bottom of the screen (0 when it
@@ -23209,8 +23278,9 @@ body.has-bottom-dock .sync-status { bottom: calc(var(--mini-player-h) + 26px); }
    Modal <dialog>s and the full-screen overlays above 900 (Now Playing, video,
    Travel Mode, the lock screen) cover the dock on purpose and are left alone.
    New window? Size it against --dock-h, or add it to this list. */
-:root { --dock-h: 0px; }
-body.app-authed.has-bottom-dock { --dock-h: var(--mini-player-h); }
+:root { --dock-h: 0px; --dock-ticker-h: 0px; }
+body.app-authed.has-dock-ticker { --dock-ticker-h: calc(var(--mini-player-h) / 3); }
+body.app-authed.has-bottom-dock { --dock-h: calc(var(--mini-player-h) + var(--dock-ticker-h)); }
 
 .meal-trash-overlay,
 .shop-move-sheet,
