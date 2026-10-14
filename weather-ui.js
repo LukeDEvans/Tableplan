@@ -260,6 +260,12 @@ function renderWeatherPage() {
 }
 
 function wxShortLoc(label) { return String(label || "").split(",")[0].trim() || "Location"; }
+// The saved place with id "home" is Home from the Profile (always first in the list,
+// so it's also the fallback when the device's location can't be had).
+function wxPlaceName(l, { short = false } = {}) {
+  if (l?.id === "home") return short ? "Home" : `Home · ${l.label}`;
+  return short ? wxShortLoc(l?.label) : String(l?.label || "");
+}
 
 function wxLocationRail() {
   // Just the saved cities (quick-switch). "Current" moved to the search picker
@@ -267,7 +273,7 @@ function wxLocationRail() {
   const saved = state.weatherLocations || [];
   if (!saved.length) return "";
   const active = weatherActiveLocation;
-  const chips = saved.map((l) => `<button class="wx-loc" type="button" data-wx-action="select-saved" data-id="${escapeHtml(l.id)}" aria-current="${active && active.id === l.id ? "true" : "false"}">${escapeHtml(wxShortLoc(l.label))}</button>`);
+  const chips = saved.map((l) => `<button class="wx-loc" type="button" data-wx-action="select-saved" data-id="${escapeHtml(l.id)}" aria-current="${active && active.id === l.id ? "true" : "false"}">${escapeHtml(wxPlaceName(l, { short: true }))}</button>`);
   return `<div class="wx-locrail" role="group" aria-label="Saved locations">${chips.join("")}</div>`;
 }
 
@@ -284,7 +290,7 @@ function wxPicker() {
   const saved = state.weatherLocations || [];
   const savedHtml = saved.length ? saved.map((l) => `
     <div class="wx-saved-row">
-      <button class="wx-saved-pick" type="button" data-wx-action="select-saved" data-id="${escapeHtml(l.id)}">${escapeHtml(l.label)}</button>
+      <button class="wx-saved-pick" type="button" data-wx-action="select-saved" data-id="${escapeHtml(l.id)}">${escapeHtml(wxPlaceName(l))}</button>
       <button class="icon-btn wx-saved-remove" type="button" data-wx-action="remove-saved" data-id="${escapeHtml(l.id)}" aria-label="Remove ${escapeHtml(l.label)}">&times;</button>
     </div>`).join("") : `<div class="wx-picker-empty">No saved locations yet.</div>`;
   const results = weatherSearchResults.map((r) => `
@@ -896,6 +902,6 @@ async function renderWeatherTicker(el) {
     </span>`;
 }
 
-  return { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent };
+  return { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent, searchWeatherLocations };
 }
 

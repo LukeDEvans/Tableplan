@@ -15,6 +15,8 @@ import { categoriesFor, categoryById, resolveGenreId, filterSavedLibrary, filter
 import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
+import { DIET_OPTIONS, ALLERGEN_OPTIONS, normalizeMemberDiets, normalizeDietEntry, mergeMemberDiets, isEmptyDiet, describeDiets, describeAllergies, foodRestrictionsContext } from './food-restrictions.js';
+import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, loadAvatar, resizeImageToAvatar, uploadAvatar, removeAvatar } from './profile.js';
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule } from './news-ui.js';
 import { createScoresModule } from './scores-ui.js';
@@ -314,7 +316,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
-  eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking", "mealPlanSharedEvents"],
+  eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "memberDiets", "activeCooking", "mealPlanSharedEvents"],
   grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders", "grocerySettingStamps"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
@@ -1764,7 +1766,7 @@ const _weather = createWeatherModule({
   // The bottom dock's weather ticker follows the weather page's chosen place.
   onLocationChosen: () => renderWeatherTicker(document.getElementById("weatherTicker")),
 });
-const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent } = _weather;
+const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent, searchWeatherLocations } = _weather;
 
 // ── Scores (scores-ui.js, SPORTS_SCORES_DESIGN.md) ─────────────────────
 // The Scores view inside News → Sports. Reads only the app's own scores function;
@@ -1881,6 +1883,7 @@ const {
 // record (Decision #2b) — the live list is state.persistentManualGroceries.
 const _groceries = createGroceriesModule({
   state, elements, persist, meals, prepDays,
+  getHomeLocation: () => homeLocation(),
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
   getPendingMealIngredientSelection: () => pendingMealIngredientSelection,
@@ -2104,6 +2107,7 @@ const {
 // infra + calendar readers + eat shell stay in app.js and are injected. Dual calendar list
 // preserved (Decision #1 not applied). Legacy week.manualGroceries untouched (Decision #2b).
 const _mealplan = createMealplanModule({
+  getHomeLocation: () => homeLocation(),
   state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys,
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
@@ -2419,10 +2423,7 @@ function bindEvents() {
     input.value = ""; // same photo can be picked again
     scanReceiptFromHeader(files);
   }));
-  document.querySelector("#closeProfileBtn").addEventListener("click", () => elements.profileDialog.close());
-  document.querySelector("#saveProfileBtn").addEventListener("click", saveProfile);
-  document.querySelector("#profileLogOutBtn").addEventListener("click", () => { elements.profileDialog.close(); toggleAuth(); });
-  document.querySelector("#profileLogInBtn").addEventListener("click", () => { elements.profileDialog.close(); toggleAuth(); });
+  bindProfileDialog();
   document.querySelector("#closeAdminUsersBtn").addEventListener("click", () => elements.adminUsersDialog.close());
   document.querySelector("#closeAdminHouseholdsBtn").addEventListener("click", () => elements.adminHouseholdsDialog.close());
   elements.sendLoginBtn.addEventListener("click", handleAuthFormSubmit);
@@ -3381,6 +3382,7 @@ async function initializeSupabaseAuth() {
       await hydrateRecipeRowsFromSupabase();
       maybeAutoLinkProfile();
       restoreProfileDobFromAuth();
+      restoreOwnDietFromAuth();
       warmMailStatus();
       warmMailList();
       warmPageNotifs();
@@ -3455,68 +3457,427 @@ async function signInLocalDev() {
   render();
 }
 
+// ── Profile window ────────────────────────────────────────────────────────────
+// Opens read-only; the small Edit pill switches to the form, Save/Cancel return
+// to the view. Pure helpers + the photo client live in profile.js (the photo is
+// stored in Storage, never in synced state — see the note at the top of it).
+let profileAvatarDataUrl = "";   // this user's photo as a data URL, "" = none
+let profileAvatarLoad = null;    // in-flight loadAvatar, so opens never stack fetches
+let profilePhotoDraft = null;    // { blob, dataUrl } picked, "remove", or null
+let profileSaving = false;
+let profileHomeDraft;            // undefined = untouched, null = typed (no place picked), or the picked place
+let profileHomeSearchTimer = null;
+let profileHomeSearchGen = 0;
+let profileDietDraft = null;     // { diets, allergies } while editing
+
+// Home from the Profile, with coordinates — a saved Weather place with id "home"
+// (stored there so Weather shows it and older app builds keep it). null if Home
+// was typed without picking a place.
+function homeLocation() {
+  const h = (state.weatherLocations || []).find((l) => l?.id === "home");
+  return h && isFinite(h.latitude) && isFinite(h.longitude) ? h : null;
+}
+
+// Put Home first among the Weather places (or remove it with null).
+function setHomeLocation(place) {
+  const others = (state.weatherLocations || []).filter((l) => l?.id !== "home");
+  state.weatherLocations = place
+    ? [{ id: "home", label: place.label, latitude: place.latitude, longitude: place.longitude, timezone: place.timezone }, ...others]
+    : others;
+  if (!place && state.weatherActiveLocationId === "home") state.weatherActiveLocationId = "";
+}
+
+function bindProfileDialog() {
+  const dlg = elements.profileDialog;
+  if (!dlg) return;
+  dlg.querySelector("#closeProfileBtn").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#profileEditBtn").addEventListener("click", () => setProfileMode("edit"));
+  dlg.querySelector("#cancelProfileEditBtn").addEventListener("click", () => setProfileMode("view"));
+  dlg.querySelector("#saveProfileBtn").addEventListener("click", saveProfile);
+  dlg.querySelector("#profilePhotoPickBtn").addEventListener("click", () => dlg.querySelector("#profilePhotoInput").click());
+  dlg.querySelector("#profilePhotoRemoveBtn").addEventListener("click", () => {
+    profilePhotoDraft = "remove";
+    setProfilePhotoStatus("");
+    renderProfileEditPhoto();
+  });
+  dlg.querySelector("#profilePhotoInput").addEventListener("change", onProfilePhotoPicked);
+  const homeInput = dlg.querySelector("#profileHomeInput");
+  homeInput.addEventListener("input", () => {
+    profileHomeDraft = null; // typing un-picks the place until one is chosen again
+    renderProfileHomeHint();
+    window.clearTimeout(profileHomeSearchTimer);
+    const q = homeInput.value.trim();
+    if (q.length < 3) { renderProfileHomeResults(null); return; }
+    profileHomeSearchTimer = window.setTimeout(() => searchProfileHome(q), 300);
+  });
+  homeInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !dlg.querySelector("#profileHomeResults").hidden) { e.preventDefault(); renderProfileHomeResults(null); }
+  });
+  dlg.querySelector("#profileHomeResults").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-home-index]");
+    if (!btn) return;
+    const place = profileHomeResults[Number(btn.dataset.homeIndex)];
+    if (!place) return;
+    profileHomeDraft = place;
+    homeInput.value = place.label;
+    renderProfileHomeResults(null);
+    renderProfileHomeHint();
+  });
+  dlg.querySelector("#profileEdit").addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-diet-kind]");
+    if (!chip || !profileDietDraft) return;
+    const list = chip.dataset.dietKind === "allergy" ? "allergies" : "diets";
+    const id = chip.dataset.dietId;
+    const set = new Set(profileDietDraft[list]);
+    if (set.has(id)) set.delete(id); else set.add(id);
+    profileDietDraft[list] = [...set];
+    chip.setAttribute("aria-pressed", set.has(id) ? "true" : "false");
+  });
+  // View rows carry their action in data-profile-action.
+  dlg.querySelector("#profileView").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-profile-action]");
+    if (!btn) return;
+    const action = btn.dataset.profileAction;
+    if (action === "edit-field") {
+      setProfileMode("edit");
+      dlg.querySelector(`#${btn.dataset.field}`)?.focus();
+    } else if (action === "household") {
+      dlg.close();
+      openContextSettingsDialog("family");
+    } else if (action === "auth") {
+      dlg.close();
+      toggleAuth();
+    }
+  });
+  dlg.addEventListener("close", () => { profilePhotoDraft = null; });
+}
+
 function openProfileDialog() {
   closeFloatingMenus();
-  renderProfileDialog();
+  profilePhotoDraft = null;
+  setProfileMode("view");
   elements.profileDialog.showModal();
+  // Show the device copy straight away; fetch only if the photo's version changed.
+  refreshProfileAvatar().then(() => {
+    if (elements.profileDialog.open) renderProfileDialog();
+  });
+}
+
+function profileAvatarVersion() {
+  return authSession?.user?.user_metadata?.avatar_v || "";
+}
+
+function refreshProfileAvatar() {
+  const userId = authSession?.user?.id;
+  if (!userId) { profileAvatarDataUrl = ""; return Promise.resolve(); }
+  if (localDevMode) { // no Storage locally: the device copy is the photo
+    profileAvatarDataUrl = readCachedAvatar(userId)?.dataUrl || "";
+    return Promise.resolve();
+  }
+  if (!profileAvatarLoad) {
+    profileAvatarLoad = loadAvatar({ baseUrl: supabaseBaseUrl(), userId, version: profileAvatarVersion() })
+      .then((url) => { profileAvatarDataUrl = url; })
+      .finally(() => { profileAvatarLoad = null; });
+  }
+  return profileAvatarLoad;
+}
+
+function paintProfileAvatar(el, name, dataUrl) {
+  if (!el) return;
+  el.classList.toggle("has-photo", !!dataUrl);
+  el.style.backgroundImage = dataUrl ? `url("${dataUrl}")` : "";
+  el.textContent = dataUrl ? "" : (profileInitials(name) || "?");
+}
+
+function setProfileMode(mode) {
+  const dlg = elements.profileDialog;
+  const editing = mode === "edit";
+  dlg.dataset.mode = editing ? "edit" : "view";
+  dlg.querySelector("#profileView").hidden = editing;
+  dlg.querySelector("#profileEdit").hidden = !editing;
+  dlg.querySelector("#profileEditActions").hidden = !editing;
+  dlg.querySelector("#profileTitle").textContent = editing ? "Edit profile" : "Profile";
+  if (!editing) profilePhotoDraft = null;
+  setProfilePhotoStatus("");
+  renderProfileDialog();
+}
+
+function profileDisplayName() {
+  const member = getCurrentProfileMember();
+  const email = authSession?.user?.email || "";
+  return member?.label || userGroup?.display_name || email.split("@")[0] || "";
+}
+
+function profileRowHtml({ iconName, label, value, detail = "", empty = false, trail = "", action = "", field = "" }) {
+  const tag = action ? "button" : "div";
+  const attrs = action ? ` type="button" data-profile-action="${action}"${field ? ` data-field="${field}"` : ""}` : "";
+  return `<${tag} class="profile-row"${attrs}>
+    <span class="profile-row-icon">${ldeIcon(iconName, { size: 20 })}</span>
+    <span class="profile-row-text">
+      <span class="profile-row-label">${escapeHtml(label)}</span>
+      <span class="profile-row-value${empty ? " is-empty" : ""}">${value}</span>
+      ${detail ? `<span class="profile-row-detail">${escapeHtml(detail)}</span>` : ""}
+    </span>
+    ${trail ? `<span class="profile-row-trail${action ? " is-action" : ""}">${escapeHtml(trail)}</span>` : ""}
+  </${tag}>`;
 }
 
 function renderProfileDialog() {
+  const dlg = elements.profileDialog;
+  if (!dlg) return;
+  if (dlg.dataset.mode === "edit") { renderProfileEdit(); return; }
+
   const member = getCurrentProfileMember();
   const isLoggedIn = !!authSession?.access_token;
   const email = authSession?.user?.email || "";
-  const name = member?.label || userGroup?.display_name || email.split("@")[0] || "";
-  const initials = name.trim().split(/\s+/).map(w => w[0]?.toUpperCase() || "").slice(0, 2).join("");
+  const name = profileDisplayName();
 
-  elements.profileDialog.querySelector(".profile-avatar-large").textContent = initials || "?";
-  elements.profileDialog.querySelector("#profileNameInput").value = member?.label || userGroup?.display_name || "";
-  elements.profileDialog.querySelector("#profileDobInput").value = member?.dob || "";
-  const homeInput = elements.profileDialog.querySelector("#profileHomeInput");
-  if (homeInput) homeInput.value = state.travelHome || "";
+  paintProfileAvatar(dlg.querySelector("#profileViewAvatar"), name, profileAvatarDataUrl);
+  dlg.querySelector("#profileViewName").textContent = name || "Your profile";
+  dlg.querySelector("#profileViewSub").textContent = isLoggedIn ? email : "Not signed in";
+  dlg.querySelector("#profileEditBtn").hidden = !isLoggedIn && !localDevMode;
 
-  const emailEl = elements.profileDialog.querySelector("#profileEmailDisplay");
-  emailEl.textContent = email || (isLoggedIn ? "" : "Not signed in");
-  emailEl.hidden = !email && isLoggedIn;
+  // About
+  const bday = birthdaySummary(member?.dob);
+  const home = String(state.travelHome || "").trim();
+  dlg.querySelector("#profileViewAbout").innerHTML = [
+    bday
+      ? profileRowHtml({ iconName: "birthday", label: "Birthday", value: escapeHtml(bday.dateLabel), detail: bday.detail })
+      : profileRowHtml({ iconName: "birthday", label: "Birthday", value: "Not set", empty: true, trail: "Add", action: "edit-field", field: "profileDobInput" }),
+    home
+      ? profileRowHtml({ iconName: "home", label: "Home", value: escapeHtml(home),
+          detail: homeLocation() ? "Weather, store search and trips use this" : "Trips start here. Pick it from the list to use it for weather and stores" })
+      : profileRowHtml({ iconName: "home", label: "Home", value: "Not set", empty: true, trail: "Add", action: "edit-field", field: "profileHomeInput" }),
+  ].join("");
 
-  elements.profileDialog.querySelector("#profileLogOutBtn").hidden = !isLoggedIn;
-  elements.profileDialog.querySelector("#profileLogInBtn").hidden = isLoggedIn;
+  // Food — this person's diet and allergies (shared with the household).
+  const diet = member ? normalizeMemberDiets(state.memberDiets)[member.id] : null;
+  dlg.querySelector("#profileViewFood").innerHTML = isEmptyDiet(diet)
+    ? profileRowHtml({ iconName: "nutrition", label: "Diet & allergies", value: "None set", empty: true, trail: "Add", action: "edit-field", field: "profileFoodOtherInput" })
+    : [
+        diet.allergies.length ? profileRowHtml({ iconName: "warning", label: "Allergies", value: escapeHtml(describeAllergies(diet)) }) : "",
+        diet.diets.length ? profileRowHtml({ iconName: "nutrition", label: "Diet", value: escapeHtml(describeDiets(diet)) }) : "",
+        diet.other ? profileRowHtml({ iconName: "info", label: "Also", value: escapeHtml(diet.other) }) : "",
+      ].join("");
+
+  // Household — who shares this app with you, and your role in it.
+  const members = isLoggedIn ? normalizeMealPlanConfig(state.mealPlanConfig).members : [];
+  const myId = authSession?.user?.id;
+  const myRole = groupMembers.find((gm) => gm.user_id === myId)?.role || userGroup?.role || "";
+  const roleLabel = myRole === "admin" ? "Admin" : myRole === "hoh" ? "Head of household" : myRole ? "Member" : "";
+  const chips = members.map((m) => {
+    const isMe = myId && m.linkedUserId === myId;
+    const photo = isMe ? profileAvatarDataUrl : "";
+    const av = `<span class="profile-avatar${photo ? " has-photo" : ""}"${photo ? ` style="background-image:url('${escapeHtml(photo)}')"` : ""}>${photo ? "" : escapeHtml(profileInitials(m.label) || "?")}</span>`;
+    return `<span class="profile-member">${av}${escapeHtml(isMe ? `${m.label} (you)` : m.label)}</span>`;
+  }).join("");
+  const householdGroup = dlg.querySelector("#profileViewHouseholdGroup");
+  householdGroup.hidden = !members.length;
+  dlg.querySelector("#profileViewHousehold").innerHTML = members.length
+    ? profileRowHtml({
+        iconName: "group",
+        label: `${members.length} ${members.length === 1 ? "person" : "people"}`,
+        value: `<span class="profile-members">${chips}</span>`,
+        detail: roleLabel ? `You're ${roleLabel === "Admin" ? "the admin" : roleLabel.toLowerCase()}` : "",
+        trail: "Manage",
+        action: "household",
+      })
+    : "";
+
+  // Account
+  dlg.querySelector("#profileViewAccount").innerHTML = [
+    email ? profileRowHtml({ iconName: "email", label: "Signed in as", value: escapeHtml(email) }) : "",
+    `<button type="button" class="profile-row profile-row--center${isLoggedIn ? " profile-row--danger" : " is-action"}" data-profile-action="auth">${isLoggedIn ? "Sign out" : "Sign in"}</button>`,
+  ].join("");
 }
 
-function saveProfile() {
+function renderProfileEdit() {
+  const dlg = elements.profileDialog;
+  const member = getCurrentProfileMember();
+  dlg.querySelector("#profileNameInput").value = member?.label || userGroup?.display_name || "";
+  dlg.querySelector("#profileDobInput").value = member?.dob || "";
+  dlg.querySelector("#profileHomeInput").value = state.travelHome || "";
+  profileHomeDraft = undefined;
+  renderProfileHomeResults(null);
+  renderProfileHomeHint();
+  const diet = normalizeDietEntry(member ? normalizeMemberDiets(state.memberDiets)[member.id] : null);
+  profileDietDraft = { diets: [...diet.diets], allergies: [...diet.allergies] };
+  const chips = (options, kind, chosen) => options.map((o) =>
+    `<button type="button" class="profile-chip" data-diet-kind="${kind}" data-diet-id="${o.id}" aria-pressed="${chosen.includes(o.id) ? "true" : "false"}">${escapeHtml(o.label)}</button>`).join("");
+  dlg.querySelector("#profileDietChips").innerHTML = chips(DIET_OPTIONS, "diet", diet.diets);
+  const allergyEl = dlg.querySelector("#profileAllergyChips");
+  allergyEl.classList.add("profile-chips--allergy");
+  allergyEl.innerHTML = chips(ALLERGEN_OPTIONS, "allergy", diet.allergies);
+  dlg.querySelector("#profileFoodOtherInput").value = diet.other;
+  renderProfileEditPhoto();
+}
+
+let profileHomeResults = [];
+async function searchProfileHome(q) {
+  const gen = ++profileHomeSearchGen;
+  let results = [];
+  try { results = await searchWeatherLocations(q); } catch { results = []; }
+  if (gen !== profileHomeSearchGen || elements.profileDialog.dataset.mode !== "edit") return;
+  renderProfileHomeResults(results.slice(0, 5));
+}
+
+// null hides the list; [] shows "no matches".
+function renderProfileHomeResults(results) {
+  const dlg = elements.profileDialog;
+  const box = dlg.querySelector("#profileHomeResults");
+  const input = dlg.querySelector("#profileHomeInput");
+  profileHomeResults = results || [];
+  box.hidden = results === null;
+  input.setAttribute("aria-expanded", results === null ? "false" : "true");
+  if (results === null) { box.innerHTML = ""; return; }
+  box.innerHTML = results.length
+    ? results.map((r, i) => `<button type="button" role="option" data-home-index="${i}">${escapeHtml(r.label)}</button>`).join("")
+    : `<div class="profile-home-empty">No U.S. matches. You can keep it as typed for trips.</div>`;
+}
+
+function renderProfileHomeHint() {
+  const dlg = elements.profileDialog;
+  const hint = dlg.querySelector("#profileHomeHint");
+  const typed = dlg.querySelector("#profileHomeInput").value.trim();
+  const current = homeLocation();
+  const linked = profileHomeDraft || (profileHomeDraft === undefined && current && typed === (state.travelHome || "").trim() ? current : null);
+  hint.classList.toggle("is-ok", !!linked);
+  hint.textContent = linked
+    ? "✓ Weather, store search and Explore will use this. Shared with your household."
+    : typed
+      ? "Pick your city from the list so Weather and store search can use it."
+      : "Shared with your household. Weather, store search and Explore use it.";
+}
+
+function renderProfileEditPhoto() {
+  const dlg = elements.profileDialog;
+  const shown = profilePhotoDraft === "remove" ? "" : (profilePhotoDraft?.dataUrl || profileAvatarDataUrl);
+  const typedName = dlg.querySelector("#profileNameInput")?.value || profileDisplayName();
+  paintProfileAvatar(dlg.querySelector("#profileEditAvatar"), typedName, shown);
+  dlg.querySelector("#profilePhotoPickBtn").textContent = shown ? "Change photo" : "Add photo";
+  dlg.querySelector("#profilePhotoRemoveBtn").hidden = !shown;
+}
+
+function setProfilePhotoStatus(text) {
+  const el = elements.profileDialog?.querySelector("#profilePhotoStatus");
+  if (el) el.textContent = text;
+}
+
+async function onProfilePhotoPicked(e) {
+  const file = e.target.files?.[0];
+  e.target.value = ""; // the same photo can be picked again
+  if (!file) return;
+  setProfilePhotoStatus("Preparing photo…");
+  try {
+    profilePhotoDraft = await resizeImageToAvatar(file);
+    setProfilePhotoStatus("");
+  } catch (err) {
+    setProfilePhotoStatus(err?.message || "Couldn't use that photo.");
+  }
+  renderProfileEditPhoto();
+}
+
+function saveProfileFields() {
   const dialog = elements.profileDialog;
   const newName = dialog.querySelector("#profileNameInput").value.trim();
   const newDob = dialog.querySelector("#profileDobInput").value.trim();
 
-  // Home address (used by Explore as each trip's start/finish anchor).
+  // Home: the text is Explore's trip start/finish; a picked place also becomes
+  // the Weather "Home" place and the fallback for store search. Typing something
+  // new without picking clears the old coordinates so they can't go stale.
   const newHome = (dialog.querySelector("#profileHomeInput")?.value || "").trim();
-  if (newHome !== (state.travelHome || "")) { state.travelHome = newHome; persist(); }
+  const homeTextChanged = newHome !== (state.travelHome || "");
+  if (profileHomeDraft) setHomeLocation(profileHomeDraft);
+  else if (homeTextChanged && homeLocation()) setHomeLocation(null);
+  if (homeTextChanged) state.travelHome = newHome;
+  if (homeTextChanged || profileHomeDraft) persist();
+  profileHomeDraft = undefined;
 
+  // A signed-in user with no household entry yet gets one, so their name and
+  // birthday have somewhere to live (previously they were silently dropped).
+  if (!getCurrentProfileMember() && authSession?.user?.id) maybeAutoLinkProfile();
   const member = getCurrentProfileMember();
-  if (member && newName) {
-    const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
-    state.mealPlanConfig = normalizeMealPlanConfig({
-      ...state.mealPlanConfig,
-      members: members.map(m => m.id === member.id ? { ...m, label: newName, dob: newDob } : m)
-    });
-    persist();
-    render();
-    updateAuthUi();
-    if (supabaseClient && authSession?.access_token) {
-      supabaseClient.auth.updateUser({ data: { dob: newDob } }).catch(() => {});
-    }
-  } else if (member && newDob !== (member.dob || "")) {
-    const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
-    state.mealPlanConfig = normalizeMealPlanConfig({
-      ...state.mealPlanConfig,
-      members: members.map(m => m.id === member.id ? { ...m, dob: newDob } : m)
-    });
-    persist();
-    if (supabaseClient && authSession?.access_token) {
-      supabaseClient.auth.updateUser({ data: { dob: newDob } }).catch(() => {});
-    }
+  if (!member) return;
+  saveProfileDiet(member);
+  const nameChanged = newName && newName !== member.label;
+  const dobChanged = newDob !== (member.dob || "");
+  if (!nameChanged && !dobChanged) return;
+  const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
+  state.mealPlanConfig = normalizeMealPlanConfig({
+    ...state.mealPlanConfig,
+    members: members.map((m) => m.id === member.id ? { ...m, label: nameChanged ? newName : m.label, dob: newDob } : m)
+  });
+  persist();
+  if (nameChanged) { render(); updateAuthUi(); }
+  if (dobChanged && supabaseClient && authSession?.access_token) {
+    supabaseClient.auth.updateUser({ data: { dob: newDob } }).catch(() => {});
   }
+}
 
-  dialog.close();
+// Diet & allergies for this member, stamped so it merges per member. Mirrored to
+// the user's auth metadata as a backstop (restoreOwnDietFromAuth).
+function saveProfileDiet(member) {
+  if (!profileDietDraft) return;
+  const other = (elements.profileDialog.querySelector("#profileFoodOtherInput")?.value || "").trim();
+  const all = normalizeMemberDiets(state.memberDiets);
+  const before = normalizeDietEntry(all[member.id]);
+  const next = normalizeDietEntry({ ...profileDietDraft, other, updatedAt: new Date().toISOString() });
+  const same = before.other === next.other
+    && [...before.diets].sort().join() === [...next.diets].sort().join()
+    && [...before.allergies].sort().join() === [...next.allergies].sort().join();
+  profileDietDraft = null;
+  if (same) return;
+  state.memberDiets = { ...all, [member.id]: next };
+  persist();
+  if (supabaseClient && authSession?.access_token && member.linkedUserId === authSession.user?.id) {
+    supabaseClient.auth.updateUser({ data: { diet: next } }).catch(() => {});
+  }
+}
+
+// Upload or remove the photo. Returns false (with a status line) on failure so
+// the form stays open with the draft still in place.
+async function saveProfilePhoto() {
+  if (!profilePhotoDraft) return true;
+  const userId = authSession?.user?.id;
+  if (!userId) return true;
+  try {
+    if (localDevMode) {
+      const url = profilePhotoDraft === "remove" ? "" : profilePhotoDraft.dataUrl;
+      writeCachedAvatar(userId, url ? "local" : "", url);
+      profileAvatarDataUrl = url;
+    } else if (profilePhotoDraft === "remove") {
+      setProfilePhotoStatus("Removing photo…");
+      await removeAvatar({ supabaseClient, userId });
+      if (authSession.user.user_metadata) authSession.user.user_metadata.avatar_v = null;
+      writeCachedAvatar(userId, "", "");
+      profileAvatarDataUrl = "";
+    } else {
+      setProfilePhotoStatus("Uploading photo…");
+      const version = await uploadAvatar({ supabaseClient, userId, blob: profilePhotoDraft.blob });
+      authSession.user.user_metadata = { ...(authSession.user.user_metadata || {}), avatar_v: version };
+      writeCachedAvatar(userId, version, profilePhotoDraft.dataUrl);
+      profileAvatarDataUrl = profilePhotoDraft.dataUrl;
+    }
+    profilePhotoDraft = null;
+    return true;
+  } catch (err) {
+    setProfilePhotoStatus(`Photo not saved: ${err?.message || "try again"}. Your other changes were saved.`);
+    return false;
+  }
+}
+
+async function saveProfile() {
+  if (profileSaving) return;
+  profileSaving = true;
+  const btn = elements.profileDialog.querySelector("#saveProfileBtn");
+  btn.disabled = true;
+  try {
+    saveProfileFields();
+    if (await saveProfilePhoto()) setProfileMode("view");
+  } finally {
+    profileSaving = false;
+    btn.disabled = false;
+  }
 }
 
 // Gather the live runtime values into a diagnostics snapshot (pure normalization
@@ -4815,6 +5176,23 @@ function restoreProfileDobFromAuth() {
   persist();
 }
 
+// Same backstop for the user's own diet/allergies: saved to their auth metadata
+// too, so if an older app build (which doesn't know `memberDiets`) rewrites the
+// eat section without it, their next session on a current build puts it back.
+// Only fills a missing or older entry — never overwrites a newer one.
+function restoreOwnDietFromAuth() {
+  const userId = authSession?.user?.id;
+  const meta = authSession?.user?.user_metadata?.diet;
+  if (!userId || !meta || typeof meta !== "object") return;
+  const me = normalizeMealPlanConfig(state.mealPlanConfig).members.find((m) => m.linkedUserId === userId);
+  if (!me) return;
+  const saved = normalizeDietEntry(meta);
+  const current = normalizeMemberDiets(state.memberDiets)[me.id];
+  if (!saved.updatedAt || (current && String(current.updatedAt) >= saved.updatedAt)) return;
+  state.memberDiets = { ...normalizeMemberDiets(state.memberDiets), [me.id]: saved };
+  persist();
+}
+
 
 function updateTabIndicator(stableParent) {
   if (!stableParent) return;
@@ -5043,6 +5421,7 @@ function defaultState() {
 
     autoGenerateRules: defaultAutoGenerateRules(),
     mealPlanConfig: defaultMealPlanConfig(),
+    memberDiets: {},
     collapsedSections: defaultCollapsedSections(),
     collapsedDays: {},
     emailPrefs: "",
@@ -5263,6 +5642,7 @@ function normalizeState(parsed) {
     weatherLocations: Array.isArray(parsed?.weatherLocations) ? parsed.weatherLocations.filter((l) => l && isFinite(l.latitude) && isFinite(l.longitude)) : [],
     weatherActiveLocationId: typeof parsed?.weatherActiveLocationId === "string" ? parsed.weatherActiveLocationId : "",
     mealPlanConfig,
+    memberDiets: normalizeMemberDiets(parsed?.memberDiets),
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
     travelHome: typeof parsed?.travelHome === "string" ? parsed.travelHome.trim() : "",
     emailPrefs: String(parsed?.emailPrefs || ""),
@@ -6666,6 +7046,8 @@ function mergeStates(newer, older) {
 
   // ── Meal plan config: union members, prefer customized labels ─────────────
   merged.mealPlanConfig = mergeMealPlanConfig(newer.mealPlanConfig, older.mealPlanConfig);
+  // Per-member diets/allergies: union, each member by its own updatedAt.
+  merged.memberDiets = mergeMemberDiets(newer.memberDiets, older.memberDiets);
 
   // ── Calendar events shared with the meal plan: one entry per member, each
   // rewritten whole by its owner — the later copy wins per member.
@@ -46651,6 +47033,8 @@ function buildChatOverviewContext() {
   if (bdays.length) {
     lines.push(`BIRTHDAYS SOON: ${bdays.map((x) => `${x.name} (${x.d === 0 ? "today" : `in ${x.d}d`})`).join(", ")}`);
   }
+  const food = foodRestrictionsContext(state.memberDiets, normalizeMealPlanConfig(state.mealPlanConfig).members);
+  if (food) lines.push(food);
   const access = assistantAccessFlags();
   lines.push(`ACCESS: email ${access.mail ? "on (search_mail / read_mail_thread)" : "off"}; finance ${access.finance ? "on (query_transactions)" : "off"}`);
   return lines.join("\n");

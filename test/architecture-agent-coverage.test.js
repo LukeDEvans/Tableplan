@@ -61,6 +61,7 @@ const SHARED_FILES = {
   "diagnostics.js": "app diagnostics",
   "data-export.js": "whole-app export",
   "auth-account-reset.js": "auth",
+  "profile.js": "the user's own profile window + photo (account-level, every domain reads it)",
   "device-location.js": "shared location (weather, travel, stores)",
   "save-file.js": "shared file hand-off",
   "local-text-detect.js": "shared on-device text recognition",

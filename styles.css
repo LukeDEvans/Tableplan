@@ -769,66 +769,127 @@ h3 {
   width: 100%;
 }
 
-.profile-dialog {
-  width: min(360px, calc(100vw - 28px));
+/* ── Profile window ────────────────────────────────────────────────────────────
+   Opens read-only (hero + grouped rows, like the contact card); the small Edit
+   pill in the header swaps in the form. Built on the std-form-dialog window. */
+.profile-dialog.std-form-dialog { max-width: 380px; width: min(380px, calc(100vw - 28px)); }
+.profile-head { min-height: 28px; }
+.profile-head h2 { margin: 0; }
+.profile-edit-btn {
+  position: absolute; top: 13px; right: 46px; z-index: 1;
+  min-height: 28px; padding: 3px 12px;
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  border-radius: 999px; background: transparent; box-shadow: none;
+  color: var(--ink); font-size: 0.8rem; font-weight: 700; cursor: pointer;
 }
+.profile-edit-btn:hover { border-color: var(--accent); color: var(--accent-dark); }
+.profile-dialog[data-mode="edit"] .profile-edit-btn { display: none; }
 
-.profile-dialog-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 8px 0 4px;
+.profile-dialog .recipe-form { grid-template-rows: auto 1fr auto; }
+.profile-dialog-body { display: flex; flex-direction: column; gap: 18px; padding: 4px 0 8px; align-self: start; }
+.profile-view { display: flex; flex-direction: column; gap: 20px; }
+
+.profile-avatar {
+  width: 44px; height: 44px; min-width: 44px; border-radius: 50%;
+  display: grid; place-items: center; flex-shrink: 0;
+  background: radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.26), transparent 42%), var(--accent);
+  background-size: cover; background-position: center;
+  color: #fffaf0; font-weight: 850; letter-spacing: 0.02em; font-size: 0.95rem;
 }
+.profile-avatar--xl { width: 92px; height: 92px; min-width: 92px; font-size: 2rem; }
+.profile-avatar.has-photo { color: transparent; background-color: var(--surface-strong); }
 
-.profile-avatar-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+.profile-hero { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; padding-top: 6px; }
+.profile-hero .profile-avatar { margin-bottom: 8px; box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 28%, transparent); }
+.profile-hero-name { margin: 0; font-size: 1.3rem; font-weight: 850; color: var(--ink); overflow-wrap: anywhere; }
+.profile-hero-sub { margin: 0; font-size: 0.84rem; color: var(--muted); overflow-wrap: anywhere; }
+.profile-hero-sub:empty { display: none; }
+
+.profile-group { display: flex; flex-direction: column; gap: 6px; }
+.profile-group-title {
+  margin: 0 4px; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted);
 }
-
-.profile-avatar-large {
-  width: 54px;
-  height: 54px;
-  min-width: 54px;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.26), transparent 42%),
-    var(--accent);
-  color: #fffaf0;
-  display: grid;
-  place-items: center;
-  font-size: 1.2rem;
-  font-weight: 850;
-  letter-spacing: 0.02em;
-  flex-shrink: 0;
-}
-
-.profile-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-#profileEmailDisplay {
-  margin: 0;
-  font-size: 0.82rem;
-  color: color-mix(in srgb, var(--ink) 55%, transparent);
-  white-space: nowrap;
+.profile-rows {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 70%, var(--window-bg));
   overflow: hidden;
-  text-overflow: ellipsis;
 }
+.profile-row {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; min-height: 52px; padding: 10px 12px; box-sizing: border-box;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none;
+  text-align: left; color: var(--ink); font: inherit;
+}
+.profile-row + .profile-row { border-top: 1px solid var(--line); }
+button.profile-row { cursor: pointer; }
+button.profile-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.profile-row-icon { display: grid; place-items: center; width: 22px; color: var(--accent-dark); flex-shrink: 0; }
+.profile-row-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.profile-row-label { font-size: 0.72rem; font-weight: 700; color: var(--muted); }
+.profile-row-value { font-size: 0.95rem; font-weight: 650; overflow-wrap: anywhere; }
+.profile-row-value.is-empty { color: var(--muted); font-weight: 500; font-style: italic; }
+.profile-row-detail { font-size: 0.78rem; color: var(--muted); }
+.profile-row-trail { margin-left: auto; color: var(--muted); font-size: 0.8rem; font-weight: 700; flex-shrink: 0; }
+.profile-row-trail.is-action { color: var(--accent-dark); }
+.profile-row--center { justify-content: center; font-weight: 750; color: var(--accent-dark); }
+.profile-row--danger { color: var(--tomato); }
 
-.profile-field-label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: color-mix(in srgb, var(--ink) 55%, transparent);
+.profile-members { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.profile-member { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 2px; border-radius: 999px; background: var(--accent-soft); font-size: 0.8rem; font-weight: 650; color: var(--ink); }
+.profile-member .profile-avatar { width: 22px; height: 22px; min-width: 22px; font-size: 0.6rem; }
+.profile-role { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 0.66rem; font-weight: 800; background: var(--sun-pale); color: var(--ink); vertical-align: 2px; font-style: normal; }
+
+.profile-edit { display: flex; flex-direction: column; gap: 16px; }
+.profile-photo-edit { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 6px; }
+.profile-photo-actions { display: flex; align-items: center; gap: 14px; }
+.link-btn.profile-photo-remove { color: var(--tomato); }
+.std-form-dialog .profile-field > span { color: var(--muted); opacity: 1; font-size: 0.74rem; font-weight: 700; }
+.std-form-dialog .recipe-form-body .profile-field input:not([type="checkbox"]):not([type="radio"]) {
+  border-bottom-color: var(--line); font-size: 1rem; color: var(--ink);
 }
+.profile-field-hint { font-size: 0.74rem; font-weight: 500; color: var(--muted); margin: 0; }
+.profile-home-field { display: flex; flex-direction: column; gap: 4px; position: relative; }
+.profile-home-field label { display: block; }
+.std-form-dialog .profile-home-field label > span { color: var(--muted); font-size: 0.74rem; font-weight: 700; }
+.profile-home-results {
+  display: flex; flex-direction: column; margin-top: 2px;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: var(--window-bg); box-shadow: var(--shadow);
+}
+.profile-home-results button {
+  border: 0; border-radius: 0; background: transparent; box-shadow: none;
+  text-align: left; padding: 10px 12px; min-height: 40px; color: var(--ink); font: inherit; font-size: 0.9rem; cursor: pointer;
+}
+.profile-home-results button + button { border-top: 1px solid var(--line); }
+.profile-home-results button:hover, .profile-home-results button:focus-visible { background: var(--accent-soft); outline: none; }
+.profile-home-results .profile-home-empty { padding: 10px 12px; font-size: 0.82rem; color: var(--muted); }
+.profile-field-hint.is-ok { color: var(--accent-dark); }
+
+.profile-food { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; border-top: 1px solid var(--line); }
+.profile-food .profile-group-title { margin: 8px 0 0; }
+.profile-chip-field { display: flex; flex-direction: column; gap: 6px; }
+.profile-chip-label { font-size: 0.74rem; font-weight: 700; color: var(--muted); }
+.profile-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.profile-chip {
+  min-height: 32px; padding: 4px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; box-shadow: none;
+  color: var(--ink); font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer;
+}
+.profile-chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-dark); }
+.profile-chips--allergy .profile-chip[aria-pressed="true"] { background: var(--tomato-soft); border-color: var(--tomato); color: var(--tomato); }
+
+/* Recipe view: heads-up when an ingredient conflicts with someone's diet/allergy. */
+.recipe-diet-warning {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 12px; border-radius: 12px;
+  background: var(--tomato-soft); color: var(--ink); font-size: 0.86rem;
+}
+.recipe-diet-warning .live-icon { color: var(--tomato); flex-shrink: 0; margin-top: 1px; }
+.recipe-diet-warning ul { margin: 2px 0 0; padding-left: 18px; }
+.recipe-diet-warning small { display: block; margin-top: 4px; color: var(--muted); }
+.profile-field-hint:empty { display: none; }
 
 .prep-window-copy {
   display: grid;
