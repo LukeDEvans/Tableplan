@@ -16,6 +16,12 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
+- [ ] **[P2] Themes: hard-coded colors that no theme reaches** (design tokens · styles.css · 2026-10-14)
+      About 1,100 literal colors remain (218 `#fff`, `#888`, `#92400e`, `#b3261e`, the dock's own palette, and others). The main pages, cards, dialogs, menus and buttons are token-based and pass the Halloween contrast check. Less-used screens (Listen, Watch, Mail, Recreate subpages, Cadence) weren't screenshotted and may show Classic colors inside Halloween. → Sweep page by page: swap literals for tokens, look at each page in Halloween light and dark. THEMES_DESIGN.md → Known gaps. Verdict: CONFIRMED (count by grep).
+- [ ] **[P2] Classic fails the contrast check the Halloween theme passes** (design tokens · styles.css :root · 2026-10-14)
+      Classic's teal accent `#32b496` is about 2.6:1 on white, so teal text and white-on-teal buttons fall short of 4.5:1. Not changed, since Classic is the everyday look. → If wanted: give Classic `/* theme:classic:* */` blocks with a deeper teal for text, then add it to `CHECKED` in test/theme-contrast.test.js. Verdict: CONFIRMED (computed).
+- [ ] **[P2] Seasonal app icon not run on a phone yet** (themes · ios/App/App/AppIconPlugin.swift · 2026-10-14)
+      Verified: the plugin code, the alternate-icon build setting, the asset catalog entry, and the JS that only asks when the icon differs. Not verified: the icon actually switching on a device, and iOS's notice showing once and not on every launch. → First TestFlight build: Settings → Display → Halloween; expect one notice and the orange-on-black icon. Switch back to Classic; expect one notice and the usual icon.
 - [ ] **[P1] Daily briefing push goes to every user's devices** (notifications · netlify/functions/daily-briefing.js loadSubscriptions · 2026-10-13)
       `loadSubscriptions()` reads every row of `live_push_subscriptions` with no `user_id` filter, and the prompt is hard-coded to Luke. → If Luke's wife ever subscribes a browser, she gets Luke's briefing. No exposure today as far as known (only Luke subscribes). Planned fix: Luke decided (2026-10-13) to retire the briefing entirely in notifications Phase 2 (IOS_NOTIFICATIONS_DESIGN.md §3), keeping the function's TTS cleanup + finance snapshot as `daily-maintenance`. Verdict: CONFIRMED (by reading).
 - [ ] **[P2] Share-sheet receipts: not run on a phone or through the App Store export yet** (finance · ios/App/ShareExtension · netlify/functions/share-receipt.js · 2026-10-13)

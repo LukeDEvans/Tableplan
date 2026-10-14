@@ -1,0 +1,63 @@
+# THEMES_DESIGN.md — Display mode + themes
+
+Decisions (Luke, 2026-10-14):
+
+- **Two separate choices: Mode and Theme.** Mode is Light / Dark / Auto. Theme is Classic,
+  Halloween, or Seasonal. Every theme has both a light and a dark version, so Auto works
+  inside any theme.
+- **Per person.** Stored in `state.displayPrefs` (`{ mode, theme, icon }`) in the personal
+  `recreate` section, stamped field by field (`TRACKED_SETTINGS`, `"fields"`). One
+  person's choice never changes what anyone else in the household sees. The old
+  household-wide `config.themeMode` is only the fallback mode until a person picks one.
+- **Seasonal is opt-in.** The default theme is Classic. Seasonal means Halloween for all of
+  October and Classic the rest of the year (`SEASONS` in `theme.js`; add more seasons there).
+- **Visibility first.** Every text/fill pair a theme defines must reach WCAG AA (4.5:1).
+  `test/theme-contrast.test.js` enforces this for every theme in its `CHECKED` list, and
+  every new theme goes in that list. Danger red must also differ from the accent hue by at
+  least 25°, so a warning never reads as decoration.
+- **Seasonal app icon (iPhone).** Halloween uses an all-orange logo on black
+  (`AppIconHalloween`). The icon follows the active theme unless the person turns off
+  "Change the app icon too". iOS always shows its own short notice when the icon changes,
+  so the app only asks when the icon really differs.
+
+## How it works
+
+- `theme.js` is pure apart from `applyResolvedTheme()`. `resolveTheme(prefs, { systemDark, now })`
+  turns the prefs into `{ scheme, palette, themeColor, icon, favicon }`.
+- **Auto is resolved in JS.** CSS only ever sees `data-theme="light" | "dark"` (plus
+  `data-palette="<theme>"` when not Classic), on both `<html>` and `<body>`. There is one
+  dark rule set. The old CSS copy for Auto had drifted (74 dark fixes against 55 Auto ones)
+  and was removed. `app.js` re-applies on the device's light/dark change and when the app
+  returns to the foreground, which is also when Seasonal re-checks the date. No timers.
+- **A theme only redefines tokens.** Each one is a `/* theme:<name>:light */` and a
+  `/* theme:<name>:dark */` block in `styles.css`, read by the contrast test.
+  `--on-accent` / `--on-tomato` are the text colors on accent and danger fills. Classic
+  leaves them unset, and each rule's fallback keeps Classic's look.
+- Theme extras that aren't tokens (the orange home logo, the dock) sit right under the
+  theme's blocks in `styles.css`.
+- Browser chrome follows the theme through `<meta name="theme-color">`, and the browser tab
+  through the favicon. A home-screen web app's icon can't change; only the iPhone app's can.
+- iPhone: `ios/App/App/AppIconPlugin.swift` (`AppIcon` plugin: `get` / `set`), registered in
+  `MainViewController.swift`; the alternate icon set is listed in
+  `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES`. `nativeAppIcon()` in `native-bridge.js` is
+  null in a browser or an older app build.
+
+## Adding a theme
+
+1. Add it to `THEMES` (label, theme-color for light and dark, swatch) and, if it's seasonal,
+   to `SEASONS` in `theme.js`.
+2. Add `/* theme:<name>:light */` and `/* theme:<name>:dark */` token blocks to `styles.css`.
+   Keep one value per line.
+3. Add the name to `CHECKED` in `test/theme-contrast.test.js` and make it pass.
+4. Optional: an alternate iPhone icon (a new `.appiconset`, the build setting, and the
+   plugin's `allowed` list) and a favicon.
+5. Look at it: Calendar, Meal Plan, Shop, Finance and News at phone width, light and dark.
+   Freeze CSS transitions when screenshotting a theme switch headlessly, or the shots catch
+   colors mid-transition.
+
+## Known gaps
+
+`styles.css` still has many hard-coded colors (about 1,100) that no theme reaches. The
+everyday surfaces (cards, dialogs, menus, buttons, the five main pages) are all
+token-based and checked. Less-used screens may still show Classic colors inside a theme.
+Logged in ISSUES.md for a page-by-page sweep.
