@@ -332,7 +332,7 @@ const STATE_SECTIONS = {
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -5229,7 +5229,6 @@ function defaultState() {
     emailPrefs: "",
     appName: "",
     travelHome: "",
-    voiceCommandSecret: "",
     tombstones: {},
     apiUsage: {},
     aiNotes: { userPreferences: [], appGaps: [], suggestions: [], patterns: [] },
@@ -5448,7 +5447,6 @@ function normalizeState(parsed) {
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
     travelHome: typeof parsed?.travelHome === "string" ? parsed.travelHome.trim() : "",
     emailPrefs: String(parsed?.emailPrefs || ""),
-    voiceCommandSecret: typeof parsed?.voiceCommandSecret === "string" ? parsed.voiceCommandSecret : "",
     tombstones: normalizeTombstones(parsed?.tombstones),
     apiUsage: (parsed?.apiUsage && typeof parsed.apiUsage === "object" && !Array.isArray(parsed.apiUsage)) ? parsed.apiUsage : {},
     stateUpdatedAt: typeof parsed?.stateUpdatedAt === "string" ? parsed.stateUpdatedAt : "",
@@ -6860,7 +6858,6 @@ function mergeStates(newer, older) {
   // personal preference list, not id-merged history).
   merged.weatherLocations = newer.weatherLocations || older.weatherLocations || [];
   merged.weatherActiveLocationId = newer.weatherActiveLocationId || older.weatherActiveLocationId || "";
-  merged.voiceCommandSecret = newer.voiceCommandSecret || older.voiceCommandSecret || "";
 
   // ── Email schedule: preserve configured schedule over fresh-device defaults
   merged.weeklyEmailSettings = mergeWeeklyEmailSettings(newer.weeklyEmailSettings, older.weeklyEmailSettings);
@@ -16557,7 +16554,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music", "notifications"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "location-services", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music", "notifications"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16791,7 +16788,6 @@ function renderContextSettingsDialog(kind) {
     recreate: "Recreate",
     pages: "Pages",
     "location-services": "Location Services",
-    "voice-commands": "Voice Commands",
     "admin-pages": "Global Pages",
     "read-sync": "Sync Settings",
     "finance-accounts": "Accounts",
@@ -16821,7 +16817,6 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="voice">Voice</button>
         <button type="button" data-context-settings-action="apple-music">Apple Music</button>
         <button type="button" data-context-settings-action="family">Household</button>
-        <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
         <button type="button" data-context-settings-action="ai-notes">AI Notes</button>
         <button type="button" data-context-settings-action="import-ai">Import from AI Chat</button>
@@ -17245,33 +17240,6 @@ function renderContextSettingsDialog(kind) {
             <button class="secondary-btn compact-btn" type="button" data-context-settings-action="test-location">Test</button>
           </div>
         ` : ""}
-      </div>
-    `;
-    return;
-  }
-
-  if (kind === "voice-commands") {
-    const secret = state.voiceCommandSecret || "";
-    const hid = userGroup?.id;
-    const endpoint = `${window.location.origin}/api/voice-command`;
-    const previewHtml = (secret && hid) ? `
-      <div class="voice-setup-shortcut">
-        <p class="voice-setup-label">Siri Shortcut — paste into "Get Contents of URL" body:</p>
-        <pre class="voice-setup-json" id="voiceSetupJsonDialog">${escapeHtml(`POST ${endpoint}\n\n${JSON.stringify({transcript:"{{Dictated Text}}", householdId: hid, secret}, null, 2)}`)}</pre>
-        <button class="secondary-btn" type="button" data-context-settings-action="copy-voice-setup">Copy</button>
-      </div>
-    ` : "";
-    elements.contextSettingsBody.innerHTML = `
-      <div class="voice-setup">
-        <p class="voice-setup-hint">Set a passphrase to authenticate voice commands from Siri or Alexa. You'll paste the generated JSON into your Shortcut once.</p>
-        <div class="voice-setup-row">
-          <label for="voiceSecretInputDialog">Passphrase</label>
-          <div class="voice-setup-input-row">
-            <input type="text" id="voiceSecretInputDialog" placeholder="e.g. sunshine-lake-42" autocomplete="off" spellcheck="false" value="${escapeHtml(secret)}" />
-            <button class="primary-btn" type="button" data-context-settings-action="save-voice-secret">Save</button>
-          </div>
-        </div>
-        ${previewHtml}
       </div>
     `;
     return;
@@ -17936,7 +17904,6 @@ function handleContextSettingsAction(event) {
     "family": () => renderContextSettingsDialog("family"),
     "pages": () => renderContextSettingsDialog("pages"),
     "location-services": () => renderContextSettingsDialog("location-services"),
-    "voice-commands": () => renderContextSettingsDialog("voice-commands"),
     "ai-log": () => renderContextSettingsDialog("ai-log"),
     "ai-notes": () => renderContextSettingsDialog("ai-notes"),
     "import-ai": () => closeAndRun(openImportAiDialog),
@@ -17969,18 +17936,6 @@ function handleContextSettingsAction(event) {
     "sync-now-context": () => {
       elements.contextSettingsDialog.close();
       syncSavedArticles("read");
-    },
-    "save-voice-secret": () => {
-      const input = document.getElementById("voiceSecretInputDialog");
-      if (!input) return;
-      state.voiceCommandSecret = input.value.trim();
-      persist();
-      renderContextSettingsDialog("voice-commands");
-    },
-    "copy-voice-setup": () => {
-      const jsonEl = document.getElementById("voiceSetupJsonDialog");
-      if (!jsonEl) return;
-      navigator.clipboard.writeText(jsonEl.textContent).catch(() => {});
     },
     "add-family-member": () => {
       const list = elements.contextSettingsBody.querySelector("[data-family-members-list]");
@@ -39945,82 +39900,9 @@ async function copyText(text, button, label) {
   }, 900);
 }
 
-// ── Voice settings ────────────────────────────────────────────────────────────
-
-function renderVoiceSettings() {
-  const input = document.getElementById("voiceSecretInput");
-  if (!input) return;
-  input.value = state.voiceCommandSecret || "";
-  updateVoiceSetupPreview();
-}
-
-function saveVoiceSecret() {
-  const input = document.getElementById("voiceSecretInput");
-  if (!input) return;
-  state.voiceCommandSecret = input.value.trim();
-  persist();
-  updateVoiceSetupPreview();
-}
-
-function updateVoiceSetupPreview() {
-  const shortcut = document.getElementById("voiceSetupShortcut");
-  const jsonEl = document.getElementById("voiceSetupJson");
-  if (!shortcut || !jsonEl) return;
-  const secret = state.voiceCommandSecret;
-  const hid = userGroup?.id;
-  if (!secret || !hid) {
-    shortcut.setAttribute("hidden", "");
-    return;
-  }
-  const endpoint = `${window.location.origin}/api/voice-command`;
-  const body = JSON.stringify({ transcript: "{{Dictated Text}}", householdId: hid, secret }, null, 2);
-  jsonEl.textContent = `POST ${endpoint}\n\n${body}`;
-  shortcut.removeAttribute("hidden");
-}
-
-// ── Voice command (Siri / Alexa external path) ─────────────────────────────────
+// ── Assistant actions (setMeal), used by the chat assistant's set_meal tool ──
 
 let voiceToastTimer = null;
-
-async function sendVoiceCommand(transcript) {
-  trackUsage("claude_voice");
-  // Resolve today to a concrete prepDay id + week key
-  const todayDate = new Date();
-  todayDate.setHours(0, 0, 0, 0);
-  const todayWeekStart = startOfPrepWindow(todayDate);
-  const todayWeekKey = dateKeyFromDate(todayWeekStart);
-  let todayDayId = "backlog";
-  for (const day of doPrepDays) {
-    const d = addDays(todayWeekStart, day.offset);
-    d.setHours(0, 0, 0, 0);
-    if (d.getTime() === todayDate.getTime()) { todayDayId = day.id; break; }
-  }
-
-  const context = {
-    today: todayDate.toISOString().split("T")[0],
-    todayDayId,
-    todayWeekKey,
-    weekKey: weekKey(),
-    days: prepDays.map((d) => ({ id: d.id, name: d.name })),
-    recipes: activeRecipes().slice(0, 200).map((r) => ({ id: r.id, name: r.name }))
-  };
-
-  console.log("[voice] sending to server:", transcript);
-  const response = await fetch("/api/voice-command", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ transcript, context })
-  });
-
-  if (!response.ok) {
-    const errBody = await response.json().catch(() => ({}));
-    throw new Error(errBody.error || `Voice command failed: ${response.status}`);
-  }
-  const payload = await response.json();
-  console.log("[voice] actions from server:", payload.actions);
-  applyVoiceActions(payload.actions, transcript);
-  setVoiceState("idle");
-}
 
 function applyVoiceActions(actions, transcript) {
   console.log("[voice] applying actions:", actions);

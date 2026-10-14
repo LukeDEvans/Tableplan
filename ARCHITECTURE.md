@@ -49,7 +49,7 @@ move off Supabase to a home server + local-first storage without a rewrite.
 │  Postgres + RLS           │     │  Integration/proxy layer + jobs:      │
 │  tableplan_states (JSONB  │     │   tmdb-*, youtube-search, weather,    │
 │    app-state blob/section)│     │   google-*, simplefin, showtimes…     │
-│  eat_recipes/eat_folders  │◀────│  AI: chat.js, voice-command,_claude.js│
+│  eat_recipes/eat_folders  │◀────│  AI: chat.js, _claude.js              │
 │  mail_* (jobs, hardened)  │ svc │  Background: sweep-background, gmail-  │
 │  live_group_* (sharing)   │ role│    webhook, import-pdf-background      │
 │  Auth (JWT, email-scoped) │     │  Cron: scheduled-email(15m), daily-   │
