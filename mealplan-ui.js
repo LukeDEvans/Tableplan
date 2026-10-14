@@ -1146,28 +1146,6 @@ function clearMealRestaurant(day, meal, index) {
   setMeal(day, meal, compactMealSlotEntries(entries, meal));
 }
 
-function saveMealPlanMembers() {
-  const rows = elements.familyMembersDialog.querySelectorAll("[data-member-row]");
-  const newMembers = [];
-  rows.forEach(row => {
-    const id = row.dataset.memberId;
-    const linkedUserId = row.dataset.memberLinkedUserId || null;
-    const label = (row.querySelector("input[type='text']")?.value || "").trim();
-    const dob = (row.querySelector("[data-member-dob]")?.value || "").trim();
-    if (label) newMembers.push({ id, label, dob, linkedUserId: linkedUserId || null });
-  });
-  if (!newMembers.length) { alert("At least one family member is required."); return; }
-  const oldConfig = normalizeMealPlanConfig(state.mealPlanConfig);
-  state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, members: newMembers });
-  const newConfig = normalizeMealPlanConfig(state.mealPlanConfig);
-  recomputeMealPlanLayout();
-  applyMealPlanConfigChange(oldConfig, newConfig);
-  persist();
-  render();
-  if (getActiveAppArea() === "home") setPageTitle(getAppName());
-  elements.familyMembersDialog.close();
-}
-
 function openMealPlanSettingsDialog() {
   closeSettingsMenu();
   renderMealTypesList();
@@ -3897,7 +3875,6 @@ function recipeOrCustomMealValue(value, dayId = "", meal = "") {
     renderRestaurantSuggestions,
     restoreMealPlanSwipeScroll,
     saveMealPlanMealTypes,
-    saveMealPlanMembers,
     searchRestaurantLocations,
     selectPlannerDay,
     setMeal,

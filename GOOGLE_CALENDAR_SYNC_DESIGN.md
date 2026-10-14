@@ -137,7 +137,7 @@ Real start/end times also fix meal-plan placement for Google events.
 - ✅ Publishing status confirmed **In production** (Luke, 2026-10-12). Keep it there: in *Testing*, refresh tokens for sensitive scopes expire after 7 days.
 
 **Phase 1: Read via API (biggest immediate win) — ✅ MERGED (PR #90) and DEPLOYED 2026-10-13**
-- As built: `migrations/2026-10-12-gcal-accounts.sql` (`gcal_accounts` + `gcal_links`), `netlify/functions/_gcal.js` + `gcal-auth` / `gcal-callback` / `gcal-calendars` / `gcal-events`, `calendar/google.js` (pure mapping + severance converter), `calendar/google-client.js` (device cache + link reconciliation), app.js glue (search "Google Calendar API sync"), panel in Settings → Calendars and the sidebar's Add Calendar dialog.
+- As built: `migrations/2026-10-12-gcal-accounts.sql` (`gcal_accounts` + `gcal_links`), `netlify/functions/_gcal.js` + `gcal-auth` / `gcal-callback` / `gcal-calendars` / `gcal-events`, `calendar/google.js` (pure mapping + severance converter), `calendar/google-client.js` (device cache + link reconciliation), app.js glue (search "Google Calendar API sync"), panel in the Calendar sidebar's Add Calendar dialog (the old Settings → Calendars dialog was removed with the settings cleanup, SETTINGS_AUDIT.md).
 - Deviations from §3–5, on purpose:
   - The app↔Google mapping is authoritative in **`gcal_links`** (server), not only on the `state.calendars` entry. Older deployed clients strip unknown fields from `state.calendars` when they re-save the plan row, so the entry's `googleCalendarId` is just a cache that every status sync re-applies.
   - A removed calendar is a `gcal_links` row with `enabled=false`, so discovery never re-adds it. Re-adding mints a fresh app id, because the old one is tombstoned.

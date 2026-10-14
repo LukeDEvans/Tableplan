@@ -2000,60 +2000,6 @@ select:focus {
   outline: none;
 }
 
-.settings-page {
-  min-height: min(70vh, 760px);
-}
-
-.settings-page-list {
-  display: grid;
-  gap: 12px;
-}
-
-.settings-page-section {
-  display: grid;
-  gap: 0;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--sun) 48%, var(--line));
-  border-radius: 18px;
-  background: rgba(255, 253, 246, 0.86);
-}
-
-.settings-section-toggle {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 54px;
-  padding: 0 14px;
-  color: #3b2e12;
-  font-family: "Great Vibes", cursive;
-  font-size: 1.5rem;
-  font-weight: 700;
-  text-align: left;
-}
-
-.settings-section-toggle svg {
-  width: 22px;
-  height: 22px;
-  justify-self: end;
-  transition: transform 160ms ease;
-}
-
-.settings-section-toggle[aria-expanded="false"] svg {
-  transform: rotate(-90deg);
-}
-
-.settings-page-body {
-  display: grid;
-  gap: 12px;
-  padding: 0 14px 14px;
-}
-
-.settings-page-body[hidden] {
-  display: none;
-}
-
 .settings-subheading {
   font-size: 0.78rem;
   font-weight: 600;
@@ -16202,36 +16148,14 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
 /* ─── End Article/Listen pages ──────────────────────────────────────────────── */
 
 /* ─── Read & Listen settings ─────────────────────────────────────────────────── */
-.read-listen-settings { display: flex; flex-direction: column; gap: 18px; padding: 4px 0; }
 .settings-hint { font-size: 0.82rem; color: var(--text-muted, #888); margin: 0; line-height: 1.45; }
 .settings-hint--small { font-size: 0.76rem; }
 .settings-field-row { display: flex; flex-direction: column; gap: 6px; }
 .settings-field-row--action { flex-direction: row; align-items: center; gap: 12px; }
-.settings-field-label { font-size: 0.83rem; font-weight: 600; }
-.settings-field-key { font-family: monospace; font-size: 0.79rem; background: color-mix(in srgb, var(--ink) 7%, transparent); padding: 1px 5px; border-radius: 4px; font-weight: 500; }
-.settings-field-input-row { display: flex; gap: 8px; }
-.settings-field-input {
-  flex: 1;
-  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
-  border-radius: 8px;
-  padding: 8px 11px;
-  font-size: 0.88rem;
-  font-family: inherit;
-  background: var(--paper, #fff);
-  color: var(--ink);
-}
-.settings-field-input:focus { outline: none; border-color: var(--accent, #92400E); }
-.settings-sync-status { font-size: 0.82rem; color: var(--text-muted, #888); }
 
 /* Spin animation for sync buttons */
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinning svg { animation: spin 1s linear infinite; }
-/* Sync settings dialog */
-.article-sync-settings-dialog .recipe-form { max-width: 460px; }
-.article-sync-settings-body { padding: 14px 0 4px; display: flex; flex-direction: column; gap: 16px; }
-.sync-settings-field { display: flex; flex-direction: column; gap: 6px; }
-.sync-settings-label { font-size: 0.83rem; font-weight: 600; }
-.sync-settings-status-row { margin: 4px 0 0; min-height: 1.2em; }
 /* ─── Sync context settings dialog ──────────────────────────────────────────── */
 .sync-context-settings { display: flex; flex-direction: column; gap: 16px; padding: 2px 0; }
 .sync-context-hint { font-size: 0.84rem; color: var(--text-muted, #888); margin: 0; line-height: 1.5; }

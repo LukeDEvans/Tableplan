@@ -470,9 +470,9 @@ const PAGE_SCOPE_SECTION = {
 
 let scopeToggleWired = false;
 
-// The per-page header toggle has moved into Settings → General → View, which
-// switches every page at once. Keep this stub so callers stay valid; it just
-// keeps the old header control hidden and refreshes the Settings radios.
+// The per-page header toggle was replaced by one app-wide switch (setAllScopes).
+// That switch has no control right now: Luke is redesigning how household and
+// personal overlap (SETTINGS_AUDIT.md §7). Keep this stub so callers stay valid.
 function updateScopeToggleUi() {
   const wrap = document.getElementById("scopeToggle");
   if (wrap) wrap.hidden = true;
@@ -1112,7 +1112,6 @@ const elements = {
   foodHealthMeals: document.querySelector("#foodHealthMeals"),
   addFoodLogBtn: document.querySelector("#addFoodLogBtn"),
   ateRecipeBtn: document.querySelector("#ateRecipeBtn"),
-  settingsMainPage: document.querySelector("#settingsMainPage"),
   playMainPage: document.querySelector("#playMainPage"),
   playPlannerGrid: document.querySelector("#playPlannerGrid"),
   watchPlannerGrid: document.querySelector("#watchPlannerGrid"), // on the Watch page (#watchMainPage)
@@ -1264,23 +1263,9 @@ const elements = {
   readingArchiveDialog: document.querySelector("#readingArchiveDialog"),
   readingArchiveBody: document.querySelector("#readingArchiveBody"),
   closeReadingArchiveBtn: document.querySelector("#closeReadingArchiveBtn"),
-  generalSettingsBtn: document.querySelector("#generalSettingsBtn"),
-  generalSettingsMenu: document.querySelector("#generalSettingsMenu"),
-  eatSettingsBtn: document.querySelector("#eatSettingsBtn"),
-  eatSettingsMenu: document.querySelector("#eatSettingsMenu"),
-  doSettingsBtn: document.querySelector("#doSettingsBtn"),
-  doSettingsMenu: document.querySelector("#doSettingsMenu"),
-  watchSettingsBtn: document.querySelector("#watchSettingsBtn"),
-  watchSettingsMenu: document.querySelector("#watchSettingsMenu"),
-  playSettingsBtn: document.querySelector("#playSettingsBtn"),
-  playSettingsMenu: document.querySelector("#playSettingsMenu"),
-  openRecurringTasksBtn: document.querySelector("#openRecurringTasksBtn"),
-  openWorkoutLibraryBtn: document.querySelector("#openWorkoutLibraryBtn"),
-  openWorkoutLogsBtn: document.querySelector("#openWorkoutLogsBtn"),
   openPlayAutoRulesBtn: document.querySelector("#openPlayAutoRulesBtn"),
   openDoListBtn: document.querySelector("#openDoListBtn"),
   openTasksPageBtn: document.querySelector("#openTasksPageBtn"),
-  openDoSettingsBtn: document.querySelector("#openDoSettingsBtn"),
   doMainPage: document.querySelector("#doMainPage"),
   doPlannerGrid: document.querySelector("#doPlannerGrid"),
   addTaskDialog: document.querySelector("#addTaskDialog"),
@@ -1317,9 +1302,6 @@ const elements = {
   tasksPageTaskForm: document.querySelector("#tasksPageTaskForm"),
   tasksPageTaskInput: document.querySelector("#tasksPageTaskInput"),
   tasksPageTaskList: document.querySelector("#tasksPageTaskList"),
-  doSettingsDialog: document.querySelector("#doSettingsDialog"),
-  closeDoSettingsBtn: document.querySelector("#closeDoSettingsBtn"),
-  doneDoSettingsBtn: document.querySelector("#doneDoSettingsBtn"),
   recurringTasksDialog: document.querySelector("#recurringTasksDialog"),
   closeRecurringTasksBtn: document.querySelector("#closeRecurringTasksBtn"),
   doneRecurringTasksBtn: document.querySelector("#doneRecurringTasksBtn"),
@@ -1387,20 +1369,7 @@ const elements = {
   pastWorkoutSelect: document.querySelector("#pastWorkoutSelect"),
   pastWorkoutDate: document.querySelector("#pastWorkoutDate"),
   startPastWorkoutBtn: document.querySelector("#startPastWorkoutBtn"),
-  openPastWorkoutBtn: document.querySelector("#openPastWorkoutBtn"),
-  themeModeInputs: document.querySelectorAll("input[name='themeMode']"),
-  openAutoRulesBtn: document.querySelector("#openAutoRulesBtn"),
-  openTagsBtn: document.querySelector("#openTagsBtn"),
-  openGroceryLibraryBtn: document.querySelector("#openGroceryLibraryBtn"),
-  openIngredientOptionsBtn: document.querySelector("#openIngredientOptionsBtn"),
-  openFoodHealthSettingsBtn: document.querySelector("#openFoodHealthSettingsBtn"),
   menuMealPlanSettingsBtn: document.querySelector("#menuMealPlanSettingsBtn"),
-  openCalendarsBtn: document.querySelector("#openCalendarsBtn"),
-  openWeeklyEmailBtn: document.querySelector("#openWeeklyEmailBtn"),
-  openBackupHealthBtn: document.querySelector("#openBackupHealthBtn"),
-  openRestoreBackupBtn: document.querySelector("#openRestoreBackupBtn"),
-  openExportDataBtn: document.querySelector("#openExportDataBtn"),
-  openTrashBtn: document.querySelector("#openTrashBtn"),
   autoRulesDialog: document.querySelector("#autoRulesDialog"),
   mealAutoFillDialog: document.querySelector("#mealAutoFillDialog"),
   autoRuleTrashTarget: document.querySelector("#autoRuleTrashTarget"),
@@ -1521,15 +1490,6 @@ const elements = {
   ingredientQtyOptions: document.querySelector("#ingredientQtyOptions"),
   ingredientItemOptions: document.querySelector("#ingredientItemOptions"),
   ingredientPrepOptions: document.querySelector("#ingredientPrepOptions"),
-  calendarsDialog: document.querySelector("#calendarsDialog"),
-  closeCalendarsBtn: document.querySelector("#closeCalendarsBtn"),
-  saveCalendarsBtn: document.querySelector("#saveCalendarsBtn"),
-  syncCalendarsBtn: document.querySelector("#syncCalendarsBtn"),
-  calendarNameInput: document.querySelector("#calendarNameInput"),
-  calendarUrlInput: document.querySelector("#calendarUrlInput"),
-  calendarColorInput: document.querySelector("#calendarColorInput"),
-  calendarList: document.querySelector("#calendarList"),
-  calendarStatus: document.querySelector("#calendarStatus"),
   weeklyEmailDialog: document.querySelector("#weeklyEmailDialog"),
   closeWeeklyEmailBtn: document.querySelector("#closeWeeklyEmailBtn"),
   closeWeeklyEmailBtn2: document.querySelector("#closeWeeklyEmailBtn2"),
@@ -1673,9 +1633,6 @@ const elements = {
   trashList: document.querySelector("#trashList"),
   closeTrashBtn: document.querySelector("#closeTrashBtn"),
   doneTrashBtn: document.querySelector("#doneTrashBtn"),
-  openFamilyMembersBtn: document.querySelector("#openFamilyMembersBtn"),
-  familyMembersDialog: document.querySelector("#familyMembersDialog"),
-  openMealPlanSettingsBtn: document.querySelector("#openMealPlanSettingsBtn"),
   mealPlanSettingsDialog: document.querySelector("#mealPlanSettingsDialog")
 };
 
@@ -2193,7 +2150,6 @@ const {
   renderRestaurantSuggestions,
   restoreMealPlanSwipeScroll,
   saveMealPlanMealTypes,
-  saveMealPlanMembers,
   searchRestaurantLocations,
   selectPlannerDay,
   setMeal,
@@ -2688,7 +2644,6 @@ function bindEvents() {
   elements.openMealPlanBtn?.addEventListener("click", showEatApp);
   elements.openDoListBtn?.addEventListener("click", showDoApp);
   elements.openTasksPageBtn?.addEventListener("click", openTasksPage);
-  elements.openDoSettingsBtn?.addEventListener("click", openDoSettingsDialog);
   elements.closeWatchSearchBtn.addEventListener("click", () => elements.watchSearchDialog.close());
   elements.watchSearchDialog.addEventListener("click", closeDialogOnBackdropClick);
   elements.watchSearchDialog.addEventListener("close", () => {
@@ -2725,8 +2680,6 @@ function bindEvents() {
   elements.planTasksBtn?.addEventListener("click", openTasksPage);
   elements.tasksOverlayPrevWeek?.addEventListener("click", () => stepPlanTasksWeek(-1));
   elements.tasksOverlayNextWeek?.addEventListener("click", () => stepPlanTasksWeek(1));
-  elements.closeDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
-  elements.doneDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
   elements.closeRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
   elements.doneRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
   elements.tasksPageTaskForm?.addEventListener("submit", addDoTaskFromTasksPage);
@@ -2804,25 +2757,6 @@ function bindEvents() {
   document.addEventListener("drop", handleDocumentMealDrop, true);
   document.addEventListener("mousemove", handleDocumentAutoRuleMouseMove);
   document.addEventListener("mouseup", handleDocumentAutoRuleMouseUp);
-  elements.generalSettingsBtn.addEventListener("click", toggleGeneralSettingsMenu);
-  elements.eatSettingsBtn.addEventListener("click", toggleEatSettingsMenu);
-  elements.doSettingsBtn.addEventListener("click", toggleDoSettingsMenu);
-  elements.playSettingsBtn.addEventListener("click", togglePlaySettingsMenu);
-  elements.watchSettingsBtn.addEventListener("click", toggleWatchSettingsMenu);
-  document.getElementById("readListenSettingsBtn")?.addEventListener("click", toggleReadListenSettingsMenu);
-  document.getElementById("saveNytCookieBtn")?.addEventListener("click", saveNytCookie);
-  document.getElementById("saveEconomistCookieBtn")?.addEventListener("click", saveEconomistCookie);
-  document.getElementById("saveStribCookieBtn")?.addEventListener("click", saveStribCookie);
-  document.getElementById("syncArticlesSettingsBtn")?.addEventListener("click", () => syncSavedArticles("settings"));
-  document.getElementById("closeArticleSyncSettingsBtn")?.addEventListener("click", closeSyncSettingsDialog);
-  document.getElementById("cancelArticleSyncSettingsBtn")?.addEventListener("click", closeSyncSettingsDialog);
-  document.getElementById("dialogSaveNytCookieBtn")?.addEventListener("click", saveDialogNytCookie);
-  document.getElementById("dialogSaveEconomistCookieBtn")?.addEventListener("click", saveDialogEconomistCookie);
-  document.getElementById("dialogSaveStribCookieBtn")?.addEventListener("click", saveDialogStribCookie);
-  document.getElementById("dialogSyncNowBtn")?.addEventListener("click", () => syncSavedArticles("dialog"));
-  elements.openRecurringTasksBtn.addEventListener("click", openRecurringTasksDialog);
-  elements.openWorkoutLibraryBtn.addEventListener("click", openWorkoutLibraryDialog);
-  elements.openWorkoutLogsBtn.addEventListener("click", openWorkoutLogsDialog);
   elements.openPlayAutoRulesBtn?.addEventListener("click", openPlayAutoRulesDialog);
   elements.closeWorkoutLibraryBtn.addEventListener("click", () => elements.workoutLibraryDialog.close());
   elements.doneWorkoutLibraryBtn.addEventListener("click", () => elements.workoutLibraryDialog.close());
@@ -2862,32 +2796,8 @@ function bindEvents() {
   elements.repMoodDialog.querySelectorAll("[data-rep-mood]").forEach((btn) => {
     btn.addEventListener("click", () => selectRepMood(btn.dataset.repMood));
   });
-  elements.openPastWorkoutBtn.addEventListener("click", openPastWorkoutDialog);
   elements.closePastWorkoutBtn.addEventListener("click", () => elements.pastWorkoutDialog.close());
   elements.startPastWorkoutBtn.addEventListener("click", startPastWorkout);
-  elements.themeModeInputs.forEach((input) => {
-    input.addEventListener("change", () => setThemeMode(input.value));
-  });
-  document.querySelectorAll('input[name="globalScope"]').forEach((input) => {
-    input.addEventListener("change", () => { if (input.checked) setAllScopes(input.value); });
-  });
-  elements.openAutoRulesBtn.addEventListener("click", openAutoRulesDialog);
-  elements.openTagsBtn.addEventListener("click", openTagsDialog);
-  elements.openGroceryLibraryBtn.addEventListener("click", openGroceryLibraryDialog);
-  elements.openIngredientOptionsBtn.addEventListener("click", openIngredientOptionsDialog);
-  elements.openFoodHealthSettingsBtn.addEventListener("click", openFoodHealthSettingsDialog);
-  elements.openCalendarsBtn.addEventListener("click", openCalendarsDialog);
-  elements.openWeeklyEmailBtn.addEventListener("click", openWeeklyEmailDialog);
-  elements.openBackupHealthBtn.addEventListener("click", openBackupHealthDialog);
-  elements.openRestoreBackupBtn.addEventListener("click", openRestoreDialog);
-  elements.openExportDataBtn?.addEventListener("click", exportMyData);
-  elements.openTrashBtn.addEventListener("click", openTrashDialog);
-  elements.openFamilyMembersBtn.addEventListener("click", openFamilyMembersDialog);
-  elements.openMealPlanSettingsBtn.addEventListener("click", openMealPlanSettingsDialog);
-  document.querySelector("#closeFamilyMembersBtn").addEventListener("click", () => elements.familyMembersDialog.close());
-  document.querySelector("#cancelFamilyMembersBtn").addEventListener("click", () => elements.familyMembersDialog.close());
-  document.querySelector("#saveFamilyMembersBtn").addEventListener("click", saveMealPlanMembers);
-  document.querySelector("#addFamilyMemberBtn").addEventListener("click", addFamilyMember);
   document.querySelector("#closeMealPlanSettingsBtn").addEventListener("click", () => elements.mealPlanSettingsDialog.close());
   document.querySelector("#cancelMealPlanSettingsBtn").addEventListener("click", () => elements.mealPlanSettingsDialog.close());
   document.querySelector("#saveMealTypesBtn").addEventListener("click", saveMealPlanMealTypes);
@@ -2956,9 +2866,6 @@ function bindEvents() {
   elements.closeIngredientOptionsBtn.addEventListener("click", () => elements.ingredientOptionsDialog.close());
   elements.saveIngredientOptionsBtn.addEventListener("click", saveIngredientOptions);
   elements.resetIngredientOptionsBtn.addEventListener("click", resetIngredientOptions);
-  elements.closeCalendarsBtn.addEventListener("click", () => elements.calendarsDialog.close());
-  elements.saveCalendarsBtn.addEventListener("click", saveCalendarSettings);
-  elements.syncCalendarsBtn.addEventListener("click", syncCalendarsNow);
   elements.closeWeeklyEmailBtn.addEventListener("click", () => elements.weeklyEmailDialog.close());
   elements.closeWeeklyEmailBtn2.addEventListener("click", () => elements.weeklyEmailDialog.close());
   elements.previewWeeklyEmailBtn.addEventListener("click", generateWeeklyEmailPreview);
@@ -3164,32 +3071,6 @@ function bindEvents() {
     restaurantSearchTimer = window.setTimeout(() => searchRestaurantLocations(query), 300);
   });
   document.querySelector("#groupSetupForm")?.addEventListener("submit", submitGroupSetup);
-  document.querySelector("#groupSettingsBtn")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const menu = document.getElementById("groupSettingsMenu");
-    if (!menu) return;
-    const willOpen = menu.hidden;
-    menu.hidden = !willOpen;
-    document.getElementById("groupSettingsBtn").setAttribute("aria-expanded", String(willOpen));
-    if (willOpen) renderGroupSettingsSection();
-  });
-
-  document.querySelector("#voiceSettingsBtn")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const menu = document.getElementById("voiceSettingsMenu");
-    if (!menu) return;
-    const willOpen = menu.hidden;
-    menu.hidden = !willOpen;
-    document.getElementById("voiceSettingsBtn").setAttribute("aria-expanded", String(willOpen));
-    if (willOpen) renderVoiceSettings();
-  });
-
-  document.querySelector("#saveVoiceSecretBtn")?.addEventListener("click", saveVoiceSecret);
-  document.querySelector("#copyVoiceSetupBtn")?.addEventListener("click", () => {
-    const pre = document.getElementById("voiceSetupJson");
-    if (!pre) return;
-    copyText(pre.textContent, document.getElementById("copyVoiceSetupBtn"), "Copied!");
-  });
 }
 
 function closeDialogOnBackdropClick(event) {
@@ -3266,7 +3147,7 @@ function handleHashNavigation() {
     contacts: showContactsApp,
     weather: showWeatherApp,
     news: showNewsApp,
-    settings: showSettingsApp,
+    settings: () => { showHomeApp(); openContextSettingsDialog("general"); }, // the old Settings page is gone
     home: showHomeApp,
     read: showMediaApp,
     listen: showMediaApp,
@@ -3411,7 +3292,6 @@ function syncShareTokenForSession(signedIn) {
 // `message` (optional) is shown on the sign-in gate's status line — used for
 // boot failures, so a signed-out user sees WHY instead of a generic prompt.
 function updateAuthUi(message) {
-  updateGroupSettingsSection();
   if (message) {
     const status = document.getElementById("lockStatus");
     if (status) status.textContent = message;
@@ -4633,7 +4513,6 @@ async function runLoadOrCreateUserGroup() {
         userGroup = { id: member.group_id, disabled_pages: group?.disabled_pages || [], role: member.role, display_name: member.display_name };
         personalDisabledPages = member.personal_disabled_pages || [];
         await loadGroupMembers();
-        updateGroupSettingsSection();
         return;
       }
       openGroupSetupDialog(); // confirmed: signed in, no membership → new user
@@ -4753,7 +4632,6 @@ async function submitGroupSetup(event) {
     dialog.close();
     sessionStorage.removeItem("live_invite_token");
     pendingInviteToken = null;
-    updateGroupSettingsSection();
   } catch (e) {
     errorEl.textContent = e.message || "Something went wrong. Please try again.";
   } finally {
@@ -4813,82 +4691,6 @@ async function sendGroupInvite(email) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Could not send invite.");
   return data;
-}
-
-function updateGroupSettingsSection() {
-  const section = document.getElementById("groupSettingsSection");
-  if (!section) return;
-  if (authSession?.access_token !== undefined) {
-    section.hidden = !authSession.access_token;
-  }
-  if (!authSession?.access_token || !userGroup) return;
-  const menu = document.getElementById("groupSettingsMenu");
-  if (menu && !menu.hidden) renderGroupSettingsSection();
-}
-
-function renderGroupSettingsSection() {
-  const body = document.getElementById("groupSettingsMenu");
-  if (!body || !userGroup) return;
-  const isAdmin = userGroup.role === "admin";
-  const canManageHousehold = isAdmin || userGroup.role === "hoh";
-  const roleLabel = (r) => r === "admin" ? "Admin" : r === "hoh" ? "HoH" : "Member";
-  const memberHtml = groupMembers.map((m) => `
-    <div class="config-row group-member-row">
-      <span>${escapeHtml(m.display_name || m.user_id)}</span>
-      <span class="muted-label">${escapeHtml(roleLabel(m.role))}</span>
-    </div>
-  `).join("");
-  const inviteHtml = isAdmin ? `
-    <div class="group-invite-form">
-      <p class="settings-subheading">Invite someone</p>
-      <div class="inline-form">
-        <input type="email" id="groupInviteEmail" placeholder="email@example.com" autocomplete="email" />
-        <button class="secondary-btn" type="button" id="sendGroupInviteBtn">Send invite</button>
-      </div>
-      <p class="import-status" id="groupInviteStatus"></p>
-    </div>
-  ` : "";
-  const pages = MANAGED_PAGES;
-  const pageAccessHtml = canManageHousehold ? `
-    <div class="group-page-access">
-      <p class="settings-subheading">Members can access</p>
-      ${pages.map((p) => `
-        <label class="group-page-toggle-row">
-          <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
-            ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
-          ${escapeHtml(p.label)}
-        </label>
-      `).join("")}
-    </div>
-  ` : "";
-  body.innerHTML = `
-    <div class="group-members-list">${memberHtml || '<p class="muted-label">No members yet.</p>'}</div>
-    ${inviteHtml}
-    ${pageAccessHtml}
-  `;
-  if (isAdmin) {
-    document.getElementById("sendGroupInviteBtn")?.addEventListener("click", async () => {
-      const emailInput = document.getElementById("groupInviteEmail");
-      const status = document.getElementById("groupInviteStatus");
-      const email = emailInput?.value.trim();
-      if (!email) return;
-      status.textContent = "Sending…";
-      try {
-        const result = await sendGroupInvite(email);
-        status.innerHTML = result.emailSent === false
-          ? `Invite created, but the email could not be delivered — share the link directly: <a href="${escapeHtml(result.inviteUrl)}" target="_blank" rel="noopener">invite link</a> (copy and text it).`
-          : `Invite sent to ${escapeHtml(email)}.${result.inviteUrl ? ` <a href="${escapeHtml(result.inviteUrl)}" target="_blank" rel="noopener">Open link</a>` : ""}`;
-        if (emailInput) emailInput.value = "";
-      } catch (e) {
-        status.textContent = e.message;
-      }
-    });
-  }
-  if (canManageHousehold) {
-    body.querySelectorAll("[data-group-page]").forEach((checkbox) => {
-      checkbox.addEventListener("change", () => setGroupPageVisibility(checkbox.dataset.groupPage, !checkbox.checked));
-    });
-  }
 }
 
 async function setGroupPageVisibility(page, disabled) {
@@ -6492,9 +6294,6 @@ function applyThemeMode() {
   state.themeMode = mode;
   document.body.dataset.theme = mode;
   document.documentElement.style.colorScheme = mode === "dark" ? "dark" : mode === "light" ? "light" : "light dark";
-  elements.themeModeInputs?.forEach((input) => {
-    input.checked = input.value === mode;
-  });
 }
 
 function setThemeMode(mode) {
@@ -8452,7 +8251,6 @@ function hideAllPages() {
     if (!elements.newsMainPage.hidden) leaveNewsPage(); // send any queued read/send/hide now
     elements.newsMainPage.hidden = true;
   }
-  elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
   document.getElementById("exploreMainPage").hidden = true;
 }
@@ -8676,20 +8474,6 @@ function leaveMailContactsMode() {
   setPageHash("mail");
   renderMailConnectState();
   if (!mailPageInitialized) initMailPage(); // arrived at Contacts directly (e.g. #contacts)
-}
-
-function showSettingsApp(event) {
-  event?.stopPropagation();
-  activeAppArea = "settings";
-  hideAllPages();
-  elements.settingsMainPage.hidden = false;
-  elements.weekLabel.closest(".week-tools").hidden = true;
-  elements.activeCookingSection.hidden = true;
-  setPageTitle("Settings");
-  setPageHash("settings");
-  initReadListenSettings();
-  closePageTitleMenu();
-  closeAppMenu();
 }
 
 function showHomeApp(event) {
@@ -12156,7 +11940,6 @@ function currentMainPageTitle() {
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Recreate";
   if (activeAppArea === "finance") return "Finance";
-  if (activeAppArea === "settings") return "Settings";
   if (activeAppArea === "mail") return "Mail";
   if (activeAppArea === "explore") return "Explore";
   return "Meal Plan";
@@ -12197,12 +11980,6 @@ function stepPlanTasksWeek(delta) {
   currentWeek = tasksWeekSession ? stepTasksWeek(tasksWeekSession, delta) : addDays(currentWeek, delta * 7);
   renderDoPlanner();
   updatePlanTasksWeekLabel();
-}
-
-function openDoSettingsDialog(event) {
-  event?.stopPropagation();
-  closeFloatingMenus();
-  elements.doSettingsDialog.showModal();
 }
 
 function openRecurringTasksDialog(event) {
@@ -17008,9 +16785,8 @@ function renderContextSettingsDialog(kind) {
   contextSettingsKind = kind;
   const titles = {
     general: "Settings",
-    eat: "Meal Plan",
-    do: "Tasks",
-    play: "Exercise",
+    watch: "Watch",
+    radio: "Radio",
     family: "Household",
     recreate: "Recreate",
     pages: "Pages",
@@ -17029,7 +16805,7 @@ function renderContextSettingsDialog(kind) {
     "apple-music": "Apple Music",
     "notifications": "Notifications"
   };
-  const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
+  const isSubPanel = !["general", "watch", "radio", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
   elements.contextSettingsTitle.textContent = titles[kind] || "Settings";
   if (kind === "general") {
@@ -17800,31 +17576,6 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
-  if (kind === "eat") {
-    elements.contextSettingsBody.innerHTML = `
-      <div class="settings-action-grid">
-        <button type="button" data-context-settings-action="auto-rules">Auto-Fill Rules</button>
-        <button type="button" data-context-settings-action="tags">Tags</button>
-        <button type="button" data-context-settings-action="grocery-list">Grocery List</button>
-        <button type="button" data-context-settings-action="grocery-pricing">Receipts &amp; Price History</button>
-        <button type="button" data-context-settings-action="grocery-items">Grocery Items</button>
-        <button type="button" data-context-settings-action="ingredient-options">Ingredient Options</button>
-        <button type="button" data-context-settings-action="food-health-settings">Nutrition Settings</button>
-        <button type="button" data-context-settings-action="meal-plan-settings">Meal Plan Settings</button>
-      </div>
-    `;
-    return;
-  }
-
-  if (kind === "do") {
-    elements.contextSettingsBody.innerHTML = `
-      <div class="settings-action-grid">
-        <button type="button" data-context-settings-action="recurring-tasks">Recurring Tasks</button>
-      </div>
-    `;
-    return;
-  }
-
   if (kind === "watch") {
     renderWatchContextSettings();
     return;
@@ -18335,130 +18086,6 @@ function toggleDoMenu(event) {
   showDoApp(event);
 }
 
-function toggleGeneralSettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.generalSettingsMenu.hidden;
-  elements.generalSettingsMenu.hidden = !willOpen;
-  elements.generalSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-}
-
-
-function toggleEatSettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.eatSettingsMenu.hidden;
-  elements.eatSettingsMenu.hidden = !willOpen;
-  elements.eatSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-}
-
-function toggleDoSettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.doSettingsMenu.hidden;
-  elements.doSettingsMenu.hidden = !willOpen;
-  elements.doSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-}
-
-function togglePlaySettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.playSettingsMenu.hidden;
-  elements.playSettingsMenu.hidden = !willOpen;
-  elements.playSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-}
-
-function toggleWatchSettingsMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.watchSettingsMenu.hidden;
-  elements.watchSettingsMenu.hidden = !willOpen;
-  elements.watchSettingsBtn.setAttribute("aria-expanded", String(willOpen));
-  if (willOpen) renderWatchSettingsMenu();
-}
-
-function renderWatchSettingsMenu() {
-  const theaters = state.watchSettings?.theaters || [];
-  const categories = state.watchSettings?.categories || [];
-  elements.watchSettingsMenu.innerHTML = `
-    <div class="watch-theater-settings">
-      <div class="watch-theater-settings-head">Watch Tabs</div>
-      <p class="watch-theater-settings-hint">Tabs appear above the watch list to filter movies and shows by category.</p>
-      ${categories.length ? `<ul class="watch-theater-list">
-        ${categories.map((c) => `
-          <li class="watch-theater-item">
-            <span class="watch-theater-name">${escapeHtml(c.name)}</span>
-            <button class="icon-btn watch-theater-delete" type="button" data-delete-category="${escapeHtml(c.id)}" aria-label="Remove ${escapeHtml(c.name)}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
-          </li>`).join("")}
-      </ul>` : ""}
-      <form class="watch-theater-add-form" id="watchCategoryAddForm">
-        <input class="watch-theater-input" id="watchCategoryNameInput" type="text" placeholder="Tab name (e.g. Sci-Fi)" autocomplete="off" required />
-        <button class="primary-btn" type="submit">Add Tab</button>
-      </form>
-    </div>
-    <div class="watch-theater-settings">
-      <div class="watch-theater-settings-head">Movie Theaters</div>
-      <p class="watch-theater-settings-hint">Saved theaters appear as showtime links for movies currently in theaters.</p>
-      ${theaters.length ? `<ul class="watch-theater-list">
-        ${theaters.map((t) => `
-          <li class="watch-theater-item">
-            <span class="watch-theater-name">${escapeHtml(t.name)}</span>
-            ${t.url ? `<a class="watch-theater-url-preview" href="${escapeHtml(t.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(t.url)}">link</a>` : ""}
-            <button class="icon-btn watch-theater-delete" type="button" data-delete-theater="${escapeHtml(t.id)}" aria-label="Remove ${escapeHtml(t.name)}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
-          </li>`).join("")}
-      </ul>` : ""}
-      <form class="watch-theater-add-form" id="watchTheaterAddForm">
-        <input class="watch-theater-input" id="watchTheaterNameInput" type="text" placeholder="Theater name" autocomplete="off" required />
-        <input class="watch-theater-input watch-theater-url-input" id="watchTheaterUrlInput" type="url" placeholder="Website URL (optional)" autocomplete="off" />
-        <button class="primary-btn" type="submit">Add Theater</button>
-      </form>
-    </div>
-  `;
-  elements.watchSettingsMenu.querySelector("#watchCategoryAddForm")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const name = elements.watchSettingsMenu.querySelector("#watchCategoryNameInput")?.value.trim();
-    if (!name) return;
-    if (!state.watchSettings) state.watchSettings = { theaters: [], categories: [] };
-    if (!state.watchSettings.categories) state.watchSettings.categories = [];
-    state.watchSettings.categories.push({ id: createId("wcat"), name });
-    persist();
-    renderWatchSettingsMenu();
-    renderWatchPlanner();
-  });
-  elements.watchSettingsMenu.querySelectorAll("[data-delete-category]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.deleteCategory;
-      if (state.watchSettings?.categories) {
-        recordDeletion("watchSettings.categories", id);
-        state.watchSettings.categories = state.watchSettings.categories.filter((c) => c.id !== id);
-        if (activeWatchCategory === id) activeWatchCategory = "all";
-        persist();
-        renderWatchSettingsMenu();
-        renderWatchPlanner();
-      }
-    });
-  });
-  elements.watchSettingsMenu.querySelector("#watchTheaterAddForm")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const name = elements.watchSettingsMenu.querySelector("#watchTheaterNameInput")?.value.trim();
-    const url = elements.watchSettingsMenu.querySelector("#watchTheaterUrlInput")?.value.trim();
-    if (!name) return;
-    if (!state.watchSettings) state.watchSettings = { theaters: [], categories: [] };
-    state.watchSettings.theaters.push({ id: createId("theater"), name, url: url || "" });
-    persist();
-    renderWatchSettingsMenu();
-  });
-  elements.watchSettingsMenu.querySelectorAll("[data-delete-theater]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.deleteTheater;
-      if (state.watchSettings?.theaters) {
-        recordDeletion("watchSettings.theaters", id);
-        state.watchSettings.theaters = state.watchSettings.theaters.filter((t) => t.id !== id);
-        persist();
-        renderWatchSettingsMenu();
-      }
-    });
-  });
-}
 
 function closeDirectorySubmenus() {
 }
@@ -18709,110 +18336,6 @@ function resetIngredientOptions() {
   populateIngredientOptionsEditor();
   persist();
   renderIngredientSuggestions();
-}
-
-function openCalendarsDialog(event) {
-  event?.stopPropagation();
-  closeSettingsMenu();
-  elements.calendarNameInput.value = "";
-  elements.calendarUrlInput.value = "";
-  elements.calendarColorInput.value = normalizeCalendarColor("", state.calendars.length);
-  renderCalendarList();
-  renderGcalPanels();
-  renderReminderDevicePanel();
-  elements.calendarStatus.textContent = calendarEvents.length
-    ? `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced.`
-    : "No calendars synced yet.";
-  elements.calendarsDialog.showModal();
-}
-
-function saveCalendarSettings() {
-  addCalendarFromEditor();
-  persist();
-  elements.calendarsDialog.close();
-  refreshAllCalendarSources({ kinds: ["linked"] });
-}
-
-async function syncCalendarsNow() {
-  addCalendarFromEditor();
-  persist();
-  elements.calendarStatus.textContent = "Syncing calendars...";
-  renderCalendarList();
-  await refreshAllCalendarSources({ kinds: ["linked"], force: true, statusElement: elements.calendarStatus });
-}
-
-function addCalendarFromEditor() {
-  const url = elements.calendarUrlInput.value.trim();
-  if (!url) return;
-  const name = elements.calendarNameInput.value.trim() || "Calendar";
-  const color = normalizeCalendarColor(elements.calendarColorInput.value, state.calendars.length);
-  state.calendars = normalizeLinkedCalendars([
-    ...state.calendars,
-    { id: createId("cal"), name, url, color, enabled: true }
-  ]);
-  elements.calendarNameInput.value = "";
-  elements.calendarUrlInput.value = "";
-  elements.calendarColorInput.value = normalizeCalendarColor("", state.calendars.length);
-  renderCalendarList();
-}
-
-function renderCalendarList() {
-  state.calendars = normalizeLinkedCalendars(state.calendars);
-  if (!state.calendars.length) {
-    elements.calendarList.innerHTML = `<div class="empty-state">No linked calendars yet.</div>`;
-    return;
-  }
-  elements.calendarList.innerHTML = state.calendars.map((calendar) => `
-    <article class="calendar-list-item">
-      <div class="calendar-list-main">
-        <strong>${escapeHtml(calendar.name)}</strong>
-        <small>${escapeHtml(calendar.url || (calendar.googleCalendarId ? "Google Calendar (connected account)" : ""))}</small>
-      </div>
-      <div class="calendar-list-controls">
-        <label>
-          <input type="checkbox" data-calendar-enabled="${escapeHtml(calendar.id)}" ${calendar.enabled ? "checked" : ""} />
-          <span>Display</span>
-        </label>
-        <label>
-          <span>Color</span>
-          <input class="calendar-color-input" type="color" value="${escapeHtml(calendar.color)}" data-calendar-color="${escapeHtml(calendar.id)}" aria-label="Color for ${escapeHtml(calendar.name)}" />
-        </label>
-        <button type="button" data-remove-calendar="${escapeHtml(calendar.id)}" aria-label="Remove ${escapeHtml(calendar.name)}">×</button>
-      </div>
-    </article>
-  `).join("");
-  elements.calendarList.querySelectorAll("[data-calendar-enabled]").forEach((checkbox) => {
-    checkbox.addEventListener("change", () => {
-      state.calendars = state.calendars.map((calendar) => (
-        calendar.id === checkbox.dataset.calendarEnabled ? { ...calendar, enabled: checkbox.checked } : calendar
-      ));
-      persist();
-      renderPlanner();
-    });
-  });
-  elements.calendarList.querySelectorAll("[data-calendar-color]").forEach((input) => {
-    input.addEventListener("change", () => {
-      state.calendars = state.calendars.map((calendar) => (
-        calendar.id === input.dataset.calendarColor ? { ...calendar, color: normalizeCalendarColor(input.value) } : calendar
-      ));
-      const recolored = calendarEvents.map((event) => (
-        event.calendarId === input.dataset.calendarColor ? { ...event, calendarColor: normalizeCalendarColor(input.value) } : event
-      ));
-      persist();
-      writeCalendarSourceCache({ source: "linked" }, recolored); // Phase 3: linked cache write via the facade
-      renderPlanner();
-    });
-  });
-  elements.calendarList.querySelectorAll("[data-remove-calendar]").forEach((button) => {
-    button.addEventListener("click", () => {
-      recordDeletion("calendars", button.dataset.removeCalendar);
-      gcalUnlinkQuietly(state.calendars.find((calendar) => calendar.id === button.dataset.removeCalendar));
-      state.calendars = state.calendars.filter((calendar) => calendar.id !== button.dataset.removeCalendar);
-      persist();
-      renderCalendarList();
-      refreshAllCalendarSources({ kinds: ["linked"] });
-    });
-  });
 }
 
 const COMMON_TIMEZONES = [
@@ -19165,64 +18688,6 @@ function openTrashDialog(event) {
   closeSettingsMenu();
   renderTrash();
   elements.trashDialog.showModal();
-}
-
-function openFamilyMembersDialog() {
-  closeSettingsMenu();
-  renderFamilyMembersList();
-  elements.familyMembersDialog.showModal();
-}
-
-function renderFamilyMembersList() {
-  const config = normalizeMealPlanConfig(state.mealPlanConfig);
-  const existingNames = new Set(config.members.map(m => m.label.trim().toLowerCase()));
-
-  // Auto-include group members not already in the list
-  const autoMembers = groupMembers
-    .filter(gm => gm.display_name && !existingNames.has(gm.display_name.trim().toLowerCase()))
-    .map(gm => ({ id: createId("member"), label: gm.display_name, dob: "", linkedUserId: gm.user_id }));
-
-  const allMembers = [...config.members, ...autoMembers];
-  const currentUserId = authSession?.user?.id;
-
-  const list = elements.familyMembersDialog.querySelector("[data-members-list]");
-  list.innerHTML = allMembers.map(m => {
-    const isLinked = !!m.linkedUserId;
-    const isCurrentUser = currentUserId && m.linkedUserId === currentUserId;
-    return `
-      <div class="config-row" data-member-row data-member-id="${escapeHtml(m.id)}" data-member-linked-user-id="${escapeHtml(m.linkedUserId || "")}">
-        <input type="text" class="config-input${isLinked ? " config-input-readonly" : ""}" value="${escapeHtml(m.label)}" placeholder="Name" ${isLinked ? "readonly" : ""} />
-        <input type="date" class="config-input config-dob-input${isLinked ? " config-input-readonly" : ""}" data-member-dob value="${escapeHtml(m.dob || "")}" title="${isLinked ? "Edit via profile" : "Date of birth"}" ${isLinked ? "readonly" : ""} />
-        ${isCurrentUser ? "" : `
-          <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
-        `}
-      </div>
-    `;
-  }).join("");
-  list.querySelectorAll("[data-remove-member]").forEach(btn => {
-    btn.addEventListener("click", () => btn.closest("[data-member-row]").remove());
-  });
-}
-
-function addFamilyMember() {
-  const list = elements.familyMembersDialog.querySelector("[data-members-list]");
-  const id = createId("member");
-  const div = document.createElement("div");
-  div.className = "config-row";
-  div.setAttribute("data-member-row", "");
-  div.setAttribute("data-member-id", id);
-  div.innerHTML = `
-    <input type="text" class="config-input" value="" placeholder="Name" />
-    <input type="date" class="config-input config-dob-input" data-member-dob value="" title="Date of birth" />
-    <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-    </button>
-  `;
-  div.querySelector("[data-remove-member]").addEventListener("click", () => div.remove());
-  list.appendChild(div);
-  div.querySelector("input").focus();
 }
 
 
@@ -20854,7 +20319,7 @@ function gcalUnlinkQuietly(calendar) {
     .catch(() => { /* reconcile retries the unlink from the tombstone */ });
 }
 
-// ── Google Calendar panel (Settings → Calendars, and the sidebar's Add Calendar) ──
+// ── Google Calendar panel (the Calendar sidebar's Add Calendar dialog) ──
 
 function renderGcalPanels() {
   document.querySelectorAll("[data-gcal-panel]").forEach((el) => {
@@ -28956,7 +28421,6 @@ function wireSavedArticles() {
   document.getElementById("articleReaderDeleteBtn")?.addEventListener("click", deleteOpenArticle);
   document.getElementById("articleAddBtn")?.addEventListener("click", openArticleSaveDialog);
   document.getElementById("articleSyncBtn")?.addEventListener("click", () => syncSavedArticles("read"));
-  document.getElementById("articleSyncSettingsBtn")?.addEventListener("click", () => openSyncSettingsDialog("read"));
   document.getElementById("listenPlayPauseBtn")?.addEventListener("click", toggleReaderListen);
   document.getElementById("listenStopBtn")?.addEventListener("click", stopListen);
   document.getElementById("closeArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
@@ -37286,7 +36750,7 @@ function returnToReaderOrigin(origin) {
     mail: () => showMailApp(), shop: showShopApp, inventory: showInventoryApp,
     finance: showFinanceApp, recreate: showRecreateApp, explore: showExploreApp,
     play: showPlayApp, weather: showWeatherApp, contacts: showContactsApp,
-    settings: showSettingsApp, home: showHomeApp, watch: showWatchApp,
+    home: showHomeApp, watch: showWatchApp,
   }[origin.area];
   if (!show) return;
   // Media comes back exactly as it was left (tab, search, open show); other
@@ -38038,16 +37502,9 @@ function maybeAutoSync(source) {
 }
 
 async function syncSavedArticles(source, silent = false) {
-  const syncBtn = source === "read"
-    ? document.getElementById("articleSyncBtn")
-    : source === "dialog"
-      ? document.getElementById("dialogSyncNowBtn")
-      : document.getElementById("syncArticlesSettingsBtn");
-  const statusElId = source === "dialog" ? "dialogSyncStatus" : "articleSyncStatus";
+  const syncBtn = source === "read" ? document.getElementById("articleSyncBtn") : null;
   const setStatus = (msg) => {
-    const el = document.getElementById(statusElId);
-    if (el) el.textContent = msg;
-    if (!silent && syncBtn && source !== "dialog") syncBtn.title = msg || "Sync saved articles";
+    if (!silent && syncBtn) syncBtn.title = msg || "Sync saved articles";
   };
 
   if (syncBtn) syncBtn.classList.add("spinning");
@@ -38095,135 +37552,11 @@ async function syncSavedArticles(source, silent = false) {
 
 // ─── Read & Listen settings ───────────────────────────────────────────────────
 
-function openSyncSettingsDialog(source) {
-  const dialog = document.getElementById("articleSyncSettingsDialog");
-  if (!dialog) return;
-  const nytInput = document.getElementById("dialogNytCookieInput");
-  const econInput = document.getElementById("dialogEconomistCookieInput");
-  const statusEl = document.getElementById("dialogSyncStatus");
-  if (nytInput) {
-    nytInput.value = "";
-    nytInput.placeholder = state.articleSync?.nytCookie ? "NYT-S cookie set ✓ — paste to update" : "Paste NYT-S cookie value";
-  }
-  if (econInput) {
-    econInput.value = "";
-    econInput.placeholder = state.articleSync?.economistCookie ? "blaize_session set ✓ — paste to update" : "Paste blaize_session cookie value";
-  }
-  const stribInput = document.getElementById("dialogStribCookieInput");
-  if (stribInput) {
-    stribInput.value = "";
-    stribInput.placeholder = state.articleSync?.stribCookie ? "Star Tribune sign-in set ✓ — paste to update" : "Paste your Star Tribune session cookie";
-  }
-  if (statusEl) statusEl.textContent = "";
-  dialog.dataset.source = source;
-  dialog.showModal();
-}
-
-
-function closeSyncSettingsDialog() {
-  document.getElementById("articleSyncSettingsDialog")?.close();
-}
-
-function saveDialogNytCookie() {
-  const val = document.getElementById("dialogNytCookieInput")?.value.trim();
-  if (!val) return;
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.nytCookie = val;
-  persist();
-  const input = document.getElementById("dialogNytCookieInput");
-  if (input) { input.value = ""; input.placeholder = "NYT-S cookie set ✓ — paste to update"; }
-  const el = document.getElementById("dialogSyncStatus");
-  if (el) { el.textContent = "NYT cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  const source = document.getElementById("articleSyncSettingsDialog")?.dataset.source || "read";
-  updateSyncButtons(source);
-  verifyNewsSignIns(); // News only collects from papers you're signed in to
-}
-
-function saveDialogEconomistCookie() {
-  const val = document.getElementById("dialogEconomistCookieInput")?.value.trim();
-  if (!val) return;
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.economistCookie = val;
-  persist();
-  const input = document.getElementById("dialogEconomistCookieInput");
-  if (input) { input.value = ""; input.placeholder = "blaize_session set ✓ — paste to update"; }
-  const el = document.getElementById("dialogSyncStatus");
-  if (el) { el.textContent = "Economist cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  const source = document.getElementById("articleSyncSettingsDialog")?.dataset.source || "read";
-  updateSyncButtons(source);
-  verifyNewsSignIns();
-}
-
-function saveDialogStribCookie() {
-  const val = document.getElementById("dialogStribCookieInput")?.value.trim();
-  if (!val) return;
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.stribCookie = val;
-  persist();
-  const input = document.getElementById("dialogStribCookieInput");
-  if (input) { input.value = ""; input.placeholder = "Star Tribune sign-in set ✓ — paste to update"; }
-  const el = document.getElementById("dialogSyncStatus");
-  if (el) { el.textContent = "Star Tribune sign-in saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  verifyNewsSignIns(); // News only collects from papers you're signed in to
-}
 
 function updateSyncButtons(source) {
   const pubs = getReadPublications();
   const syncBtn = document.getElementById("articleSyncBtn");
   if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeSavedPub) || !hasSyncCookies();
-}
-
-function initReadListenSettings() {
-  populateReadListenSettings();
-}
-
-function toggleReadListenSettingsMenu() {
-  const menu = document.getElementById("readListenSettingsMenu");
-  const btn = document.getElementById("readListenSettingsBtn");
-  if (!menu || !btn) return;
-  const willOpen = menu.hidden;
-  menu.hidden = !willOpen;
-  btn.setAttribute("aria-expanded", String(willOpen));
-  if (willOpen) populateReadListenSettings();
-}
-
-function saveNytCookie() {
-  const val = document.getElementById("nytCookieInput")?.value.trim();
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.nytCookie = val || "";
-  persist();
-  const el = document.getElementById("articleSyncStatus");
-  if (el) { el.textContent = "NYT cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  verifyNewsSignIns(); // News only collects from papers you're signed in to
-}
-
-function saveEconomistCookie() {
-  const val = document.getElementById("economistCookieInput")?.value.trim();
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.economistCookie = val || "";
-  persist();
-  const el = document.getElementById("articleSyncStatus");
-  if (el) { el.textContent = "Economist cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  verifyNewsSignIns();
-}
-
-function saveStribCookie() {
-  const val = document.getElementById("stribCookieInput")?.value.trim();
-  if (!state.articleSync) state.articleSync = {};
-  state.articleSync.stribCookie = val || "";
-  persist();
-  const el = document.getElementById("articleSyncStatus");
-  if (el) { el.textContent = "Star Tribune sign-in saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
-  verifyNewsSignIns();
-}
-
-function populateReadListenSettings() {
-  const nytInput = document.getElementById("nytCookieInput");
-  const econInput = document.getElementById("economistCookieInput");
-  if (nytInput && state.articleSync?.nytCookie) nytInput.placeholder = "NYT-S cookie set ✓";
-  if (econInput && state.articleSync?.economistCookie) econInput.placeholder = "blaize_session cookie set ✓";
-  const stribInput = document.getElementById("stribCookieInput");
-  if (stribInput && state.articleSync?.stribCookie) stribInput.placeholder = "Star Tribune sign-in set ✓";
 }
 
 // ─── TTS audio ────────────────────────────────────────────────────────────────
