@@ -9839,18 +9839,54 @@ function closeMailMenus() {
   document.getElementById("mailMovePicker")?.remove();
   document.getElementById("mailMoreMenu")?.remove();
   document.getElementById("mailSnoozeMenu")?.remove();
+  document.body.classList.remove("mail-menu-open");
+}
+
+const anyMailMenuOpen = () => document.getElementById("mailMovePicker") || document.getElementById("mailMoreMenu") || document.getElementById("mailSnoozeMenu");
+
+// Tapping the button that opened a menu closes it (the pointerdown below
+// closes it first, and this stops the button's own click reopening it).
+let mailMenuAnchor = null;
+let mailMenuReopenBlockedUntil = 0;
+function mailMenuToggleClosed(anchor) {
+  if (anchor && anchor === mailMenuAnchor && Date.now() < mailMenuReopenBlockedUntil) {
+    mailMenuReopenBlockedUntil = 0;
+    mailMenuAnchor = null;
+    return true;
+  }
+  return false;
 }
 
 let mailMenuDismissWired = false;
-function wireMailMenuDismiss() {
+function wireMailMenuDismiss(anchor) {
+  if (anchor) mailMenuAnchor = anchor;
+  // While a menu is open the email frames ignore taps (CSS: .mail-menu-open),
+  // so a tap on the email reaches this page and closes the menu. Watch for the
+  // menu going away by any route (an option chosen removes it directly) and
+  // hand taps back to the frames. Runs only while a menu is open.
+  document.body.classList.add("mail-menu-open");
+  clearInterval(wireMailMenuDismiss.watch);
+  wireMailMenuDismiss.watch = setInterval(() => {
+    if (anyMailMenuOpen()) return;
+    document.body.classList.remove("mail-menu-open");
+    clearInterval(wireMailMenuDismiss.watch);
+  }, 250);
   if (mailMenuDismissWired) return;
   mailMenuDismissWired = true;
-  const anyMenuOpen = () => document.getElementById("mailMovePicker") || document.getElementById("mailMoreMenu") || document.getElementById("mailSnoozeMenu");
-  document.addEventListener("click", (e) => {
+  const anyMenuOpen = anyMailMenuOpen;
+  // pointerdown, not click: iPhone Safari sends no click for a tap on a plain
+  // (non-button) area, which is what left the snooze menu stuck open.
+  const dismiss = (e) => {
     if (!anyMenuOpen()) return;
-    if (e.target.closest("#mailMovePicker, #mailMoreMenu, #mailSnoozeMenu")) return;
+    if (e.target.closest?.("#mailMovePicker, #mailMoreMenu, #mailSnoozeMenu")) return;
+    if (mailMenuAnchor && mailMenuAnchor.contains(e.target)) mailMenuReopenBlockedUntil = Date.now() + 800;
     closeMailMenus();
-  }, { capture: true });
+  };
+  document.addEventListener("pointerdown", dismiss, { capture: true });
+  document.addEventListener("click", dismiss, { capture: true });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && anyMenuOpen()) closeMailMenus();
+  });
   // Tapping inside an email message iframe swallows the click (it never reaches
   // the document), so also close when focus moves into an iframe — this is what
   // made the snooze/more menus feel "stuck" open. Scoped to IFRAME focus so the
@@ -9887,12 +9923,14 @@ function formatSnoozeWhen(d) {
 }
 
 function showMailSnoozeMenu(threadId, anchorEl) {
+  if (mailMenuToggleClosed(anchorEl)) return;
   closeMailMenus();
   const menu = document.createElement("div");
   menu.id = "mailSnoozeMenu";
   menu.className = "mail-more-menu mail-snooze-menu";
   const rect = anchorEl.getBoundingClientRect();
   menu.style.position = "fixed";
+  menu.style.right = "auto"; // .mail-more-menu pins right:0, which stretched this fixed menu to the screen edge
   menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 268)) + "px";
   menu.style.top = Math.min(rect.bottom + 4, usableViewportBottom() - 300) + "px";
   const renderOptions = () => {
@@ -9939,7 +9977,7 @@ function showMailSnoozeMenu(threadId, anchorEl) {
     }
   });
   document.body.appendChild(menu);
-  wireMailMenuDismiss();
+  wireMailMenuDismiss(anchorEl);
 }
 
 async function snoozeMailThread(threadId, when) {
@@ -10057,8 +10095,9 @@ function mailMoveOptionsHtml(threadId) {
 }
 
 function showMailMovePicker(thread) {
-  closeMailMenus();
   const btn = document.getElementById("mailMoveBtn");
+  if (mailMenuToggleClosed(btn)) return;
+  closeMailMenus();
   if (!btn) return;
   if (!mailThreadSenders.has(thread.id) && thread.messages?.[0]?.from) {
     mailThreadSenders.set(thread.id, mailSenderAddress(thread.messages[0].from));
@@ -10074,7 +10113,7 @@ function showMailMovePicker(thread) {
     });
   });
   btn.closest(".mail-move-wrap").appendChild(picker);
-  wireMailMenuDismiss();
+  wireMailMenuDismiss(btn);
 }
 
 async function moveMailToLabel(threadId, targetLabelId) {
@@ -10429,8 +10468,9 @@ function afterMailThreadAction(threadId) {
 }
 
 function showMailMoreMenu(thread, lastMsg) {
-  closeMailMenus();
   const btn = document.getElementById("mailMoreBtn");
+  if (mailMenuToggleClosed(btn)) return;
+  closeMailMenus();
   if (!btn) return;
   const menu = document.createElement("div");
   menu.id = "mailMoreMenu";
@@ -10496,7 +10536,7 @@ function showMailMoreMenu(thread, lastMsg) {
     else if (action === "label") showMailMovePicker(thread);
   });
   btn.closest(".mail-more-wrap").appendChild(menu);
-  wireMailMenuDismiss();
+  wireMailMenuDismiss(btn);
 }
 
 function addEmailToTasks(subject) {
@@ -16504,7 +16544,7 @@ function displaySettingsTemplate() {
   const modes = [["light", "Light"], ["dark", "Dark"], ["auto", "Auto"]];
   const themeDesc = {
     classic: "The everyday look.",
-    halloween: "Orange and black.",
+    halloween: "Orange, black and purple.",
     seasonal: seasonNow === "classic"
       ? "Halloween every October, Classic the rest of the year."
       : `${THEMES[seasonNow].label} now, Classic from ${escapeHtml(endsLabel)}.`,

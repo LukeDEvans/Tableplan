@@ -19,6 +19,9 @@ Decisions (Luke, 2026-10-14):
   (`AppIconHalloween`). The icon follows the active theme unless the person turns off
   "Change the app icon too". iOS always shows its own short notice when the icon changes,
   so the app only asks when the icon really differs.
+- **Halloween is orange, black and purple** (Luke, 2026-10-14). Orange stays the accent
+  (fills, links, highlights, today). Purple (`--purple`, also `--window-border`) outlines
+  windows and buttons and tints the dock: `#6a35a0` in light, `#a77bff` in dark.
 
 ## How it works
 
@@ -33,6 +36,13 @@ Decisions (Luke, 2026-10-14):
   `/* theme:<name>:dark */` block in `styles.css`, read by the contrast test.
   `--on-accent` / `--on-tomato` are the text colors on accent and danger fills. Classic
   leaves them unset, and each rule's fallback keeps Classic's look.
+- **Shared surface tokens that only dark modes set.** `--paper` (menus, the mail sidebar,
+  the article reader, … written as `var(--paper, #fff)`) and `--card` (raised cards
+  written as `var(--card, <cream>)`). Light mode leaves them unset so each fallback keeps
+  its look; dark modes set them so those surfaces don't stay white under light text.
+- **The mail reading surface stays white in dark mode** and carries the light version of
+  the theme's tokens (`.mail-thread-panel` in `styles.css`), so chips and buttons on it
+  read on white. The contrast test checks it.
 - Theme extras that aren't tokens (the orange home logo, the dock) sit right under the
   theme's blocks in `styles.css`.
 - Browser chrome follows the theme through `<meta name="theme-color">`, and the browser tab

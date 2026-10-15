@@ -53,6 +53,13 @@ body[data-theme="dark"] {
   --blue: #f1cc54;
   --window-bg: #20221f;
   --window-border: #4a7fae; /* Pantone 2955 C, lifted for dark surfaces */
+  /* Surfaces written as var(--paper, #fff) (menus, the mail sidebar, the article
+     reader…) were white in dark mode under light text. Light mode leaves --paper
+     unset so each fallback keeps its look. */
+  --paper: #20221f;
+  /* Raised cards written as var(--card, <cream>) (workout and hobby cards, piano
+     rows…) — unset in light mode, so the cream stays. */
+  --card: #272a26;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
 }
 
@@ -86,7 +93,10 @@ body[data-palette="halloween"] {
   --sun-pale: #fdf0e0;
   --blue: #a84300;
   --window-bg: #ffffff;
-  --window-border: #1a1714;
+  --window-border: #6a35a0;
+  --purple: #6a35a0;
+  --paper: #ffffff;
+  --card: #fffdf6;
   --text-muted: #5e554b;
 }
 
@@ -110,24 +120,29 @@ body[data-palette="halloween"][data-theme="dark"] {
   --sun-pale: #2a1c10;
   --blue: #ff8a1f;
   --window-bg: #1f1b18;
-  --window-border: #ff8a1f;
+  --window-border: #a77bff;
+  --purple: #a77bff;
+  --paper: #1f1b18;
+  --card: #29231e;
   --text-muted: #b8ada0;
 }
 body[data-palette="halloween"][data-theme="dark"] { background: #0e0c0b; }
 
 /* Halloween extras: the home logo goes all orange (a deeper orange on the light
-   cream so it still stands out), and the bottom dock turns from navy to near-black
-   with an orange edge in both modes. Dock text stays light on dark. */
+   cream so it still stands out), and the bottom dock turns from navy to a
+   purple-black with an orange edge in both modes. Dock text stays light on dark.
+   Purple (--purple, also --window-border) outlines windows and buttons; orange
+   stays the accent for fills, links and highlights. */
 body[data-palette="halloween"] .home-logo { content: url("./home-logo-halloween-light.png"); }
 body[data-palette="halloween"][data-theme="dark"] .home-logo { content: url("./home-logo-halloween-dark.png"); }
 body[data-palette="halloween"] .bottom-dock {
-  --dock-bg1: #2a231d;
+  --dock-bg1: #2d2140;
   --dock-bg2: #141210;
   --dock-ink: #f5eee4;
   border-top-color: #ff8a1f;
 }
 body[data-palette="halloween"][data-theme="dark"] .bottom-dock {
-  --dock-bg1: #1f1b18;
+  --dock-bg1: #2a1d3d;
   --dock-bg2: #0e0c0b;
 }
 
@@ -5002,7 +5017,7 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(255, 253, 246, 0.92);
+  background: var(--card, rgba(255, 253, 246, 0.92));
   color: var(--ink);
   font: inherit;
   font-weight: 850;
@@ -5073,7 +5088,7 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   border: 1px solid color-mix(in srgb, var(--sun) 50%, var(--line));
   border-radius: 18px;
   background:
-    linear-gradient(to bottom, rgba(255, 253, 246, 0.7), transparent 24%, transparent 76%, rgba(255, 253, 246, 0.7)),
+    linear-gradient(to bottom, var(--card, rgba(255, 253, 246, 0.7)), transparent 24%, transparent 76%, var(--card, rgba(255, 253, 246, 0.7))),
     color-mix(in srgb, var(--sun-pale) 80%, #ffffff);
   color: var(--ink);
   font-size: 1.25rem;
@@ -5236,7 +5251,7 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
   border-radius: 16px;
-  background: rgba(255, 253, 246, 0.92);
+  background: var(--card, rgba(255, 253, 246, 0.92));
 }
 
 .workout-log-editor-title {
@@ -5337,7 +5352,7 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   padding: 4px;
   border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
   border-radius: 14px;
-  background: rgba(255, 253, 246, 0.92);
+  background: var(--card, rgba(255, 253, 246, 0.92));
   color: var(--ink);
   cursor: pointer;
   font-size: clamp(1.05rem, 5vw, 1.65rem);
@@ -5409,7 +5424,7 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
   border-radius: 14px;
-  background: rgba(255, 253, 246, 0.92);
+  background: var(--card, rgba(255, 253, 246, 0.92));
   color: var(--ink);
   cursor: pointer;
   font-size: 1rem;
@@ -5523,7 +5538,7 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   padding: 16px 12px 14px;
   border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
   border-radius: 20px;
-  background: rgba(255, 253, 246, 0.92);
+  background: var(--card, rgba(255, 253, 246, 0.92));
   color: var(--ink);
   cursor: pointer;
   text-align: center;
@@ -5555,6 +5570,13 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   object-fit: contain;
   display: block;
   margin: 0 auto;
+}
+/* The activity pictures are dark navy line art; on a dark card they sit on a
+   small cream tile so they stay visible. */
+body[data-theme="dark"] .workout-pool-img {
+  background: #f3ede2;
+  border-radius: 12px;
+  padding: 3px;
 }
 
 .workout-pool-title {
@@ -10370,7 +10392,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
   padding: 6px;
   border: 1px solid color-mix(in srgb, var(--sun) 40%, #fff);
   border-radius: 12px;
-  background: rgba(255, 253, 246, 0.98);
+  background: var(--card, rgba(255, 253, 246, 0.98));
   margin-top: -4px;
   max-height: 420px;
   overflow-y: auto;
@@ -13764,7 +13786,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
   gap: 8px;
   padding: 7px 10px;
   border-radius: 10px;
-  background: rgba(255, 253, 246, 0.6);
+  background: var(--card, rgba(255, 253, 246, 0.6));
   border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
@@ -13776,7 +13798,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
   gap: 10px;
   padding: 9px 12px;
   border-radius: 10px;
-  background: rgba(255, 253, 246, 0.6);
+  background: var(--card, rgba(255, 253, 246, 0.6));
   border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
   cursor: pointer;
 }
@@ -14655,10 +14677,45 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   overflow-y: auto;
   overflow-x: hidden;
   background: #fff;
+  color-scheme: light;
   --ink: #1c1917;
   --text-muted: #6b6459;
   --muted: #6b6459;
+  --paper: #ffffff;
+  /* Set color here too: text that inherits would otherwise keep the page's
+     (light, in dark mode) color, which washed out the subject and senders. */
+  color: var(--ink);
 }
+/* In dark mode the reading surface stays white, so it gets the LIGHT version of
+   the theme's tokens: buttons, chips and accents inside it match the white. */
+body[data-theme="dark"] .mail-thread-panel {
+  --surface: #fffdf8;
+  --surface-strong: #ffffff;
+  --window-bg: #ffffff;
+  --line: #ded7cb;
+  --accent: #237f69;
+  --accent-dark: #1d6b58;
+  --accent-soft: #d9f4ed;
+  --on-accent: #ffffff;
+  --tomato: #b3261e;
+  --tomato-soft: #f6ded7;
+  --window-border: #003865;
+  --sun: #f1cc54;
+}
+body[data-palette="halloween"][data-theme="dark"] .mail-thread-panel {
+  --accent: #a84300;
+  --accent-dark: #8a3700;
+  --accent-soft: #fde6cf;
+  --on-accent: #ffffff;
+  --tomato: #b0183d;
+  --tomato-soft: #f9dbe2;
+  --window-border: #6a35a0;
+  --line: #e2cdb3;
+}
+/* While a mail menu (move / snooze / more) is open, taps on an email go to the
+   page instead of into its frame, so they close the menu (app.js
+   wireMailMenuDismiss). */
+body.mail-menu-open .mail-thread-panel iframe { pointer-events: none; }
 
 /* Swipe-between-emails pager: the neighbouring email's preview slides in
    beside the open thread (positioned by JS over .mail-content). */

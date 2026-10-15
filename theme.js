@@ -27,7 +27,7 @@ export const THEMES = Object.freeze({
     icon: "AppIconHalloween",
     favicon: "./icon-halloween-32.png",
     themeColor: Object.freeze({ light: "#1a1714", dark: "#0e0c0b" }),
-    swatch: Object.freeze(["#0e0c0b", "#ff8a1f", "#f9e6cf"]),
+    swatch: Object.freeze(["#0e0c0b", "#ff8a1f", "#a77bff"]),
   }),
 });
 
