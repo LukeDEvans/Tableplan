@@ -1746,6 +1746,11 @@ const _newsTicker = createNewsTickerModule({
   escapeHtml: (...a) => escapeHtml(...a),
   getState: () => state,
   isEnabled: () => !!authSession?.access_token && isPageEnabled("news"),
+  isReady: () => authCheckCompleted,
+  // The pre-paint script marks a stored session with body.app-authed; the saved
+  // copy itself is account-scoped (cleared on sign-out / account change).
+  canShowSaved: () => (!!authSession?.access_token || document.body.classList.contains("app-authed")) && isPageEnabled("news"),
+  storage: (() => { try { return window.localStorage; } catch { return null; } })(),
   getLeads: (...a) => newsTickerLeads(...a),
   getBoard: (...a) => getScoresBoard(...a),
   openStory: (id) => { if (!openNewsStory(id)) showNewsApp(); },
@@ -3146,7 +3151,7 @@ async function initializeSupabaseAuth() {
   // and a subsequent sign-in is a clean 'first'.
   stateAccountId = authSession?.user?.id || authSession?.user?.email || null;
   updateAppLockState();
-  if (authSession?.access_token) { warmMailStatus(); warmMailList(); warmPageNotifs(); syncShareTokenForSession(true); }
+  if (authSession?.access_token) { warmMailStatus(); warmMailList(); warmPageNotifs(); syncShareTokenForSession(true); refreshNewsTicker(); }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     // Multi-tab account isolation: classify the change against the account whose
     // data this tab holds. A transition can arrive cross-tab (Supabase broadcasts
@@ -6230,7 +6235,39 @@ function syncIngredientOptionGlobals(targetState = state) {
 // until this person picks one. Called at module load (above), so no module-level
 // let/const here (TDZ) — the one-time listeners hang off the function itself.
 function currentDisplayPrefs() {
+  // Until this person's prefs have arrived from the cloud, the last theme this
+  // device showed them (live-display-v1) is the better guess than a device
+  // mirror that may predate their choice — it's what made a cold start open in
+  // the classic look and then switch.
+  if (!syncAppIcon.ready) {
+    const cached = readDisplayCache();
+    if (cached?.prefs) return normalizeDisplayPrefs(cached.prefs, normalizeThemeMode(state.themeMode));
+  }
   return normalizeDisplayPrefs(state.displayPrefs, normalizeThemeMode(state.themeMode));
+}
+
+// This device's copy of the person's resolved theme. Read by the pre-paint
+// script in index.html (so the first frame is already themed) and by
+// currentDisplayPrefs above until the cloud prefs load. Account-scoped: cleared
+// on sign-out / account change (auth-account-reset.js). The key is spelled out
+// here and there — no module const (this runs at module load; TDZ).
+function readDisplayCache() {
+  try { return JSON.parse(localStorage.getItem("live-display-v1") || "null"); } catch { return null; }
+}
+function writeDisplayCache(prefs, resolved) {
+  try {
+    const next = JSON.stringify({ prefs: cleanDisplayPrefs(prefs), scheme: resolved.scheme, palette: resolved.palette, themeColor: resolved.themeColor || "", favicon: resolved.favicon || "" });
+    if (localStorage.getItem("live-display-v1") !== next) localStorage.setItem("live-display-v1", next);
+  } catch { /* storage blocked — next launch just starts classic */ }
+}
+
+// This person's display prefs are known (cloud state loaded, or they just
+// changed one): from now on the app may write the device's theme copy and
+// change the iPhone icon.
+function markDisplayPrefsKnown() {
+  if (syncAppIcon.ready) return;
+  syncAppIcon.ready = true;
+  applyThemeMode();
 }
 
 function applyThemeMode() {
@@ -6248,17 +6285,19 @@ function applyThemeMode() {
     try { window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => applyThemeMode()); } catch { /* old WebKit */ }
     document.addEventListener("visibilitychange", () => { if (!document.hidden) applyThemeMode(); });
   }
+  if (syncAppIcon.ready) writeDisplayCache(prefs, resolved);
   syncAppIcon(resolved.icon);
   return resolved;
 }
 
 // iPhone only: point the home-screen icon at the active theme's icon. iOS shows
 // its own "icon changed" alert, so only ever ask when it really differs (the
-// plugin also no-ops when it's already that icon) and never before sign-in has
-// had a chance to load this person's prefs.
+// plugin also no-ops when it's already that icon) and never before this person's
+// prefs have loaded (markDisplayPrefsKnown) — asking from a guess is what reset the
+// icon to the default on a cold start and then set it back a moment later.
 function syncAppIcon(name) {
   const plugin = nativeAppIcon();
-  if (!plugin) return;
+  if (!plugin || !syncAppIcon.ready) return;
   const want = name || "";
   if (syncAppIcon.last === want) return;
   syncAppIcon.last = want;
@@ -6269,6 +6308,7 @@ function syncAppIcon(name) {
 }
 
 function setDisplayPref(key, value) {
+  syncAppIcon.ready = true; // a choice made here is this person's
   state.displayPrefs = cleanDisplayPrefs({ ...(state.displayPrefs || {}), [key]: value });
   applyThemeMode();
   persist();
@@ -7131,6 +7171,7 @@ async function runHydrateStateFromSharedStorage() {
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
+      markDisplayPrefsKnown(); // theme copy + iPhone icon follow the loaded prefs from here
       hideHydrationOverlay(); // data is in — never leave the "Syncing…" cover up
       backfillHistoryLog();
       return;

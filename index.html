@@ -32,6 +32,23 @@
           }
         }
       } catch { /* gate stays up */ }
+      // Pre-paint theme: this person's last theme on this device (written by
+      // app.js applyThemeMode → live-display-v1), so a cold start opens in it
+      // instead of flashing the classic look. app.js re-resolves it on load.
+      try {
+        const d = document.body.classList.contains("app-authed") && JSON.parse(localStorage.getItem("live-display-v1") || "null");
+        if (d && d.palette) {
+          const mode = d.prefs && d.prefs.mode;
+          const scheme = mode === "auto"
+            ? (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+            : (d.scheme === "dark" ? "dark" : "light");
+          for (const el of [document.documentElement, document.body]) {
+            el.dataset.theme = scheme;
+            if (d.palette !== "classic") el.dataset.palette = d.palette;
+          }
+          document.documentElement.style.colorScheme = scheme;
+        }
+      } catch { /* classic until app.js loads */ }
     </script>
     <!-- Portrait lock fallback: the pages are portrait-only. The manifest's
          "orientation":"portrait" locks installed PWAs where the OS honors it;
