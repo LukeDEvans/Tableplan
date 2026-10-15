@@ -6,13 +6,15 @@
 // its real response.
 import { describe, it, expect } from "vitest";
 import { cleanGames, GAME_STATES, LEAGUE_BY_KEY, LEAGUES } from "../sports-model.js";
-import { espn, parseScoreboard, parseTeams, parseSchedule, _test as espnTest } from "../netlify/functions/_scores-espn.mjs";
+import { espn, parseScoreboard, parseTeams, parseSchedule, parseStandings, parseAllSchedule, espnSeason, _test as espnTest } from "../netlify/functions/_scores-espn.mjs";
 import { thesportsdb, parseEvents, inSportsDay, _test as tsdbTest } from "../netlify/functions/_scores-thesportsdb.mjs";
-import { PROVIDERS, providerChain, leagueScoreboard, leagueTeams, teamLastNext } from "../netlify/functions/_scores-providers.mjs";
+import { PROVIDERS, providerChain, leagueScoreboard, leagueTeams, teamLastNext, leagueStandings, teamSeason } from "../netlify/functions/_scores-providers.mjs";
 import { handler, parseLeagues, parseScheduleTeams } from "../netlify/functions/scores.mjs";
 import {
-  ESPN_SOCCER_SCOREBOARD, ESPN_NHL_SCOREBOARD, ESPN_NCAAF_SCOREBOARD, ESPN_NFL_SCHEDULE, ESPN_TEAMS, TSDB_EVENTSDAY, TSDB_EVENTSDAY_NEXT
+  ESPN_SOCCER_SCOREBOARD, ESPN_NHL_SCOREBOARD, ESPN_NCAAF_SCOREBOARD, ESPN_NFL_SCHEDULE, ESPN_TEAMS, TSDB_EVENTSDAY, TSDB_EVENTSDAY_NEXT,
+  ESPN_NFL_STANDINGS, ESPN_SOCCER_STANDINGS, ESPN_NCAAF_STANDINGS, ESPN_NBA_STANDINGS, ESPN_AJAX_RESULTS, ESPN_AJAX_FIXTURES
 } from "./_scores-fixtures.js";
+import { cleanStandings } from "../sports-model.js";
 
 const CONTRACT_CASES = [
   ["espn soccer", () => parseScoreboard(ESPN_SOCCER_SCOREBOARD, "nations-league"), 4],
@@ -20,6 +22,7 @@ const CONTRACT_CASES = [
   ["espn college football", () => parseScoreboard(ESPN_NCAAF_SCOREBOARD, "ncaaf"), 3],
   ["espn team schedule", () => parseSchedule(ESPN_NFL_SCHEDULE, "nfl"), 3],
   ["thesportsdb", () => parseEvents(TSDB_EVENTSDAY, "nfl"), 2],
+  ["espn soccer, every competition", () => [...parseAllSchedule(ESPN_AJAX_RESULTS), ...parseAllSchedule(ESPN_AJAX_FIXTURES)], 4],
 ];
 
 describe.each(CONTRACT_CASES)("provider contract: %s", (_name, parse, count) => {
@@ -89,6 +92,67 @@ describe("espn adapter", () => {
     expect(next.state).toBe("pre");
     expect(next.home.score).toBeNull();
   });
+  it("names the season ESPN would otherwise get wrong", () => {
+    expect(espnSeason("nhl", "2026-10-15")).toBe(2027);   // 2026-27 is "2027"
+    expect(espnSeason("nhl", "2027-04-20")).toBe(2027);
+    expect(espnSeason("nhl", "2027-08-01")).toBe(2027);   // off-season: the last one
+    expect(espnSeason("nba", "2026-10-15")).toBe(2027);
+    expect(espnSeason("nfl", "2026-10-15")).toBe(2026);
+    expect(espnSeason("nfl", "2027-01-20")).toBe(2026);   // playoffs
+    expect(espnSeason("mls", "2026-10-15")).toBe(2026);
+    expect(espnSeason("eredivisie", "2026-10-15")).toBe(2026);
+    expect(espnSeason("conference-league", "2027-03-10")).toBe(2026);
+    expect(espnSeason("nations-league", "2026-10-15")).toBeNull(); // left to ESPN
+    for (const k of Object.keys(espnTest.SEASON_STYLE)) expect(LEAGUE_BY_KEY[k], k).toBeTruthy();
+  });
+  it("tables: divisions inside conferences, named; records and streaks; ESPN's '-' kept as a dash", () => {
+    const t = cleanStandings(parseStandings(ESPN_NFL_STANDINGS, "nfl"));
+    expect(t.groups.map((g) => g.name)).toEqual(["AFC East", "NFC North"]);
+    expect(t.season).toBe("2026");
+    const bills = t.groups[0].rows[0];
+    expect(bills.team).toMatchObject({ name: "Buffalo Bills", abbr: "BUF", refs: { espn: "2" } });
+    expect(bills.stats).toMatchObject({ w: "3", l: "1", t: "0", pct: ".750", gb: "–", streak: "L1", gf: "127", ga: "107", gd: "+20", seed: "4", ovr: "3-1", home: "2-0" });
+    expect(bills.rank).toBe(1);
+  });
+  it("tables: soccer notes (qualification) and computed games played", () => {
+    const t = cleanStandings(parseStandings(ESPN_SOCCER_STANDINGS, "conference-league"));
+    expect(t.season).toBe("2026-27 UEFA Conference League");
+    expect(t.groups).toHaveLength(1);
+    expect(t.groups[0].name).toBe("League Phase");
+    const [ajax, pec] = t.groups[0].rows;
+    expect(ajax).toMatchObject({ rank: 1, note: { text: "Qualifies for round of 16", color: "#81d6ac" }, stats: { gp: "1", w: "1", t: "0", l: "0", gd: "+2", pts: "3", gf: "2", ga: "0", ovr: "1-0-0" } });
+    expect(pec.rank).toBe(9);
+    expect(pec.stats.gp).toBe("1"); // 0 + 0 + 1
+  });
+  it("tables: college uses the team's own figures, not the conference-only copies", () => {
+    const row = cleanStandings(parseStandings(ESPN_NCAAF_STANDINGS, "ncaaf")).groups[0].rows[0];
+    expect(row.stats).toMatchObject({ w: "5", streak: "W4", ovr: "5-1", conf: "2-1" });
+  });
+  it("tables: NBA's points-per-game isn't taken as standings points", () => {
+    const row = cleanStandings(parseStandings(ESPN_NBA_STANDINGS, "nba")).groups[0].rows[0];
+    expect(row.stats.pts).toBeUndefined();
+    expect(row.stats.pct).toBe(".000");
+  });
+  it("tables: asks for the right season and split", async () => {
+    const urls = [];
+    const fetchJson = async (u) => { urls.push(u); return ESPN_NFL_STANDINGS; };
+    for (const k of ["nfl", "nhl", "nba", "ncaaf", "eredivisie", "nations-league"]) await espn.standings(k, { fetchJson, dateKey: "2026-10-15" });
+    expect(urls).toEqual([
+      "https://site.api.espn.com/apis/v2/sports/football/nfl/standings?level=3&season=2026&seasontype=2",
+      "https://site.api.espn.com/apis/v2/sports/hockey/nhl/standings?level=3&season=2027&seasontype=2",
+      "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings?level=2&season=2027&seasontype=2",
+      "https://site.api.espn.com/apis/v2/sports/football/college-football/standings?group=80&season=2026&seasontype=2",
+      "https://site.api.espn.com/apis/v2/sports/soccer/ned.1/standings?season=2026",
+      "https://site.api.espn.com/apis/v2/sports/soccer/uefa.nations/standings",
+    ]);
+    expect(() => parseStandings({ code: 404 }, "nfl")).toThrow();
+  });
+  it("a soccer team's season spans competitions; one ESPN doesn't map to a league is left out", () => {
+    const games = cleanGames([...parseAllSchedule(ESPN_AJAX_RESULTS), ...parseAllSchedule(ESPN_AJAX_FIXTURES)]);
+    expect(games.map((g) => g.league)).toEqual(["eredivisie", "conference-league", "eredivisie", "conference-league"]);
+    expect(games[1]).toMatchObject({ state: "final", away: { score: 2, winner: true, team: { name: "Ajax Amsterdam" } } });
+    expect(espnTest.KEY_BY_SOCCER_SLUG["uefa.europa.conf"]).toBe("conference-league");
+  });
   it("team list", () => {
     const teams = parseTeams(ESPN_TEAMS);
     expect(teams.map((t) => t.name)).toEqual(["Arizona Cardinals", "Albania"]);
@@ -104,14 +168,20 @@ describe("espn adapter", () => {
     const fetchJson = async (u) => { urls.push(u); return { events: [] }; };
     await espn.scoreboard("ncaaf", "2026-10-03", { fetchJson });
     await espn.scoreboard("eredivisie", "2026-10-03", { fetchJson });
-    await espn.teamGames("nfl", "16", { fetchJson });
-    await espn.teamGames("eredivisie", "139", { fetchJson });
+    await espn.teamGames("nfl", "16", { fetchJson, dateKey: "2026-10-15" });
+    await espn.teamGames("eredivisie", "139", { fetchJson, dateKey: "2026-10-15" });
+    await espn.teamGames("nhl", "30", { fetchJson, dateKey: "2026-10-15" });
+    await espn.scoreboard("conference-league", "2026-10-15", { fetchJson });
     expect(urls).toEqual([
       "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates=20261003&groups=80&limit=300",
       "https://site.api.espn.com/apis/site/v2/sports/soccer/ned.1/scoreboard?dates=20261003",
-      "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/16/schedule",
-      "https://site.api.espn.com/apis/site/v2/sports/soccer/ned.1/teams/139/schedule",
-      "https://site.api.espn.com/apis/site/v2/sports/soccer/ned.1/teams/139/schedule?fixture=true",
+      "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/16/schedule?season=2026&seasontype=2",
+      "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/16/schedule?season=2026&seasontype=3",
+      "https://site.api.espn.com/apis/site/v2/sports/soccer/all/teams/139/schedule",
+      "https://site.api.espn.com/apis/site/v2/sports/soccer/all/teams/139/schedule?fixture=true",
+      "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/30/schedule?season=2027&seasontype=2",
+      "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/30/schedule?season=2027&seasontype=3",
+      "https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.europa.conf/scoreboard?dates=20261015",
     ]);
     await expect(espn.teamGames("nfl", "16/../x", { fetchJson })).rejects.toThrow();
   });
@@ -180,6 +250,15 @@ describe("provider chain", () => {
     expect(r.provider).toBe("b");
     expect(r.teams.map((t) => t.key)).toEqual(["soccer:ajax", "soccer:zwolle"]);
     expect((await leagueTeams("eredivisie", { chain: [fake("a")] })).ok).toBe(false);
+  });
+  it("tables and seasons come through the chain, and fail soft", async () => {
+    const chain = [fake("a"), fake("b", { standings: async () => parseStandings(ESPN_SOCCER_STANDINGS, "eredivisie") })];
+    expect(await leagueStandings("eredivisie", { chain })).toMatchObject({ ok: true, provider: "b", standings: { league: "eredivisie" } });
+    expect(await leagueStandings("eredivisie", { chain: [fake("a")] })).toMatchObject({ ok: false, error: "No provider has this league's table." });
+    const fetchJson = async (u) => (u.includes("fixture=true") ? ESPN_AJAX_FIXTURES : ESPN_AJAX_RESULTS);
+    const season = await teamSeason("eredivisie", "espn", "139", { chain: [espn], fetchJson });
+    expect(season.games).toHaveLength(4);
+    expect(await teamSeason("eredivisie", "thesportsdb", "1", { chain: [espn], fetchJson })).toMatchObject({ ok: false, games: [] });
   });
   it("last and next game for a team; nothing when its provider has gone", async () => {
     const fetchJson = async () => ESPN_NFL_SCHEDULE;
@@ -272,6 +351,26 @@ describe("scores function", () => {
     expect(body.teams.map((t) => t.key)).toEqual(["nfl:albania", "nfl:arizona-cardinals"]);
     expect(res.headers["cache-control"]).toBe("public, max-age=86400");
     expect((await call({ action: "teams", league: "nope" }, espnFetch)).statusCode).toBe(400);
+  });
+  it("standings: the league's table, cached ten minutes; unknown league refused", async () => {
+    const fetchJson = async (u) => { if (u.includes("/standings")) return ESPN_NFL_STANDINGS; throw new Error("HTTP 404"); };
+    const res = await call({ action: "standings", league: "nfl" }, fetchJson);
+    const body = JSON.parse(res.body);
+    expect(res.statusCode).toBe(200);
+    expect(body).toMatchObject({ v: 1, provider: "espn", league: "nfl", season: "2026" });
+    expect(body.groups[0].rows[0].stats.w).toBe("3");
+    expect(res.headers["cache-control"]).toBe("public, max-age=600");
+    expect((await call({ action: "standings", league: "nope" }, fetchJson)).statusCode).toBe(400);
+    expect((await call({ action: "standings", league: "nfl" }, async () => { throw new Error("HTTP 500"); })).statusCode).toBe(502);
+  });
+  it("team: a whole season; strict team parameter", async () => {
+    const fetchJson = async (u) => (u.includes("fixture=true") ? ESPN_AJAX_FIXTURES : ESPN_AJAX_RESULTS);
+    const res = await call({ action: "team", league: "eredivisie", team: "espn:139" }, fetchJson);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).games).toHaveLength(4);
+    expect(res.headers["cache-control"]).toBe("public, max-age=300");
+    for (const team of ["", "espn", "espn:1:2", "ESPN:139", "espn:../x"]) expect((await call({ action: "team", league: "eredivisie", team }, fetchJson)).statusCode, team).toBe(400);
+    expect((await call({ action: "team", league: "eredivisie", team: "espn:139" }, async () => { throw new Error("HTTP 500"); })).statusCode).toBe(502);
   });
   it("schedule: last and next game per team token", async () => {
     const res = await call({ action: "schedule", teams: "nfl:espn:16,nhl:espn:30" }, espnFetch);

@@ -249,3 +249,89 @@ export const TSDB_EVENTSDAY_NEXT = {
     }
   ]
 };
+
+// ── Standings (site.api.espn.com/apis/v2/sports/…/standings) ────────────────
+const st = (name, displayValue, extra = {}) => ({ name, displayValue, ...extra });
+const tm = (id, abbr, displayName, shortDisplayName, logo) => ({ id, abbreviation: abbr, displayName, shortDisplayName, logos: [{ href: logo, rel: ["full", "default"] }] });
+
+// …/football/nfl/standings?level=3&seasontype=2 — conferences → divisions.
+export const ESPN_NFL_STANDINGS = {
+  name: "National Football League", abbreviation: "NFL",
+  children: [
+    { name: "American Football Conference", abbreviation: "AFC", isConference: true, children: [
+      { name: "AFC East", abbreviation: "East", standings: { season: 2026, seasonType: 2, seasonDisplayName: "2026", entries: [
+        { team: tm("2", "BUF", "Buffalo Bills", "Bills", "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png"), stats: [
+          st("wins", "3", { type: "wins" }), st("losses", "1", { type: "losses" }), st("ties", "0", { type: "ties" }), st("winPercent", ".750", { type: "winpercent" }),
+          st("gamesBehind", "-", { type: "gamesbehind" }), st("streak", "L1", { type: "streak" }), st("pointsFor", "127", { type: "pointsfor" }),
+          st("pointsAgainst", "107", { type: "pointsagainst" }), st("pointDifferential", "+20", { type: "pointdifferential" }), st("playoffSeed", "4", { type: "playoffseed" }),
+          { name: "overall", type: "total", summary: "3-1", displayValue: "3-1" }, { name: "Home", type: "home", summary: "2-0", displayValue: "2-0" } ] },
+        { team: tm("17", "NE", "New England Patriots", "Patriots", "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png"), stats: [
+          st("wins", "3", { type: "wins" }), st("losses", "2", { type: "losses" }), st("winPercent", ".600", { type: "winpercent" }), st("streak", "W2", { type: "streak" }) ] }
+      ] } }
+    ] },
+    { name: "National Football Conference", abbreviation: "NFC", isConference: true, children: [
+      { name: "NFC North", abbreviation: "North", standings: { season: 2026, seasonType: 2, seasonDisplayName: "2026", entries: [
+        { team: tm("16", "MIN", "Minnesota Vikings", "Vikings", "https://a.espncdn.com/i/teamlogos/nfl/500/min.png"), stats: [
+          st("wins", "4", { type: "wins" }), st("losses", "1", { type: "losses" }), st("winPercent", ".800", { type: "winpercent" }), st("streak", "W3", { type: "streak" }) ] }
+      ] } }
+    ] }
+  ]
+};
+
+// …/soccer/uefa.europa.conf/standings?season=2026 — one table, notes, no types.
+export const ESPN_SOCCER_STANDINGS = {
+  name: "UEFA Conference League", season: { year: 2026, displayName: "2026-27 UEFA Conference League" },
+  children: [{ name: "League Phase", abbreviation: "2026-27", standings: { entries: [
+    { team: tm("139", "AJA", "Ajax Amsterdam", "Ajax", "https://a.espncdn.com/i/teamlogos/soccer/500/139.png"),
+      note: { color: "#81D6AC", description: "Qualifies for round of 16", rank: 1 },
+      stats: [st("gamesPlayed", "1", { value: 1 }), st("losses", "0", { value: 0 }), st("pointDifferential", "+2", { value: 2 }), st("points", "3", { value: 3 }),
+        st("pointsAgainst", "0"), st("pointsFor", "2"), st("ties", "0"), st("wins", "1"), st("rank", "1", { value: 1 }), { name: "overall", abbreviation: "Total", displayValue: "1-0-0", summary: "1-0-0" }] },
+    { team: tm("2565", "PEC", "PEC Zwolle", "PEC", "https://a.espncdn.com/i/teamlogos/soccer/500/2565.png"),
+      note: { color: "#B5E3FC", description: "Qualifies for playoff round", rank: 9 },
+      stats: [st("losses", "1"), st("ties", "0"), st("wins", "0"), st("points", "0"), st("pointDifferential", "-2"), st("rank", "9", { value: 9 })] }
+  ] } }]
+};
+
+// …/football/college-football/standings — the same stat names repeat under
+// "vsconf_*" types; records come as summaries.
+export const ESPN_NCAAF_STANDINGS = {
+  name: "FBS", children: [
+    { name: "Big Ten Conference", abbreviation: "Big Ten", isConference: true, standings: { season: 2026, seasonType: 2, seasonDisplayName: "2026", entries: [
+      { team: tm("135", "MINN", "Minnesota Golden Gophers", "Minnesota", "https://a.espncdn.com/i/teamlogos/ncaa/500/135.png"), stats: [
+        st("wins", "1", { type: "vsconf_wins" }), st("streak", "W2", { type: "vsconf_streak" }),
+        st("wins", "5", { type: "wins" }), st("streak", "W4", { type: "streak" }),
+        { name: "overall", type: "total", summary: "5-1", displayValue: "5-1" }, { name: "vs. Conf.", type: "vsconf", summary: "2-1", displayValue: "2-1" } ] }
+    ] } }
+  ]
+};
+
+// …/basketball/nba/standings — "points" is points per game, not a standings column.
+export const ESPN_NBA_STANDINGS = {
+  name: "National Basketball Association", children: [
+    { name: "Western Conference", isConference: true, standings: { seasonDisplayName: "2026-27", entries: [
+      { team: tm("16", "MIN", "Minnesota Timberwolves", "Timberwolves", "https://a.espncdn.com/i/teamlogos/nba/500/min.png"), stats: [
+        st("wins", "0", { type: "wins" }), st("losses", "0", { type: "losses" }), st("points", "0.0", { type: "points" }), st("winPercent", ".000", { type: "winpercent" }), st("gamesBehind", "-", { type: "gamesbehind" }) ] }
+    ] } }
+  ]
+};
+
+// …/soccer/all/teams/139/schedule(?fixture=true) — each event names its competition.
+const allEv = (id, date, slug, state, home, away, hs, as) => ({
+  id, date, league: { slug }, season: { slug: "2026-27" },
+  competitions: [{ status: { type: state === "post" ? { name: "STATUS_FULL_TIME", state: "post", completed: true, shortDetail: "FT" } : { name: "STATUS_SCHEDULED", state: "pre" } },
+    competitors: [
+      { id: home.id, homeAway: "home", winner: state === "post" && hs > as, ...(state === "post" ? { score: { value: hs, displayValue: String(hs) } } : {}), team: home },
+      { id: away.id, homeAway: "away", winner: state === "post" && as > hs, ...(state === "post" ? { score: { value: as, displayValue: String(as) } } : {}), team: away }
+    ] }]
+});
+const AJAX = { id: "139", abbreviation: "AJA", displayName: "Ajax Amsterdam", shortDisplayName: "Ajax", logos: [{ href: "https://a.espncdn.com/i/teamlogos/soccer/500/139.png", rel: ["full", "default"] }] };
+const opp = (id, abbr, name) => ({ id, abbreviation: abbr, displayName: name, shortDisplayName: name, logos: [{ href: `https://a.espncdn.com/i/teamlogos/soccer/500/${id}.png`, rel: ["full", "default"] }] });
+export const ESPN_AJAX_RESULTS = { events: [
+  allEv("401875700", "2026-09-19T18:00Z", "ned.1", "post", AJAX, opp("2563", "EXC", "Excelsior"), 2, 2),
+  allEv("401875710", "2026-10-15T16:45Z", "uefa.europa.conf", "post", opp("4009", "HAJ", "Hajduk Split"), AJAX, 0, 2),
+  allEv("401875799", "2026-08-01T15:00Z", "club.friendly", "post", AJAX, opp("1", "XXX", "Somewhere FC"), 5, 0)
+] };
+export const ESPN_AJAX_FIXTURES = { events: [
+  allEv("401875720", "2026-10-18T14:45Z", "ned.1", "pre", opp("138", "GRO", "FC Groningen"), AJAX),
+  allEv("401875730", "2026-10-22T19:00Z", "uefa.europa.conf", "pre", AJAX, opp("105", "ATA", "Atalanta"))
+] };

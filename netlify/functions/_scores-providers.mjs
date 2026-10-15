@@ -9,8 +9,10 @@
 //   supports(league)   → boolean, for one of our league keys (sports-model.js)
 //   scoreboard(league, dateKey, ctx)  → raw games for that calendar day
 //   teams?(league, ctx)               → raw teams (optional)
-//   teamGames?(league, ref, ctx)      → a team's recent + upcoming raw games
+//   teamGames?(league, ref, ctx)      → every raw game of a team's season
 //                                       (optional; `ref` is its own team id)
+//   standings?(league, ctx)           → { league, season, groups: [{ name, rows }] }
+//                                       (optional; rows per cleanStandings)
 //
 // "Raw" means already in the app's field names; cleanGame/cleanTeam validate and
 // trim. ctx is { fetchJson, env }. A method throws on any failure — the chain
@@ -19,7 +21,7 @@
 // Order comes from SCORES_PROVIDERS (comma-separated ids, default below). To
 // retire a provider, drop it from that list; to add one, write the adapter, add
 // it to PROVIDERS, and give it a fixture in test/scores-providers.test.js.
-import { cleanGames, cleanTeam, LEAGUE_BY_KEY } from "../../sports-model.js";
+import { cleanGames, cleanTeam, cleanStandings, LEAGUE_BY_KEY } from "../../sports-model.js";
 import { espn } from "./_scores-espn.mjs";
 import { thesportsdb } from "./_scores-thesportsdb.mjs";
 
@@ -78,5 +80,33 @@ export async function teamLastNext(leagueKey, providerId, ref, ctx, nowMs = Date
     return { ok: true, last: done[done.length - 1] || null, next: ahead[0] || null };
   } catch (e) {
     return { ok: false, last: null, next: null, error: errText(e) };
+  }
+}
+
+// A league's table from the first provider that has one. Never throws.
+export async function leagueStandings(leagueKey, ctx) {
+  const tried = [];
+  for (const p of ctx.chain) {
+    if (!p.supports(leagueKey) || typeof p.standings !== "function") continue;
+    try {
+      const standings = cleanStandings(await p.standings(leagueKey, ctx));
+      if (!standings) throw new Error("unusable standings");
+      return { ok: true, provider: p.id, standings, tried };
+    } catch (e) {
+      tried.push({ provider: p.id, error: errText(e) });
+    }
+  }
+  return { ok: false, provider: "", standings: null, tried, error: tried.length ? tried[tried.length - 1].error : "No provider has this league's table." };
+}
+
+// Every game of a team's season, from the provider whose id for it the caller
+// holds. Never throws.
+export async function teamSeason(leagueKey, providerId, ref, ctx) {
+  const p = ctx.chain.find((x) => x.id === providerId);
+  if (!p || !p.supports(leagueKey) || typeof p.teamGames !== "function") return { ok: false, games: [], error: "This team's schedule isn't available from the current data source." };
+  try {
+    return { ok: true, provider: p.id, games: cleanGames(await p.teamGames(leagueKey, ref, ctx)) };
+  } catch (e) {
+    return { ok: false, games: [], error: errText(e) };
   }
 }
