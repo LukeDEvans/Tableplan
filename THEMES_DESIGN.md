@@ -52,6 +52,13 @@ Decisions (Luke, 2026-10-14):
   `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES`. `nativeAppIcon()` in `native-bridge.js` is
   null in a browser or an older app build.
 
+- **Cold start (2026-10-15).** The person's last resolved theme is kept on the device in
+  `live-display-v1` (account-scoped, cleared on sign-out). The inline script at the top of
+  `<body>` in `index.html` applies it before first paint, and `currentDisplayPrefs` uses it
+  until the cloud prefs load. The iPhone icon is never changed before then
+  (`markDisplayPrefsKnown`, after hydration or a choice made on this device), so a cold
+  start can't reset the icon and set it back.
+
 ## Adding a theme
 
 1. Add it to `THEMES` (label, theme-color for light and dark, swatch) and, if it's seasonal,

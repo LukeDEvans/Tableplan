@@ -163,3 +163,36 @@ describe("holdMsFor", () => {
     expect(holdMsFor(240)).toBe(1_400 + 5_000 + 1_600);
   });
 });
+
+// The saved copy that lets the strip appear with the dock on a cold launch.
+import { tickerCacheRecord, itemsFromCache } from "../news-ticker.js";
+describe("ticker saved copy (cold launch)", () => {
+  const news = { kind: "news", key: "n:1", id: "1", tag: "News", text: "Headline" };
+  const final = { kind: "game", key: "g:1", id: "1", phase: "final", status: "Final" };
+  const live = { kind: "game", key: "g:2", id: "2", phase: "live", status: "3rd 5:21" };
+  const pre = { kind: "game", key: "g:3", id: "3", phase: "pre", status: "7:00 PM" };
+  const saved = at(2026, 10, 15, 9, 0);
+  const rec = tickerCacheRecord([news, final, live, pre], saved);
+  const later = (min) => saved.getTime() + min * 60_000;
+
+  it("a few minutes later everything comes back", () => {
+    expect(itemsFromCache(rec, later(5)).map((i) => i.key)).toEqual(["n:1", "g:1", "g:2", "g:3"]);
+  });
+  it("after 10 minutes live scores and start times are dropped; finals and headlines stay", () => {
+    expect(itemsFromCache(rec, later(45)).map((i) => i.key)).toEqual(["n:1", "g:1"]);
+  });
+  it("once the noon/midnight window has changed, no games; headlines up to 12 hours", () => {
+    expect(itemsFromCache(rec, later(4 * 60)).map((i) => i.key)).toEqual(["n:1"]);
+    expect(itemsFromCache(rec, later(13 * 60))).toEqual([]);
+  });
+  it("junk or a clock that went backwards shows nothing", () => {
+    expect(itemsFromCache(null)).toEqual([]);
+    expect(itemsFromCache({ at: 0, items: [news] })).toEqual([]);
+    expect(itemsFromCache(rec, later(-5))).toEqual([]);
+  });
+  it("game items carry their phase", () => {
+    const g = cleanGames([{ id: "x", league: "nfl", sport: "football", state: "final", start: saved.toISOString(), home: { team: vikings, score: 21 }, away: { team: packers, score: 14 } }])[0];
+    expect(g).toBeTruthy();
+    expect(gameTicker({ game: g, rel: 0, fav: { home: true, away: false } }).phase).toBe("final");
+  });
+});

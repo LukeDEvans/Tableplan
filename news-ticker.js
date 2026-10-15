@@ -98,7 +98,7 @@ export function gameTicker(entry, { locale } = {}) {
   }
   const joiner = scored ? "" : game.sport === "soccer" ? "v" : "at";
   const label = `${game.away.team.name} at ${game.home.team.name}${scored ? `, ${game.away.score} to ${game.home.score}` : ""}, ${status}`;
-  return { league: LEAGUE_BY_KEY[game.league]?.short || "", sides, joiner, status, live: isLive(game), label };
+  return { league: LEAGUE_BY_KEY[game.league]?.short || "", sides, joiner, status, live: isLive(game), phase: game.state, label };
 }
 
 // Everything the ticker shows, news first, then scores. Each item has a stable `key`.
@@ -120,6 +120,34 @@ export function holdMsFor(overflowPx) {
   return SCROLL_LEAD_MS + Math.round((overflowPx / SCROLL_PX_PER_S) * 1000) + SCROLL_TAIL_MS;
 }
 
+// The last items shown, kept on this device so the strip can appear with the
+// dock on the next launch instead of after sign-in and two network calls.
+// Account-scoped (auth-account-reset.js clears it on sign-out / account change).
+export const TICKER_CACHE_KEY = "live-dock-ticker-v1";
+const CACHE_NEWS_MAX_AGE_MS = 12 * 60 * 60_000;
+const CACHE_GAME_MAX_AGE_MS = 10 * 60_000;
+
+export function tickerCacheRecord(items, now = new Date()) {
+  return { at: now.getTime(), windowEnds: now.getTime() + msUntilWindowChange(now), items };
+}
+
+// What's still fit to show from a saved record at `now`: headlines up to 12 h
+// old; games only within the same yesterday/today/tomorrow window, and only a
+// finished game once the copy is over 10 minutes old (a live score or a start
+// time could be out of date by then — the refresh brings those back).
+export function itemsFromCache(record, now = Date.now()) {
+  if (!record || !Array.isArray(record.items) || !(record.at > 0)) return [];
+  const age = now - record.at;
+  if (age < 0) return [];
+  const sameWindow = now < (record.windowEnds || 0);
+  return record.items.filter((it) => {
+    if (!it || !it.key) return false;
+    if (it.kind === "news") return age <= CACHE_NEWS_MAX_AGE_MS;
+    if (it.kind === "game") return sameWindow && (age <= CACHE_GAME_MAX_AGE_MS || ["final", "postponed", "canceled"].includes(it.phase));
+    return false;
+  });
+}
+
 // ── Module ───────────────────────────────────────────────────────────────────
 
 export function createNewsTickerModule(deps) {
@@ -128,6 +156,14 @@ export function createNewsTickerModule(deps) {
     getState,
     // Whether the ticker may show at all (signed in, News switched on).
     isEnabled,
+    // False until the sign-in check has finished: until then a "not enabled"
+    // answer is only "not known yet", so what's showing (the saved copy) stays.
+    isReady = () => true,
+    // Whether this device's saved copy may be shown before sign-in is confirmed
+    // (a stored session and News switched on).
+    canShowSaved = () => false,
+    // Device storage for the saved copy (localStorage); absent in tests.
+    storage = null,
     // news-ui.js tickerLeads({ maxAgeMs }) → lead articles.
     getLeads,
     // scores-ui.js getBoard(dateKey, { maxAgeMs }) → games | null.
@@ -172,7 +208,7 @@ export function createNewsTickerModule(deps) {
   }
   async function refreshOnce() {
     try {
-      if (!isEnabled?.()) { setItems([]); return; }
+      if (!isEnabled?.()) { if (isReady()) { setItems([]); clearCache(); } return; }
       const now = new Date();
       const days = tickerDays(now);
       const ttl = lastLiveish ? SCORES_LIVE_TTL_MS : SCORES_IDLE_MS / 2;
@@ -184,10 +220,31 @@ export function createNewsTickerModule(deps) {
       const byDay = Object.fromEntries(days.map((d, i) => [d.key, boards[i]]));
       const games = favoriteGames(byDay, getState?.()?.sportsPrefs, days);
       lastLiveish = nextRefreshMs(games.filter((e) => e.rel >= 0).map((e) => e.game), now.getTime()) !== null;
-      setItems(buildTickerItems({ leads, games }));
+      const next = buildTickerItems({ leads, games });
+      // Nothing came back but the calls may just have failed (offline): keep the
+      // saved copy on screen rather than blanking the strip.
+      if (!next.length && items.length && !leads.length && boards.every((b) => b == null)) return;
+      setItems(next);
+      saveCache(next, now);
     } catch {
       /* keep what's showing */
     }
+  }
+
+  function saveCache(list, now) {
+    try {
+      if (!storage) return;
+      if (!list.length) storage.removeItem(TICKER_CACHE_KEY);
+      else storage.setItem(TICKER_CACHE_KEY, JSON.stringify(tickerCacheRecord(list, now)));
+    } catch { /* storage full or blocked — the strip just waits for the network */ }
+  }
+  function clearCache() { try { storage?.removeItem(TICKER_CACHE_KEY); } catch { /* ignore */ } }
+  function restoreCache() {
+    if (items.length || !storage || !canShowSaved()) return;
+    let record = null;
+    try { record = JSON.parse(storage.getItem(TICKER_CACHE_KEY) || "null"); } catch { return; }
+    const saved = itemsFromCache(record);
+    if (saved.length) setItems(saved);
   }
 
   // One timer, foreground only: soon while a followed game is on, otherwise
@@ -360,6 +417,7 @@ export function createNewsTickerModule(deps) {
 
   function init() {
     wire();
+    restoreCache(); // show last launch's strip with the dock; refresh() replaces it
     return refresh();
   }
 
