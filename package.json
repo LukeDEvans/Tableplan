@@ -11,6 +11,7 @@
     "check:boot": "vite build && node scripts/check-boot.mjs",
     "check:mail-frame": "node scripts/check-mail-frame.mjs",
     "assistant:check": "node scripts/check-assistant.mjs",
+    "qa:mail-menus": "node scripts/qa-mail-menus.mjs",
     "qa:p0p1": "node scripts/qa-p0p1.mjs",
     "qa:p0p1-extended": "node scripts/qa-p0p1-extended.mjs",
     "qa:reminders": "node scripts/qa-reminders.mjs",

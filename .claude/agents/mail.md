@@ -79,7 +79,8 @@ changes to Mail only.
 
 ## Verify
 `npx vitest run` (`mail-*`, `auth-gmail-callback`), `npm run check:mail-frame`,
-`npm run check:boot`, and headless Chromium at phone width against
+`npm run check:boot`, `npm run qa:mail-menus` (move/snooze/more menus close on any tap,
+including on the email itself), and headless Chromium at phone width against
 `npm run dev:local` with Gmail calls mocked (local dev has no real mailbox). The frame
 still needs a look on the iPhone (no iOS WebKit in the sandbox).
 
@@ -112,6 +113,18 @@ notifications-window rules (never open empty, close when the last item is handle
 Fixed windows and popovers size against the bottom dock via `dock-space.js`
 (`usableViewportBottom`, `dockInset`, `notificationsWindowBox`). Every page must fit a
 ~360px phone with no sideways scroll.
+
+**Thread menus (Luke, 2026-10-14):** the move / snooze / more menus close on a tap
+anywhere outside them (listened for on `pointerdown`, since iPhone Safari sends no click
+for a tap on a plain area), on a tap on the email itself (the email frames ignore taps
+while `body.mail-menu-open` is set), on a second tap of the button that opened them,
+and on Escape. A new thread menu uses `wireMailMenuDismiss(anchor)` and checks
+`mailMenuToggleClosed(anchor)` first.
+
+**Reading surface in dark mode:** `.mail-thread-panel` stays white and carries the
+LIGHT version of the active theme's tokens (and its own `color`), so everything on it
+reads on white. Menus attached to `<body>` use `var(--paper)`, which follows the theme.
+`test/theme-contrast.test.js` checks the panel's tokens.
 
 ## Git & shipping
 Follow root **CLAUDE.md → Git / GitHub**. Commit on a branch as work completes;

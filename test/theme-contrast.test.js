@@ -40,7 +40,8 @@ const TEXT_PAIRS = [
   ["accent-dark", "surface"], ["accent-dark", "surface-strong"], ["accent-dark", "window-bg"], ["accent-dark", "accent-soft"],
   ["on-accent", "accent"], ["on-accent", "window-border"], ["on-tomato", "tomato"],
   ["tomato", "surface-strong"], ["tomato", "window-bg"], ["tomato", "tomato-soft"],
-  ["window-border", "window-bg"], ["blue", "surface-strong"], ["text-muted", "surface-strong"],
+  ["window-border", "window-bg"], ["window-border", "surface-strong"], ["blue", "surface-strong"], ["text-muted", "surface-strong"],
+  ["ink", "paper"], ["muted", "paper"], ["ink", "card"], ["muted", "card"], ["purple", "window-bg"], ["purple", "surface-strong"],
 ];
 
 describe.each(CHECKED)("theme %s", (name) => {
@@ -64,4 +65,25 @@ describe.each(CHECKED)("theme %s", (name) => {
     if (!m) return;
     expect(ratio(sets.dark.ink, m[1])).toBeGreaterThanOrEqual(4.5);
   });
+});
+
+// The mail reading surface stays white in dark mode and carries the LIGHT
+// tokens (styles.css, .mail-thread-panel). Everything drawn on it must read on
+// white — this is what washed out in Halloween dark (2026-10-14).
+describe("mail reading surface in dark mode", () => {
+  const panel = (sel) => {
+    const m = css.match(new RegExp(sel.replace(/[[\]".]/g, "\\$&") + "\\s*\\{([^}]*)\\}"));
+    if (!m) throw new Error(`no block for ${sel}`);
+    return Object.fromEntries([...m[1].matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)].map((x) => [x[1], x[2]]));
+  };
+  const base = panel(".mail-thread-panel");
+  const dark = { ...base, ...panel('body[data-theme="dark"] .mail-thread-panel') };
+  const sets = { classic: dark, halloween: { ...dark, ...panel('body[data-palette="halloween"][data-theme="dark"] .mail-thread-panel') } };
+  for (const [name, t] of Object.entries(sets)) {
+    it(`${name}: text and accents read on the white surface`, () => {
+      const pairs = [["ink", "window-bg"], ["muted", "window-bg"], ["accent", "window-bg"], ["accent-dark", "window-bg"], ["tomato", "window-bg"], ["window-border", "window-bg"], ["on-accent", "accent"], ["ink", "accent-soft"], ["ink", "paper"]];
+      const failures = pairs.map(([fg, bg]) => [fg, bg, ratio(t[fg], t[bg])]).filter(([, , r]) => !(r >= 4.5)).map(([fg, bg, r]) => `${fg} on ${bg}: ${r.toFixed(2)}`);
+      expect(failures).toEqual([]);
+    });
+  }
 });
