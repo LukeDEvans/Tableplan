@@ -198,6 +198,76 @@ for (const p of pages) {
   }
 }
 
+// Page gear menus (Luke, 2026-10-14): Finance and Recreate have none; Shop splits
+// Receipts and Price History and drops Checklist; News keeps only Sync Settings.
+const menuFor = async (p) => {
+  await visit(p);
+  await page.evaluate(() => document.getElementById("appMenuBtn")?.click());
+  await page.waitForTimeout(100);
+  const items = await page.evaluate(() => [...document.querySelectorAll("#appMenu > button")].filter((b) => !b.hidden).map((b) => b.textContent.trim()).filter((t) => !["User Profile", "Settings"].includes(t)));
+  await page.evaluate(() => document.getElementById("appMenuBtn")?.click());
+  return items;
+};
+const expectMenus = { finance: [], recreate: [], shop: ["Preferred Stores", "Receipts", "Price History"], news: ["Sync Settings"] };
+for (const [p, want] of Object.entries(expectMenus)) {
+  const got = await menuFor(p);
+  check(JSON.stringify(got) === JSON.stringify(want), `#${p} gear menu is ${want.length ? want.join(", ") : "empty"}`, JSON.stringify(got));
+}
+
+// Shop › Receipts has the Scan receipt button; Price History doesn't.
+await visit("shop");
+const shopSplit = await page.evaluate(() => {
+  document.getElementById("menuShopReceiptsBtn")?.click();
+  const receipts = document.getElementById("shopReceiptsDialog");
+  const scanInReceipts = !!receipts?.open && !!receipts.querySelector("#openReceiptScanBtn");
+  receipts?.close();
+  document.getElementById("menuGroceryPricingBtn")?.click();
+  const pricing = document.getElementById("groceryPricingDialog");
+  const r = { scanInReceipts, pricingOpen: !!pricing?.open, scanInPricing: !!pricing?.querySelector("#openReceiptScanBtn"), pricingTitle: pricing?.querySelector("h2")?.textContent };
+  pricing?.close();
+  return r;
+});
+check(shopSplit.scanInReceipts && shopSplit.pricingOpen && !shopSplit.scanInPricing && shopSplit.pricingTitle === "Price History", "Shop: Receipts opens the receipts list with Scan receipt; Price History opens prices", JSON.stringify(shopSplit));
+
+// Finance › Accounts tab: Emergency savings months and the Alerts card live here now.
+await visit("finance");
+await page.evaluate(() => window.__liveQA.financeSeedAccount());
+await page.evaluate(() => document.getElementById("fin-tab-accounts")?.click());
+await page.waitForTimeout(400);
+await page.evaluate(() => document.querySelector('.fin-savings-emergency .fin-savings-caret')?.click());
+await page.waitForTimeout(300);
+const fin = await page.evaluate(() => ({
+  months: !!document.querySelector('.fin-savings-emergency [data-fin-edit="emergency-months"]'),
+  settingsText: /Settings › Finance/.test(document.getElementById("fin-tabpanel")?.innerText || ""),
+  alerts: [...document.querySelectorAll('.fin-alerts-card [data-fin-edit="alert"]')].length,
+  accounts: !!document.querySelector(".fin-accounts-card"),
+}));
+check(fin.months, "Finance: Emergency savings card has the months field", JSON.stringify(fin));
+check(fin.alerts > 0 && fin.accounts && !fin.settingsText, "Finance: Accounts tab has Accounts and Alerts, no 'Settings › Finance' pointers", JSON.stringify(fin));
+const finBefore = errors.length;
+await page.evaluate(() => {
+  const input = document.querySelector('.fin-savings-emergency [data-fin-edit="emergency-months"]');
+  input.value = "6"; input.dispatchEvent(new Event("change", { bubbles: true }));
+  const t = document.querySelector('.fin-alerts-card [data-fin-edit="alert"]');
+  t.click();
+});
+await page.waitForTimeout(300);
+const finAfter = await page.evaluate(() => ({
+  months: document.querySelector('.fin-savings-emergency [data-fin-edit="emergency-months"]')?.value,
+  alertOn: document.querySelector('.fin-alerts-card [data-fin-edit="alert"]')?.checked,
+}));
+check(errors.length === finBefore && finAfter.months === "6" && finAfter.alertOn === false, "Finance: months and alert switch save", JSON.stringify(finAfter));
+
+// News › Sync Settings: no subscriber cookies.
+await openGeneral();
+await page.evaluate(() => { document.getElementById("contextSettingsDialog").close(); });
+await visit("news");
+await page.evaluate(() => { document.getElementById("appMenuBtn")?.click(); document.getElementById("menuReadSyncBtn")?.click(); });
+await page.waitForTimeout(300);
+const sync = await page.evaluate(() => { const b = document.getElementById("contextSettingsBody"); return { cookies: b.querySelectorAll("input[type=password]").length, text: b.innerText.trim() }; });
+check(sync.cookies === 0 && !/cookie/i.test(sync.text) && sync.text.length > 0, "News › Sync Settings has no subscriber cookies", JSON.stringify(sync));
+await page.evaluate(() => document.querySelectorAll("dialog[open]").forEach((d) => d.close()));
+
 // Recipe Box › Recently deleted: shows the last 30 days, purges older entries on open,
 // and restores a recipe.
 await visit("eat");

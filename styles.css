@@ -4246,6 +4246,7 @@ body.shop-move-dragging { user-select: none; -webkit-user-select: none; }
 .receipt-scan-launch {
   justify-self: start;
 }
+.shop-receipts-page .receipt-scan-launch { margin: 4px 0 12px; }
 
 .receipt-dialog {
   width: min(1080px, calc(100vw - 28px));
@@ -15770,6 +15771,8 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
 .sync-context-actions { display: flex; align-items: center; gap: 12px; padding-top: 4px; }
 .sync-context-last { font-size: 0.8rem; color: var(--text-muted, #888); }
 .sync-context-divider { border: none; border-top: 1px solid var(--line); margin: 4px 0; }
+.sync-context-heading { display: flex; align-items: center; gap: 8px; }
+.sync-context-heading .sync-context-label { margin: 0; }
 .sync-pub-list { display: flex; flex-direction: column; gap: 0; }
 .sync-pub-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
 .sync-pub-item:last-child { border-bottom: none; }
@@ -22755,8 +22758,10 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .vpick-note { margin-top: 6px; font-size: 0.8rem; color: var(--muted); border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 13px; border-radius: 0 10px 10px 0; }
 
 /* Finance alerts settings section (Settings › Finance). Reuses .mail-ai-feature-row. */
-.fin-alerts-settings { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
-.fin-alerts-title { margin-top: 8px; font-size: 0.95rem; font-weight: 800; color: var(--ink); }
+/* Finance › Accounts › Alerts card (moved from Settings › Finance, 2026-10-14). */
+.fin-alert-pref { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0 2px; cursor: pointer; }
+.fin-alert-pref-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fin-alert-pref-label { font-weight: 650; font-size: 0.9rem; color: var(--ink); }
 
 /* ── Safe-area insets for full-screen dialogs ──────────────────────────────────
    Dialogs render in the top layer, outside the body's safe-area padding, so a

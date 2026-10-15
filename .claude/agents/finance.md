@@ -69,6 +69,13 @@ all your work is there. Make focused changes to the Finance domain only.
   `invalidateFinanceLabeled` is called by **state-sync** (`applyStoredState`). These are
   in the module's returned interface — don't change their names/shapes without updating
   those callers.
+- **No finance settings (Luke, 2026-10-14):** Settings › Finance (Accounts, Emergency
+  Savings) and the Finance gear-menu items are gone. Everything lives on the page:
+  the Accounts tab's **Accounts** card (bank link, manual accounts, labels, stored
+  history switch), the **Emergency savings** card's "Months of Needs to cover" field
+  (`emergency-months`), and an **Alerts** card (`FINANCE_ALERTS`, `data-fin-edit="alert"`,
+  stored in `state.financeAlertPrefs`). "Link a bank" / "Track manually" / "Open
+  Accounts" switch to the Accounts tab. Don't add a Finance settings panel back.
 - **No UI test coverage:** the finance/receipt test files cover the pure logic modules
   only, not `finance-ui.js`'s render/handlers. Verify UI changes by hand and say so.
 

@@ -105,7 +105,7 @@ export function normalizeFinanceBudgetGroups(raw, createId) {
 
 export const FINANCE_ACCOUNT_KINDS = ["cash", "retirement", "investment", "debt", "other"];
 
-// User-configurable finance alerts (Settings › Finance). Default ON; stored in
+// User-configurable finance alerts (Finance › Accounts › Alerts). Default ON; stored in
 // the config section (state.financeAlertPrefs), NOT the schema-guarded finance
 // section — these are preferences, not ledger data.
 export const FINANCE_ALERTS = [
@@ -1905,7 +1905,7 @@ function financeAttentionCardHtml(a) {
     <div class="fin-alert-text"><b>${escapeHtml(a.label)}</b> — ${escapeHtml(a.detail)}</div>
     <div class="fin-item-row fin-item-row--tools">
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="dismiss-alert" data-key="${escapeHtml(a.key)}">Dismiss</button>
-      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open bank settings</button>
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open Accounts</button>
     </div>`;
   return financeNotifAlertCardWrap(kicker, body);
 }
@@ -2792,11 +2792,10 @@ function financeExpensesTotal() {
   return (state.financeBudgetGroups || []).reduce((s, g) => s + financeGroupTotal(g), 0);
 }
 
-// The Accounts management UI. It used to be a card on the Finance page; it now
-// lives in Settings › Finance. Returns the inner HTML; the same data-fin-edit /
-// data-fin-action hooks route through onFinanceGridChange / onFinanceGridClick
-// (delegated from the settings body). A visible ✎ button opens each account's
-// editor, since the old right-click menu can't layer above a modal dialog.
+// The Accounts management UI, shown as the Accounts card on the Accounts tab
+// (Settings › Finance › Accounts was removed 2026-10-14). Returns the inner HTML;
+// its data-fin-edit / data-fin-action hooks route through onFinanceGridChange /
+// onFinanceGridClick. A visible ✎ button opens each account's editor.
 function renderFinanceAccountsPanel() {
   const owners = [...new Set([
     ...(Array.isArray(state.financeAccountLabels) ? state.financeAccountLabels : []),
@@ -3356,7 +3355,7 @@ function renderFinancePage() {
   // + "+" button adds one more at a time. Making any pick materializes the set.
   const savingsAccountEditor = (card, activeIds) => {
     const accts = state.financeAccounts || [];
-    if (!accts.length) return `<p class="fin-hint">Add accounts in Settings › Finance first.</p>`;
+    if (!accts.length) return `<p class="fin-hint">Add accounts in the Accounts card below first.</p>`;
     const byId = new Map(accts.map((a) => [a.id, a]));
     const active = activeIds.filter((id) => byId.has(id));
     const remaining = accts.filter((a) => !active.includes(a.id));
@@ -3408,7 +3407,13 @@ function renderFinancePage() {
         </div>
         ${savingsValue(emergencyHave, emergencyTarget > 0 ? emergencyTarget : null, false)}
         ${emergencyOpen ? `<div class="fin-savings-editor">
-          <p class="fin-hint">Target = ${emergencyMonths} month${emergencyMonths === 1 ? "" : "s"} of Needs${monthlyNeeds > 0 ? ` (${formatFinMoney(monthlyNeeds)}/mo)` : ""}${emergencyTarget > 0 ? ` = ${formatFinMoney(emergencyTarget)}` : ""}. Adjust the number of months in Settings › Finance.</p>
+          <div class="fin-savings-fields">
+            <label class="fin-savings-field">
+              <span>Months of Needs to cover</span>
+              <input type="number" min="1" max="24" step="1" inputmode="numeric" value="${emergencyMonths}" data-fin-edit="emergency-months" />
+            </label>
+          </div>
+          <p class="fin-hint">Target = ${emergencyMonths} month${emergencyMonths === 1 ? "" : "s"} of Needs${monthlyNeeds > 0 ? ` (${formatFinMoney(monthlyNeeds)}/mo)` : ""}${emergencyTarget > 0 ? ` = ${formatFinMoney(emergencyTarget)}` : ""}.</p>
           <p class="fin-hint">Accounts counted as emergency savings.</p>
           ${savingsAccountEditor("emergency", emergencyIds)}
         </div>` : ""}
@@ -3438,8 +3443,6 @@ function renderFinancePage() {
       </div>
     </div>`;
 
-  // The Accounts management UI moved to Settings › Finance (see
-  // renderFinanceAccountsPanel); it no longer renders as a card here.
 
   const f = financeTxnFilter;
   // Trim only at point-of-use so live typing keeps spaces (f.q holds the raw box
@@ -3949,9 +3952,8 @@ function renderFinancePage() {
   // Two distinct paths instead of one generic button: a returning user who
   // dismissed bank linking already knows they want the manual path, and
   // shouldn't be funneled back through "connect a bank" copy every time they
-  // land here. Both buttons open the same finance-accounts settings dialog
-  // (linking and manual-account creation already live in that one panel) —
-  // this is UI/copy only, no new state or write path.
+  // land here. Both buttons go to the Accounts tab's Accounts card (linking and
+  // manual-account creation live there) — UI/copy only, no new state or write path.
   const hasAccounts = (state.financeAccounts || []).length > 0;
   const connectPrompt = `
     <div class="fin-card fin-empty-onboard">
@@ -4196,9 +4198,21 @@ function renderFinancePage() {
 
   // Route the existing cards into tabs (they keep their own internals + wiring).
   const accountsPanel = `<div class="fin-card fin-accounts-card"><div class="fin-subhead fin-accounts-title">Accounts</div>${renderFinanceAccountsPanel()}</div>`;
+  // Alerts (moved here from Settings › Finance, Luke 2026-10-14): which finance
+  // alerts appear in the notifications bell. Stored in state.financeAlertPrefs.
+  const alertsCard = `
+    <div class="fin-card fin-alerts-card">
+      <div class="fin-subhead fin-accounts-title">Alerts</div>
+      <div class="fin-hint">Which alerts appear in the notifications bell.</div>
+      ${FINANCE_ALERTS.map((a) => `
+        <label class="fin-alert-pref">
+          <span class="fin-alert-pref-text"><span class="fin-alert-pref-label">${escapeHtml(a.label)}</span><span class="fin-hint">${escapeHtml(a.desc)}</span></span>
+          <input type="checkbox" class="live-toggle" data-fin-edit="alert" data-key="${escapeHtml(a.key)}" aria-label="${escapeHtml(a.label)}" ${financeAlertPref(a.key) ? "checked" : ""} />
+        </label>`).join("")}
+    </div>`;
   const tabBody =
     financeTab === "budget" ? `${showOnboard ? connectPrompt : ""}${budgetView}${personalCard}`
-    : financeTab === "accounts" ? `${showOnboard ? connectPrompt : ""}${goalsCard}${savingsRow}${netWorthCard}${accountsPanel}`
+    : financeTab === "accounts" ? `${showOnboard ? connectPrompt : ""}${goalsCard}${savingsRow}${netWorthCard}${accountsPanel}${alertsCard}`
     : financeTab === "insights" ? `${showOnboard ? connectPrompt : ""}${insightsView}`
     : (txnsCard || connectPrompt);
 
@@ -4261,9 +4275,6 @@ function renderFinancePage() {
     });
   }
 
-  // Keep the Accounts panel (Settings › Finance) in sync when the finance page
-  // re-renders — e.g. after an async bank refresh updates live balances.
-  refreshFinanceSettingsIfOpen();
   // Re-apply the budget category filter after a render (edits rebuild the list).
   if (financeTab === "budget" && financeBudgetSearch) applyBudgetSearch();
 }
@@ -4427,7 +4438,16 @@ function onFinanceGridClick(e) {
     persist(); renderFinancePage(); return;
   }
   if (action === "toggle-txn-expand") { financeTxnListExpanded = !financeTxnListExpanded; renderFinancePage(); return; }
-  if (action === "open-finance-settings") { openContextSettingsDialog("finance-accounts"); return; }
+  // Bank linking and manual accounts live on the Accounts tab (Settings › Finance
+  // was removed 2026-10-14): switch to it and bring the Accounts card into view.
+  if (action === "open-finance-settings") {
+    document.getElementById("finReviewOverlay")?.remove(); // opened from the bell's alert card
+    financeNotifOpen = false;
+    financeTab = "accounts";
+    renderFinancePage();
+    requestAnimationFrame(() => document.querySelector(".fin-accounts-card")?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    return;
+  }
   if (action === "dismiss-alert") {
     if (!state.financeDismissedAlerts || typeof state.financeDismissedAlerts !== "object") state.financeDismissedAlerts = {};
     if (btn.dataset.key) state.financeDismissedAlerts[btn.dataset.key] = true;
@@ -4912,6 +4932,9 @@ function onFinanceGridChange(e) {
     state.financeBirthYear = (y >= 1900 && y <= new Date().getFullYear()) ? y : null;
   } else if (kind === "ret-annual-income") {
     state.financeAnnualIncome = Math.max(0, Number(el.value) || 0);
+  } else if (kind === "alert") {
+    if (!state.financeAlertPrefs || typeof state.financeAlertPrefs !== "object") state.financeAlertPrefs = {};
+    state.financeAlertPrefs[el.dataset.key] = el.checked;
   } else {
     return;
   }
@@ -4955,11 +4978,9 @@ function jumpToFinanceMonth(key) {
   renderFinancePage();
 }
 
-function refreshFinanceSettingsIfOpen() {
-  if (elements.contextSettingsDialog?.open && getContextSettingsKind() === "finance-accounts") {
-    renderContextSettingsDialog("finance-accounts");
-  }
-}
+// Settings › Finance › Accounts was removed (2026-10-14: the Accounts tab covers it),
+// so there is no settings panel to refresh. Kept as a no-op for its many callers.
+function refreshFinanceSettingsIfOpen() {}
 
   // ── Nav-entry glue (showFinanceApp stays in app.js and calls these) ──────────
   // The finance-enter sequence, kept in the module so the shared state (financeViewMonth,
