@@ -272,43 +272,6 @@ The edit recipe window also includes Log & Notes, where entries can be added, re
 
 Recipes now track prep time and cook time separately. Older recipes with only a single time value keep that value as the prep time until edited.
 
-## Weekly Email Review
-
-Netlify includes a scheduled function at:
-
-```text
-netlify/functions/weekly-review.js
-```
-
-It is scheduled for Thursdays at 14:00 UTC, which is Thursday morning in Central time. The email summarizes the week in review, active cooks or cook logs that may need notes, and whether the upcoming Friday-to-Friday meal plan is published.
-
-Required Netlify environment variables:
-
-```text
-SUPABASE_SERVICE_ROLE_KEY
-RESEND_API_KEY
-```
-
-Optional Netlify environment variables:
-
-```text
-SUPABASE_URL
-WEEKLY_REVIEW_TO
-WEEKLY_REVIEW_FROM
-EAT_APP_URL
-WEEKLY_REVIEW_TRIGGER_SECRET
-```
-
-The function will skip sending if required keys are missing. Manual URL testing requires `WEEKLY_REVIEW_TRIGGER_SECRET`; scheduled Netlify runs do not.
-
-The email layout can be adjusted in the app:
-
-```text
-Settings -> Weekly Email
-```
-
-That editor saves the subject prefix, intro line, closing note, and which weekly sections are included. The text supports `{reviewRange}`, `{upcomingRange}`, and `{appUrl}` placeholders.
-
 ## Holidays
 
 Meal Plan can show U.S. holidays beside the date. Localhost uses `/api/holidays`; Netlify uses `/.netlify/functions/us-holidays`. Holiday results are cached in the browser for display, and the helper endpoint can cache live responses through normal HTTP caching.

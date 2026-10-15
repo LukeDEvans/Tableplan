@@ -21,8 +21,8 @@ changes to Mail only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `mail-frame.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/weekly-email.js`, `netlify/functions/weekly-review.js`, `netlify/functions/_weekly-context.js`, `netlify/functions/_recipient.js`, `netlify/functions/email-interview.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
-- state: `mail*`, `emailPrefs`, `weeklyEmailSettings`
+- files: `mail-frame.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
+- state: `mail*`
 
 ## Your scope (edit these)
 - **Reading frame:** `mail-frame.js` (sanitizing, image handling, fit/size; app.js
@@ -32,19 +32,18 @@ changes to Mail only.
   `renderMailThread`, `renderMailMessage`, `openMailAttachment`,
   `loadMailEmbeddedImage`), the connect screen (`renderMailConnectState`), the
   **Mail suggestions** bell (`loadMailSuggestionsPanel`, `renderMailSuggestions`),
-  Settings → Mail AI (`MAIL_AI_FEATURES`) and Settings → Mail Reading. Search:
-  `showMailApp`, `renderMail`, `MAIL_AI_FEATURES`, `mailReadingPrefs`.
+  Settings → Mail AI (`MAIL_AI_FEATURES`; each row's write-up opens from its (i)
+  button). Search: `showMailApp`, `renderMail`, `MAIL_AI_FEATURES`.
 - **Server:** `gmail.js` (the session-authenticated action endpoint), `gmail-auth.js` /
   `gmail-callback.js` (OAuth with signed state via `_oauth-state.js`; the iPhone app
   returns through the WebAuth sheet), `gmail-watch-rearm.js` (daily) and
   `gmail-webhook.js` (Pub/Sub push — always ACK 200), `_gmail-shared.js`
   (`getValidAccessToken`, `runInboxSweep`), `sweep-background.js`, `_mail-jobs.js`
-  (durable processing engine), `scheduled-email.js`, `weekly-email.js`,
-  `email-interview.js`, `recipe-digest.js` / `_recipe-digest.js`.
+  (durable processing engine), `scheduled-email.js` (15-minute snooze wake only),
+  `recipe-digest.js` / `_recipe-digest.js`.
 - **Data:** tables `mail_accounts` and `mail_sweep_state` (service role only — per-user
   state stays **out of `tableplan_states`** for egress). Client config in the `config`
-  section: `mailAiSettings`, `mailReadingPrefs`, `mailMoveMemory`, `emailPrefs`,
-  `weeklyEmailSettings`.
+  section: `mailAiSettings`, `mailMoveMemory`.
 
 ## Rules (from CLAUDE.md — do not drift)
 - **Every AI email feature has a toggle** in Settings → Mail AI: add it to
@@ -54,11 +53,15 @@ changes to Mail only.
   default** — only an explicit `true` turns it on. Don't "fix" it to match.
 - **Reading frame:** set the frame up when its markup is parsed, never on `load`;
   `loading="lazy"` does nothing in the sandbox (remote images park on `data-lz-src`
-  and get their source as they near the screen); remote images load by default with
-  1×1 and known tracking URLs stripped, and `mailReadingPrefs.blockRemoteImages`
-  blocks everything. Images never touch Supabase. Run `npm run check:mail-frame` after
+  and get their source as they near the screen); remote images **always** load, with
+  1×1 and known tracking URLs stripped — there's no switch (Luke, 2026-10-14: Settings
+  › Mail Reading and the "Display images" menu item are gone). Images never touch
+  Supabase. Run `npm run check:mail-frame` after
   any frame change.
 - The Mail suggestions bell follows the notifications-window rules.
+- **Removed (Luke, 2026-10-14):** the weekly review email (Settings › Email, its
+  functions and dialogs) — don't rebuild it. `scheduled-email.js` keeps only the
+  snooze wake.
 - "Save to News" is Mail's name for saving an email's article (News owns Saved).
 
 ## Domain landmines (do NOT change without flagging)

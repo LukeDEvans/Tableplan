@@ -131,7 +131,6 @@ body[data-palette="halloween"][data-theme="dark"] .bottom-dock {
   --dock-bg2: #0e0c0b;
 }
 
-
 * {
   box-sizing: border-box;
 }
@@ -150,7 +149,6 @@ body {
   max-width: 100%;
   overflow-x: hidden;
 }
-
 
 body[data-theme="dark"] {
   background: var(--sun-pale);
@@ -1922,66 +1920,6 @@ select:focus {
   background: var(--surface-strong);
 }
 
-.location-sharing-setting {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0 0 6px;
-}
-
-.location-sharing-setting > span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.location-sharing-setting strong {
-  color: var(--blue);
-  font-size: 0.72rem;
-  font-weight: 950;
-  text-transform: uppercase;
-}
-
-.location-sharing-setting small {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-.location-sharing-setting label {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 7px;
-  align-items: center;
-  color: var(--ink);
-  font-size: 0.76rem;
-  font-weight: 850;
-}
-
-.location-status-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding-top: 4px;
-  border-top: 1px solid color-mix(in srgb, var(--blue) 20%, transparent);
-}
-
-.location-status-text {
-  flex: 1;
-  font-size: 0.74rem;
-}
-
-.location-status-ok { color: var(--accent-dark); }
-.location-status-error { color: color-mix(in srgb, red 65%, var(--ink)); }
-.location-status-pending { color: var(--muted); }
-
-.location-sharing-setting input {
-  width: 15px;
-  height: 15px;
-  accent-color: var(--accent);
-}
-
 .theme-setting legend,
 .theme-setting-title {
   padding: 0 3px;
@@ -2072,25 +2010,48 @@ select:focus {
 .dialog-head-title-row h2 { margin: 0; }
 .context-settings-back-btn { flex-shrink: 0; }
 
-.family-members-inline-section { margin-bottom: 4px; }
-.family-members-inline-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+/* Settings › Household (Luke, 2026-10-14): read-only list + Edit; names always
+   fit (ellipsis), roles are small pills, nothing scrolls sideways. */
+.household-panel { display: flex; flex-direction: column; gap: 6px; min-width: 0; overflow-x: hidden; contain: inline-size; }
+.household-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.household-head .settings-subheading { margin: 0; }
+.household-edit-btn { border: 0; background: none; padding: 4px 2px; font: inherit; font-size: 0.86rem; font-weight: 600; color: var(--accent); cursor: pointer; }
+.household-list { list-style: none; margin: 6px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-strong); overflow: hidden; }
+.household-member { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 14px; border-bottom: 1px solid var(--line); min-width: 0; }
+.household-member:last-child { border-bottom: 0; }
+.household-member-name { flex: 1 1 auto; min-width: 0; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; line-height: 1.3; }
+.household-member-meta { flex: 0 0 auto; font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.household-role { flex: 0 0 auto; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.02em; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 9%, transparent); color: var(--muted); white-space: nowrap; }
+.household-role--admin { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.household-role--hoh { background: color-mix(in srgb, var(--sun) 26%, transparent); color: color-mix(in srgb, var(--sun) 50%, var(--ink)); }
+.household-edit-list { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.household-edit-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-strong); min-width: 0; }
+.household-edit-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.household-edit-line .household-name-input { flex: 1 1 auto; width: 100%; min-width: 0; box-sizing: border-box; }
+.household-edit-line .household-dob-input { flex: 1 1 auto; min-width: 0; box-sizing: border-box; }
+.household-edit-line .household-role-select { flex: 0 0 116px; width: 116px; padding-left: 10px; padding-right: 6px; min-width: 0; box-sizing: border-box; }
+.household-edit-row input[readonly] { color: var(--muted); }
+.household-add-btn { align-self: flex-start; border: 0; background: none; padding: 6px 2px; font: inherit; font-size: 0.9rem; font-weight: 600; color: var(--accent); cursor: pointer; }
+.household-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.household-invite { display: flex; gap: 8px; min-width: 0; }
+.household-invite input { flex: 1 1 auto; min-width: 0; }
+
+/* Page switches (Pages, Household › Members can access, Global Pages). */
+.page-access-list { contain: inline-size; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-strong); overflow: hidden; margin-top: 6px; }
+.page-access-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 8px 14px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 0.95rem; font-weight: 400; color: var(--ink); }
+.page-access-row:last-child { border-bottom: 0; }
+.page-access-row.is-locked { opacity: 0.6; cursor: default; }
+.page-access-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.page-access-name { font-weight: 600; color: var(--ink); }
+.page-access-note { font-size: 0.78rem; color: var(--muted); }
+.settings-panel-note { margin: 0 0 8px; font-size: 0.86rem; color: var(--muted); line-height: 1.4; }
+
+/* (i) beside a setting + the little window it opens (Settings › Mail AI). */
+.settings-info-btn { flex: 0 0 auto; display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1.5px solid currentColor; border-radius: 50%; background: none; color: var(--muted); font: italic 700 0.72rem/1 Georgia, "Times New Roman", serif; cursor: pointer; }
+.settings-info-btn[aria-expanded="true"] { color: var(--accent); }
+.settings-info-pop { margin: 8px 0 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-strong); color: var(--ink); font-size: 0.84rem; line-height: 1.45; box-shadow: 0 6px 18px color-mix(in srgb, var(--ink) 12%, transparent); }
+.settings-info-pop[hidden] { display: none; }
 .family-group-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
-
-.location-services-hint { margin: 6px 0 0; font-size: 0.82rem; color: var(--muted); }
-
-.group-members-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 4px;
-}
-
-.group-member-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 0;
-}
 
 .group-invite-form {
   margin-top: 8px;
@@ -3447,7 +3408,6 @@ input.live-toggle:checked::before,
   height: 18px;
 }
 
-
 .meal-pick-slot:hover,
 .meal-pick-slot:focus-visible,
 .meal-special-choice:hover,
@@ -4604,7 +4564,6 @@ body.shop-move-dragging { user-select: none; -webkit-user-select: none; }
   transform: translateX(16px);
 }
 
-
 .grocery-store-setting.is-disabled .grocery-store-setting-details {
   opacity: 0.45;
 }
@@ -4768,7 +4727,6 @@ body.shop-move-dragging { user-select: none; -webkit-user-select: none; }
 #doPlannerGrid .day-tabs {
   overflow-x: visible;
 }
-
 
 .do-task-form {
   display: grid;
@@ -6303,7 +6261,6 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   flex-shrink: 0;
 }
 
-
 .grocery-form {
   margin-bottom: 12px;
 }
@@ -7176,7 +7133,6 @@ textarea {
   outline: 0;
 }
 
-
 .grocery-review-card {
   display: grid;
   gap: 6px;
@@ -7558,7 +7514,7 @@ textarea {
   text-align: center;
 }
 
-.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row):not(.grocery-store-instacart-row) {
+.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row):not(.grocery-store-instacart-row):not(.page-access-row) {
   display: grid;
   gap: 6px;
   color: #4f493f;
@@ -7590,91 +7546,10 @@ textarea {
   line-height: 1;
 }
 
-.recipe-form .location-sharing-setting label {
-  display: flex;
-  flex-direction: row;
-  gap: 7px;
-  align-items: center;
-  color: var(--ink);
-  font-size: 0.76rem;
-  font-weight: 850;
-  white-space: nowrap;
-}
-
 .page-visibility-setting input {
   width: 11px;
   height: 11px;
   accent-color: var(--accent);
-}
-
-/* ─── Page Visibility Toggle List ───────────────────────────────────────────── */
-.page-vis-card {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--surface-strong);
-}
-
-.page-vis-row {
-  position: relative;
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 0 82px 0 18px;
-  min-height: 54px;
-  line-height: 54px;
-  cursor: pointer;
-  border-bottom: 1px solid var(--line);
-  transition: background 0.12s;
-}
-
-.page-vis-row:last-child { border-bottom: none; }
-
-.page-vis-row:active { background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
-
-.page-vis-name {
-  display: inline;
-  font-size: 1rem;
-  font-weight: 500;
-  color: var(--ink);
-  user-select: none;
-}
-
-.page-vis-cb {
-  display: none;
-}
-
-.page-vis-toggle {
-  position: absolute;
-  top: 50%;
-  right: 18px;
-  transform: translateY(-50%);
-  width: 50px;
-  height: 30px;
-  border-radius: 15px;
-  background: color-mix(in srgb, var(--ink) 18%, transparent);
-  transition: background 0.2s ease;
-}
-
-.page-vis-toggle::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-  transition: transform 0.2s ease;
-}
-
-.page-vis-cb:checked + .page-vis-toggle {
-  background: var(--accent);
-}
-
-.page-vis-cb:checked + .page-vis-toggle::after {
-  transform: translateX(20px);
 }
 
 .recipe-form .tag-choice {
@@ -8214,11 +8089,6 @@ textarea {
   color: var(--ink);
 }
 
-.weekly-email-editor {
-  display: grid;
-  gap: 12px;
-}
-
 .ingredient-options-editor {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8429,28 +8299,6 @@ textarea {
   margin: 0;
   padding-left: 18px;
   font-size: 0.8rem;
-}
-
-.weekly-email-editor .restore-preview-card {
-  gap: 5px;
-}
-
-.weekly-email-options {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.45);
-}
-
-.weekly-email-options label {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  color: var(--ink);
-  font-weight: 700;
 }
 
 .photo-editor,
@@ -8816,7 +8664,6 @@ body[data-theme="dark"] .published-meal-entry .meal-entry-static,
 body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   background: transparent;
 }
-
 
 @media (max-width: 900px) {
   .app-shell {
@@ -9632,7 +9479,6 @@ body.touch-drag-active * {
   padding-bottom: 24px;
 }
 
-
 .watch-sections {
   display: grid;
   gap: 20px;
@@ -9821,7 +9667,6 @@ body.touch-drag-active * {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
 
 .watch-status-select {
   padding: 3px 6px;
@@ -10607,7 +10452,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
   font-weight: 700;
   color: var(--ink);
 }
-
 
 /* Watch search dialog */
 
@@ -11580,7 +11424,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
   margin-left: 6px;
   flex-shrink: 0;
 }
-
 
 /* Calendar fills the viewport on desktop */
 @media (min-width: 561px) {
@@ -13011,59 +12854,8 @@ body[data-theme="dark"] .watch-provider-link:hover {
   background: color-mix(in srgb, var(--chip-color, var(--accent, #92400E)) 12%, transparent);
 }
 .plan-evt-cal-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-
-/* ─── End Plan page ──────────────────────────────────────────────────────────── */
-
-/* ─── Weekly Email Dialog ────────────────────────────────────────────────────── */
-.weekly-email-dialog { max-width: 680px; width: 95vw; }
-.weekly-email-dialog .recipe-form { display: flex; flex-direction: column; height: min(80vh, 700px); }
-.weekly-email-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.weekly-email-setup { padding: 16px; background: color-mix(in srgb, var(--ink) 5%, transparent); border-radius: 10px; margin-bottom: 12px; }
-.weekly-email-setup-msg { margin: 0; font-size: 0.9rem; font-family: monospace; color: #c00; }
-.weekly-email-preview-area { flex: 1; min-height: 0; display: flex; }
-.weekly-email-preview-area iframe { flex: 1; border: none; border-radius: 10px; background: #fff; min-height: 0; }
-.weekly-email-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; padding: 32px; color: var(--text-muted, #888); text-align: center; font-size: 0.95rem; }
-.weekly-email-actions-right { display: flex; gap: 8px; }
-/* ─── End Weekly Email Dialog ────────────────────────────────────────────────── */
-.email-schedule-section { padding: 10px 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); margin-bottom: 10px; }
-.email-schedule-section .email-schedule-toggle-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.875rem; font-weight: 600; cursor: pointer; user-select: none; }
-.email-schedule-section .email-schedule-toggle-label input[type="checkbox"] { appearance: none; -webkit-appearance: none; display: block; position: relative; width: 36px; height: 20px; min-height: 0; border-radius: 10px; background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff); border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line)); margin: 0; padding: 0; cursor: pointer; flex-shrink: 0; transition: background 0.18s, border-color 0.18s; }
-.email-schedule-section .email-schedule-toggle-label input[type="checkbox"]::before { content: ""; position: absolute; width: 14px; height: 14px; border-radius: 50%; background: #fff; top: 2px; left: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.18s; }
-.email-schedule-section .email-schedule-toggle-label input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent-dark); }
-.email-schedule-section .email-schedule-toggle-label input[type="checkbox"]:checked::before { transform: translateX(16px); }
-.email-schedule-details { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-.email-schedule-days-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; container-type: inline-size; }
-.email-day-btn { display: flex; align-items: center; justify-content: flex-start; gap: 6px; background: none; border: none; padding: 4px 0; font-family: inherit; font-size: 0.8rem; font-weight: 600; color: var(--ink); cursor: pointer; user-select: none; min-width: 0; }
-.email-day-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; text-align: left; }
-.email-day-circle { display: block; flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--sun) 55%, var(--line)); background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff); transition: background 0.18s, border-color 0.18s; }
-.email-day-btn.is-on .email-day-circle { background: var(--accent); border-color: var(--accent-dark); }
-.email-day-btn:hover .email-day-circle { border-color: var(--accent); }
-.email-day-full { display: none; }
-.email-day-short { display: inline; }
-.email-day-letter { display: none; }
-@container (min-width: 400px) { .email-day-full { display: inline; } .email-day-short, .email-day-letter { display: none; } }
-@container (max-width: 175px) { .email-day-letter { display: inline; } .email-day-short, .email-day-full { display: none; } }
-.email-schedule-time-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.email-schedule-field-label { font-size: 0.82rem; font-weight: 600; white-space: nowrap; }
-#emailScheduleTime { font-size: 0.875rem; padding: 4px 6px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: var(--surface, #fff); font-family: inherit; }
-.email-schedule-tz-select { font-size: 0.82rem; padding: 4px 6px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: var(--surface, #fff); font-family: inherit; max-width: 220px; }
-.weekly-email-notes-row { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; }
-.weekly-email-notes-label { font-size: 0.85rem; font-weight: 600; }
-.weekly-email-notes { width: 100%; box-sizing: border-box; resize: vertical; font-size: 0.875rem; padding: 8px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: var(--surface, #fff); font-family: inherit; }
-.weekly-email-prefs-hint { margin-top: 8px; font-size: 0.8rem; }
-.weekly-email-prefs-hint code { font-size: 0.8rem; background: color-mix(in srgb, var(--ink) 6%, transparent); padding: 1px 4px; border-radius: 4px; }
-
-/* ─── Email Interview Dialog ─────────────────────────────────────────────────── */
-.email-interview-dialog { max-width: 600px; width: 95vw; }
-.email-interview-dialog .recipe-form { display: flex; flex-direction: column; height: min(85vh, 720px); }
-.email-interview-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
-.email-interview-step { display: flex; flex-direction: column; height: 100%; }
-.email-interview-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted, #888); font-size: 0.95rem; }
-.email-interview-form { display: flex; flex-direction: column; gap: 18px; padding: 4px 0; }
-.email-interview-question { display: flex; flex-direction: column; gap: 6px; }
-.email-interview-question label { font-size: 0.9rem; font-weight: 600; line-height: 1.4; }
-.email-interview-answer { width: 100%; box-sizing: border-box; resize: vertical; font-size: 0.875rem; padding: 8px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: var(--surface, #fff); font-family: inherit; }
-.email-interview-result { flex: 1; width: 100%; box-sizing: border-box; min-height: 300px; resize: none; font-size: 0.85rem; font-family: monospace; padding: 12px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: var(--surface, #fff); line-height: 1.6; }
+@container (min-width: 400px) { }
+@container (max-width: 175px) { }
 /* ─── End Email Interview Dialog ─────────────────────────────────────────────── */
 .inline-link-btn { background: none; border: none; padding: 0; margin: 0; font: inherit; font-size: inherit; color: var(--accent, #92400E); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .inline-link-btn:hover { opacity: 0.75; }
@@ -13184,13 +12976,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
 .config-dialog-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 /* Head of Household */
 .config-input-readonly { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
-.member-role-badge { display: inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--muted); }
-.member-role-badge--hoh { background: color-mix(in srgb, var(--sun) 30%, transparent); color: color-mix(in srgb, var(--sun) 55%, var(--ink)); }
-.member-role-badge--admin { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-dark, var(--accent)); }
-.member-role-select { font-size: 0.78rem; padding: 2px 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; flex-shrink: 0; }
-.page-vis-row--locked { opacity: 0.6; }
-.page-vis-row--locked .page-vis-toggle { opacity: 0.5; }
-.page-vis-locked-note { font-size: 0.72rem; color: var(--muted); font-weight: 400; margin-left: 4px; }
 .config-dialog-body h3 { margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--ink); }
 .config-list { display: flex; flex-direction: column; gap: 8px; }
 .config-row { display: flex; align-items: center; gap: 8px; }
@@ -13202,7 +12987,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
 }
 .config-input:focus { outline: none; border-color: var(--accent); }
 .config-remove-btn { flex-shrink: 0; }
-.config-dob-input { flex: none; width: 148px; }
 .muted-label { margin: 0; font-size: 0.82rem; color: color-mix(in srgb, var(--ink) 55%, transparent); line-height: 1.4; }
 .drag-handle {
   flex-shrink: 0; display: flex; align-items: center; justify-content: center;
@@ -13375,7 +13159,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
   gap: 12px;
   overflow-y: auto;
 }
-
 
 .shop-panel-head {
   display: flex;
@@ -13653,7 +13436,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
 }
 .inventory-item-chip:hover { background: color-mix(in srgb, var(--accent-soft) 50%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 .inventory-item-chip.inv-dragging { opacity: 0.3; cursor: grabbing; }
-
 
 .inventory-item-name {
   font-size: 0.84rem;
@@ -17610,7 +17392,6 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 }
 .explore-trip-view[hidden] { display: none; }
 
-
 /* Packing list tab */
 .trip-packing { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; }
 .trip-packing-add { display: flex; gap: 8px; }
@@ -18186,7 +17967,6 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
    archive buttons sit flush against the right edge of the window. */
 #mediaMainPage .podcast-playlist-bar { padding-right: 8px; }
 
-
 .scope-toggle button {
   display: inline-flex;
   align-items: center;
@@ -18310,6 +18090,7 @@ body.app-authed #appLockScreen { display: none; }
 .mail-ai-feature-list { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
 .mail-ai-feature-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .mail-ai-feature-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mail-ai-feature-text--inline { flex-direction: row; align-items: center; gap: 8px; }
 .mail-ai-feature-label { font-size: 0.9rem; font-weight: 650; }
 .mail-ai-feature-desc { font-size: 0.78rem; color: var(--text-muted, #888); line-height: 1.4; }
 .mail-msg-frame {
@@ -21960,46 +21741,6 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-recap-delta { font-size: 0.74rem; font-weight: 800; color: color-mix(in srgb, var(--ink) 55%, transparent); min-width: 64px; text-align: right; }
 .fin-recap-delta.is-over { color: #b3261e; }
 
-/* Import from AI Chat */
-.import-ai-help { font-size: 0.85rem; color: var(--muted); line-height: 1.4; margin: 0 0 4px; }
-.import-ai-instructions-row { display: flex; flex-direction: column; gap: 6px; }
-#importAiInstructions {
-  width: 100%;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.72rem;
-  line-height: 1.4;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--ink) 4%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
-  border-radius: 8px;
-  padding: 8px 10px;
-  resize: vertical;
-}
-.import-ai-paste { width: 100%; resize: vertical; margin-top: 10px; }
-.import-ai-preview { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
-.import-ai-summary { font-size: 0.82rem; font-style: italic; color: var(--muted); margin: 0 0 4px; }
-.import-ai-error { font-size: 0.82rem; color: #b3261e; margin: 4px 0 0; }
-.import-ai-item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 6px 8px;
-  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
-  border-radius: 8px;
-  cursor: pointer;
-}
-.import-ai-item-section {
-  flex: 0 0 auto;
-  font-size: 0.66rem;
-  font-weight: 850;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--window-border);
-}
-.import-ai-item-title { flex: 1; min-width: 0; font-size: 0.88rem; }
-.import-ai-item-meta { flex: 0 0 auto; font-size: 0.74rem; color: var(--muted); }
-.import-ai-status { font-size: 0.82rem; color: var(--muted); margin-right: auto; }
-
 /* Finance: rename a merchant's display text on a transaction row */
 .fin-txn-rename-input { flex: 1; min-width: 0; padding: 3px 8px; font-size: 0.83rem; }
 .fin-txn-row--renaming { align-items: center; }
@@ -23070,7 +22811,6 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
   font-weight: 750;
 }
 .shop-receipt-meta .shop-receipt-source::after { content: ""; margin-left: 0; }
-
 
 /* ══ Bottom dock: permanent, swipeable ticker (mini-player, weather, …) ═══════ */
 /* The dock's standard colours (Luke, 2026-10-06): one blue behind every slide,

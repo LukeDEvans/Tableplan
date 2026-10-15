@@ -1030,14 +1030,12 @@ function openRestaurantSearchDialog(day, meal, index) {
   if (!elements.restaurantSearchDialog.open) elements.restaurantSearchDialog.showModal();
   requestAnimationFrame(() => elements.restaurantSearchInput.focus());
 
-  if (!state.locationSharingEnabled) {
-    elements.restaurantSearchStatus.textContent = "Enable location sharing in Settings for local results.";
-  } else if (!getGroceryStoreSearchLocation()) {
+  if (!getGroceryStoreSearchLocation()) {
     elements.restaurantSearchStatus.textContent = "Getting your location…";
     acquireGroceryStoreSearchLocation().then((loc) => {
       if (!elements.restaurantSearchDialog.open) return;
       if (!elements.restaurantSearchInput.value.trim()) {
-        elements.restaurantSearchStatus.textContent = loc ? "" : "Location unavailable. Results may not be local.";
+        elements.restaurantSearchStatus.textContent = loc ? "" : (getHomeLocation?.() ? "Using places near Home." : "Location isn't available, so results may not be local.");
       }
     });
   } else {
@@ -1053,7 +1051,7 @@ function restaurantSearchOrigin() {
 
 async function searchRestaurantLocations(query) {
   try {
-    if (state.locationSharingEnabled && !getGroceryStoreSearchLocation()) {
+    if (!getGroceryStoreSearchLocation()) {
       await acquireGroceryStoreSearchLocation();
     }
     const response = await fetch(groceryPlacesApiUrl({

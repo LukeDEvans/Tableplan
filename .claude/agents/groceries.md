@@ -78,6 +78,10 @@ almost all your work is there. Make focused changes to the Groceries domain only
   the returned-interface functions without updating callers.
 
 ## Luke's Shop decisions (keep them)
+- **No in-app location switch (2026-10-14):** store and restaurant search always ask the
+  phone/browser for location (`acquireGroceryStoreSearchLocation`); if it's declined or
+  unavailable they use Home from the profile and don't ask again that session. Settings ›
+  Location Services and `state.locationSharingEnabled` are gone — don't bring them back.
 - **Instacart:** one item, one store (enforced in data, so nothing can be ordered
   twice); Instacart-capable stores are data (`instacartEnabled` on the store), not
   hardcoded; per-store send button after checking off what's on hand; two distinct
