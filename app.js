@@ -1036,7 +1036,7 @@ const elements = {
   menuAutoRulesBtn: document.querySelector("#menuAutoRulesBtn"),
   menuTagsBtn: document.querySelector("#menuTagsBtn"),
   menuGroceryListBtn: document.querySelector("#menuGroceryListBtn"),
-  menuGroceryChecklistBtn: document.querySelector("#menuGroceryChecklistBtn"),
+  menuShopReceiptsBtn: document.querySelector("#menuShopReceiptsBtn"),
   menuGroceryPricingBtn: document.querySelector("#menuGroceryPricingBtn"),
   menuGroceryItemsBtn: document.querySelector("#menuGroceryItemsBtn"),
   menuInventoryRoomsBtn: document.querySelector("#menuInventoryRoomsBtn"),
@@ -1060,11 +1060,7 @@ const elements = {
   menuWorkoutLogsBtn: document.querySelector("#menuWorkoutLogsBtn"),
   menuPodcastSettingsBtn: document.querySelector("#menuPodcastSettingsBtn"),
   menuPodcastPriorityBtn: document.querySelector("#menuPodcastPriorityBtn"),
-  menuPublicationsBtn: document.querySelector("#menuPublicationsBtn"),
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
-  menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
-  menuFinanceAccountsBtn: document.querySelector("#menuFinanceAccountsBtn"),
-  menuFinanceEmergencyBtn: document.querySelector("#menuFinanceEmergencyBtn"),
   contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
   contextSettingsTitle: document.querySelector("#contextSettingsTitle"),
   contextSettingsBody: document.querySelector("#contextSettingsBody"),
@@ -2578,7 +2574,7 @@ function bindEvents() {
   elements.menuAutoRulesBtn.addEventListener("click", () => openSettingsMenuDialog(openAutoRulesDialog));
   elements.menuTagsBtn.addEventListener("click", () => openSettingsMenuDialog(openTagsDialog));
   elements.menuGroceryListBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryStoresDialog));
-  elements.menuGroceryChecklistBtn?.addEventListener("click", () => openSettingsMenuDialog(openGroceryChecklistDialog));
+  elements.menuShopReceiptsBtn.addEventListener("click", () => openSettingsMenuDialog(openShopReceiptsDialog));
   elements.menuGroceryPricingBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryPricingDialog));
   elements.menuGroceryItemsBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryLibraryDialog));
   elements.menuInventoryRoomsBtn.addEventListener("click", () => openSettingsMenuDialog(openInventoryRoomsDialog));
@@ -2587,16 +2583,12 @@ function bindEvents() {
   elements.menuMealPlanSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openMealPlanSettingsDialog));
   elements.menuPodcastSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("podcasts")));
   elements.menuPodcastPriorityBtn.addEventListener("click", () => openSettingsMenuDialog(showPodcastPriorityModal));
-  elements.menuPublicationsBtn.addEventListener("click", () => openSettingsMenuDialog(showPublicationsModal));
   elements.menuReadSyncBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("read-sync")));
   elements.menuWatchServicesBtn.addEventListener("click", () => openSettingsMenuDialog(openDiscoverServicesDialog));
   elements.menuWatchTheatersBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch")));
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
-  elements.menuRecreateHobbiesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("recreate")));
-  elements.menuFinanceAccountsBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-accounts")));
-  elements.menuFinanceEmergencyBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-emergency")));
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   // Back arrow on windows opened from a Settings row (openFromSettingsWithBack).
   document.querySelectorAll("[data-settings-back]").forEach((btn) => btn.addEventListener("click", () => {
@@ -3800,6 +3792,12 @@ function setupDiagnostics() {
     trashSeed: (items) => { if (!localDevMode) return null; state.trashedRecipes = items.map(normalizeTrashedRecipe); return true; },
     trashIds: () => (localDevMode ? (state.trashedRecipes || []).map((t) => t.id) : null),
     openRecipeBox: () => { if (!localDevMode) return null; openRecipeBoxPage(); return true; },
+    // Finance QA: one manual account in memory so the savings cards render (local dev only).
+    financeSeedAccount: () => {
+      if (!localDevMode) return null;
+      state.financeAccounts = normalizeFinanceAccounts([{ id: "qa-acct", owner: "Joint", name: "QA Savings", kind: "cash", manualBalance: 5000 }], createId);
+      return true;
+    },
     // Settings QA (scripts/qa-settings.mjs): view Settings as a household admin with
     // a few members (local dev has no signed-in group). Local dev only.
     settingsAsAdmin: () => {
@@ -16259,12 +16257,11 @@ function updateSettingsMenuOptions() {
   const isEat = activeAppArea === "eat";
   const isShop = activeAppArea === "shop";
   const isPlay = activeAppArea === "play";
-  const isRecreate = activeAppArea === "recreate";
   const isPlan = activeAppArea === "plan";
   elements.menuAutoRulesBtn.hidden = !isEat;
   elements.menuTagsBtn.hidden = !isEat;
   elements.menuGroceryListBtn.hidden = !isShop;
-  if (elements.menuGroceryChecklistBtn) elements.menuGroceryChecklistBtn.hidden = !isShop;
+  elements.menuShopReceiptsBtn.hidden = !isShop;
   elements.menuGroceryPricingBtn.hidden = !isShop;
   elements.menuGroceryItemsBtn.hidden = !isEat;
   elements.menuIngredientOptionsBtn.hidden = !isEat;
@@ -16283,11 +16280,6 @@ function updateSettingsMenuOptions() {
   elements.menuReadSyncBtn.hidden = activeAppArea !== "news"; // newspaper sign-ins: News, not Media
   elements.menuPodcastSettingsBtn.hidden = activeAppArea !== "media";
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
-  elements.menuPublicationsBtn.hidden = activeAppArea !== "news"; // the saved-articles publications list lives in News
-  elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
-  const isFinance = activeAppArea === "finance";
-  elements.menuFinanceAccountsBtn.hidden = !isFinance;
-  elements.menuFinanceEmergencyBtn.hidden = !isFinance;
   const isContacts = activeAppArea === "contacts";
   const impBtn = document.getElementById("menuContactsImportBtn");
   const expBtn = document.getElementById("menuContactsExportBtn");
@@ -16303,7 +16295,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "finance-accounts", "finance-emergency", "podcasts", "radio", "display", "beta", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16627,8 +16619,6 @@ function renderContextSettingsDialog(kind) {
     pages: "Pages",
     "admin-pages": "Global Pages",
     "read-sync": "Sync Settings",
-    "finance-accounts": "Accounts",
-    "finance-emergency": "Emergency Savings",
     "api-usage": "API Usage",
     "assistant": "Assistant",
     "mail-ai": "Mail AI",
@@ -16687,63 +16677,6 @@ function renderContextSettingsDialog(kind) {
   // Display mode + theme (THEMES_DESIGN.md). Per person; saves as you tap.
   if (kind === "display") {
     elements.contextSettingsBody.innerHTML = displaySettingsTemplate();
-    return;
-  }
-
-  if (kind === "finance-emergency") {
-    const emMonths = Number(state.financeEmergencyMonths) > 0 ? Number(state.financeEmergencyMonths) : 3;
-    elements.contextSettingsBody.innerHTML = `
-      <div class="fin-set-group">
-        <span class="theme-setting-title">Emergency savings target</span>
-        <p class="settings-hint">The emergency-savings card aims for this many months of your Needs budget.</p>
-        <label class="fin-set-row">
-          <span>Months of needs to cover</span>
-          <input type="number" min="1" max="24" step="1" value="${emMonths}" data-fin-setting="emergency-months" />
-        </label>
-      </div>
-      <p class="settings-hint">Your retirement target (birth year &amp; income) lives in the Retirement card — tap its ▾ on the Finance page.</p>`;
-    elements.contextSettingsBody.querySelectorAll("[data-fin-setting]").forEach((input) => {
-      input.addEventListener("change", () => {
-        const k = input.dataset.finSetting;
-        if (k === "emergency-months") {
-          state.financeEmergencyMonths = Math.max(1, Math.min(24, Math.round(Number(input.value) || 3)));
-        }
-        persist();
-        renderContextSettingsDialog("finance-emergency");
-        if (activeAppArea === "finance") renderFinancePage();
-      });
-    });
-    return;
-  }
-
-  if (kind === "finance-accounts") {
-    if (getFinanceLinkStatus() === null) checkFinanceLinkStatus();
-    elements.contextSettingsBody.innerHTML = `
-      <p class="settings-hint">Your accounts, labels, balances and bank link. These feed net worth and the savings cards.</p>
-      <div class="fin-accounts-panel">${renderFinanceAccountsPanel()}</div>
-      <div class="fin-alerts-settings">
-        <div class="fin-subhead fin-alerts-title">Alerts</div>
-        <p class="settings-hint">Which finance alerts appear in the notifications bell.</p>
-        ${FINANCE_ALERTS.map((a) => `
-          <div class="mail-ai-feature-row">
-            <div class="mail-ai-feature-text">
-              <span class="mail-ai-feature-label">${escapeHtml(a.label)}</span>
-              <span class="mail-ai-feature-desc">${escapeHtml(a.desc)}</span>
-            </div>
-            <label class="toggle-switch" aria-label="${escapeHtml(a.label)}">
-              <input type="checkbox" data-fin-alert-key="${escapeHtml(a.key)}" ${financeAlertPref(a.key) ? "checked" : ""}>
-              <span class="toggle-slider"></span>
-            </label>
-          </div>`).join("")}
-      </div>`;
-    elements.contextSettingsBody.querySelectorAll("[data-fin-alert-key]").forEach((input) => {
-      input.addEventListener("change", () => {
-        if (!state.financeAlertPrefs || typeof state.financeAlertPrefs !== "object") state.financeAlertPrefs = {};
-        state.financeAlertPrefs[input.dataset.finAlertKey] = input.checked;
-        persist();
-        if (activeAppArea === "finance") renderFinancePage();
-      });
-    });
     return;
   }
 
@@ -17172,42 +17105,15 @@ function renderContextSettingsDialog(kind) {
   }
 
   if (kind === "read-sync") {
-    // News → Sync Settings: the newspaper sign-ins News collects from. In the
-    // iPhone app, the papers' own sign-in pages (one Sign in OR Sign out per paper,
-    // by what this phone finds); everywhere, the subscriber cookies a browser pastes
-    // (also used to sync saved articles into Media).
-    const sync = state.articleSync || {};
-    const lastSync = sync.lastSyncedAt
-      ? new Date(sync.lastSyncedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
-      : null;
-    const cookieRow = (key, label, field, placeholder) => {
-      const connected = !!sync[field];
-      return `
-        <div class="sync-context-field">
-          <div class="sync-context-field-header">
-            <span class="sync-context-label">${label}</span>
-            <span class="sync-context-status ${connected ? "sync-status-ok" : "sync-status-off"}">${connected ? "Saved" : "Not saved"}</span>
-          </div>
-          <div class="sync-context-input-row">
-            <input type="password" id="ctxCookieInput-${key}" class="sync-context-input" placeholder="${connected ? "Paste to update" : placeholder}" autocomplete="off" spellcheck="false" />
-            <button type="button" class="primary-btn compact-btn" data-context-settings-action="save-paper-cookie" data-paper="${key}">Save</button>
-          </div>
-        </div>`;
-    };
+    // News → Sync Settings: the newspaper sign-ins News collects from, made in the
+    // iPhone app (one Sign in OR Sign out per paper, by what this phone finds).
+    // Subscriber cookies were removed (Luke, 2026-10-14); cookies saved before stay
+    // in state.articleSync and still count.
     elements.contextSettingsBody.innerHTML = `
       <div class="sync-context-settings">
-        ${articlePaperLoginsSettingsHtml()}
-        <p class="sync-context-label">Subscriber cookies</p>
-        <p class="sync-context-hint">For a browser: sign in to the paper there, then paste its session cookie (DevTools → Application → Cookies → copy the <em>Value</em>). ${nativeArticleReader() ? "News collects a paper when either this or the sign-in above works." : "News collects a paper once its cookie is saved and works."}</p>
-        ${cookieRow("nyt", "New York Times", "nytCookie", "Paste NYT-S cookie value")}
-        ${cookieRow("economist", "The Economist", "economistCookie", "Paste blaize_session cookie value")}
-        ${cookieRow("startribune", "Star Tribune", "stribCookie", "Paste your Star Tribune session cookie")}
-        ${(sync.nytCookie || sync.economistCookie) ? `
-          <div class="sync-context-actions">
-            <button type="button" class="primary-btn" data-context-settings-action="sync-now-context">Sync saved articles</button>
-            ${lastSync ? `<span class="sync-context-last">Last synced ${lastSync}</span>` : ""}
-          </div>
-        ` : ""}
+        ${nativeArticleReader()
+          ? articlePaperLoginsSettingsHtml()
+          : `<p class="settings-panel-note">Sign in to your newspapers from the iPhone app: News › Sync Settings there.</p>`}
       </div>
     `;
     // In the app, find out which papers this phone is signed in to (once per
@@ -17337,22 +17243,6 @@ function renderContextSettingsDialog(kind) {
     elements.contextSettingsBody.querySelectorAll("[data-remove-member]").forEach((btn) => {
       btn.addEventListener("click", () => btn.closest("[data-member-row]").remove());
     });
-    return;
-  }
-
-  if (kind === "recreate") {
-    elements.contextSettingsBody.innerHTML = `
-      <div class="page-visibility-setting" role="group" aria-label="Visible hobbies">
-        <span class="theme-setting-title">Hobbies</span>
-        ${RECREATE_HOBBIES.map((h) => `
-          <label>
-            <input type="checkbox" data-hobby-visibility="${escapeHtml(h.key)}"
-              ${(state.recreateHobbies || {})[h.key] !== false ? "checked" : ""} />
-            ${escapeHtml(h.label)}
-          </label>
-        `).join("")}
-      </div>
-    `;
     return;
   }
 
@@ -17491,13 +17381,6 @@ function renderRadioSettings() {
 }
 
 function handleContextSettingsChange(event) {
-  // The Accounts panel (Settings › Finance) reuses the Finance page's edit
-  // hooks; route them through the shared handler and refresh the panel.
-  if (event.target.closest?.("[data-fin-edit]")) {
-    onFinanceGridChange(event);
-    refreshFinanceSettingsIfOpen();
-    return;
-  }
   const displayModeInput = event.target.closest?.("input[name='displayMode']");
   if (displayModeInput) setDisplayPref("mode", displayModeInput.value);
   const displayThemeInput = event.target.closest?.("input[name='displayTheme']");
@@ -17525,23 +17408,9 @@ function handleContextSettingsChange(event) {
     const userId = row?.dataset.memberLinkedUserId;
     if (userId) setGroupMemberRole(userId, memberRoleSelect.value);
   }
-  const hobbyVisInput = event.target.closest?.("[data-hobby-visibility]");
-  if (hobbyVisInput) {
-    if (!state.recreateHobbies) state.recreateHobbies = {};
-    state.recreateHobbies[hobbyVisInput.dataset.hobbyVisibility] = hobbyVisInput.checked;
-    persist();
-    if (activeAppArea === "recreate") renderRecreatePage();
-  }
 }
 
 function handleContextSettingsAction(event) {
-  // Accounts panel (Settings › Finance): route the Finance action hooks
-  // (add/delete account, edit, labels, bank link) through the shared handler.
-  if (event.target.closest?.("[data-fin-action]")) {
-    onFinanceGridClick(event);
-    refreshFinanceSettingsIfOpen();
-    return;
-  }
   const infoBtn = event.target.closest?.("[data-settings-info]");
   if (infoBtn) { toggleSettingsInfo(infoBtn); return; }
   const button = event.target.closest?.("[data-context-settings-action]");
@@ -17591,23 +17460,6 @@ function handleContextSettingsAction(event) {
       // News stops collecting a paper this phone signed out of; the row flips to Sign in.
       await verifyNewsSignIns().catch(() => null);
       if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
-    },
-    "save-paper-cookie": () => {
-      const key = button.dataset.paper;
-      const field = { nyt: "nytCookie", economist: "economistCookie", startribune: "stribCookie" }[key];
-      const val = document.getElementById(`ctxCookieInput-${key}`)?.value?.trim();
-      if (!field || !val) return;
-      if (!state.articleSync) state.articleSync = {};
-      state.articleSync[field] = val;
-      persist();
-      updateSyncButtons("read");
-      updateSyncButtons("listen");
-      renderContextSettingsDialog("read-sync");
-      verifyNewsSignIns(); // News only collects from papers you're signed in to
-    },
-    "sync-now-context": () => {
-      elements.contextSettingsDialog.close();
-      syncSavedArticles("read");
     },
     "add-family-member": () => {
       const list = elements.contextSettingsBody.querySelector("[data-family-members-list]");
@@ -22543,9 +22395,10 @@ function pianoLogList() {
   return state.pianoLog;
 }
 
+// Everyone sees every hobby (Luke, 2026-10-14: Settings › Hobbies removed).
+// state.recreateHobbies is no longer read; old saved choices are ignored.
 function visibleRecreateHobbies() {
-  const hobbies = state.recreateHobbies || {};
-  return RECREATE_HOBBIES.filter((h) => hobbies[h.key] !== false);
+  return RECREATE_HOBBIES;
 }
 
 // Like the Exercise page: a grid of activity cards; clicking one opens that
@@ -29623,102 +29476,6 @@ function showPodcastPriorityModal() {
   });
 }
 
-function showPublicationsModal() {
-  document.getElementById("publicationsOverlay")?.remove();
-
-  const overlay = document.createElement("div");
-  overlay.id = "publicationsOverlay";
-  overlay.className = "priority-overlay";
-
-  function buildHtml() {
-    const pubs = getReadPublications();
-    const rows = pubs.map(p => `
-      <div class="pub-mgr-row" data-pub-key="${escapeHtml(p.key)}">
-        <div class="pub-mgr-info">
-          <span class="pub-mgr-name">${escapeHtml(p.label)}</span>
-          <span class="pub-mgr-domain">${escapeHtml(p.domain)}</span>
-        </div>
-        <button class="icon-btn pub-mgr-remove" type="button" data-remove-pub="${escapeHtml(p.key)}" aria-label="Remove ${escapeHtml(p.label)}">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>`).join("");
-
-    return `
-      <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Publications">
-        <div class="priority-modal-header">
-          <h2 class="priority-modal-title">Publications</h2>
-          <button class="icon-btn" type="button" id="closePublicationsBtn" aria-label="Close">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-        <p class="pub-mgr-hint">Articles saved from a publication's domain are automatically routed to its tab in the sidebar.</p>
-        <div class="pub-mgr-list">${rows || '<p class="pub-mgr-empty">No publications added yet.</p>'}</div>
-        <form class="pub-mgr-add-form" id="pubMgrAddForm" autocomplete="off">
-          <div class="pub-mgr-add-row">
-            <input class="pub-mgr-input" type="text" id="pubMgrNameInput" placeholder="Name (e.g. The Atlantic)" required>
-            <input class="pub-mgr-input" type="text" id="pubMgrDomainInput" placeholder="Domain (e.g. theatlantic.com)" required>
-            <button class="primary-btn" type="submit">Add</button>
-          </div>
-        </form>
-        <div class="pub-mgr-section-label">Library</div>
-        <p class="pub-mgr-hint" style="margin-top:0">Used for "Find at library" and "Borrow in Libby" links on book cards. Enter your library's short key — for Hennepin County it's <strong>hclib</strong>. Find yours as the subdomain of your library's catalog (e.g. <em>hclib</em>.bibliocommons.com).</p>
-        <div class="pub-mgr-library-row">
-          <input class="pub-mgr-input" type="text" id="pubMgrLibraryKeyInput" placeholder="e.g. hclib" value="${escapeHtml(getLibraryKey())}">
-          <button class="primary-btn" type="button" id="pubMgrLibraryKeySave">Save</button>
-        </div>
-        <div class="priority-modal-footer">
-          <button class="primary-btn" type="button" id="donePublicationsBtn">Done</button>
-        </div>
-      </div>`;
-  }
-
-  function render() {
-    overlay.innerHTML = buildHtml();
-
-    overlay.querySelector("#closePublicationsBtn").addEventListener("click", () => overlay.remove());
-    overlay.querySelector("#donePublicationsBtn").addEventListener("click", () => overlay.remove());
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
-
-    overlay.querySelectorAll("[data-remove-pub]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        removePublication(btn.dataset.removePub);
-        render();
-      });
-    });
-
-    overlay.querySelector("#pubMgrAddForm").addEventListener("submit", (e) => {
-      e.preventDefault();
-      const nameInput = overlay.querySelector("#pubMgrNameInput");
-      const domainInput = overlay.querySelector("#pubMgrDomainInput");
-      const name = nameInput.value.trim();
-      const rawDomain = domainInput.value.trim();
-      const domain = rawDomain.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
-      if (!name || !domain) return;
-      const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-      if (!key) return;
-      const existing = getReadPublications();
-      if (!existing.find(p => p.key === key || p.domain === domain)) {
-        if (!Array.isArray(state.readPublications)) state.readPublications = defaultReadPublications();
-        state.readPublications.push({ key, label: name, domain });
-        persist();
-        renderMediaPubTabs();
-      }
-      render();
-    });
-
-    overlay.querySelector("#pubMgrLibraryKeySave")?.addEventListener("click", () => {
-      const val = overlay.querySelector("#pubMgrLibraryKeyInput")?.value.trim().toLowerCase();
-      if (!val) return;
-      state.libraryKey = val;
-      persist();
-      hclAvailabilityCache.clear();
-    });
-  }
-
-  document.body.appendChild(overlay);
-  render();
-}
-
 // ── Multi-part series bundling ────────────────────────────────────────────────
 // Some shows release a story across numbered parts ("… (Part 3)", "Part 3 of
 // 6", "Pt. 3/6"). For shows the user opts into (state.podcastBundleSeries) we
@@ -36509,9 +36266,11 @@ function articlePaperLoginsSettingsHtml() {
         </div>`;
   }).join("");
   return `
-        <p class="sync-context-label">Newspaper sign-ins on this device</p>
-        <p class="sync-context-hint">Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with Apple or with email and password: Google sign-in doesn't work inside apps.</p>${rows}
-        <div class="sync-context-divider"></div>`;
+        <div class="sync-context-heading">
+          <p class="sync-context-label">Newspaper sign-ins on this device</p>
+          ${settingsInfoButton("paper-signins", "newspaper sign-ins")}
+        </div>
+        ${settingsInfoPanel("paper-signins", "Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with Apple or with email and password: Google sign-in doesn't work inside apps.")}${rows}`;
 }
 
 function bindArticlePaperLoginActions(root, article) {
@@ -36868,12 +36627,6 @@ async function syncSavedArticles(source, silent = false) {
 
 // ─── Read & Listen settings ───────────────────────────────────────────────────
 
-
-function updateSyncButtons(source) {
-  const pubs = getReadPublications();
-  const syncBtn = document.getElementById("articleSyncBtn");
-  if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeSavedPub) || !hasSyncCookies();
-}
 
 // ─── TTS audio ────────────────────────────────────────────────────────────────
 

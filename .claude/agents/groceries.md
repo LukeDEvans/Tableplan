@@ -78,6 +78,9 @@ almost all your work is there. Make focused changes to the Groceries domain only
   the returned-interface functions without updating callers.
 
 ## Luke's Shop decisions (keep them)
+- **Gear menu (2026-10-14):** Preferred Stores, **Receipts** (the receipts list, which
+  holds the Scan receipt button) and **Price History** (prices only) — two separate
+  items. No Checklist item: it's configured from the Configure button under the list.
 - **No in-app location switch (2026-10-14):** store and restaurant search always ask the
   phone/browser for location (`acquireGroceryStoreSearchLocation`); if it's declined or
   unavailable they use Home from the profile and don't ask again that session. Settings ›

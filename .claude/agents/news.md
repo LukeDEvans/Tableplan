@@ -84,7 +84,11 @@ changes to the News page (including Sports → Scores) only.
 - Article intake (extension, Add by URL, Scan, PDF) lands in News. News search covers
   stories and saved articles; Listen and Watch have their own searches.
 - **Sync Settings lives on News** and shows **one button per paper** — Sign in *or*
-  Sign out, from the phone's current status.
+  Sign out, from the phone's current status. Its write-up opens from an (i) button.
+  **No subscriber cookies (Luke, 2026-10-14):** the paste-a-cookie section is gone;
+  cookies saved before stay in `state.articleSync` and still count. In a browser,
+  Sync Settings just points to the iPhone app. **No Publications** item in the gear
+  menu (removed 2026-10-14) — News' sections and Sync Settings cover it.
 - **Scores works like the ESPN app's Scores tab**: a broad board plus per-user
   favorites the app puts first. It must survive losing ESPN — **only an adapter may
   know a vendor's URLs or JSON**; everything else speaks the canonical model.

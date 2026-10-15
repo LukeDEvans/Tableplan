@@ -122,6 +122,13 @@ Multiple settings agents would overlap with the domain agents. A recurring audit
     - **Household:** read-only list with an Edit button; names wrap instead of being cut off; small role pills; no App Name; nothing scrolls sideways.
     - **Page lists** (Pages, Household › Members can access, Global Pages) show only real pages, one switch each: Calendar includes Tasks, Mail includes Contacts, Recreate includes Exercise and Explore.
 
+11. **Page settings trim (2026-10-14, late).**
+    - **Finance:** no gear-menu items and no Settings panels. The Accounts tab has everything: the Accounts card, the Emergency savings card's "Months of Needs to cover" field, and a new Alerts card.
+    - **News:** Publications removed from the gear menu. Sync Settings drops subscriber cookies (cookies already saved still count); the sign-ins write-up opens from an (i). In a browser it points to the iPhone app.
+    - **Recreate:** Hobbies setting removed; everyone sees every hobby.
+    - **Shop:** gear menu is Preferred Stores, Receipts, Price History. Checklist stays under the list's Configure button. Scan receipt moved into Receipts.
+    - Personal Pages switches for admins: left as they are (Luke).
+
 Still open: Mail AI recipe toggles (move to Meal Plan, or stay in Mail AI with a link). For admins, the personal Pages switches have no effect (admins always see every page).
 
 ## 8. Build order
