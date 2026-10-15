@@ -115,7 +115,14 @@ Multiple settings agents would overlap with the domain agents. A recurring audit
 8. **Trash → "Recently deleted"** (2026-10-14): a small view inside the Recipe Box; deleted recipes are kept 30 days, then purged.
 9. **AI Notes: removed** (2026-10-14). Luke doesn't use the assistant yet and will rebuild it fresh. The panel's other settings stay under Settings › Assistant until the new structure gives them a home.
 
-Still open: Mail AI recipe toggles (move to Meal Plan, or stay in Mail AI with a link).
+10. **Settings trim (2026-10-14, evening).** Gear menu: "User" is now "User Profile". Settings list: Display, Pages, Household, Mail AI, Voice, Export My Data; Admin: Global Pages, Users, Households, Restore Backup, API Usage, Beta (Assistant, AI Action Log). Every subsection has a back arrow to its parent.
+    - **Removed:** Notifications (the reminders switch still lives in the Calendar's Add Calendar window), Email (the weekly review email — not coming back), Mail Reading (email images always load, trackers stripped), Import from AI Chat, Location Services (the phone or browser asks; searches fall back to Home), Backup Health (it only ever worked from the Mac's local helper), App Name (the app is "Live").
+    - **Kept:** Restore Backup, under Admin. The app keeps taking cloud snapshots; Restore is the only way to use one.
+    - **Mail AI:** each row has an (i) button that opens its write-up in a small window.
+    - **Household:** read-only list with an Edit button; names wrap instead of being cut off; small role pills; no App Name; nothing scrolls sideways.
+    - **Page lists** (Pages, Household › Members can access, Global Pages) show only real pages, one switch each: Calendar includes Tasks, Mail includes Contacts, Recreate includes Exercise and Explore.
+
+Still open: Mail AI recipe toggles (move to Meal Plan, or stay in Mail AI with a link). For admins, the personal Pages switches have no effect (admins always see every page).
 
 ## 8. Build order
 

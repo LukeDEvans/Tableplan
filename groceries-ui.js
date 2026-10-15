@@ -599,10 +599,10 @@ function openGroceryStoresDialog(event) {
   groceryStoreSearchSuggestions = [];
   groceryStoreSearchSessionToken = createGroceryStoreSearchSessionToken();
   renderGroceryStoreSuggestions();
-  setGroceryStoreSearchStatus(state.locationSharingEnabled ? "Preparing nearby store suggestions..." : "");
+  setGroceryStoreSearchStatus(groceryStoreLocationDenied ? "" : "Preparing nearby store suggestions...");
   renderGroceryStoresSettings();
   elements.groceryStoresDialog.showModal();
-  if (state.locationSharingEnabled && !groceryStoreSearchLocation) acquireGroceryStoreSearchLocation();
+  if (!groceryStoreSearchLocation) acquireGroceryStoreSearchLocation();
   window.requestAnimationFrame(() => elements.groceryStoreInput.focus());
 }
 
@@ -749,14 +749,17 @@ function scheduleGroceryStoreSearch() {
   groceryStoreSearchTimer = window.setTimeout(() => searchGroceryStoreLocations(query), 280);
 }
 
-function acquireGroceryStoreSearchLocation({ settingsInput = null } = {}) {
+// Store and restaurant search ask the phone or browser for location (Luke,
+// 2026-10-14: no in-app switch; iPhone Settings or the browser decide). If it's
+// declined or unavailable, searches fall back to Home from the profile, and we
+// don't ask again this session.
+let groceryStoreLocationDenied = false;
+
+function acquireGroceryStoreSearchLocation() {
   if (groceryStoreSearchLocation) return Promise.resolve(groceryStoreSearchLocation);
   if (groceryStoreLocationPromise) return groceryStoreLocationPromise;
-  if (!navigator.geolocation) {
-    state.locationSharingEnabled = false;
-    if (settingsInput) settingsInput.checked = false;
-    persist();
-    window.alert("Location sharing is not available in this browser.");
+  if (groceryStoreLocationDenied || !navigator.geolocation) {
+    groceryStoreLocationDenied = true;
     return Promise.resolve(null);
   }
   if (elements.groceryStoresDialog.open) setGroceryStoreSearchStatus("Finding stores near your current location...");
@@ -774,20 +777,11 @@ function acquireGroceryStoreSearchLocation({ settingsInput = null } = {}) {
       },
       (error) => {
         groceryStoreSearchLocation = null;
-        if (error.code === 1) {
-          state.locationSharingEnabled = false;
-          if (settingsInput) settingsInput.checked = false;
-          persist();
-        }
-        const messages = {
-          1: "Location permission was not granted. The setting has been turned off.",
-          2: "Your current location could not be determined.",
-          3: "Location lookup timed out. Please try again."
-        };
-        const message = messages[error.code] || "Your current location could not be determined.";
+        if (error.code === 1) groceryStoreLocationDenied = true;
+        const home = getHomeLocation?.() || null;
+        const message = home ? "Using stores near Home." : "Location isn't available, so results may not be local.";
         if (elements.groceryStoresDialog.open) setGroceryStoreSearchStatus(message);
-        else if (elements.restaurantSearchDialog?.open) elements.restaurantSearchStatus.textContent = message;
-        else window.alert(message);
+        else if (elements.restaurantSearchDialog?.open) elements.restaurantSearchStatus.textContent = home ? "Using places near Home." : message;
         resolve(null);
       },
       {
@@ -804,10 +798,10 @@ function acquireGroceryStoreSearchLocation({ settingsInput = null } = {}) {
 
 async function searchGroceryStoreLocations(query) {
   try {
-    // Near the device when location sharing is on; otherwise (or if that fails)
-    // near Home from the profile, so results are still local.
+    // Near the device when it shares its location; otherwise near Home from the
+    // profile, so results are still local.
     const home = getHomeLocation?.() || null;
-    if (state.locationSharingEnabled && !groceryStoreSearchLocation) {
+    if (!groceryStoreSearchLocation && !groceryStoreLocationDenied) {
       setGroceryStoreSearchStatus("Finding stores near your current location...");
       const location = await acquireGroceryStoreSearchLocation();
       if (elements.groceryStoreInput.value.trim() !== query) return;

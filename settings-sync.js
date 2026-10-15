@@ -38,19 +38,14 @@ export const SETTING_STAMP_KEYS = Object.freeze({
 export const TRACKED_SETTINGS = Object.freeze({
   config: Object.freeze({
     themeMode: "value",
-    locationSharingEnabled: "value",
-    appName: "value",
-    emailPrefs: "value",
     travelHome: "value",
     weatherLocations: "value",
     jellyfin: "value",
     mediaServices: "value",
     mailAiSettings: "fields",
-    mailReadingPrefs: "fields", // { blockRemoteImages } — Settings → Mail Reading
     aiSettings: "fields",
     appleMusic: "fields",
     financeAlertPrefs: "fields",
-    weeklyEmailSettings: "fields",
   }),
   media: Object.freeze({
     articleSortOrder: "value",

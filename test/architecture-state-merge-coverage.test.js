@@ -48,13 +48,11 @@ const MERGE_NEWER_WINS_KEYS = {
   podcastSkipAds: "scalar preference",
   libraryKey: "scalar preference",
   themeMode: "scalar preference",
-  locationSharingEnabled: "scalar preference",
   financeEmergencyMonths: "finance scalar (guardBootEmptyFinance protects boot-empty)",
   financeBirthYear: "finance scalar",
   financeAnnualIncome: "finance scalar",
   // Settings objects — one coherent config blob, newest wins as a unit.
   mailAiSettings: "settings object",
-  mailReadingPrefs: "settings object (Settings → Mail Reading: remote images on/off)",
   aiSettings: "settings object",
   jellyfin: "settings object",
   mediaServices: "settings object",

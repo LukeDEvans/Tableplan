@@ -220,7 +220,10 @@ const pageVisibilityDefaults = {
   plan: true,
   mail: true,
   travel: true,
-  finance: true
+  finance: true,
+  news: true,
+  contacts: true,
+  explore: true
 };
 const prepDays = [
   { id: "friday-start", name: "Friday", offset: 0, meals: [...dinnerMeals] },
@@ -333,7 +336,7 @@ const STATE_SECTIONS = {
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailReadingPrefs", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
+  config:    ["mailAiSettings", "mailMoveMemory", "themeMode", "collapsedSections", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -630,21 +633,22 @@ async function refreshChangedSectionsOnResume() {
 // Keep in sync with the home nav and the isPageEnabled() keys. Note: "read"
 // is the Media page's key (historical name). Inventory has no entry: it is a
 // space of the Shop page, so its access follows Shop's (accessPageKey).
-const MANAGED_PAGES = [
-  { key: "eat",       label: "Meal Plan" },
-  { key: "mail",      label: "Mail" },
-  { key: "shop",      label: "Shop" },
-  { key: "do",        label: "Tasks" },
-  { key: "play",      label: "Exercise" },
-  { key: "watch",     label: "Watch" },
-  { key: "read",      label: "Listen" }, // was "Media" (MEDIA_SPLIT_DESIGN.md); key unchanged
-  { key: "recreate",  label: "Recreate" },
-  { key: "explore",   label: "Explore" },
-  { key: "plan",      label: "Calendar" },
-  { key: "finance",   label: "Finance" },
-  { key: "contacts",  label: "Contacts" },
-  { key: "news",      label: "News" },
+// The pages people can turn on or off (Settings › Pages, Household › Members can
+// access, Admin › Global Pages). One switch per page in the page menu; features
+// that live inside a page share its switch (Luke, 2026-10-14): Tasks is part of
+// Calendar, Contacts of Mail, Exercise and Explore of Recreate.
+const PAGE_ACCESS_GROUPS = [
+  { key: "plan",     label: "Calendar",  keys: ["plan", "do"],                  note: "Includes Tasks" },
+  { key: "finance",  label: "Finance",   keys: ["finance"] },
+  { key: "read",     label: "Listen",    keys: ["read"] },
+  { key: "mail",     label: "Mail",      keys: ["mail", "contacts"],            note: "Includes Contacts" },
+  { key: "eat",      label: "Meal Plan", keys: ["eat"] },
+  { key: "news",     label: "News",      keys: ["news"] },
+  { key: "recreate", label: "Recreate",  keys: ["recreate", "play", "explore"], note: "Includes Exercise and Explore" },
+  { key: "shop",     label: "Shop",      keys: ["shop"] },
+  { key: "watch",    label: "Watch",     keys: ["watch"] },
 ];
+const pageGroupKeys = (value) => String(value || "").split(",").filter(Boolean);
 
 // JSON snapshot of each section as of the last successful Supabase write.
 // null means "never written this session — write everything".
@@ -1061,16 +1065,6 @@ const elements = {
   menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
   menuFinanceAccountsBtn: document.querySelector("#menuFinanceAccountsBtn"),
   menuFinanceEmergencyBtn: document.querySelector("#menuFinanceEmergencyBtn"),
-  importAiDialog: document.querySelector("#importAiDialog"),
-  closeImportAiDialogBtn: document.querySelector("#closeImportAiDialogBtn"),
-  importAiInstructions: document.querySelector("#importAiInstructions"),
-  importAiCopyBtn: document.querySelector("#importAiCopyBtn"),
-  importAiPasteInput: document.querySelector("#importAiPasteInput"),
-  importAiParseBtn: document.querySelector("#importAiParseBtn"),
-  importAiPreview: document.querySelector("#importAiPreview"),
-  importAiApplyRow: document.querySelector("#importAiApplyRow"),
-  importAiStatus: document.querySelector("#importAiStatus"),
-  importAiApplyBtn: document.querySelector("#importAiApplyBtn"),
   contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
   contextSettingsTitle: document.querySelector("#contextSettingsTitle"),
   contextSettingsBody: document.querySelector("#contextSettingsBody"),
@@ -1492,34 +1486,6 @@ const elements = {
   ingredientQtyOptions: document.querySelector("#ingredientQtyOptions"),
   ingredientItemOptions: document.querySelector("#ingredientItemOptions"),
   ingredientPrepOptions: document.querySelector("#ingredientPrepOptions"),
-  weeklyEmailDialog: document.querySelector("#weeklyEmailDialog"),
-  closeWeeklyEmailBtn: document.querySelector("#closeWeeklyEmailBtn"),
-  closeWeeklyEmailBtn2: document.querySelector("#closeWeeklyEmailBtn2"),
-  previewWeeklyEmailBtn: document.querySelector("#previewWeeklyEmailBtn"),
-  sendWeeklyEmailBtn: document.querySelector("#sendWeeklyEmailBtn"),
-  tuneEmailPrefsBtn: document.querySelector("#tuneEmailPrefsBtn"),
-  editEmailPrefsBtn: document.querySelector("#editEmailPrefsBtn"),
-  emailInterviewTitle: document.querySelector("#emailInterviewTitle"),
-  emailInterviewDialog: document.querySelector("#emailInterviewDialog"),
-  closeEmailInterviewBtn: document.querySelector("#closeEmailInterviewBtn"),
-  emailInterviewCancelBtn: document.querySelector("#emailInterviewCancelBtn"),
-  emailInterviewBackBtn: document.querySelector("#emailInterviewBackBtn"),
-  emailInterviewNextBtn: document.querySelector("#emailInterviewNextBtn"),
-  emailInterviewLoading: document.querySelector("#emailInterviewLoading"),
-  emailInterviewForm: document.querySelector("#emailInterviewForm"),
-  emailInterviewStep1: document.querySelector("#emailInterviewStep1"),
-  emailInterviewStep2: document.querySelector("#emailInterviewStep2"),
-  emailInterviewResult: document.querySelector("#emailInterviewResult"),
-  weeklyEmailSetup: document.querySelector("#weeklyEmailSetup"),
-  emailScheduleSection: document.querySelector("#emailScheduleSection"),
-  emailScheduleEnabled: document.querySelector("#emailScheduleEnabled"),
-  emailScheduleDetails: document.querySelector("#emailScheduleDetails"),
-  emailScheduleTime: document.querySelector("#emailScheduleTime"),
-  emailScheduleTimezone: document.querySelector("#emailScheduleTimezone"),
-  weeklyEmailNotes: document.querySelector("#weeklyEmailNotes"),
-  weeklyEmailPreviewArea: document.querySelector("#weeklyEmailPreviewArea"),
-  weeklyEmailPreviewFrame: document.querySelector("#weeklyEmailPreviewFrame"),
-  weeklyEmailPlaceholder: document.querySelector("#weeklyEmailPlaceholder"),
   groceryReviewDialog: document.querySelector("#groceryReviewDialog"),
   groceryReviewItem: document.querySelector("#groceryReviewItem"),
   groceryReviewContext: document.querySelector("#groceryReviewContext"),
@@ -1616,11 +1582,6 @@ const elements = {
   tagList: document.querySelector("#tagList"),
   closeTagsBtn: document.querySelector("#closeTagsBtn"),
   doneTagsBtn: document.querySelector("#doneTagsBtn"),
-  backupHealthDialog: document.querySelector("#backupHealthDialog"),
-  backupHealthContent: document.querySelector("#backupHealthContent"),
-  closeBackupHealthBtn: document.querySelector("#closeBackupHealthBtn"),
-  refreshBackupHealthBtn: document.querySelector("#refreshBackupHealthBtn"),
-  doneBackupHealthBtn: document.querySelector("#doneBackupHealthBtn"),
   restoreDialog: document.querySelector("#restoreDialog"),
   restoreCloudList: document.querySelector("#restoreCloudList"),
   restoreBackupList: document.querySelector("#restoreBackupList"),
@@ -2636,15 +2597,13 @@ function bindEvents() {
   elements.menuRecreateHobbiesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("recreate")));
   elements.menuFinanceAccountsBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-accounts")));
   elements.menuFinanceEmergencyBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-emergency")));
-  elements.closeImportAiDialogBtn.addEventListener("click", () => elements.importAiDialog.close());
-  elements.importAiCopyBtn.addEventListener("click", copyImportAiInstructions);
-  elements.importAiParseBtn.addEventListener("click", parseImportAiPaste);
-  elements.importAiApplyBtn.addEventListener("click", applyImportAiItems);
-  elements.importAiPreview.addEventListener("change", (e) => {
-    if (e.target.matches("[data-import-ai-toggle]")) updateImportAiApplyLabel();
-  });
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
-  elements.contextSettingsBackBtn.addEventListener("click", () => renderContextSettingsDialog("general"));
+  // Back arrow on windows opened from a Settings row (openFromSettingsWithBack).
+  document.querySelectorAll("[data-settings-back]").forEach((btn) => btn.addEventListener("click", () => {
+    btn.closest("dialog")?.close();
+    openContextSettingsDialog("general");
+  }));
+  elements.contextSettingsBackBtn.addEventListener("click", () => renderContextSettingsDialog(elements.contextSettingsBackBtn.dataset.parent || "general"));
   elements.doneContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.contextSettingsDialog.addEventListener("close", () => stopVoicePreview());
   elements.contextSettingsBody.addEventListener("click", handleContextSettingsAction);
@@ -2884,27 +2843,6 @@ function bindEvents() {
   elements.closeIngredientOptionsBtn.addEventListener("click", () => elements.ingredientOptionsDialog.close());
   elements.saveIngredientOptionsBtn.addEventListener("click", saveIngredientOptions);
   elements.resetIngredientOptionsBtn.addEventListener("click", resetIngredientOptions);
-  elements.closeWeeklyEmailBtn.addEventListener("click", () => elements.weeklyEmailDialog.close());
-  elements.closeWeeklyEmailBtn2.addEventListener("click", () => elements.weeklyEmailDialog.close());
-  elements.previewWeeklyEmailBtn.addEventListener("click", generateWeeklyEmailPreview);
-  elements.sendWeeklyEmailBtn.addEventListener("click", sendWeeklyEmail);
-  elements.tuneEmailPrefsBtn.addEventListener("click", openEmailInterviewDialog);
-  elements.editEmailPrefsBtn.addEventListener("click", openEmailPrefsEditor);
-  elements.emailScheduleEnabled.addEventListener("change", () => {
-    elements.emailScheduleDetails.hidden = !elements.emailScheduleEnabled.checked;
-    saveEmailScheduleToState();
-  });
-  elements.emailScheduleSection.addEventListener("click", (e) => {
-    const btn = e.target.closest(".email-day-btn");
-    if (!btn) return;
-    btn.classList.toggle("is-on");
-    btn.setAttribute("aria-pressed", btn.classList.contains("is-on"));
-    saveEmailScheduleToState();
-  });
-  elements.closeEmailInterviewBtn.addEventListener("click", () => elements.emailInterviewDialog.close());
-  elements.emailInterviewCancelBtn.addEventListener("click", () => elements.emailInterviewDialog.close());
-  elements.emailInterviewBackBtn.addEventListener("click", emailInterviewGoBack);
-  elements.emailInterviewNextBtn.addEventListener("click", emailInterviewNext);
   elements.closeGroceryReviewBtn.addEventListener("click", dismissCurrentGroceryReview);
   elements.dismissGroceryReviewBtn.addEventListener("click", dismissCurrentGroceryReview);
   elements.goToGroceryReviewRecipeBtn.addEventListener("click", goToGroceryReviewRecipe);
@@ -2917,9 +2855,6 @@ function bindEvents() {
   elements.saveCookSessionNotesBtn.addEventListener("click", completeCookingWithLog);
   elements.cookSessionPhoto.addEventListener("change", handleCookSessionPhotoSelection);
   elements.cookSessionPhotoPreview.addEventListener("click", () => elements.cookSessionPhoto.click());
-  elements.closeBackupHealthBtn.addEventListener("click", () => elements.backupHealthDialog.close());
-  elements.doneBackupHealthBtn.addEventListener("click", () => elements.backupHealthDialog.close());
-  elements.refreshBackupHealthBtn.addEventListener("click", loadBackupHealth);
   elements.restoreFileInput.addEventListener("change", previewRestoreFile);
   elements.mergeRestoreBtn.addEventListener("click", mergeMissingRecipesFromBackup);
   elements.fullRestoreBtn.addEventListener("click", fullRestoreFromBackup);
@@ -3865,6 +3800,19 @@ function setupDiagnostics() {
     trashSeed: (items) => { if (!localDevMode) return null; state.trashedRecipes = items.map(normalizeTrashedRecipe); return true; },
     trashIds: () => (localDevMode ? (state.trashedRecipes || []).map((t) => t.id) : null),
     openRecipeBox: () => { if (!localDevMode) return null; openRecipeBoxPage(); return true; },
+    // Settings QA (scripts/qa-settings.mjs): view Settings as a household admin with
+    // a few members (local dev has no signed-in group). Local dev only.
+    settingsAsAdmin: () => {
+      if (!localDevMode) return null;
+      userGroup = { id: "qa-group", role: "admin", disabled_pages: [] };
+      groupMembers = [
+        { user_id: "qa-admin", display_name: "Alexandra Montgomery-Whitfield", role: "admin" },
+        { user_id: "qa-hoh", display_name: "Sam", role: "hoh" },
+        { user_id: "qa-member", display_name: "Christopher Abernathy", role: "member" },
+      ];
+      state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, members: [{ id: "qa-kid", label: "Juniper", dob: "2023-05-01" }] });
+      return true;
+    },
     // Google Calendar (scripts/qa-gcal.mjs): local dev has no Netlify functions, so
     // the QA script mocks /.netlify/functions/gcal-* and flips this on to run the
     // real client paths (discovery, linking, event load, panel) against the mocks.
@@ -4727,10 +4675,12 @@ async function sendGroupInvite(email) {
   return data;
 }
 
+// `page` is one key or a page group's keys, comma-separated (PAGE_ACCESS_GROUPS).
 async function setGroupPageVisibility(page, disabled) {
   if (!userGroup?.id || (userGroup.role !== "admin" && userGroup.role !== "hoh")) return;
+  const pages = pageGroupKeys(page);
   const current = userGroup.disabled_pages || [];
-  const updated = disabled ? [...new Set([...current, page])] : current.filter((p) => p !== page);
+  const updated = disabled ? [...new Set([...current, ...pages])] : current.filter((p) => !pages.includes(p));
   const res = await fetch(`${supabaseBaseUrl()}/rest/v1/live_groups?id=eq.${userGroup.id}`, {
     method: "PATCH",
     headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
@@ -4739,7 +4689,7 @@ async function setGroupPageVisibility(page, disabled) {
   if (!res.ok) {
     console.warn("Could not update page visibility");
     document.querySelectorAll("[data-group-page]").forEach((cb) => {
-      cb.checked = !(userGroup.disabled_pages || []).includes(cb.dataset.groupPage);
+      cb.checked = !pageGroupKeys(cb.dataset.groupPage).some((k) => (userGroup.disabled_pages || []).includes(k));
     });
     return;
   }
@@ -4749,11 +4699,13 @@ async function setGroupPageVisibility(page, disabled) {
   updateSettingsMenuOptions();
 }
 
+// `page` is one key or a page group's keys, comma-separated (PAGE_ACCESS_GROUPS).
 async function setAdminDisabledPage(page, disabled) {
   if (userGroup?.role !== "admin") return;
+  const pages = pageGroupKeys(page);
   const updated = disabled
-    ? [...new Set([...adminDisabledPages, page])]
-    : adminDisabledPages.filter(p => p !== page);
+    ? [...new Set([...adminDisabledPages, ...pages])]
+    : adminDisabledPages.filter(p => !pages.includes(p));
   const res = await fetch(`${supabaseBaseUrl()}/rest/v1/live_app_config?id=eq.1`, {
     method: "PATCH",
     headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
@@ -4957,8 +4909,9 @@ function trackUsage(key) {
   persist();
 }
 
+// App Name was removed from Settings (Luke, 2026-10-14); the app is "Live".
 function getAppName() {
-  return state.appName || "Live";
+  return "Live";
 }
 
 function getCurrentProfileMember() {
@@ -5206,9 +5159,7 @@ function defaultState() {
     weatherActiveLocationId: "",
     groceryReviewDismissed: {},
     activeCooking: [],
-    weeklyEmailSettings: defaultWeeklyEmailSettings(),
     mailAiSettings: {},
-    mailReadingPrefs: {},
     financeAlertPrefs: {},
     mailMoveMemory: { threads: {}, senders: {} },
     financePeople: [],
@@ -5257,15 +5208,12 @@ function defaultState() {
     financeTxnReceipts: {},
     doTasks: [],
     themeMode: "light",
-    locationSharingEnabled: false,
 
     autoGenerateRules: defaultAutoGenerateRules(),
     mealPlanConfig: defaultMealPlanConfig(),
     memberDiets: {},
     collapsedSections: defaultCollapsedSections(),
     collapsedDays: {},
-    emailPrefs: "",
-    appName: "",
     travelHome: "",
     tombstones: {},
     apiUsage: {},
@@ -5400,9 +5348,7 @@ function normalizeState(parsed) {
     calendars: normalizeLinkedCalendars(parsed?.calendars, parsed?.birthdayCalendar),
     groceryReviewDismissed: parsed?.groceryReviewDismissed || {},
     activeCooking: normalizeActiveCooking(parsed?.activeCooking),
-    weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
     mailAiSettings: (parsed?.mailAiSettings && typeof parsed.mailAiSettings === "object") ? parsed.mailAiSettings : {},
-    mailReadingPrefs: (parsed?.mailReadingPrefs && typeof parsed.mailReadingPrefs === "object") ? parsed.mailReadingPrefs : {},
     financeAlertPrefs: (parsed?.financeAlertPrefs && typeof parsed.financeAlertPrefs === "object") ? parsed.financeAlertPrefs : {},
     mailMoveMemory: (parsed?.mailMoveMemory && typeof parsed.mailMoveMemory === "object") ? parsed.mailMoveMemory : { threads: {}, senders: {} },
     financePeople: normalizeFinancePeople(parsed?.financePeople, createId),
@@ -5457,7 +5403,6 @@ function normalizeState(parsed) {
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal, createId),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
-    locationSharingEnabled: Boolean(parsed?.locationSharingEnabled),
 
     autoGenerateRules: normalizeAutoGenerateRules(parsed?.autoGenerateRules),
     collapsedSections: parsed?.collapsedSections || defaultCollapsedSections(),
@@ -5482,9 +5427,7 @@ function normalizeState(parsed) {
     weatherActiveLocationId: typeof parsed?.weatherActiveLocationId === "string" ? parsed.weatherActiveLocationId : "",
     mealPlanConfig,
     memberDiets: normalizeMemberDiets(parsed?.memberDiets),
-    appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
     travelHome: typeof parsed?.travelHome === "string" ? parsed.travelHome.trim() : "",
-    emailPrefs: String(parsed?.emailPrefs || ""),
     tombstones: normalizeTombstones(parsed?.tombstones),
     apiUsage: (parsed?.apiUsage && typeof parsed.apiUsage === "object" && !Array.isArray(parsed.apiUsage)) ? parsed.apiUsage : {},
     stateUpdatedAt: typeof parsed?.stateUpdatedAt === "string" ? parsed.stateUpdatedAt : "",
@@ -5571,21 +5514,6 @@ function unrecordDeletion(arrayKey, id) {
   state.tombstones[arrayKey] = state.tombstones[arrayKey].filter(t => t !== idStr);
 }
 
-function defaultWeeklyEmailSettings() {
-  return {
-    subjectPrefix: "Eat weekly review",
-    introText: "{reviewRange} review and {upcomingRange} planning check.",
-    closingNote: "",
-    includeWeekInReview: true,
-    includeActiveCooks: true,
-    includeMissingNotes: true,
-    includeUpcomingStatus: true,
-    includePlannedCount: true,
-    includeEmptyMeals: true,
-    emailSchedule: { enabled: false, days: [], time: "08:00", timezone: "" }
-  };
-}
-
 function normalizeBirthdayCalendarSettings(settings) {
   return {
     url: String(settings?.url || "").trim()
@@ -5644,32 +5572,6 @@ function normalizeCalendarSources(linkedCalendars, planCalendars) {
     out.push(cal); // same object, same id — no reshaping, no re-id
   }
   return out;
-}
-
-function normalizeWeeklyEmailSettings(settings) {
-  const defaults = defaultWeeklyEmailSettings();
-  return {
-    subjectPrefix: String(settings?.subjectPrefix || defaults.subjectPrefix).trim() || defaults.subjectPrefix,
-    introText: String(settings?.introText || defaults.introText).trim() || defaults.introText,
-    closingNote: String(settings?.closingNote || "").trim(),
-    includeWeekInReview: settings?.includeWeekInReview !== false,
-    includeActiveCooks: settings?.includeActiveCooks !== false,
-    includeMissingNotes: settings?.includeMissingNotes !== false,
-    includeUpcomingStatus: settings?.includeUpcomingStatus !== false,
-    includePlannedCount: settings?.includePlannedCount !== false,
-    includeEmptyMeals: settings?.includeEmptyMeals !== false,
-    emailSchedule: normalizeEmailSchedule(settings?.emailSchedule)
-  };
-}
-
-function normalizeEmailSchedule(s) {
-  const validDays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-  return {
-    enabled: Boolean(s?.enabled),
-    days: (Array.isArray(s?.days) ? s.days : []).filter((d) => validDays.includes(d)),
-    time: /^\d{2}:\d{2}$/.test(s?.time || "") ? s.time : "08:00",
-    timezone: String(s?.timezone || "").trim()
-  };
 }
 
 function normalizeTaskLogEntries(entries) {
@@ -6378,13 +6280,14 @@ function setThemeMode(mode) {
   setDisplayPref("mode", normalizeThemeMode(mode));
 }
 
+// `page` is one key or a page group's keys, comma-separated (PAGE_ACCESS_GROUPS).
 function setPageVisibility(page, enabled) {
-  if (!Object.hasOwn(pageVisibilityDefaults, page)) return;
-  if (!isPageEnabled(page)) return;
+  const pages = pageGroupKeys(page).filter((p) => Object.hasOwn(pageVisibilityDefaults, p));
+  if (!pages.length || !isPageEnabled(pages[0])) return;
   if (enabled) {
-    personalDisabledPages = personalDisabledPages.filter(p => p !== page);
+    personalDisabledPages = personalDisabledPages.filter(p => !pages.includes(p));
   } else {
-    if (!personalDisabledPages.includes(page)) personalDisabledPages.push(page);
+    personalDisabledPages = [...new Set([...personalDisabledPages, ...pages])];
   }
   updatePageVisibilityControls();
   updatePageVisibility();
@@ -6930,16 +6833,11 @@ function mergeStates(newer, older) {
   merged.mealPlanSharedEvents = mergeMealPlanSharedEvents(newer.mealPlanSharedEvents, older.mealPlanSharedEvents);
 
   // ── Non-empty string fields: blank newer must never erase saved data ──────
-  merged.emailPrefs = newer.emailPrefs || older.emailPrefs || "";
-  merged.appName = newer.appName || older.appName || "";
   merged.travelHome = newer.travelHome || older.travelHome || "";
   // Saved weather locations + active selection: last writer wins (a small
   // personal preference list, not id-merged history).
   merged.weatherLocations = newer.weatherLocations || older.weatherLocations || [];
   merged.weatherActiveLocationId = newer.weatherActiveLocationId || older.weatherActiveLocationId || "";
-
-  // ── Email schedule: preserve configured schedule over fresh-device defaults
-  merged.weeklyEmailSettings = mergeWeeklyEmailSettings(newer.weeklyEmailSettings, older.weeklyEmailSettings);
 
   // ── Tracked settings: each one's OWN "last changed" stamp decides, not the
   // whole-state timestamp (a device with a stale setting but a newer
@@ -7100,19 +6998,6 @@ function mergePlayPlans(newer, older, tombstones) {
   return result;
 }
 
-
-function mergeWeeklyEmailSettings(newer, older) {
-  if (!newer && !older) return defaultWeeklyEmailSettings();
-  if (!newer) return older;
-  if (!older) return newer;
-  const merged = { ...older, ...newer };
-  const nSched = newer.emailSchedule || {};
-  const oSched = older.emailSchedule || {};
-  // If newer has no configured schedule (disabled + no days = fresh defaults) but older does, keep older's
-  const newerIsDefaultSchedule = !nSched.enabled && (!nSched.days || !nSched.days.length);
-  merged.emailSchedule = (newerIsDefaultSchedule && oSched.enabled) ? oSched : nSched;
-  return merged;
-}
 
 // Remove content that was created while the user was explicitly signed out so that
 // signing back in doesn't pollute the cloud account with anonymous data.
@@ -8667,9 +8552,6 @@ let mailGmailConnected = false;
 let mailAccountEmail = ""; // this account's own address, to exclude self on reply-all
 let mailStatusPromise = null; // pre-fetched status so Mail page loads instantly
 let mailOpenThreadId = null;
-// The messages currently shown in the open thread (display order), so the "…"
-// menu's Display images can re-render each body with remote images enabled.
-let mailThreadDisplayMessages = [];
 // Set by renderMailThread to the current thread's compose opener so the "…"
 // menu (a separate function) can trigger reply/forward for the open thread.
 let mailReplyForwardTrigger = null;
@@ -9020,9 +8902,6 @@ const mailThreadCache = new Map(); // threadId → { thread, at }
 // Lightweight row data (subject/from) kept from the list so opening a thread can
 // paint its header INSTANTLY while the full body loads — see openMailThread.
 const mailRowSummary = new Map(); // threadId → { subject, from }
-// Message ids the user has opted to load remote images for this session —
-// only matters while remote images are blocked in Settings → Mail Reading.
-const mailShownImages = new Set();
 let mailPrefetchGen = 0;
 const MAIL_LIST_PRELOAD_TTL = 2 * 60 * 1000;
 const MAIL_THREAD_CACHE_TTL = 5 * 60 * 1000;
@@ -10388,7 +10267,6 @@ function renderMailThread(thread) {
       </div>
     </div>`;
   elements.mailThread.innerHTML = html;
-  mailThreadDisplayMessages = displayOrder; // referenced by displayAllMailImages
   mountMailMessageFrames(elements.mailThread, displayOrder);
   // Collapsed messages expand (and lazily mount their body) on header click
   elements.mailThread.querySelectorAll("[data-msg-toggle]").forEach((metaEl) => {
@@ -10559,16 +10437,7 @@ function showMailMoreMenu(thread, lastMsg) {
   const menu = document.createElement("div");
   menu.id = "mailMoreMenu";
   menu.className = "mail-more-menu";
-  // Offer "Display images" here (rather than an inline banner) only when the
-  // open thread still has blocked remote images.
-  const hasBlockedImages = [...elements.mailThread.querySelectorAll(".mail-msg-frame")].some((f) => Number(f.dataset.blockedImages) > 0);
-  const displayImagesOption = hasBlockedImages ? `
-    <button class="mail-more-option" type="button" data-action="display-images">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
-      Display images
-    </button>
-    <div class="mail-more-divider"></div>` : "";
-  menu.innerHTML = displayImagesOption + `
+  menu.innerHTML = `
     <button class="mail-more-option" type="button" data-action="reply">
       <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
       Reply
@@ -10617,8 +10486,7 @@ function showMailMoreMenu(thread, lastMsg) {
     if (!opt) return;
     menu.remove();
     const action = opt.dataset.action;
-    if (action === "display-images") displayAllMailImages();
-    else if (action === "reply") mailReplyForwardTrigger?.("reply");
+    if (action === "reply") mailReplyForwardTrigger?.("reply");
     else if (action === "reply-all") mailReplyForwardTrigger?.("reply-all");
     else if (action === "forward") mailReplyForwardTrigger?.("forward");
     else if (action === "spam") spamMailThread(thread);
@@ -11714,11 +11582,9 @@ function mountMailMessageFrames(container, messages) {
 
 function mountMailMessageBody(holder, msg) {
   if (msg.body?.includes("<")) {
-    // Remote images load by default, with tracking images stripped (Settings →
-    // Mail Reading turns that off). When they're blocked, the reader can still
-    // turn them on for the open thread via the "…" menu's Display images (see
-    // showMailMoreMenu / displayAllMailImages).
-    const showImages = mailImagesOn() || mailShownImages.has(msg.id);
+    // Remote images always load, with tracking images stripped (Luke,
+    // 2026-10-14: no switch; Settings → Mail Reading is gone).
+    const showImages = true;
     const frame = buildMailFrame(msg.body, {
       showImages,
       onReady: (iframe, doc) => {
@@ -11749,12 +11615,6 @@ function mountMailMessageBody(holder, msg) {
   }
 }
 
-// Remote images in emails: on unless switched off in Settings → Mail Reading
-// (state.mailReadingPrefs.blockRemoteImages, synced).
-function mailImagesOn() {
-  return state.mailReadingPrefs?.blockRemoteImages !== true;
-}
-
 // One embedded image, as base64url, through the existing attachment action
 // (Netlify → Gmail). Cached for the session so re-rendering a thread, or
 // reopening it, never fetches the same image twice; failures are not cached.
@@ -11769,19 +11629,6 @@ function loadMailEmbeddedImage(messageId, att) {
   p.then((data) => { if (!data) mailEmbeddedImageCache.delete(key); });
   while (mailEmbeddedImageCache.size > 80) mailEmbeddedImageCache.delete(mailEmbeddedImageCache.keys().next().value);
   return p;
-}
-
-// Turn on remote images for the whole open thread (the "…" → Display images
-// action) and re-render each already-mounted message body with src restored.
-function displayAllMailImages() {
-  (mailThreadDisplayMessages || []).forEach((msg) => { if (msg?.id) mailShownImages.add(msg.id); });
-  elements.mailThread.querySelectorAll("[data-msg-idx]").forEach((holder) => {
-    if (holder.hidden || !holder.dataset.mounted) return; // collapsed bodies mount fresh (with images) on expand
-    const msg = mailThreadDisplayMessages[Number(holder.dataset.msgIdx)];
-    if (!msg) return;
-    holder.innerHTML = "";
-    mountMailMessageBody(holder, msg);
-  });
 }
 
 // The frame itself (sanitizing, image handling, fit/size) lives in mail-frame.js.
@@ -12069,186 +11916,6 @@ function openRecurringTasksDialog(event) {
   elements.recurringTasksDialog.showModal();
 }
 
-// ── Import from AI Chat ──────────────────────────────────────────────────────
-// Lets Luke work through a real-life topic with ChatGPT/Claude outside the
-// app (cheaper than spending Live's own tokens on open-ended brainstorming),
-// then paste back a small structured JSON blob that gets turned into real
-// To-Do / Calendar / Shopping / Recurring-task items — reusing the exact same
-// state shapes and push sites the app's own "add" buttons use, so imported
-// items are indistinguishable from hand-entered ones.
-const IMPORT_AI_SECTIONS = new Set(["todo", "calendar", "shopping", "recurring"]);
-const IMPORT_AI_DAY_MAP = {
-  sunday: "sunday", monday: "monday", tuesday: "tuesday", wednesday: "wednesday",
-  thursday: "thursday", friday: "friday-start", saturday: "saturday"
-};
-let importAiParsedItems = [];
-
-function importAiInstructionsText() {
-  const today = new Date().toISOString().slice(0, 10);
-  return `You are helping me turn a conversation into structured actions for my personal life-management app, Live. When I ask you to "prepare my Live import" (or similar), respond with ONLY a single fenced json code block — no text before or after it — matching exactly this schema:
-
-{
-  "summary": "one short line describing this batch",
-  "items": [
-    { "section": "todo", "title": "...", "notes": "" },
-    { "section": "calendar", "title": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "notes": "" },
-    { "section": "shopping", "title": "..." },
-    { "section": "recurring", "title": "...", "notes": "", "days": ["monday","wednesday"] }
-  ]
-}
-
-Rules:
-- "section" is exactly one of: todo, calendar, shopping, recurring.
-- todo = a one-time task with no fixed date (goes to my backlog).
-- calendar = a one-time event on a specific date. Only include "time" if there's a real time — omit it entirely for an all-day event.
-- shopping = a single item for my grocery list. No other fields besides title.
-- recurring = a task that repeats weekly. "days" uses only: sunday, monday, tuesday, wednesday, thursday, friday, saturday.
-- Every item needs "section" and "title". Only include fields that apply to that section.
-- Today's date is ${today} — resolve "tomorrow," "next week," etc. against that.
-- Only include things we actually discussed — don't invent items. If nothing applies, return {"summary": "", "items": []}.`;
-}
-
-function openImportAiDialog() {
-  elements.importAiInstructions.value = importAiInstructionsText();
-  elements.importAiPasteInput.value = "";
-  elements.importAiPreview.innerHTML = "";
-  elements.importAiApplyRow.hidden = true;
-  importAiParsedItems = [];
-  if (!elements.importAiDialog.open) elements.importAiDialog.showModal();
-}
-
-async function copyImportAiInstructions() {
-  try {
-    await navigator.clipboard.writeText(elements.importAiInstructions.value);
-    const original = elements.importAiCopyBtn.textContent;
-    elements.importAiCopyBtn.textContent = "Copied!";
-    setTimeout(() => { elements.importAiCopyBtn.textContent = original; }, 1500);
-  } catch {
-    elements.importAiInstructions.select();
-  }
-}
-
-function importAiItemSummary(item) {
-  if (item.section === "calendar") return `${item.date}${item.time ? ` · ${item.time}` : " · all day"}`;
-  if (item.section === "recurring") return (item.days || []).map((d) => d.slice(0, 3)).join(", ") || "no days";
-  if (item.section === "shopping") return "Shopping list";
-  return "Tasks backlog";
-}
-
-// Lenient parse: strips a markdown fence if present, validates each item
-// independently so one bad entry doesn't sink the whole batch.
-function parseImportAiPaste() {
-  const raw = elements.importAiPasteInput.value.trim();
-  elements.importAiPreview.innerHTML = "";
-  elements.importAiApplyRow.hidden = true;
-  importAiParsedItems = [];
-  if (!raw) {
-    elements.importAiPreview.innerHTML = `<p class="import-ai-error">Paste the JSON your AI chat gave you first.</p>`;
-    return;
-  }
-  const fenced = raw.match(/\{[\s\S]*\}/);
-  let parsed;
-  try {
-    parsed = JSON.parse(fenced ? fenced[0] : raw);
-  } catch {
-    elements.importAiPreview.innerHTML = `<p class="import-ai-error">That doesn't look like valid JSON. Make sure you copied the whole code block.</p>`;
-    return;
-  }
-  const items = Array.isArray(parsed?.items) ? parsed.items : [];
-  if (!items.length) {
-    elements.importAiPreview.innerHTML = `<p class="import-ai-error">No items found in that import.</p>`;
-    return;
-  }
-
-  const results = items.map((raw, i) => {
-    const section = String(raw?.section || "").toLowerCase().trim();
-    const title = String(raw?.title || "").trim().slice(0, 200);
-    const notes = String(raw?.notes || "").trim().slice(0, 2000);
-    if (!IMPORT_AI_SECTIONS.has(section)) return { ok: false, i, error: `Unknown section "${raw?.section}"` };
-    if (!title) return { ok: false, i, error: "Missing title" };
-    if (section === "calendar") {
-      const date = String(raw?.date || "").trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, i, error: `"${title}" has no valid date` };
-      const time = /^\d{2}:\d{2}$/.test(String(raw?.time || "")) ? raw.time : "";
-      return { ok: true, i, item: { section, title, notes, date, time } };
-    }
-    if (section === "recurring") {
-      const days = (Array.isArray(raw?.days) ? raw.days : [])
-        .map((d) => IMPORT_AI_DAY_MAP[String(d || "").toLowerCase().trim()])
-        .filter(Boolean);
-      if (!days.length) return { ok: false, i, error: `"${title}" has no valid days` };
-      return { ok: true, i, item: { section, title, notes, days: [...new Set(days)] } };
-    }
-    return { ok: true, i, item: { section, title, notes } };
-  });
-
-  importAiParsedItems = results.filter((r) => r.ok).map((r) => r.item);
-  const bad = results.filter((r) => !r.ok);
-
-  const sectionLabel = { todo: "Tasks", calendar: "Calendar", shopping: "Shopping", recurring: "Recurring" };
-  elements.importAiPreview.innerHTML = `
-    ${parsed.summary ? `<p class="import-ai-summary">${escapeHtml(String(parsed.summary).slice(0, 300))}</p>` : ""}
-    ${importAiParsedItems.map((item, idx) => `
-      <label class="import-ai-item">
-        <input type="checkbox" data-import-ai-toggle data-idx="${idx}" checked />
-        <span class="import-ai-item-section">${sectionLabel[item.section]}</span>
-        <span class="import-ai-item-title">${escapeHtml(item.title)}</span>
-        <span class="import-ai-item-meta">${escapeHtml(importAiItemSummary(item))}</span>
-      </label>`).join("")}
-    ${bad.length ? `<p class="import-ai-error">${bad.length} item${bad.length === 1 ? "" : "s"} skipped: ${bad.map((b) => escapeHtml(b.error)).join("; ")}</p>` : ""}
-  `;
-  if (importAiParsedItems.length) {
-    elements.importAiApplyRow.hidden = false;
-    updateImportAiApplyLabel();
-  }
-}
-
-function updateImportAiApplyLabel() {
-  const checked = elements.importAiPreview.querySelectorAll("[data-import-ai-toggle]:checked").length;
-  elements.importAiApplyBtn.disabled = checked === 0;
-  elements.importAiApplyBtn.textContent = checked ? `Add ${checked} item${checked === 1 ? "" : "s"} to Live` : "Add to Live";
-}
-
-function applyImportAiItems() {
-  const checkedIdx = new Set([...elements.importAiPreview.querySelectorAll("[data-import-ai-toggle]:checked")].map((cb) => Number(cb.dataset.idx)));
-  const toApply = importAiParsedItems.filter((_, idx) => checkedIdx.has(idx));
-  if (!toApply.length) return;
-
-  let addedCalendar = false;
-  for (const item of toApply) {
-    if (item.section === "todo") {
-      doBacklogTasks().push({ id: createId("task"), title: item.title, notes: item.notes, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
-    } else if (item.section === "calendar") {
-      state.planEvents = [...(state.planEvents || []), {
-        id: createId("plan-evt"), createdAt: new Date().toISOString(),
-        title: item.title, date: item.date, allDay: !item.time,
-        startTime: item.time || null, endTime: null,
-        notes: item.notes, color: PLAN_COLORS[0], calendarId: null, location: null, attachment: null
-      }];
-      addedCalendar = true;
-    } else if (item.section === "shopping") {
-      if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
-      stampGroceryAdd(groceryListStamps(), item.title, new Date().toISOString());
-      if (!state.persistentManualGroceries.some((existing) => normalize(existing) === normalize(item.title))) {
-        state.persistentManualGroceries.push(item.title);
-        state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
-      }
-    } else if (item.section === "recurring") {
-      state.recurringTasks = normalizeRecurringTasks(state.recurringTasks);
-      state.recurringTasks.push({ id: createId("recurring-task"), title: item.title, notes: item.notes, dayIds: item.days, createdAt: new Date().toISOString() });
-    }
-  }
-
-  persist();
-  render();
-  if (addedCalendar && activeAppArea === "plan") renderPlanPage();
-  elements.importAiStatus.textContent = `Added ${toApply.length} item${toApply.length === 1 ? "" : "s"}.`;
-  elements.importAiApplyRow.hidden = true;
-  elements.importAiPreview.innerHTML = "";
-  elements.importAiPasteInput.value = "";
-  importAiParsedItems = [];
-  setTimeout(() => elements.importAiDialog.close(), 900);
-}
 
 function addDoTaskFromTasksPage(event) {
   addDoTask(event, elements.tasksPageTaskInput, activePlannerDayId);
@@ -16506,7 +16173,7 @@ function updatePageVisibility() {
 
 function updatePageVisibilityControls() {
   document.querySelectorAll("[data-page-visibility]").forEach((input) => {
-    const page = input.dataset.pageVisibility;
+    const page = pageGroupKeys(input.dataset.pageVisibility)[0];
     const locked = !isPageEnabled(page);
     input.checked = isPagePersonallyEnabled(page);
     input.disabled = locked;
@@ -16636,7 +16303,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "location-services", "admin-pages", "read-sync", "assistant", "finance-accounts", "finance-emergency", "podcasts", "radio", "notifications", "display"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "finance-accounts", "finance-emergency", "podcasts", "radio", "display", "beta", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16894,6 +16561,60 @@ function displaySettingsTemplate() {
     </div>`;
 }
 
+// Where a Settings panel's back arrow goes (anything not listed → the main list).
+const SETTINGS_PANEL_PARENT = { assistant: "beta", "ai-log": "beta" };
+
+// A small (i) button beside a setting; tapping it opens that setting's write-up
+// in a little window under the row (Luke, 2026-10-14), so long explanations
+// stay out of the list. Pair with settingsInfoPanel(id, text).
+function settingsInfoButton(id, label) {
+  return `<button type="button" class="settings-info-btn" data-settings-info="${escapeHtml(id)}" aria-expanded="false" aria-controls="settings-info-${escapeHtml(id)}" aria-label="About ${escapeHtml(label)}">i</button>`;
+}
+function settingsInfoPanel(id, text) {
+  return `<div class="settings-info-pop" id="settings-info-${escapeHtml(id)}" role="note" hidden>${escapeHtml(text)}</div>`;
+}
+function toggleSettingsInfo(btn) {
+  const pop = document.getElementById(btn.getAttribute("aria-controls"));
+  if (!pop) return;
+  const open = pop.hidden;
+  elements.contextSettingsBody.querySelectorAll(".settings-info-pop").forEach((p) => { p.hidden = true; });
+  elements.contextSettingsBody.querySelectorAll("[data-settings-info]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+  pop.hidden = !open;
+  btn.setAttribute("aria-expanded", String(open));
+}
+
+// Settings rows that open their own window (Users, Households, Restore Backup)
+// get a back arrow to the Settings list while open from there.
+function openFromSettingsWithBack(dialog, open) {
+  elements.contextSettingsDialog.close();
+  open();
+  const back = dialog?.querySelector("[data-settings-back]");
+  if (!back) return;
+  back.hidden = false;
+  dialog.addEventListener("close", () => { back.hidden = true; }, { once: true });
+}
+
+// Household panel: read-only until Edit is tapped (Luke, 2026-10-14).
+let householdEditMode = false;
+
+// One row per page group (PAGE_ACCESS_GROUPS) with the house toggle. `attr` is
+// the data attribute the change handler listens for; its value is the group's
+// keys, comma-separated, so one switch turns the whole page on or off.
+function pageAccessListTemplate({ attr, isOn, isLocked = () => false }) {
+  return `<div class="page-access-list" role="group" aria-label="Pages">
+    ${PAGE_ACCESS_GROUPS.map((g) => {
+      const locked = isLocked(g.keys);
+      return `<label class="page-access-row${locked ? " is-locked" : ""}">
+        <span class="page-access-text">
+          <span class="page-access-name">${escapeHtml(g.label)}</span>
+          ${locked ? `<span class="page-access-note">Turned off for your household</span>` : (g.note ? `<span class="page-access-note">${escapeHtml(g.note)}</span>` : "")}
+        </span>
+        <input type="checkbox" class="live-toggle" ${attr}="${escapeHtml(g.keys.join(","))}" aria-label="${escapeHtml(g.label)}" ${isOn(g.keys) ? "checked" : ""} ${locked ? "disabled" : ""} />
+      </label>`;
+    }).join("")}
+  </div>`;
+}
+
 function renderContextSettingsDialog(kind) {
   if (kind !== "voice") stopVoicePreview(); // leaving the Voice panel silences any preview
   contextSettingsKind = kind;
@@ -16904,7 +16625,6 @@ function renderContextSettingsDialog(kind) {
     family: "Household",
     recreate: "Recreate",
     pages: "Pages",
-    "location-services": "Location Services",
     "admin-pages": "Global Pages",
     "read-sync": "Sync Settings",
     "finance-accounts": "Accounts",
@@ -16912,32 +16632,27 @@ function renderContextSettingsDialog(kind) {
     "api-usage": "API Usage",
     "assistant": "Assistant",
     "mail-ai": "Mail AI",
-    "mail-reading": "Mail Reading",
     "voice": "Voice",
     "podcasts": "Podcasts",
-    "notifications": "Notifications",
-    "display": "Display"
+    "display": "Display",
+    "beta": "Beta",
+    "ai-log": "AI Action Log"
   };
   const isSubPanel = !["general", "watch", "radio", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
+  elements.contextSettingsBackBtn.dataset.parent = SETTINGS_PANEL_PARENT[kind] || "general";
   elements.contextSettingsTitle.textContent = titles[kind] || "Settings";
   if (kind === "general") {
+    // Settings list (Luke, 2026-10-14). Admin holds account tools, API usage and
+    // Beta — features still being developed.
     const isAdmin = !authSession?.access_token || userGroup?.role === "admin";
     elements.contextSettingsBody.innerHTML = `
       <div class="settings-action-grid">
         <button type="button" data-context-settings-action="display">Display</button>
-        <button type="button" data-context-settings-action="notifications">Notifications</button>
         <button type="button" data-context-settings-action="pages">Pages</button>
-        <button type="button" data-context-settings-action="location-services">Location Services</button>
-        <button type="button" data-context-settings-action="weekly-email">Email</button>
-        <button type="button" data-context-settings-action="mail-reading">Mail Reading</button>
+        <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
-        <button type="button" data-context-settings-action="family">Household</button>
-        <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
-        <button type="button" data-context-settings-action="assistant">Assistant</button>
-        <button type="button" data-context-settings-action="import-ai">Import from AI Chat</button>
-        <button type="button" data-context-settings-action="api-usage">API Usage</button>
         <button type="button" data-context-settings-action="export-data">Export My Data</button>
       </div>
       ${isAdmin ? `
@@ -16945,10 +16660,11 @@ function renderContextSettingsDialog(kind) {
           <span class="theme-setting-title">Admin</span>
           <div class="settings-action-grid">
             <button type="button" data-context-settings-action="admin-pages">Global Pages</button>
-            <button type="button" data-context-settings-action="backup-health">Backup Health</button>
-            <button type="button" data-context-settings-action="restore-backup">Restore Backup</button>
             <button type="button" data-context-settings-action="admin-users">Users</button>
             <button type="button" data-context-settings-action="admin-households">Households</button>
+            <button type="button" data-context-settings-action="restore-backup">Restore Backup</button>
+            <button type="button" data-context-settings-action="api-usage">API Usage</button>
+            <button type="button" data-context-settings-action="beta">Beta</button>
           </div>
         </div>
       ` : ""}
@@ -16956,18 +16672,21 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
-  // Display mode + theme (THEMES_DESIGN.md). Per person; saves as you tap.
-  if (kind === "display") {
-    elements.contextSettingsBody.innerHTML = displaySettingsTemplate();
+  // Beta (admin): things still in development.
+  if (kind === "beta") {
+    elements.contextSettingsBody.innerHTML = `
+      <p class="settings-panel-note">Features still being developed.</p>
+      <div class="settings-action-grid">
+        <button type="button" data-context-settings-action="assistant">Assistant</button>
+        <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
+      </div>
+    `;
     return;
   }
 
-  // Event reminders on this device (IOS_NOTIFICATIONS_DESIGN.md §5).
-  if (kind === "notifications") {
-    elements.contextSettingsBody.innerHTML = `
-      <div class="reminder-device-panel" data-reminder-device-panel></div>
-      <p class="muted-note">Set a reminder on any timed event (or on a Google event's details) and only you get it. Google Calendar's own notifications can be turned off in its app.</p>`;
-    renderReminderDevicePanel();
+  // Display mode + theme (THEMES_DESIGN.md). Per person; saves as you tap.
+  if (kind === "display") {
+    elements.contextSettingsBody.innerHTML = displaySettingsTemplate();
     return;
   }
 
@@ -17028,37 +16747,21 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
-  if (kind === "mail-reading") {
-    elements.contextSettingsBody.innerHTML = `
-      <div class="mail-ai-feature-list">
-        <div class="mail-ai-feature-row">
-          <div class="mail-ai-feature-text">
-            <span class="mail-ai-feature-label">Load images in emails</span>
-            <span class="mail-ai-feature-desc">Shows an email's pictures as it opens, with tracking pixels removed. A sender can still tell you opened an email from its other pictures. When off, “Display images” in an email's … menu loads them for that conversation.</span>
-          </div>
-          <input type="checkbox" class="live-toggle" aria-label="Load images in emails" id="mailLoadImagesToggle" ${mailImagesOn() ? "checked" : ""}>
-        </div>
-      </div>`;
-    elements.contextSettingsBody.querySelector("#mailLoadImagesToggle").addEventListener("change", (e) => {
-      if (!state.mailReadingPrefs || typeof state.mailReadingPrefs !== "object") state.mailReadingPrefs = {};
-      state.mailReadingPrefs.blockRemoteImages = !e.target.checked;
-      persist();
-    });
-    return;
-  }
-
   if (kind === "mail-ai") {
     if (!state.mailAiSettings || typeof state.mailAiSettings !== "object") state.mailAiSettings = {};
     elements.contextSettingsBody.innerHTML = `
       <p class="settings-hint">AI features that process your email. Each runs automatically only while switched on.</p>
       <div class="mail-ai-feature-list">
         ${MAIL_AI_FEATURES.map((f) => `
-          <div class="mail-ai-feature-row">
-            <div class="mail-ai-feature-text">
-              <span class="mail-ai-feature-label">${escapeHtml(f.label)}</span>
-              <span class="mail-ai-feature-desc">${escapeHtml(f.desc)}</span>
+          <div class="mail-ai-feature-item">
+            <div class="mail-ai-feature-row">
+              <div class="mail-ai-feature-text mail-ai-feature-text--inline">
+                <span class="mail-ai-feature-label">${escapeHtml(f.label)}</span>
+                ${settingsInfoButton(`mail-ai-${f.key}`, f.label)}
+              </div>
+              <input type="checkbox" class="live-toggle" aria-label="${escapeHtml(f.label)}" data-mail-ai-key="${escapeHtml(f.key)}" ${(f.defaultOn ? state.mailAiSettings[f.key] !== false : Boolean(state.mailAiSettings[f.key])) ? "checked" : ""}>
             </div>
-            <input type="checkbox" class="live-toggle" aria-label="${escapeHtml(f.label)}" data-mail-ai-key="${escapeHtml(f.key)}" ${(f.defaultOn ? state.mailAiSettings[f.key] !== false : Boolean(state.mailAiSettings[f.key])) ? "checked" : ""}>
+            ${settingsInfoPanel(`mail-ai-${f.key}`, f.desc)}
           </div>
         `).join("")}
       </div>`;
@@ -17227,41 +16930,19 @@ function renderContextSettingsDialog(kind) {
 
   if (kind === "admin-pages") {
     if (userGroup?.role !== "admin") return;
-    const pages = MANAGED_PAGES;
     elements.contextSettingsBody.innerHTML = `
-      <p class="muted-label" style="margin-bottom:10px;font-size:0.82rem">These pages are hidden for all users app-wide, regardless of household or personal settings.</p>
-      <div class="page-vis-card" role="group" aria-label="Globally enabled pages">
-        ${pages.map(({ key, label }) => `
-          <label class="page-vis-row">
-            <span class="page-vis-name">${escapeHtml(label)}</span>
-            <input type="checkbox" class="page-vis-cb" data-admin-page-visibility="${escapeHtml(key)}"
-              ${!adminDisabledPages.includes(key) ? "checked" : ""} />
-            <span class="page-vis-toggle" aria-hidden="true"></span>
-          </label>
-        `).join("")}
-      </div>
+      <p class="settings-panel-note">Turn a page off here and it's hidden for everyone, in every household.</p>
+      ${pageAccessListTemplate({ attr: "data-admin-page-visibility", isOn: (keys) => !keys.some((k) => adminDisabledPages.includes(k)) })}
     `;
     return;
   }
 
   if (kind === "pages") {
-    const pages = MANAGED_PAGES;
-    elements.contextSettingsBody.innerHTML = `
-      <div class="page-vis-card" role="group" aria-label="Enabled pages">
-        ${pages.map(({ key, label }) => {
-          const locked = !isPageEnabled(key);
-          return `
-            <label class="page-vis-row${locked ? " page-vis-row--locked" : ""}">
-              <span class="page-vis-name">${escapeHtml(label)}${locked ? ' <span class="page-vis-locked-note">restricted</span>' : ""}</span>
-              <input type="checkbox" class="page-vis-cb" data-page-visibility="${escapeHtml(key)}"
-                ${isPagePersonallyEnabled(key) ? "checked" : ""}
-                ${locked ? "disabled" : ""} />
-              <span class="page-vis-toggle" aria-hidden="true"></span>
-            </label>
-          `;
-        }).join("")}
-      </div>
-    `;
+    elements.contextSettingsBody.innerHTML = pageAccessListTemplate({
+      attr: "data-page-visibility",
+      isOn: (keys) => isPagePersonallyEnabled(keys[0]),
+      isLocked: (keys) => !isPageEnabled(keys[0]),
+    });
     return;
   }
 
@@ -17294,29 +16975,6 @@ function renderContextSettingsDialog(kind) {
       if (e.target.checked) scheduleAdSkips(podcastCurrentChapters, podcastAudio);
       else clearAdSkipTimers();
     });
-    return;
-  }
-
-  if (kind === "location-services") {
-    elements.contextSettingsBody.innerHTML = `
-      <div class="location-sharing-setting">
-        <label>
-          <input type="checkbox" data-location-sharing ${state.locationSharingEnabled ? "checked" : ""} />
-          Enable location services
-        </label>
-        <p class="location-services-hint">Show nearby results when searching for stores and restaurants.</p>
-        ${state.locationSharingEnabled ? `
-          <div class="location-status-row">
-            <span class="location-status-text" id="locationStatusText">${
-              getGroceryStoreSearchLocation()
-                ? `<span class="location-status-ok">&#10003; Active — ${getGroceryStoreSearchLocation().latitude.toFixed(3)}°, ${getGroceryStoreSearchLocation().longitude.toFixed(3)}°</span>`
-                : `<span class="location-status-pending">Tap Test to verify</span>`
-            }</span>
-            <button class="secondary-btn compact-btn" type="button" data-context-settings-action="test-location">Test</button>
-          </div>
-        ` : ""}
-      </div>
-    `;
     return;
   }
 
@@ -17575,6 +17233,8 @@ function renderContextSettingsDialog(kind) {
   }
 
   if (kind === "family") {
+    // Household (Luke, 2026-10-14): a read-only list with a small Edit button
+    // (like the profile), names that always fit, and one accurate page list.
     const config = normalizeMealPlanConfig(state.mealPlanConfig);
     const existingNames = new Set(config.members.map((m) => m.label.trim().toLowerCase()));
     const autoMembers = groupMembers
@@ -17583,105 +17243,97 @@ function renderContextSettingsDialog(kind) {
     const allMembers = [...config.members, ...autoMembers];
     const currentUserId = authSession?.user?.id;
     const viewerIsAdmin = userGroup?.role === "admin";
-    const memberRowsHtml = allMembers.map((m) => {
+    const canManageHousehold = viewerIsAdmin || userGroup?.role === "hoh";
+    const roleLabel = (r) => r === "admin" ? "Admin" : r === "hoh" ? "HoH" : r === "member" ? "Member" : "";
+    const roleOf = (m) => (m.linkedUserId ? groupMembers.find((gm) => gm.user_id === m.linkedUserId)?.role : null) || null;
+    const ageText = (dob) => {
+      const d = dob ? new Date(`${dob}T00:00:00`) : null;
+      if (!d || Number.isNaN(d.getTime())) return "";
+      const now = new Date();
+      let age = now.getFullYear() - d.getFullYear();
+      if (now < new Date(now.getFullYear(), d.getMonth(), d.getDate())) age -= 1;
+      return age >= 0 ? `Age ${age}` : "";
+    };
+
+    const viewRow = (m) => {
+      const role = roleOf(m);
+      const meta = [ageText(m.dob), m.linkedUserId && m.linkedUserId === currentUserId ? "You" : ""].filter(Boolean).join(" · ");
+      return `
+        <li class="household-member">
+          <span class="household-member-name">${escapeHtml(m.label)}</span>
+          ${meta ? `<span class="household-member-meta">${escapeHtml(meta)}</span>` : ""}
+          ${role ? `<span class="household-role household-role--${escapeHtml(role)}">${escapeHtml(roleLabel(role))}</span>` : ""}
+        </li>`;
+    };
+    const editRow = (m) => {
       const isLinked = !!m.linkedUserId;
       const isCurrentUser = currentUserId && m.linkedUserId === currentUserId;
-      const groupMember = isLinked ? groupMembers.find(gm => gm.user_id === m.linkedUserId) : null;
-      const memberRole = groupMember?.role || null;
-
-      let roleHtml = "";
-      if (isLinked) {
-        if (isCurrentUser && memberRole === "admin") {
-          roleHtml = `<span class="member-role-badge member-role-badge--admin">Admin</span>`;
-        } else if (viewerIsAdmin && !isCurrentUser && memberRole && memberRole !== "admin") {
-          roleHtml = `
-            <select class="member-role-select" data-member-role title="Role">
-              <option value="hoh" ${memberRole === "hoh" ? "selected" : ""}>HoH</option>
-              <option value="member" ${memberRole === "member" ? "selected" : ""}>Member</option>
-            </select>`;
-        } else if (memberRole) {
-          const badgeClass = memberRole === "admin" ? "member-role-badge--admin" : memberRole === "hoh" ? "member-role-badge--hoh" : "";
-          const roleLabel = memberRole === "admin" ? "Admin" : memberRole === "hoh" ? "HoH" : "Member";
-          roleHtml = `<span class="member-role-badge ${badgeClass}">${escapeHtml(roleLabel)}</span>`;
-        }
-      }
-
+      const role = roleOf(m);
+      const roleControl = viewerIsAdmin && isLinked && !isCurrentUser && role && role !== "admin"
+        ? `<select class="config-input household-role-select" data-member-role aria-label="Role">
+            <option value="hoh" ${role === "hoh" ? "selected" : ""}>HoH</option>
+            <option value="member" ${role === "member" ? "selected" : ""}>Member</option>
+          </select>`
+        : (role ? `<span class="household-role household-role--${escapeHtml(role)}">${escapeHtml(roleLabel(role))}</span>` : "");
       return `
-        <div class="config-row" data-member-row data-member-id="${escapeHtml(m.id)}" data-member-linked-user-id="${escapeHtml(m.linkedUserId || "")}">
-          <input type="text" class="config-input${isLinked ? " config-input-readonly" : ""}" value="${escapeHtml(m.label)}" placeholder="Name" ${isLinked ? "readonly" : ""} />
-          <input type="date" class="config-input config-dob-input${isLinked ? " config-input-readonly" : ""}" data-member-dob value="${escapeHtml(m.dob || "")}" title="${isLinked ? "Edit via profile" : "Date of birth"}" ${isLinked ? "readonly" : ""} />
-          ${roleHtml}
-          ${isCurrentUser ? "" : `
-            <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
+        <div class="household-edit-row" data-member-row data-member-id="${escapeHtml(m.id)}" data-member-linked-user-id="${escapeHtml(m.linkedUserId || "")}">
+          <div class="household-edit-line">
+            <input type="text" class="config-input household-name-input" value="${escapeHtml(m.label)}" placeholder="Name" aria-label="Name" ${isLinked ? "readonly title=\"Change in their profile\"" : ""} />
+            ${isCurrentUser ? "" : `<button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove ${escapeHtml(m.label)}">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
-          `}
-        </div>
-      `;
-    }).join("");
+            </button>`}
+          </div>
+          <div class="household-edit-line">
+            <input type="date" class="config-input household-dob-input" data-member-dob value="${escapeHtml(m.dob || "")}" aria-label="Birthday" ${isLinked ? "readonly title=\"Change in their profile\"" : ""} />
+            ${roleControl}
+          </div>
+        </div>`;
+    };
+
+    const membersHtml = householdEditMode ? `
+      <div class="household-head"><p class="settings-subheading">Members</p></div>
+      <div class="household-edit-list" data-family-members-list>${allMembers.map(editRow).join("")}</div>
+      <button class="text-btn household-add-btn" type="button" data-context-settings-action="add-family-member">+ Add member</button>
+      <div class="household-edit-actions">
+        <button class="secondary-btn" type="button" data-context-settings-action="cancel-family-edit">Cancel</button>
+        <button class="primary-btn" type="button" data-context-settings-action="save-family-members">Save</button>
+      </div>` : `
+      <div class="household-head">
+        <p class="settings-subheading">Members</p>
+        <button class="text-btn household-edit-btn" type="button" data-context-settings-action="edit-family">Edit</button>
+      </div>
+      <ul class="household-list">${allMembers.map(viewRow).join("")}</ul>`;
 
     const groupHtml = (() => {
-      if (!authSession?.access_token) return "";
+      if (!authSession?.access_token || householdEditMode) return "";
       if (!userGroup) return `
         <div class="family-group-section">
           <p class="settings-subheading">Shared account</p>
-          <p style="margin-bottom:10px;font-size:0.9rem;">Set up a family group to share this app with others.</p>
+          <p class="settings-panel-note">Set up a family group to share this app with others.</p>
           <button class="secondary-btn" type="button" data-context-settings-action="setup-group">Set Up Group</button>
         </div>
       `;
-      const isAdmin = userGroup.role === "admin";
-      const canManageHousehold = isAdmin || userGroup.role === "hoh";
-      const pages = MANAGED_PAGES;
-      const roleLabel = (r) => r === "admin" ? "Admin" : r === "hoh" ? "HoH" : "Member";
-      const accountMembersHtml = groupMembers.map((m) => `
-        <div class="config-row group-member-row">
-          <span>${escapeHtml(m.display_name || m.user_id)}</span>
-          <span class="muted-label">${escapeHtml(roleLabel(m.role))}</span>
-        </div>
-      `).join("");
       return `
-        <div class="family-group-section">
-          <p class="settings-subheading">Shared account</p>
-          <div class="group-members-list">${accountMembersHtml}</div>
-          ${isAdmin ? `
-            <div class="group-invite-form">
-              <p class="settings-subheading">Invite someone</p>
-              <div class="inline-form">
-                <input type="email" id="groupInviteEmail" placeholder="email@example.com" autocomplete="email" />
-                <button class="secondary-btn" type="button" data-context-settings-action="send-invite">Invite</button>
-              </div>
-              <p class="import-status" id="groupInviteStatus"></p>
+        ${viewerIsAdmin ? `
+          <div class="family-group-section">
+            <p class="settings-subheading">Invite someone</p>
+            <div class="household-invite">
+              <input type="email" class="config-input" id="groupInviteEmail" placeholder="email@example.com" autocomplete="email" />
+              <button class="secondary-btn" type="button" data-context-settings-action="send-invite">Invite</button>
             </div>
-          ` : ""}
-          ${canManageHousehold ? `
-            <div class="group-page-access">
-              <p class="settings-subheading">Members can access</p>
-              ${pages.map((p) => `
-                <label class="group-page-toggle-row">
-                  <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
-                    ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
-                  ${escapeHtml(p.label)}
-                </label>
-              `).join("")}
-            </div>
-          ` : ""}
-        </div>
+            <p class="import-status" id="groupInviteStatus"></p>
+          </div>
+        ` : ""}
+        ${canManageHousehold ? `
+          <div class="family-group-section">
+            <p class="settings-subheading">Members can access</p>
+            ${pageAccessListTemplate({ attr: "data-group-page", isOn: (keys) => !keys.some((k) => (userGroup.disabled_pages || []).includes(k)) })}
+          </div>
+        ` : ""}
       `;
     })();
 
-    elements.contextSettingsBody.innerHTML = `
-      <div class="family-members-inline-section">
-        <p class="settings-subheading">App Name</p>
-        <input type="text" class="config-input" id="contextAppNameInput" value="${escapeHtml(state.appName || "")}" placeholder="Live" maxlength="32" autocomplete="off" style="margin-bottom:4px" />
-        <p class="settings-subheading">Members</p>
-        <div data-family-members-list>${memberRowsHtml}</div>
-        <div class="family-members-inline-actions">
-          <button class="secondary-btn" type="button" data-context-settings-action="add-family-member">+ Add</button>
-          <button class="primary-btn" type="button" data-context-settings-action="save-family-members">Save</button>
-        </div>
-      </div>
-      ${groupHtml}
-    `;
+    elements.contextSettingsBody.innerHTML = `<div class="household-panel">${membersHtml}${groupHtml}</div>`;
     elements.contextSettingsBody.querySelectorAll("[data-remove-member]").forEach((btn) => {
       btn.addEventListener("click", () => btn.closest("[data-member-row]").remove());
     });
@@ -17859,8 +17511,6 @@ function handleContextSettingsChange(event) {
   if (pageVisibilityInput) setPageVisibility(pageVisibilityInput.dataset.pageVisibility, pageVisibilityInput.checked);
   const adminPageInput = event.target.closest?.("[data-admin-page-visibility]");
   if (adminPageInput) setAdminDisabledPage(adminPageInput.dataset.adminPageVisibility, !adminPageInput.checked);
-  const locationSharingInput = event.target.closest?.("[data-location-sharing]");
-  if (locationSharingInput) setLocationSharingEnabled(locationSharingInput.checked, locationSharingInput);
   const recentWindowSelect = event.target.closest?.("[data-podcast-recent-window]");
   if (recentWindowSelect) {
     state.podcastRecentWindow = recentWindowSelect.value;
@@ -17892,6 +17542,8 @@ function handleContextSettingsAction(event) {
     refreshFinanceSettingsIfOpen();
     return;
   }
+  const infoBtn = event.target.closest?.("[data-settings-info]");
+  if (infoBtn) { toggleSettingsInfo(infoBtn); return; }
   const button = event.target.closest?.("[data-context-settings-action]");
   if (!button) return;
   const action = button.dataset.contextSettingsAction;
@@ -17901,18 +17553,14 @@ function handleContextSettingsAction(event) {
   };
   const actions = {
     "calendars": () => closeAndRun(openPlanCalDialog),
-    "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
-    "notifications": () => renderContextSettingsDialog("notifications"),
     "display": () => renderContextSettingsDialog("display"),
-    "mail-reading": () => renderContextSettingsDialog("mail-reading"),
     "voice": () => renderContextSettingsDialog("voice"),
-    "backup-health": () => closeAndRun(openBackupHealthDialog),
-    "restore-backup": () => closeAndRun(openRestoreDialog),
+    "restore-backup": () => openFromSettingsWithBack(elements.restoreDialog, openRestoreDialog),
     "export-data": () => closeAndRun(exportMyData),
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
-    "admin-users": () => closeAndRun(openAdminUsersDialog),
-    "admin-households": () => closeAndRun(openAdminHouseholdsDialog),
+    "admin-users": () => openFromSettingsWithBack(elements.adminUsersDialog, openAdminUsersDialog),
+    "admin-households": () => openFromSettingsWithBack(elements.adminHouseholdsDialog, openAdminHouseholdsDialog),
     "auto-rules": () => closeAndRun(openAutoRulesDialog),
     "tags": () => closeAndRun(openTagsDialog),
     "grocery-list": () => closeAndRun(openGroceryStoresDialog),
@@ -17924,16 +17572,14 @@ function handleContextSettingsAction(event) {
     "workout-library": () => closeAndRun(openWorkoutLibraryDialog),
     "workout-logs": () => closeAndRun(openWorkoutLogsDialog),
     "play-auto-rules": () => closeAndRun(openPlayAutoRulesDialog),
-    "family-members": () => renderContextSettingsDialog("family"),
+    "family-members": () => { householdEditMode = false; renderContextSettingsDialog("family"); },
     "meal-plan-settings": () => closeAndRun(openMealPlanSettingsDialog),
-    "test-location": () => testLocationAccess(),
-    "family": () => renderContextSettingsDialog("family"),
+    "family": () => { householdEditMode = false; renderContextSettingsDialog("family"); },
     "pages": () => renderContextSettingsDialog("pages"),
-    "location-services": () => renderContextSettingsDialog("location-services"),
     "ai-log": () => renderContextSettingsDialog("ai-log"),
     "assistant": () => renderContextSettingsDialog("assistant"),
-    "import-ai": () => closeAndRun(openImportAiDialog),
     "api-usage": () => renderContextSettingsDialog("api-usage"),
+    "beta": () => renderContextSettingsDialog("beta"),
     "paper-signin": () => signInToArticlePaper(SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper)),
     "paper-signout": async () => {
       const paper = SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper);
@@ -17968,23 +17614,27 @@ function handleContextSettingsAction(event) {
       if (!list) return;
       const id = createId("member");
       const div = document.createElement("div");
-      div.className = "config-row";
+      div.className = "household-edit-row";
       div.setAttribute("data-member-row", "");
       div.setAttribute("data-member-id", id);
       div.innerHTML = `
-        <input type="text" class="config-input" value="" placeholder="Name" />
-        <input type="date" class="config-input config-dob-input" data-member-dob value="" title="Date of birth" />
-        <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </button>
+        <div class="household-edit-line">
+          <input type="text" class="config-input household-name-input" value="" placeholder="Name" aria-label="Name" />
+          <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="household-edit-line">
+          <input type="date" class="config-input household-dob-input" data-member-dob value="" aria-label="Birthday" />
+        </div>
       `;
       div.querySelector("[data-remove-member]").addEventListener("click", () => div.remove());
       list.appendChild(div);
       div.querySelector("input").focus();
     },
+    "edit-family": () => { householdEditMode = true; renderContextSettingsDialog("family"); },
+    "cancel-family-edit": () => { householdEditMode = false; renderContextSettingsDialog("family"); },
     "save-family-members": () => {
-      const appNameInput = document.getElementById("contextAppNameInput");
-      if (appNameInput) state.appName = appNameInput.value.trim();
       const rows = elements.contextSettingsBody.querySelectorAll("[data-member-row]");
       const newMembers = [];
       rows.forEach((row) => {
@@ -18002,7 +17652,7 @@ function handleContextSettingsAction(event) {
       applyMealPlanConfigChange(oldConfig, newConfig);
       persist();
       render();
-      if (activeAppArea === "home") setPageTitle(getAppName());
+      householdEditMode = false;
       renderContextSettingsDialog("family");
     },
     "setup-group": () => { elements.contextSettingsDialog.close(); openGroupSetupDialog(); },
@@ -18116,53 +17766,6 @@ function openTagsDialog(event) {
 
 
 
-
-function testLocationAccess() {
-  const statusEl = document.querySelector("#locationStatusText");
-  if (statusEl) statusEl.innerHTML = `<span class="location-status-pending">&#8987; Requesting…</span>`;
-  if (!navigator.geolocation) {
-    if (statusEl) statusEl.innerHTML = `<span class="location-status-error">&#10007; Geolocation not supported in this browser.</span>`;
-    return;
-  }
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      const { latitude, longitude } = position.coords;
-      setGroceryStoreSearchLocation({ latitude, longitude });
-      setGroceryStoreLocationPromise(null);
-      if (statusEl) statusEl.innerHTML = `<span class="location-status-ok">&#10003; ${latitude.toFixed(4)}&deg;, ${longitude.toFixed(4)}&deg;</span>`;
-    },
-    (error) => {
-      setGroceryStoreSearchLocation(null);
-      setGroceryStoreLocationPromise(null);
-      const msgs = {
-        1: "&#10007; Permission denied. Check browser settings and System Settings &#8594; Privacy &amp; Security &#8594; Location Services.",
-        2: "&#10007; Position unavailable. Make sure Location Services is enabled for this browser.",
-        3: "&#10007; Request timed out. Try again."
-      };
-      if (statusEl) statusEl.innerHTML = `<span class="location-status-error">${msgs[error.code] || "&#10007; Could not get location."}</span>`;
-      if (error.code === 1) {
-        state.locationSharingEnabled = false;
-        const cb = document.querySelector("[data-location-sharing]");
-        if (cb) cb.checked = false;
-        persist();
-      }
-    },
-    { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
-  );
-}
-
-function setLocationSharingEnabled(enabled, input) {
-  if (!enabled) {
-    state.locationSharingEnabled = false;
-    setGroceryStoreSearchLocation(null);
-    setGroceryStoreLocationPromise(null);
-    persist();
-    return;
-  }
-  state.locationSharingEnabled = true;
-  persist();
-  acquireGroceryStoreSearchLocation({ settingsInput: input });
-}
 
 
 
@@ -18350,210 +17953,7 @@ const COMMON_TIMEZONES = [
   { value: "UTC", label: "UTC" },
 ];
 
-function populateEmailScheduleTimezones(selectEl, currentTz) {
-  const detected = currentTz || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const inList = COMMON_TIMEZONES.some((tz) => tz.value === detected);
-  selectEl.innerHTML = "";
-  if (!inList) {
-    const opt = document.createElement("option");
-    opt.value = detected;
-    opt.textContent = detected;
-    selectEl.appendChild(opt);
-  }
-  COMMON_TIMEZONES.forEach(({ value, label }) => {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = label;
-    selectEl.appendChild(opt);
-  });
-  selectEl.value = detected;
-}
-
-function saveEmailScheduleToState() {
-  if (!state.weeklyEmailSettings) state.weeklyEmailSettings = defaultWeeklyEmailSettings();
-  const sched = state.weeklyEmailSettings.emailSchedule || {};
-  sched.enabled = elements.emailScheduleEnabled.checked;
-  sched.time = elements.emailScheduleTime.value || "08:00";
-  sched.timezone = elements.emailScheduleTimezone.value;
-  sched.days = [...elements.emailScheduleSection.querySelectorAll(".email-day-btn.is-on")].map((btn) => btn.dataset.day);
-  state.weeklyEmailSettings.emailSchedule = sched;
-  persist();
-}
-
-async function openWeeklyEmailDialog(event) {
-  event?.stopPropagation();
-  closeSettingsMenu();
-  elements.weeklyEmailSetup.hidden = true;
-  elements.weeklyEmailPreviewArea.hidden = true;
-  elements.weeklyEmailPlaceholder.hidden = false;
-  elements.weeklyEmailNotes.value = "";
-  elements.sendWeeklyEmailBtn.disabled = true;
-
-  const sched = normalizeEmailSchedule(state.weeklyEmailSettings?.emailSchedule);
-  elements.emailScheduleEnabled.checked = sched.enabled;
-  elements.emailScheduleDetails.hidden = !sched.enabled;
-  const currentTz = sched.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  populateEmailScheduleTimezones(elements.emailScheduleTimezone, currentTz);
-  elements.emailScheduleTime.value = sched.time;
-  elements.emailScheduleSection.querySelectorAll(".email-day-btn").forEach((btn) => {
-    const on = sched.days.includes(btn.dataset.day);
-    btn.classList.toggle("is-on", on);
-    btn.setAttribute("aria-pressed", on);
-  });
-
-  elements.weeklyEmailDialog.showModal();
-  try {
-    const res = await fetch("/api/weekly-email", { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
-    const cfg = await res.json();
-    const missing = [];
-    if (!cfg.hasAnthropicKey) missing.push("ANTHROPIC_API_KEY");
-    if (cfg.hasResendKey === false) missing.push("RESEND_API_KEY");
-    if (cfg.hasEmailUser === false) missing.push("EMAIL_USER");
-    if (cfg.hasEmailPassword === false) missing.push("EMAIL_APP_PASSWORD");
-    if (missing.length) {
-      const location = canUseLocalBackend() ? ".env file" : "Netlify environment variables";
-      elements.weeklyEmailSetup.querySelector(".weekly-email-setup-msg").textContent =
-        `Add to your ${location}: ${missing.join(", ")}`;
-      elements.weeklyEmailSetup.hidden = false;
-      elements.previewWeeklyEmailBtn.disabled = true;
-    } else {
-      elements.previewWeeklyEmailBtn.disabled = false;
-    }
-  } catch (e) {
-    elements.weeklyEmailSetup.querySelector(".weekly-email-setup-msg").textContent = "Could not reach local server.";
-    elements.weeklyEmailSetup.hidden = false;
-    elements.previewWeeklyEmailBtn.disabled = true;
-  }
-}
-
-async function generateWeeklyEmailPreview() {
-  elements.previewWeeklyEmailBtn.disabled = true;
-  elements.previewWeeklyEmailBtn.textContent = "Generating…";
-  elements.weeklyEmailPlaceholder.hidden = true;
-  elements.weeklyEmailPreviewArea.hidden = false;
-  elements.weeklyEmailPreviewFrame.srcdoc = "<p style='font-family:sans-serif;padding:24px;color:#888'>Generating your email with Claude…</p>";
-  try {
-    const notes = elements.weeklyEmailNotes.value.trim();
-    const res = await fetch("/api/weekly-email", { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ preview: true, notes }) });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
-    const { html } = await res.json();
-    elements.weeklyEmailPreviewFrame.srcdoc = html;
-    elements.sendWeeklyEmailBtn.disabled = false;
-  } catch (err) {
-    elements.weeklyEmailPreviewFrame.srcdoc = `<p style='font-family:sans-serif;padding:24px;color:#c00'>Error: ${err.message}</p>`;
-  } finally {
-    elements.previewWeeklyEmailBtn.disabled = false;
-    elements.previewWeeklyEmailBtn.textContent = "Regenerate";
-  }
-}
-
-async function sendWeeklyEmail() {
-  elements.sendWeeklyEmailBtn.disabled = true;
-  elements.sendWeeklyEmailBtn.textContent = "Sending…";
-  try {
-    const notes = elements.weeklyEmailNotes.value.trim();
-    const res = await fetch("/api/weekly-email", { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ preview: false, notes }) });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
-    const { to } = await res.json();
-    elements.sendWeeklyEmailBtn.textContent = `Sent to ${to}`;
-    setTimeout(() => elements.weeklyEmailDialog.close(), 2000);
-  } catch (err) {
-    alert(`Failed to send: ${err.message}`);
-    elements.sendWeeklyEmailBtn.disabled = false;
-    elements.sendWeeklyEmailBtn.textContent = "Send email";
-  }
-}
-
 let interviewQuestions = [];
-
-function openEmailPrefsEditor() {
-  interviewQuestions = [];
-  elements.emailInterviewTitle.textContent = "Standing preferences";
-  elements.emailInterviewStep1.hidden = true;
-  elements.emailInterviewStep2.hidden = false;
-  elements.emailInterviewBackBtn.hidden = true;
-  elements.emailInterviewResult.value = state.emailPrefs || "";
-  elements.emailInterviewNextBtn.textContent = "Save preferences";
-  elements.emailInterviewNextBtn.disabled = false;
-  elements.emailInterviewDialog.showModal();
-}
-
-async function openEmailInterviewDialog() {
-  interviewQuestions = [];
-  elements.emailInterviewTitle.textContent = "Tune preferences";
-  elements.emailInterviewLoading.hidden = false;
-  elements.emailInterviewForm.hidden = true;
-  elements.emailInterviewForm.innerHTML = "";
-  elements.emailInterviewStep1.hidden = false;
-  elements.emailInterviewStep2.hidden = true;
-  elements.emailInterviewBackBtn.hidden = true;
-  elements.emailInterviewNextBtn.textContent = "Submit answers";
-  elements.emailInterviewNextBtn.disabled = true;
-  elements.emailInterviewDialog.showModal();
-  try {
-    const res = await fetch("/api/email-interview", { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ step: "questions" }) });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
-    const { questions } = await res.json();
-    interviewQuestions = questions;
-    elements.emailInterviewForm.innerHTML = questions.map((q, i) => `
-      <div class="email-interview-question">
-        <label for="eiQ${i}">${i + 1}. ${q}</label>
-        <textarea id="eiQ${i}" class="email-interview-answer" rows="2" placeholder="Your answer…" data-qi="${i}"></textarea>
-      </div>`).join("");
-    elements.emailInterviewForm.querySelectorAll("textarea").forEach((ta) => ta.addEventListener("input", checkInterviewAnswers));
-    elements.emailInterviewLoading.hidden = true;
-    elements.emailInterviewForm.hidden = false;
-  } catch (err) {
-    elements.emailInterviewLoading.textContent = `Error: ${err.message}`;
-  }
-}
-
-function checkInterviewAnswers() {
-  const answers = [...elements.emailInterviewForm.querySelectorAll("textarea")].map((t) => t.value.trim());
-  elements.emailInterviewNextBtn.disabled = answers.every((a) => !a);
-}
-
-async function emailInterviewNext() {
-  if (!elements.emailInterviewStep2.hidden) {
-    await emailInterviewSave();
-    return;
-  }
-  const answers = [...elements.emailInterviewForm.querySelectorAll("textarea")].map((t) => t.value.trim());
-  elements.emailInterviewNextBtn.disabled = true;
-  elements.emailInterviewNextBtn.textContent = "Generating…";
-  try {
-    const res = await fetch("/api/email-interview", { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ step: "update", questions: interviewQuestions, answers }) });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
-    const { prefs } = await res.json();
-    elements.emailInterviewResult.value = prefs;
-    elements.emailInterviewStep1.hidden = true;
-    elements.emailInterviewStep2.hidden = false;
-    elements.emailInterviewBackBtn.hidden = false;
-    elements.emailInterviewNextBtn.textContent = "Save preferences";
-    elements.emailInterviewNextBtn.disabled = false;
-  } catch (err) {
-    alert(`Error: ${err.message}`);
-    elements.emailInterviewNextBtn.textContent = "Submit answers";
-    elements.emailInterviewNextBtn.disabled = false;
-  }
-}
-
-function emailInterviewGoBack() {
-  elements.emailInterviewStep1.hidden = false;
-  elements.emailInterviewStep2.hidden = true;
-  elements.emailInterviewBackBtn.hidden = true;
-  elements.emailInterviewNextBtn.textContent = "Submit answers";
-  checkInterviewAnswers();
-}
-
-async function emailInterviewSave() {
-  elements.emailInterviewNextBtn.disabled = true;
-  elements.emailInterviewNextBtn.textContent = "Saving…";
-  state.emailPrefs = elements.emailInterviewResult.value.trim();
-  persist();
-  elements.emailInterviewNextBtn.textContent = "Saved!";
-  setTimeout(() => elements.emailInterviewDialog.close(), 1200);
-}
 
 async function fetchAdminData() {
   if (!authSession?.access_token) throw new Error("Not signed in.");
@@ -18618,49 +18018,6 @@ async function openAdminHouseholdsDialog() {
         `).join("")}
       </tbody>
     </table>
-  `;
-}
-
-function openBackupHealthDialog(event) {
-  event?.stopPropagation();
-  closeSettingsMenu();
-  elements.backupHealthContent.textContent = "Checking backups...";
-  elements.backupHealthDialog.showModal();
-  loadBackupHealth();
-}
-
-async function loadBackupHealth() {
-  if (!canUseLocalBackend()) {
-    elements.backupHealthContent.textContent = "Backup health is only available from localhost on your Mac.";
-    return;
-  }
-
-  try {
-    const response = await fetch("/api/backup", { cache: "no-store" });
-    if (!response.ok) throw new Error(`Backup check failed with status ${response.status}`);
-    elements.backupHealthContent.innerHTML = backupHealthTemplate(await response.json());
-  } catch (error) {
-    elements.backupHealthContent.textContent = `${error.message || "Could not check backups."} Restart the local helper if this continues.`;
-  }
-}
-
-function backupHealthTemplate(status) {
-  const latest = status.latestBackup;
-  const validation = status.latestValidation;
-  const backupTime = latest ? new Date(latest.modifiedAt).toLocaleString() : "No backups yet";
-  const checksumText = validation?.checksumMatches === null
-    ? "Not available for older backup"
-    : validation?.checksumMatches ? "Matched" : "Did not match";
-  return `
-    <div class="restore-preview-card">
-      <strong>${validation?.ok ? "Latest backup is readable" : "Backup needs attention"}</strong>
-      <span>Folder: ${escapeHtml(status.folder || "")}</span>
-      <span>Backups kept: ${status.backupCount || 0} of ${status.maxBackups || 5}</span>
-      <span>Latest backup: ${escapeHtml(backupTime)}</span>
-      ${latest ? `<span>Latest file: ${escapeHtml(latest.fileName)}</span>` : ""}
-      ${validation ? `<span>Recipes: ${validation.recipeCount || 0}</span><span>Folders: ${validation.folderCount || 0}</span><span>Checksum: ${escapeHtml(checksumText)}</span>` : ""}
-      ${validation?.error ? `<span>${escapeHtml(validation.error)}</span>` : ""}
-    </div>
   `;
 }
 
@@ -19028,9 +18385,7 @@ function restoreUserDataPreview(backupState) {
     ingredientOptions: missingRestoreIngredientOptions(backupState),
     checkedGroceries: missingRestoreCheckedGroceries(backupState),
     pantryItems: missingNormalizedStrings(Array.isArray(backupState?.pantry) ? backupState.pantry : [], state.pantry || []),
-    weeklyEmailSettings: shouldRestoreWeeklyEmailSettings(backupState),
     themeMode: shouldRestoreThemeMode(backupState),
-    locationSharingEnabled: shouldRestoreLocationSharing(backupState),
     pageVisibility: shouldRestorePageVisibility(backupState)
   };
 }
@@ -19068,9 +18423,7 @@ function restoreUserDataChangeCount(userData) {
     + ingredientCount
     + userData.checkedGroceries.length
     + userData.pantryItems.length
-    + (userData.weeklyEmailSettings ? 1 : 0)
     + (userData.themeMode ? 1 : 0)
-    + (typeof userData.locationSharingEnabled === "boolean" ? 1 : 0)
     + (userData.pageVisibility ? 1 : 0);
 }
 
@@ -19398,19 +18751,9 @@ function missingRestoreCheckedGroceries(backupState) {
     .map(([key, value]) => ({ key, value }));
 }
 
-function shouldRestoreWeeklyEmailSettings(backupState) {
-  if (!backupState?.weeklyEmailSettings) return false;
-  return JSON.stringify(normalizeWeeklyEmailSettings(backupState.weeklyEmailSettings)) !== JSON.stringify(normalizeWeeklyEmailSettings(state.weeklyEmailSettings));
-}
-
 function shouldRestoreThemeMode(backupState) {
   if (!backupState?.themeMode) return false;
   return normalizeThemeMode(backupState.themeMode) !== normalizeThemeMode(state.themeMode);
-}
-
-function shouldRestoreLocationSharing(backupState) {
-  if (typeof backupState?.locationSharingEnabled !== "boolean") return null;
-  return backupState.locationSharingEnabled === state.locationSharingEnabled ? null : backupState.locationSharingEnabled;
 }
 
 function shouldRestorePageVisibility(backupState) {
@@ -19478,9 +18821,7 @@ function restoreUserDataSummary(userData) {
     ["Ingredient Options", ingredientCount],
     ["Checked Grocery States", userData.checkedGroceries.length],
     ["Pantry Items", userData.pantryItems.length],
-    ["Email Settings", userData.weeklyEmailSettings ? 1 : 0],
     ["Display Setting", userData.themeMode ? 1 : 0],
-    ["Location Setting", typeof userData.locationSharingEnabled === "boolean" ? 1 : 0],
     ["Page Visibility", userData.pageVisibility ? 1 : 0]
   ]
     .filter(([, count]) => count)
@@ -19860,20 +19201,9 @@ function mergeUserDataFromRestore(restore) {
     merged += data.pantryItems.length;
   }
 
-  if (data.weeklyEmailSettings) {
-    state.weeklyEmailSettings = normalizeWeeklyEmailSettings(restore.state.weeklyEmailSettings);
-    merged += 1;
-  }
-
   if (data.themeMode) {
     state.themeMode = normalizeThemeMode(restore.state.themeMode);
     applyThemeMode();
-    merged += 1;
-  }
-
-  if (typeof data.locationSharingEnabled === "boolean") {
-    state.locationSharingEnabled = Boolean(data.locationSharingEnabled);
-    setGroceryStoreSearchLocation(null);
     merged += 1;
   }
 

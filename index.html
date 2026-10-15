@@ -76,7 +76,7 @@
                 </svg>
               </button>
               <div class="app-menu" id="appMenu" hidden>
-                <button type="button" id="menuUserBtn">User</button>
+                <button type="button" id="menuUserBtn">User Profile</button>
                 <button type="button" id="generalSettingsMenuBtn">Settings</button>
                 <button type="button" id="menuAutoRulesBtn">Auto-Fill Rules</button>
                 <button type="button" id="menuInventoryRoomsBtn">Default Rooms</button>
@@ -1709,30 +1709,6 @@
 
       <dialog id="groceriesPageDialog"></dialog>
 
-      <dialog class="recipe-dialog import-ai-dialog" id="importAiDialog">
-        <div class="recipe-form">
-          <div class="dialog-head">
-            <h2>Import from AI Chat</h2>
-            <button class="icon-btn" id="closeImportAiDialogBtn" type="button" aria-label="Close">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-            </button>
-          </div>
-          <p class="import-ai-help">Talk through something with ChatGPT or Claude, then ask it to prepare a Live import. Give it these instructions once (paste at the start of the chat, or save as a custom instruction), then paste back whatever it gives you.</p>
-          <div class="import-ai-instructions-row">
-            <textarea id="importAiInstructions" readonly rows="6"></textarea>
-            <button class="secondary-btn" type="button" id="importAiCopyBtn">Copy instructions</button>
-          </div>
-          <textarea id="importAiPasteInput" class="import-ai-paste" rows="6" placeholder="Paste the JSON your AI chat gave you here…"></textarea>
-          <div class="dialog-actions">
-            <button class="secondary-btn" type="button" id="importAiParseBtn">Preview</button>
-          </div>
-          <div id="importAiPreview" class="import-ai-preview"></div>
-          <div class="dialog-actions" id="importAiApplyRow" hidden>
-            <span class="import-ai-status" id="importAiStatus"></span>
-            <button class="primary-btn" type="button" id="importAiApplyBtn">Add to Live</button>
-          </div>
-        </div>
-      </dialog>
 
       <dialog class="page-dialog" id="dailyDozenPageDialog">
         <section class="panel app-page-panel daily-dozen-page food-health-page" aria-label="Nutrition">
@@ -2076,7 +2052,12 @@
     <dialog class="recipe-dialog admin-data-dialog" id="adminUsersDialog">
       <div class="recipe-form">
         <div class="dialog-head">
-          <h2>Users</h2>
+          <div class="dialog-head-title-row">
+            <button class="icon-btn context-settings-back-btn" data-settings-back type="button" title="Back to Settings" aria-label="Back to Settings" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            </button>
+            <h2>Users</h2>
+          </div>
           <button class="icon-btn" id="closeAdminUsersBtn" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
@@ -2088,7 +2069,12 @@
     <dialog class="recipe-dialog admin-data-dialog" id="adminHouseholdsDialog">
       <div class="recipe-form">
         <div class="dialog-head">
-          <h2>Households</h2>
+          <div class="dialog-head-title-row">
+            <button class="icon-btn context-settings-back-btn" data-settings-back type="button" title="Back to Settings" aria-label="Back to Settings" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            </button>
+            <h2>Households</h2>
+          </div>
           <button class="icon-btn" id="closeAdminHouseholdsBtn" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
@@ -2759,142 +2745,8 @@
       </div>
     </dialog>
 
-    <dialog class="recipe-dialog auth-dialog" id="backupHealthDialog">
-      <div class="recipe-form">
-        <div class="dialog-head">
-          <div>
-            <p class="muted-label">Safety</p>
-            <h2>Backup Health</h2>
-          </div>
-          <button class="icon-btn" id="closeBackupHealthBtn" type="button" title="Close" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-          </button>
-        </div>
-        <div class="restore-preview" id="backupHealthContent">Checking backups...</div>
-        <div class="dialog-actions">
-          <span></span>
-          <div>
-            <button class="secondary-btn" type="button" id="refreshBackupHealthBtn">Check again</button>
-            <button class="primary-btn" type="button" id="doneBackupHealthBtn">Done</button>
-          </div>
-        </div>
-      </div>
-    </dialog>
 
-    <dialog class="recipe-dialog weekly-email-dialog" id="weeklyEmailDialog">
-      <div class="recipe-form">
-        <div class="dialog-head">
-          <div>
-            <h2>Email</h2>
-          </div>
-          <button class="icon-btn" id="closeWeeklyEmailBtn" type="button" title="Close" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-          </button>
-        </div>
-        <div class="weekly-email-body">
-          <div id="weeklyEmailSetup" class="weekly-email-setup" hidden>
-            <p class="weekly-email-setup-msg"></p>
-          </div>
-          <div id="emailScheduleSection" class="email-schedule-section">
-            <label class="email-schedule-toggle-label">
-              Schedule automatic sends
-              <input type="checkbox" id="emailScheduleEnabled" />
-            </label>
-            <div id="emailScheduleDetails" class="email-schedule-details" hidden>
-              <div class="email-schedule-days-row">
-                <button type="button" class="email-day-btn" data-day="sun" aria-pressed="false" aria-label="Sunday">
-                  <span class="email-day-circle"></span>
-                  <span class="email-day-name"><span class="email-day-full">Sunday</span><span class="email-day-short">Sun</span><span class="email-day-letter">S</span></span>
-                </button>
-                <button type="button" class="email-day-btn" data-day="mon" aria-pressed="false" aria-label="Monday">
-                  <span class="email-day-circle"></span>
-                  <span class="email-day-name"><span class="email-day-full">Monday</span><span class="email-day-short">Mon</span><span class="email-day-letter">M</span></span>
-                </button>
-                <button type="button" class="email-day-btn" data-day="tue" aria-pressed="false" aria-label="Tuesday">
-                  <span class="email-day-circle"></span>
-                  <span class="email-day-name"><span class="email-day-full">Tuesday</span><span class="email-day-short">Tue</span><span class="email-day-letter">T</span></span>
-                </button>
-                <button type="button" class="email-day-btn" data-day="wed" aria-pressed="false" aria-label="Wednesday">
-                  <span class="email-day-circle"></span>
-                  <span class="email-day-name"><span class="email-day-full">Wednesday</span><span class="email-day-short">Wed</span><span class="email-day-letter">W</span></span>
-                </button>
-                <button type="button" class="email-day-btn" data-day="thu" aria-pressed="false" aria-label="Thursday">
-                  <span class="email-day-circle"></span>
-                  <span class="email-day-name"><span class="email-day-full">Thursday</span><span class="email-day-short">Thu</span><span class="email-day-letter">T</span></span>
-                </button>
-                <button type="button" class="email-day-btn" data-day="fri" aria-pressed="false" aria-label="Friday">
-                  <span class="email-day-circle"></span>
-                  <span class="email-day-name"><span class="email-day-full">Friday</span><span class="email-day-short">Fri</span><span class="email-day-letter">F</span></span>
-                </button>
-                <button type="button" class="email-day-btn" data-day="sat" aria-pressed="false" aria-label="Saturday">
-                  <span class="email-day-circle"></span>
-                  <span class="email-day-name"><span class="email-day-full">Saturday</span><span class="email-day-short">Sat</span><span class="email-day-letter">S</span></span>
-                </button>
-              </div>
-              <div class="email-schedule-time-row">
-                <label class="email-schedule-field-label" for="emailScheduleTime">Time</label>
-                <input type="time" id="emailScheduleTime" step="900" />
-                <label class="email-schedule-field-label" for="emailScheduleTimezone">Timezone</label>
-                <select id="emailScheduleTimezone" class="email-schedule-tz-select">
-                  <option value="">Detecting…</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div class="weekly-email-notes-row">
-            <label class="weekly-email-notes-label" for="weeklyEmailNotes">Notes for this email <span class="muted-label">(one-time context, not saved)</span></label>
-            <textarea id="weeklyEmailNotes" class="weekly-email-notes" rows="2" placeholder="e.g. I was travelling Mon–Wed, skip exercise judgement. The recipe imported Tuesday looks broken."></textarea>
-          </div>
-          <div id="weeklyEmailPreviewArea" class="weekly-email-preview-area" hidden>
-            <iframe id="weeklyEmailPreviewFrame" title="Email preview" sandbox="allow-same-origin"></iframe>
-          </div>
-          <div id="weeklyEmailPlaceholder" class="weekly-email-placeholder">
-            <p>Claude will read your app data and write a personal weekly review email for you.</p>
-            <p class="muted-label weekly-email-prefs-hint">Standing preferences: <button class="inline-link-btn" type="button" id="tuneEmailPrefsBtn">Tune with AI</button> · <button class="inline-link-btn" type="button" id="editEmailPrefsBtn">Edit directly</button></p>
-          </div>
-        </div>
-        <div class="dialog-actions">
-          <button class="secondary-btn" id="closeWeeklyEmailBtn2" type="button">Cancel</button>
-          <div class="weekly-email-actions-right">
-            <button class="secondary-btn" type="button" id="previewWeeklyEmailBtn">Generate preview</button>
-            <button class="primary-btn" type="button" id="sendWeeklyEmailBtn" disabled>Send email</button>
-          </div>
-        </div>
-      </div>
-    </dialog>
 
-    <dialog class="recipe-dialog email-interview-dialog" id="emailInterviewDialog">
-      <div class="recipe-form">
-        <div class="dialog-head">
-          <div>
-            <p class="muted-label">Email</p>
-            <h2 id="emailInterviewTitle">Tune preferences</h2>
-          </div>
-          <button class="icon-btn" id="closeEmailInterviewBtn" type="button" title="Close" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-          </button>
-        </div>
-        <div class="email-interview-body">
-          <div id="emailInterviewStep1" class="email-interview-step">
-            <div id="emailInterviewLoading" class="email-interview-loading">
-              <span>Generating questions…</span>
-            </div>
-            <form id="emailInterviewForm" class="email-interview-form" hidden></form>
-          </div>
-          <div id="emailInterviewStep2" class="email-interview-step" hidden>
-            <p class="muted-label" style="margin:0 0 8px">Your standing preferences — the AI reads these every time it writes your email.</p>
-            <textarea id="emailInterviewResult" class="email-interview-result" spellcheck="false" placeholder="No preferences saved yet. Type your preferences here, or close this and use &quot;Tune with AI&quot; to generate them from an interview.&#10;&#10;Example:&#10;• Keep the tone warm but concise — no more than 5 sentences per section&#10;• Always include the meal plan summary&#10;• Skip detailed exercise breakdowns, just a quick note on whether I hit my goals"></textarea>
-          </div>
-        </div>
-        <div class="dialog-actions" id="emailInterviewActions">
-          <button class="secondary-btn" type="button" id="emailInterviewBackBtn" hidden>Back</button>
-          <div style="margin-left:auto;display:flex;gap:8px">
-            <button class="secondary-btn" type="button" id="emailInterviewCancelBtn">Cancel</button>
-            <button class="primary-btn" type="button" id="emailInterviewNextBtn" disabled>Submit answers</button>
-          </div>
-        </div>
-      </div>
-    </dialog>
 
     <dialog class="recipe-dialog restore-dialog" id="trashDialog">
       <div class="recipe-form">
@@ -2921,9 +2773,14 @@
     <dialog class="recipe-dialog restore-dialog" id="restoreDialog">
       <div class="recipe-form">
         <div class="dialog-head">
-          <div>
-            <p class="muted-label">Backup</p>
-            <h2>Restore backup</h2>
+          <div class="dialog-head-title-row">
+            <button class="icon-btn context-settings-back-btn" data-settings-back type="button" title="Back to Settings" aria-label="Back to Settings" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            </button>
+            <div>
+              <p class="muted-label">Backup</p>
+              <h2>Restore backup</h2>
+            </div>
           </div>
           <button class="icon-btn" id="closeRestoreBtn" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
