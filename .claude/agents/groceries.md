@@ -78,6 +78,11 @@ almost all your work is there. Make focused changes to the Groceries domain only
   the returned-interface functions without updating callers.
 
 ## Luke's Shop decisions (keep them)
+- **List rows (2026-10-15):** a row is just checkbox · name · quantity · (i). Where the
+  item came from (Manual / Meal Plan / Checklist), the recipes that call for it, prep
+  ("chopped") and price estimate live behind the (i) panel (`groceryRowInfoLines`), never as
+  small print under the name. Quantity and (i) are implicit grid columns so a row without
+  them gives the name the full width (one line for "Toothbrush Head Replacement" on a phone).
 - **Under the list (2026-10-15):** no Receipts or "+" scan buttons — Receipts is in the
   gear menu and the receipt scanner is always in the header. The "Add to Next Stop"
   (urgent) toggle beside Add item is a **warning triangle** (exclamation mark), not a clock.

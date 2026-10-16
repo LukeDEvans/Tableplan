@@ -3802,6 +3802,13 @@ function setupDiagnostics() {
     trashSeed: (items) => { if (!localDevMode) return null; state.trashedRecipes = items.map(normalizeTrashedRecipe); return true; },
     trashIds: () => (localDevMode ? (state.trashedRecipes || []).map((t) => t.id) : null),
     openRecipeBox: () => { if (!localDevMode) return null; openRecipeBoxPage(); return true; },
+    // Shop (scripts/qa-settings.mjs): what a shopping-list row's (i) panel would say
+    // for a given row, with the first two real recipes standing in as its meal-plan sources.
+    groceryInfoFor: (row) => {
+      if (!localDevMode) return null;
+      const ids = activeRecipes().slice(0, 2).map((r) => r.id);
+      return _groceries.groceryRowInfoLines({ sources: ["mealplan"], sourceRecipeIds: ids, ...row });
+    },
     // Finance QA: one manual account in memory so the savings cards render (local dev only).
     financeSeedAccount: () => {
       if (!localDevMode) return null;

@@ -6291,9 +6291,13 @@ body[data-theme="dark"] .workout-pool-img {
 .grocery-item {
   position: relative;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) minmax(56px, auto) auto;
+  /* checkbox · name, then quantity and (i) as implicit columns that exist only
+     when the row has them, so names get the whole row (2026-10-15). */
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-auto-columns: auto;
+  grid-auto-flow: column;
   gap: 8px;
-  align-items: start;
+  align-items: center;
   padding: 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -6359,6 +6363,17 @@ body[data-theme="dark"] .workout-pool-img {
   font-weight: 850;
   white-space: nowrap;
 }
+.grocery-item.checked .grocery-info-btn { text-decoration: none; }
+.grocery-info-pop {
+  margin: 4px 2px 2px; padding: 9px 12px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-strong); color: var(--ink);
+  font-size: 0.84rem; line-height: 1.4;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.grocery-info-pop[hidden] { display: none; }
+.grocery-info-line { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; }
+.grocery-info-key { color: var(--muted); font-weight: 700; }
 
 .grocery-item.checked span {
   color: var(--muted);
