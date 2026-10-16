@@ -35,8 +35,17 @@ grocery catalog (`feedsPriceHistory`). Amazon-style email orders do not.
 ## Scanning
 
 One AI read per receipt. `scan-receipt` loads the household's budget categories
-(`_finance-categories.js`). The prompt (`receipt-scan.js`) asks for a `budgetCategory` on
-each line, and unknown keys are dropped. In the review and edit forms, each line has a
+(`_finance-categories.js`). The prompt (`receipt-scan.js`) asks for a budget category on
+each line, and unknown keys are dropped.
+
+The model's reply uses a **compact line shape** so long receipts finish inside Netlify's
+30 s limit (a 30+ line receipt timed out on 2026-10-16): short keys (`text`, `name`, `cat`,
+`qty`, `unit`, `price`, `disc`, `conf`), `qty`/`unit`/`disc` left out when they're the
+default, no unit price (the normalizer derives it from price ÷ qty), and the budget
+category as a list number `b` rather than the long `cat:<group>:<category>` key.
+`expandScanReceipt` maps it back to the record's field names (and still reads the old
+long shape). The AI call stops at about 26 s into the function and returns a 504 with a
+readable message instead of Netlify's bare 504. In the review and edit forms, each line has a
 budget-category picker. The header scanner (Camera / Photo) opens this same review.
 In the iPhone app, Camera uses the native document scanner.
 

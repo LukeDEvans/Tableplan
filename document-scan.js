@@ -70,17 +70,40 @@ async function scanDocument({ items, prompt, options = {} }) {
   const headers = { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" };
   if (options.betaHeader) headers["anthropic-beta"] = options.betaHeader;
 
-  const response = await fetch(ANTHROPIC_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model,
-      max_tokens: options.maxTokens || 4096,
-      temperature: 0,
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...blocks] }],
-    }),
-  });
-  const payload = await response.json().catch(() => ({}));
+  // Optional deadline: a caller on a time-limited host (Netlify cuts synchronous
+  // functions off at 30 s with a bare 504) passes timeoutMs so the user gets a
+  // real message instead. Abort errors carry code "SCAN_TIMEOUT".
+  const timeoutMs = Number(options.timeoutMs) || 0;
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  let response;
+  let payload;
+  try {
+    response = await fetch(ANTHROPIC_URL, {
+      method: "POST",
+      headers,
+      signal: controller?.signal,
+      body: JSON.stringify({
+        model,
+        max_tokens: options.maxTokens || 4096,
+        temperature: 0,
+        messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...blocks] }],
+      }),
+    });
+    payload = await response.json().catch((error) => {
+      if (controller?.signal.aborted) throw error;
+      return {};
+    });
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      const timeout = new Error(options.timeoutMessage || `${options.label || "Scan"} took too long. Try again.`);
+      timeout.code = "SCAN_TIMEOUT";
+      throw timeout;
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   if (!response.ok) throw new Error(payload.error?.message || `${options.label || "Scan"} failed with status ${response.status}`);
   return { rawText: outputText(payload), model };
 }
