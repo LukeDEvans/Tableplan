@@ -62,6 +62,9 @@ mini-player** (`miniPlayerInfoBtn`), where its notification dot also sits.
   sit in this section); `musicLibrary` is **music's**.
 
 ## Luke's decisions (keep them)
+- **Newsletter briefings live only in Listen (2026-10-16).** The Morning / The world
+  in brief (saved articles `news-*`) reach the queue like any saved article; News no
+  longer shows them anywhere. Keep them in the queue.
 - **Books stays in Listen** for now (mostly audiobooks); how to organize non-audio
   books is undecided — don't move Kindle/Libby out.
 - **Saved articles still join the queue for read-aloud**; tapping one opens the

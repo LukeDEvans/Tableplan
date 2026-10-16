@@ -23209,11 +23209,6 @@ body[data-theme="dark"] .news-page {
 .news-banner-btn { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 5px 12px; font: inherit; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
 
 /* Briefings */
-.news-briefs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
-.news-brief { display: flex; flex-direction: column; gap: 2px; text-align: left; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 12px; padding: 10px 12px; font: inherit; cursor: pointer; min-width: 0; }
-.news-brief:hover { border-color: var(--accent); }
-.news-brief-title { font-weight: 700; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.news-brief-meta { font-size: 0.76rem; color: var(--muted); }
 
 /* Lead card — Weather-hero style gradient */
 .news-lead { position: relative; display: flex; gap: 16px; align-items: flex-start; border-radius: 16px; padding: 18px 20px; color: var(--news-lead-ink); background: linear-gradient(160deg, var(--c1), var(--c2)); border: 1px solid var(--line); cursor: pointer; overflow: visible; }

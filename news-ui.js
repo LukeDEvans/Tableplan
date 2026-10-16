@@ -1,7 +1,7 @@
 // news-ui.js — the News page (NEWS_PAGE_DESIGN.md). Articles linked in the
 // newspapers' emails (collected server-side by the mail sweep, _news-links.js),
 // sorted into newspaper sections, in the same shell as Mail and Media: a top bar,
-// a sidebar directory (Front page · Briefings · Saved · sections · papers) and
+// a sidebar directory (Front page · Saved · sections · papers) and
 // the stories. Each story's ⋯ menu: Save, Open, Listen, Share, Hide. Saved is the
 // one list of saved articles (stories saved here, newsletters, extension, URL,
 // scans, PDFs) — app.js owns it (MEDIA_SPLIT_DESIGN.md).
@@ -10,7 +10,8 @@
 // — one page of one view at a time (Front page, a section, a paper, Sent), plus
 // sidebar counts. A view is re-read when shown if over a minute old, on Refresh,
 // or on "Load more". No polling. Read / send / hide are batched into one
-// `updateNews` call. Briefings come from client state (savedArticles "news-*").
+// `updateNews` call. Newsletter briefings (savedArticles "news-*") are not shown
+// in News at all — they live only in Listen (Luke, 2026-10-16).
 //
 // Sports has two tabs: Scores (scores-ui.js, mounted here through the injected
 // `scores` interface) and Stories (the section's articles, as everywhere else).
@@ -169,11 +170,11 @@ export function unreadCounts(articles) {
   return out;
 }
 
-// Today's newsletters, already converted into listenable articles in Media.
-export function briefingsFrom(savedArticles, nowMs = Date.now()) {
-  return (savedArticles || [])
-    .filter((a) => a && String(a.id || "").startsWith("news-") && nowMs - ms(a.savedAt) <= KEEP_DAYS * DAY_MS)
-    .sort((a, b) => ms(b.savedAt) - ms(a.savedAt));
+// A newsletter briefing (The Morning, The world in brief…): a saved article the
+// mail sweep converted from a paper's newsletter, id "news-<gmail id>". Briefings
+// live only in Listen (Luke, 2026-10-16), so News's Saved list leaves them out.
+export function isNewsletterBriefing(a) {
+  return !!a && String(a.id || "").startsWith("news-");
 }
 
 // Does the sign-in status need a fresh check (any paper never checked, or over 24 h)?
@@ -262,7 +263,6 @@ export function timeAgo(iso, nowMs = Date.now()) {
 
 const ICONS = {
   front: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 4h13a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H4z"/><path d="M19 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="8" x2="14" y2="8"/><line x1="7" y1="12" x2="14" y2="12"/><line x1="7" y1="16" x2="11" y2="16"/></svg>',
-  briefings: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="m4 7 8 6 8-6"/></svg>',
   sent: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
   saved: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
   open: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>',
@@ -356,7 +356,7 @@ export function createNewsModule(deps) {
 
   // Load (or refresh) the current view's first page, or with `more` its next page.
   async function load(force = false, { more = false } = {}) {
-    if (view.kind === "briefings" || view.kind === "saved") { render(); return; }
+    if (view.kind === "saved") { render(); return; }
     const key = viewKey();
     const page = pages.get(key);
     if (seeded) {
@@ -535,10 +535,8 @@ export function createNewsModule(deps) {
     const el = $("newsSidebar");
     if (!el) return;
     const c = counts || { all: 0, sent: 0, section: {}, paper: {}, sections: [] };
-    const briefings = briefingsFrom(getState()?.savedArticles);
     const present = new Set(c.sections || []);
     let h = sideTab("front", null, `${ICONS.front}<span>Front page</span>`, c.all);
-    h += sideTab("briefings", null, `${ICONS.briefings}<span>Briefings</span>`, briefings.length);
     // One Saved view (MEDIA_SPLIT_DESIGN.md): stories saved here land in the same
     // list as newsletters, scans and links, so there is no separate "Sent" view.
     if (saved) h += sideTab("saved", null, `${ICONS.saved}<span>Saved</span>`, saved.count?.() || 0);
@@ -605,15 +603,6 @@ export function createNewsModule(deps) {
     </article>`;
   }
 
-  function briefingsHtml(list, compact) {
-    if (!list.length) return compact ? "" : `<p class="news-empty">No briefings in the last ${KEEP_DAYS} days. The Morning and The world in brief show up here once they're converted.</p>`;
-    return `<div class="news-briefs">${list.map((b) => `
-      <button class="news-brief" type="button" data-news-brief="${esc(b.id)}">
-        <span class="news-brief-title">${esc(b.title || "Briefing")}</span>
-        <span class="news-brief-meta">${esc([b.author, timeAgo(b.savedAt)].filter(Boolean).join(" · "))}</span>
-      </button>`).join("")}</div>`;
-  }
-
   function signInBanner() {
     const kind = signInBannerKind(signIns, { loaded: signInsLoaded, verifying });
     if (kind === "expired") {
@@ -662,40 +651,34 @@ export function createNewsModule(deps) {
     }
     saved?.unmount();
     const page = currentPage();
-    if (!page && view.kind !== "briefings") {
+    if (!page) {
       el.innerHTML = `<div class="news-scroll"><p class="news-empty">${esc(loadError || "Loading News…")}</p></div>`;
       return;
     }
     const nowMs = Date.now();
-    const briefings = briefingsFrom(getState()?.savedArticles, nowMs);
     let title = "Front page";
     if (view.kind === "section") title = SECTION_LABEL[view.key] || "Section";
     else if (view.kind === "paper") title = PAPER[view.key]?.label || "Paper";
     else if (view.kind === "sent") title = "Saved";
-    else if (view.kind === "briefings") title = "Briefings";
 
     let body = "";
-    if (view.kind === "briefings") {
-      body = briefingsHtml(briefings, false);
+    const list = articlesForView(page.articles, view); // search already applied by the server
+    const c = counts || { all: 0, section: {}, paper: {} };
+    const unread = view.kind === "section" ? c.section[view.key] || 0
+      : view.kind === "paper" ? c.paper[view.key] || 0
+      : view.kind === "front" ? c.all : list.filter((a) => !a.readAt).length;
+    const shown = `${list.length}${page.nextBefore ? "+" : ""} ${list.length === 1 && !page.nextBefore ? "story" : "stories"}`;
+    body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : `${shown} · ${unread} unread`}</div>`;
+    if (!list.length) {
+      body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing saved yet. Use ⋯ → Save on any story." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
     } else {
-      const list = articlesForView(page.articles, view); // search already applied by the server
-      const c = counts || { all: 0, section: {}, paper: {} };
-      const unread = view.kind === "section" ? c.section[view.key] || 0
-        : view.kind === "paper" ? c.paper[view.key] || 0
-        : view.kind === "front" ? c.all : list.filter((a) => !a.readAt).length;
-      const shown = `${list.length}${page.nextBefore ? "+" : ""} ${list.length === 1 && !page.nextBefore ? "story" : "stories"}`;
-      body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : `${shown} · ${unread} unread`}</div>`;
-      if (!list.length) {
-        body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing saved yet. Use ⋯ → Save on any story." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
-      } else {
-        const { lead, rest } = arrangeFront(list, nowMs);
-        const kicker = view.kind === "front"
-          ? (lead.lead && nowMs - ms(lead.lead) <= LEAD_WINDOW_MS ? `Lead story · ${SECTION_LABEL[sectionOf(lead)]}` : `Latest · ${SECTION_LABEL[sectionOf(lead)]}`)
-          : `Top in ${title}`;
-        body += leadHtml(lead, kicker);
-        if (rest.length) body += `<div class="news-grid">${rest.map(cardHtml).join("")}</div>`;
-        if (page.nextBefore) body += `<button class="news-more" type="button" data-news-more>${loadingKey === viewKey() ? "Loading…" : "Load more stories"}</button>`;
-      }
+      const { lead, rest } = arrangeFront(list, nowMs);
+      const kicker = view.kind === "front"
+        ? (lead.lead && nowMs - ms(lead.lead) <= LEAD_WINDOW_MS ? `Lead story · ${SECTION_LABEL[sectionOf(lead)]}` : `Latest · ${SECTION_LABEL[sectionOf(lead)]}`)
+        : `Top in ${title}`;
+      body += leadHtml(lead, kicker);
+      if (rest.length) body += `<div class="news-grid">${rest.map(cardHtml).join("")}</div>`;
+      if (page.nextBefore) body += `<button class="news-more" type="button" data-news-more>${loadingKey === viewKey() ? "Loading…" : "Load more stories"}</button>`;
     }
     el.innerHTML = `<div class="news-scroll">
       ${view.kind === "front" ? signInBanner() : ""}
@@ -712,8 +695,10 @@ export function createNewsModule(deps) {
   }
 
   function setView(next) {
-    // The old "Sent" view folded into Saved.
-    view = next?.kind === "sent" && saved ? { kind: "saved" } : next;
+    // The old "Sent" view folded into Saved; the old Briefings view is gone
+    // (briefings live in Listen), so a stale link to it opens the Front page.
+    view = next?.kind === "sent" && saved ? { kind: "saved" }
+      : next?.kind === "briefings" ? { kind: "front" } : next;
     openMenuId = null;
     if (isNarrow()) $("newsSidebar")?.classList.remove("is-expanded");
     render();
@@ -765,8 +750,6 @@ export function createNewsModule(deps) {
       if (e.target.closest("#newsScoresMount")) return; // the Scores view handles its own taps
       if (e.target.closest("[data-news-signin]")) { openSignInSettings?.(); return; }
       if (e.target.closest("[data-news-more]")) { load(false, { more: true }); renderContent(); return; }
-      const brief = e.target.closest("[data-news-brief]");
-      if (brief) { openInMedia?.(brief.dataset.newsBrief); return; }
       const item = e.target.closest("[data-news-id]");
       if (!item) return;
       const id = item.dataset.newsId;
@@ -833,7 +816,7 @@ export function createNewsModule(deps) {
     if (paper && Array.isArray(steps) && steps.length) pendingTrail = { paper, steps: steps.slice(0, 80).map(String) };
   }
 
-  // Show one of the sidebar's views ("saved", "briefings", …) — app.js uses this
+  // Show one of the sidebar's views ("saved", "front", …) — app.js uses this
   // after a scan or Add-by-URL lands a new saved article.
   function showView(kind, key) {
     if (kind === "saved" && !saved) return;
