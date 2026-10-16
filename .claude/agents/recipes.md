@@ -21,7 +21,7 @@ Tableplan** — a single-page, vanilla-ESM web app. Recipes has been **extracted
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `recipes-ui.js`, `recipe-scan.js`, `daily-dozen.js`, `nutrition-*.js`, `netlify/functions/import-recipe.js`, `netlify/functions/clean-recipe.js`, `netlify/functions/scan-recipe.js`, `netlify/functions/recipe-photo.js`, `netlify/functions/recipe-review.js`, `netlify/functions/_recipe-review.js`, `netlify/functions/_recipe-extract.js`, `netlify/functions/estimate-nutrition.js`
+- files: `recipes-ui.js`, `recipe-photos.js`, `recipe-scan.js`, `daily-dozen.js`, `nutrition-*.js`, `netlify/functions/import-recipe.js`, `netlify/functions/clean-recipe.js`, `netlify/functions/scan-recipe.js`, `netlify/functions/recipe-photo.js`, `netlify/functions/recipe-website-photo.js`, `netlify/functions/_recipe-photo.js`, `netlify/functions/recipe-review.js`, `netlify/functions/_recipe-review.js`, `netlify/functions/_recipe-extract.js`, `netlify/functions/estimate-nutrition.js`
 - state: `recipes`, `trashedRecipes`, `folders`, `recipeTags`, `ingredientOptions`, `activeCooking`
 
 ## Your scope (edit these)
@@ -36,13 +36,16 @@ Tableplan** — a single-page, vanilla-ESM web app. Recipes has been **extracted
   `normalizeNutrition*`, …) are exported **top-level** (app.js calls them at boot from
   `defaultState`/`normalizeState`/`mergeStates`) — keep boot-called normalizers as top-level
   exports, not inside the factory.
-- **Pure logic module (tested):** `meal-plan-servings.js` (`scalingFactor`, serving math) —
-  imported by the module.
+- **Pure logic modules (tested):** `meal-plan-servings.js` (`scalingFactor`, serving math)
+  and `recipe-photos.js` (photo kinds, public/thumbnail URLs, JSON-LD image picking,
+  backfill planning) — imported by the module.
 - **Nutrition & Daily Dozen (Decision #3):** `daily-dozen.js`, `nutrition-domain.js`,
   `nutrition-provider.js` (+ `netlify/functions/estimate-nutrition.js`) are owned here,
   behind a small, narrow interface so a future health domain can consume them without
   re-extracting. Don't build health-side abstractions; the health agent reads them.
-- **Server:** `import-recipe.js`, `clean-recipe.js`, `scan-recipe.js`, `recipe-photo.js`,
+- **Server:** `import-recipe.js`, `clean-recipe.js`, `scan-recipe.js`, `recipe-photo.js`
+  (the old signing proxy — no current client calls it; kept only for older TestFlight
+  builds), `recipe-website-photo.js` + `_recipe-photo.js` (a recipe page's own photo URL),
   `recipe-review.js` + `_recipe-review.js` (the Recipe Box review bell — follows the
   notifications-window rules), `_recipe-extract.js`. Recipe *emails* (the digest) are
   swept by Mail.
@@ -55,6 +58,17 @@ Tableplan** — a single-page, vanilla-ESM web app. Recipes has been **extracted
   empty) for `TRASH_RETENTION_DAYS` (30). Older entries are purged when a recipe is deleted
   or the view opens — never at boot, before the cloud copy has loaded. There is no Trash
   entry in Settings. Guarded by test/recipe-recently-deleted.test.js and `npm run qa:settings`.
+- **Recipe photos (2026-10-16, RECIPE_PHOTOS_DESIGN.md):** one field, `photoUrl`. A storage
+  path is your own photo; an https URL is the recipe website's photo, hotlinked and never
+  copied; your own photo replaces it. Own photos stay **public-by-unguessable-path** in the
+  `recipe-photos` bucket and are shown from their stable public URL (`recipePhotoImg` /
+  `recipePhotoProxyUrl`) — never through a function or with a token in the URL, so each
+  device downloads each photo once (the service worker caches them in
+  `live-recipe-photos-v1`). Uploads add a 480 px `-thumb` file for small spots. **No second
+  photo column:** removing your own photo re-reads the website's photo from `sourceUrl`.
+  URL import carries the page's photo; a one-time per-device backfill fills recipes with a
+  `sourceUrl` and no photo. Never put image bytes in state or rows. Guarded by
+  test/recipe-photos.test.js.
 
 ## Data model
 - **Recipes are the app's one RELATIONAL domain:** `state.recipes`/`state.folders` (JSONB

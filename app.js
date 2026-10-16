@@ -2007,6 +2007,7 @@ const {
   openRecipeBoxPage,
   openRecipeDialog,
   openRecipeView,
+  recipePhotoImg,
   openScanDialog,
   bindRecipeReviewEvents,
   queueRecipeForReview,
@@ -3805,6 +3806,23 @@ function setupDiagnostics() {
     trashSeed: (items) => { if (!localDevMode) return null; state.trashedRecipes = items.map(normalizeTrashedRecipe); return true; },
     trashIds: () => (localDevMode ? (state.trashedRecipes || []).map((t) => t.id) : null),
     openRecipeBox: () => { if (!localDevMode) return null; openRecipeBoxPage(); return true; },
+    // Recipe photos (scripts/qa-recipe-photos.mjs): put recipes in the book and read
+    // one back, to drive the real recipe view / editor photo paths. Local dev only.
+    recipesSeed: (recipes) => {
+      if (!localDevMode) return null;
+      for (const raw of recipes) {
+        const recipe = normalizeRecipe(raw);
+        const at = activeRecipes().findIndex((r) => r.id === recipe.id);
+        if (at >= 0) activeRecipes()[at] = recipe; else activeRecipes().push(recipe);
+      }
+      render();
+      return true;
+    },
+    recipeById: (id) => (localDevMode ? (activeRecipes().find((r) => r.id === id) || null) : null),
+    openRecipeViewForQa: (id) => { if (!localDevMode) return null; openRecipeView(id); return true; },
+    openRecipeEditorForQa: (id) => { if (!localDevMode) return null; openRecipeDialog(id); return true; },
+    // Thumbnail-sized <img>s (as the review list and cooking cards use) for given photo values.
+    recipePhotoImgForQa: (values) => (localDevMode ? values.map((v) => recipePhotoImg(v, { className: "qa-thumb", thumb: true, lazy: false })).join("") : null),
     // Shop (scripts/qa-settings.mjs): what a shopping-list row's (i) panel would say
     // for a given row, with the first two real recipes standing in as its meal-plan sources.
     groceryInfoFor: (row) => {
