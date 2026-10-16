@@ -10,6 +10,7 @@
     "boot:check": "node scripts/check-boot.mjs",
     "check:boot": "vite build && node scripts/check-boot.mjs",
     "check:mail-frame": "node scripts/check-mail-frame.mjs",
+    "qa:mail-attachments": "node scripts/qa-mail-attachments.mjs",
     "assistant:check": "node scripts/check-assistant.mjs",
     "qa:mail-menus": "node scripts/qa-mail-menus.mjs",
     "qa:p0p1": "node scripts/qa-p0p1.mjs",

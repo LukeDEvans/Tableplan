@@ -21,7 +21,7 @@ changes to Mail only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `mail-frame.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
+- files: `mail-frame.js`, `mail-attachment-view.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/gmail-attachment.mjs`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
 - state: `mail*`
 
 ## Your scope (edit these)
@@ -63,6 +63,15 @@ changes to Mail only.
   functions and dialogs) — don't rebuild it. `scheduled-email.js` keeps only the
   snooze wake.
 - "Save to News" is Mail's name for saving an email's article (News owns Saved).
+- **Attachments open inside the app** (Luke, 2026-10-15): every attachment, not just
+  PDFs. iPhone → the `AttachmentPreview` plugin (`ios/App/App/AttachmentPreviewPlugin.swift`,
+  Quick Look + Share), which downloads straight from `gmail-attachment.mjs`; web → the
+  `#mailAttachmentViewer` dialog (PDF / bitmap images / plain text inline, Download for
+  the rest). `gmail-attachment.mjs` streams raw bytes (Netlify's streamed limit is
+  20MB, vs ~6MB buffered, which with base64 meant 3.5MB); over ~19.5MB → Gmail. The
+  old base64 `attachment` action stays as the fallback (and serves `cid:` images).
+  **Security:** the sender controls the declared type — never render HTML/SVG in the
+  page, never create a blob with the sender's type (`mail-attachment-view.js`).
 
 ## Domain landmines (do NOT change without flagging)
 - **The sweep is bounded and idempotent** (ARCHITECTURE §8): claims a run atomically,
