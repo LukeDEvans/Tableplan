@@ -44,6 +44,7 @@ const SHARED_FILES = {
   "platform-capabilities.js": "platform detection",
   "dock-space.js": "bottom-dock sizing for every page",
   "status-tap-scroll.js": "app-wide status-bar tap",
+  "input-clear.js": "app-wide text-box clear button (CLAUDE.md UI conventions)",
   "sortable.js": "shared drag/sort",
   "sortable-core.js": "shared drag/sort",
   "swipe-deck.js": "shared card-deck gesture",
