@@ -22,6 +22,17 @@ international soccer), with each person's favorite teams pinned first. **Stories
   now, or "Every game" as the standing choice in Leagues.
 - **A game** expands to league, round/group, venue, TV, Follow buttons for both
   teams, and a link to the provider's game page.
+- **League tables** (2026-10-15): the table button in the bar, a league heading's
+  **Table** link, or a game's "<league> table". Divisions for NFL, NHL and MLB,
+  conferences for NBA and college, groups for the Nations League, one table for
+  soccer leagues with the qualification/relegation colours and a key. A switch at
+  the top changes league. Groups holding a favorite come first; favorites are
+  highlighted. Wider screens get extra columns (PF/PA, GF/GA, home/away).
+- **Team pages** (2026-10-15): every game of a team's season, by month, results
+  (W/D/L and score) then fixtures with time and TV, scrolled to the next game.
+  Soccer teams show **every competition** (league, cups, European, internationals).
+  From a game's "<team> schedule", a favorite's row in My Teams, or any table row.
+  Tapping a game opens its day in Scores; ‹ Back returns.
 - **Teams & leagues dialog:** favorites (add from a league's team list or from any
   game; remove), which leagues show and in what order, the college choice.
 - **Following** a soccer team follows it in every competition shown; following a
@@ -54,6 +65,8 @@ Like `weather.js`: no user data, no database, origin-restricted, CDN-cacheable.
 | `scoreboard&date&leagues` | `{ games, leagues: { key: { ok, provider, live, count } } }` | 20 s live · 60 s near a start · 5 min · 6 h for settled days |
 | `teams&league` | a league's teams | 24 h |
 | `schedule&teams=league:provider:id,…` | last + next game per team (≤ 12) | 15 min |
+| `standings&league` | `{ season, groups: [{ name, rows: [{ team, rank, note, stats }] }] }` | 10 min |
+| `team&league&team=provider:id` | every game of the team's season | 5 min (30 s while live) |
 | `health` | one small request to each provider: `{ id, ok, error, ms }` | never |
 
 One upstream GET per league, in parallel, 6 s timeout, no retries. A league that
@@ -63,7 +76,10 @@ answer is a 502 that is not cached.
 ### Providers (`_scores-providers.mjs`)
 
 A provider implements `id`, `label`, `live`, `enabled(env)`, `supports(league)`,
-`scoreboard(league, dateKey, ctx)` and optionally `teams` and `teamGames`. For each
+`scoreboard(league, dateKey, ctx)` and optionally `teams`, `teamGames` and
+`standings`. Table stats use the app's own keys (`gp w l t otl pts pct gb gf ga gd
+streak seed ovr conf home away l10`); the columns each league shows are defined in
+`sports-model.js` (`standingsColumns`), not by the provider. For each
 league the chain asks the first enabled provider that supports it and falls to the
 next on any error. Order: `SCORES_PROVIDERS` (default `espn,thesportsdb`).
 
@@ -109,10 +125,15 @@ None is sent by default (ESPN refused a custom one); `SCORES_USER_AGENT` sets on
 - ESPN's feed has no contract; see §4.
 - Two devices editing the favorites list at the same moment: the later edit wins
   the whole list.
-- A soccer favorite's next/last game comes from the league it was followed in.
+- ESPN's own idea of the current season lagged for the NHL table in October
+  2026, so tables and team schedules name the season (`espnSeason` in the adapter).
+  If a table ever shows last season, that rule is the place to look.
+- Team schedules cover the regular season and playoffs, not preseason.
+- A soccer game in a competition missing from the league catalog (club
+  friendlies, say) is left out of a team's page.
 - A "day" is the provider's day (U.S. Eastern for ESPN), shown in local time.
 - The TheSportsDB league ids other than NFL are unverified (noted in the adapter).
-- Not built: standings, box scores, score notifications.
+- Not built: box scores, player stats, score notifications.
 
 ## 7. Verification (2026-10-07)
 

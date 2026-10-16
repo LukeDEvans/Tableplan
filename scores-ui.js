@@ -8,6 +8,10 @@
 // Favorites and league choices are per user: state.sportsPrefs, in the personal
 // `recreate` section (synced, stamped per field — settings-sync.js).
 //
+// Besides the day view it has two pages of its own: a league's table, and a
+// team's whole season (soccer: every competition). Each is reached from the day
+// view (a league heading, a game, a favorite) and goes back with ‹ Back.
+//
 // Refreshing: a view is re-read when shown if it is stale, on Refresh, and — only
 // for today, only while this view is on screen — on a timer while a game is live
 // (sports-model.js nextRefreshMs). The timer reads the CDN-cached function, never
@@ -16,7 +20,8 @@
 import {
   LEAGUES, LEAGUE_BY_KEY, LEAGUE_GROUPS, cleanGames, cleanGame, cleanTeam, normalizeSportsPrefs, leaguesToRequest,
   arrangeScores, addFavorite, removeFavorite, isFavorite, setLeagueOn, moveLeague, isLeagueOn, enabledLeagueKeys,
-  dateKeyOf, shiftDateKey, dateStrip, dayLabel, statusText, resultLine, fixtureLine, nextRefreshMs, isLive, normName
+  dateKeyOf, shiftDateKey, dateStrip, dayLabel, statusText, resultLine, fixtureLine, nextRefreshMs, isLive, normName,
+  cleanStandings, standingsColumns, standingsLegend, orderStandingsGroups, arrangeTeamSchedule, teamRecordFrom, sameTeam
 } from './sports-model.js';
 
 const FRESH_MS = 15_000;            // a tap within this long reuses what's shown
@@ -25,6 +30,9 @@ const SCHEDULE_TTL_MS = 15 * 60_000;
 const TEAMS_TTL_MS = 6 * 3_600_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
 const COLLAPSED_KEY = "live-scores-collapsed-v1";
+const TABLE_TTL_MS = 10 * 60_000;
+const SEASON_TTL_MS = 5 * 60_000;
+const RETRY_AFTER_ERROR_MS = 30_000;
 const PROVIDER_LABEL = { espn: "ESPN", thesportsdb: "TheSportsDB" };
 
 // ── Pure helpers (exported for tests) ────────────────────────────────────────
@@ -32,8 +40,27 @@ const PROVIDER_LABEL = { espn: "ESPN", thesportsdb: "TheSportsDB" };
 // "nfl:espn:16" — how the schedule action addresses a favorite: its home league
 // plus one provider's id for it. "" when the team has neither.
 export function scheduleToken(fav) {
-  const [provider, ref] = Object.entries(fav?.refs || {})[0] || [];
-  return fav?.league && provider && ref ? `${fav.league}:${provider}:${ref}` : "";
+  const ref = teamRef(fav);
+  return fav?.league && ref ? `${fav.league}:${ref}` : "";
+}
+
+// "espn:16" — how the team action addresses a team: one provider's id for it.
+export function teamRef(team) {
+  const [provider, ref] = Object.entries(team?.refs || {})[0] || [];
+  return provider && ref ? `${provider}:${ref}` : "";
+}
+
+// One row of a team's season, from that team's side: who, where, and the result
+// or the start. `outcome` is "W" | "L" | "D" | "" (not played).
+export function seasonRow(game, team) {
+  const home = sameTeam(team, game.home.team);
+  const me = home ? game.home : game.away, them = home ? game.away : game.home;
+  let outcome = "";
+  if (game.state === "final" && me.score !== null && them.score !== null) {
+    outcome = me.score > them.score || (me.score === them.score && me.winner) ? "W"
+      : me.score < them.score || (me.score === them.score && them.winner) ? "L" : "D";
+  }
+  return { home, opponent: them.team, outcome, score: outcome ? `${me.score}–${them.score}${me.pens !== null && them.pens !== null ? ` (${me.pens}–${them.pens})` : ""}` : "" };
 }
 
 // What a scoreboard response's per-league status means for the footer:
@@ -68,6 +95,7 @@ const CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6
 const ARROW_UP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg>';
 const ARROW_DOWN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6"/></svg>';
 const SLIDERS = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>';
+const TABLE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M4 10h16M4 14.5h16M9.5 5v14"/></svg>';
 const CLOSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
 // ── Module ───────────────────────────────────────────────────────────────────
@@ -93,6 +121,12 @@ export function createScoresModule(deps) {
   let dialogLeague = "nfl";
   let dialogQuery = "";
   let listening = false;
+  // The page on show: the day view, a league's table, or a team's season.
+  let route = { view: "day" };
+  const backStack = [];       // earlier routes, each with the scroll it had
+  const tables = new Map();   // leagueKey → { data, loadedAt, error, loading }
+  const seasons = new Map();  // "league|provider:id" → { games, loadedAt, error, loading }
+  let scrollToNext = false;   // a team page just opened: bring its next game into view
 
   const prefs = () => normalizeSportsPrefs(getState()?.sportsPrefs);
   const isShown = () => !!mountEl?.isConnected && getActiveAppArea?.() === "news" && !document.hidden;
@@ -244,6 +278,12 @@ export function createScoresModule(deps) {
     return `<button type="button" class="scores-follow${on ? " is-on" : ""}" data-scores-follow="${esc(team.key)}" data-league="${esc(leagueKey)}" aria-pressed="${on}">${STAR}<span>${on ? "Following" : "Follow"} ${esc(team.short)}</span></button>`;
   }
 
+  // A link to a team's season page. Needs a provider id for the team.
+  function teamLink(team, leagueKey, label) {
+    if (!teamRef(team)) return "";
+    return `<button type="button" class="scores-textlink" data-scores-team="${esc(team.key)}" data-league="${esc(leagueKey)}">${esc(label)} ›</button>`;
+  }
+
   function gameHtml({ game, fav }, where) {
     const domId = `${where}|${game.id}`;
     const open = expandedId === domId;
@@ -258,6 +298,10 @@ export function createScoresModule(deps) {
         ${facts ? `<div class="scores-facts">${facts}</div>` : ""}
         <div class="scores-actions">
           ${order.map((w) => followBtn(game[w].team, game.league)).join("")}
+        </div>
+        <div class="scores-actions scores-links">
+          ${order.map((w) => teamLink(game[w].team, game.league, `${game[w].team.short} schedule`)).join("")}
+          <button type="button" class="scores-textlink" data-scores-table="${esc(game.league)}">${esc(LEAGUE_BY_KEY[game.league].short)} table</button>
           ${game.link ? `<a class="scores-link" href="${esc(game.link)}" target="_blank" rel="noopener noreferrer">Game page ↗</a>` : ""}
         </div>
       </div>`;
@@ -276,7 +320,10 @@ export function createScoresModule(deps) {
     if (sched?.next) lines.push(`<span><b>Next</b> ${esc(fixtureLine(sched.next, team, fmt()))}${sched.next.broadcasts[0] ? ` · ${esc(sched.next.broadcasts[0])}` : ""}</span>`);
     if (sched?.last) { const r = resultLine(sched.last, team); if (r) lines.push(`<span><b>Last</b> ${esc(r)}</span>`); }
     if (!lines.length) lines.push(`<span>${schedule.loading ? "Checking the schedule…" : "No game today"}</span>`);
-    return `<div class="scores-idle">${logoHtml(team)}<span class="scores-idle-name">${esc(team.short)}</span><span class="scores-idle-lines">${lines.join("")}</span></div>`;
+    const inner = `${logoHtml(team)}<span class="scores-idle-name">${esc(team.short)}</span><span class="scores-idle-lines">${lines.join("")}</span>`;
+    return teamRef(team) && team.league
+      ? `<button type="button" class="scores-idle" data-scores-team="${esc(team.key)}" data-league="${esc(team.league)}" aria-label="${esc(team.name)} schedule">${inner}</button>`
+      : `<div class="scores-idle">${inner}</div>`;
   }
 
   function daysHtml(today) {
@@ -288,6 +335,8 @@ export function createScoresModule(deps) {
 
   function render() {
     if (!mountEl?.isConnected) return;
+    if (route.view === "table") { renderTable(); return; }
+    if (route.view === "team") { renderTeam(); return; }
     rollToday();
     const today = dateKeyOf();
     const p = prefs();
@@ -322,12 +371,15 @@ export function createScoresModule(deps) {
         const key = sec.league.key;
         const shut = collapsed.has(key);
         body += `<section class="scores-sec">
-          <button type="button" class="scores-sec-head" data-scores-collapse="${key}" aria-expanded="${!shut}">
-            <h3>${esc(sec.league.label)}</h3>
-            ${sec.live ? `<span class="scores-live-pill">${sec.live} live</span>` : ""}
-            <span class="scores-count">${sec.games.length + sec.hidden}</span>
-            <span class="scores-chevron">${CHEVRON}</span>
-          </button>
+          <div class="scores-sec-row">
+            <button type="button" class="scores-sec-head" data-scores-collapse="${key}" aria-expanded="${!shut}">
+              <h3>${esc(sec.league.label)}</h3>
+              ${sec.live ? `<span class="scores-live-pill">${sec.live} live</span>` : ""}
+              <span class="scores-count">${sec.games.length + sec.hidden}</span>
+              <span class="scores-chevron">${CHEVRON}</span>
+            </button>
+            <button type="button" class="scores-sec-link" data-scores-table="${key}" aria-label="${esc(sec.league.label)} table">Table</button>
+          </div>
           ${shut ? "" : `${sec.games.length ? `<div class="scores-list">${sec.games.map((t) => gameHtml(t, key)).join("")}</div>` : `<p class="news-empty">No ranked teams or favorites playing.</p>`}
           ${sec.hidden ? `<button type="button" class="scores-more" data-scores-showall="${key}">Show all ${sec.games.length + sec.hidden} games</button>` : showAll.has(key) ? `<button type="button" class="scores-more" data-scores-showall="${key}">Show ranked teams and favorites only</button>` : ""}`}
         </section>`;
@@ -342,10 +394,12 @@ export function createScoresModule(deps) {
     }
     const focus = focusSelector();
     mountEl.innerHTML = `<div class="scores">
+      ${backStack.length ? subbarHtml("") : ""}
       <div class="scores-bar">
         <button type="button" class="scores-nav" data-scores-shift="-1" aria-label="Earlier days">‹</button>
         <div class="scores-days">${daysHtml(today)}</div>
         <button type="button" class="scores-nav" data-scores-shift="1" aria-label="Later days">›</button>
+        <button type="button" class="scores-nav" data-scores-table="" aria-label="League tables" title="League tables">${TABLE_ICON}</button>
         <button type="button" class="scores-nav scores-settings" data-scores-open="teams" aria-label="Teams and leagues" title="Teams and leagues">${SLIDERS}</button>
       </div>
       ${selected !== today ? `<button type="button" class="scores-today" data-scores-day="${today}">Back to today</button>` : ""}
@@ -382,14 +436,24 @@ export function createScoresModule(deps) {
     scheduleRefresh();
   }
 
-  function toggleFollow(teamKey, leagueKey) {
-    const board = seeded || boards.get(selected);
-    const pool = [
-      ...(board?.games || []).flatMap((g) => [g.home.team, g.away.team]),
-      ...(teamLists.get(leagueKey)?.teams || []),
-      ...prefs().teams,
+  // A team by its key, from anything on hand: the days loaded, tables, team
+  // pages, the dialog's team lists, favorites.
+  function findTeam(teamKey, leagueKey) {
+    if (route.team?.key === teamKey) return route.team;
+    const gameTeams = (games) => (games || []).flatMap((g) => [g.home.team, g.away.team]);
+    const pools = [
+      () => gameTeams(seeded?.games), () => [...boards.values()].flatMap((b) => gameTeams(b.games)),
+      () => (tables.get(leagueKey)?.data?.groups || []).flatMap((g) => g.rows.map((r) => r.team)),
+      () => [...tables.values()].flatMap((t) => (t.data?.groups || []).flatMap((g) => g.rows.map((r) => r.team))),
+      () => [...seasons.values()].flatMap((x) => gameTeams(x.games)),
+      () => teamLists.get(leagueKey)?.teams || [], () => prefs().teams,
     ];
-    const team = pool.find((t) => t.key === teamKey);
+    for (const pool of pools) { const t = pool().find((x) => x.key === teamKey); if (t) return t; }
+    return null;
+  }
+
+  function toggleFollow(teamKey, leagueKey) {
+    const team = findTeam(teamKey, leagueKey);
     if (!team) return;
     const p = prefs();
     if (isFavorite(p, team)) { setPrefs(removeFavorite(p, team)); showToast?.(`Stopped following ${team.short}.`); }
@@ -406,6 +470,13 @@ export function createScoresModule(deps) {
 
   function onClick(e) {
     const t = e.target;
+    if (t.closest("[data-scores-back]")) { goBack(); return; }
+    const tableBtn = t.closest("[data-scores-table]");
+    if (tableBtn) { openTable(tableBtn.dataset.scoresTable); return; }
+    const teamBtn = t.closest("[data-scores-team]");
+    if (teamBtn) { const team = findTeam(teamBtn.dataset.scoresTeam, teamBtn.dataset.league); if (team) openTeam(team, teamBtn.dataset.league); return; }
+    const seasonGame = t.closest("[data-scores-season-game]");
+    if (seasonGame) { openGameDay(seasonGame.dataset.scoresSeasonGame); return; }
     const day = t.closest("[data-scores-day]");
     if (day) { selectDay(day.dataset.scoresDay); return; }
     const shift = t.closest("[data-scores-shift]");
@@ -431,6 +502,203 @@ export function createScoresModule(deps) {
     }
     const game = t.closest("[data-scores-game]");
     if (game) { expandedId = expandedId === game.dataset.scoresGame ? null : game.dataset.scoresGame; render(); }
+  }
+
+  // ── Pages: a league's table, a team's season ──
+  const scroller = () => mountEl?.closest(".news-scroll");
+
+  function go(next) {
+    backStack.push({ route, scroll: scroller()?.scrollTop || 0 });
+    if (backStack.length > 12) backStack.shift();
+    route = next;
+    clearTimeout(timer); timer = null; // the day view's live refresh only runs on the day view
+    render();
+    scroller()?.scrollTo?.({ top: 0 });
+  }
+
+  function goBack() {
+    const prev = backStack.pop() || { route: { view: "day" }, scroll: 0 };
+    route = prev.route;
+    render();
+    scroller()?.scrollTo?.({ top: prev.scroll });
+    if (route.view === "day") { loadBoard(selected); scheduleRefresh(); }
+  }
+
+  // The table for `leagueKey`, or (from the bar's button, "") for the first league
+  // shown today, else the first league switched on.
+  function openTable(leagueKey) {
+    const p = prefs();
+    let key = LEAGUE_BY_KEY[leagueKey] ? leagueKey : "";
+    if (!key) {
+      const board = seeded || boards.get(selected);
+      const shown = arrangeScores(board?.games || [], p).sections.map((s) => s.league.key);
+      key = shown[0] || enabledLeagueKeys(p)[0] || LEAGUES[0].key;
+    }
+    go({ view: "table", league: key });
+    loadTable(key);
+  }
+
+  function openTeam(team, leagueKey) {
+    const league = LEAGUE_BY_KEY[leagueKey] ? leagueKey : team.league;
+    if (!LEAGUE_BY_KEY[league] || !teamRef(team)) return;
+    scrollToNext = true;
+    go({ view: "team", league, team });
+    loadSeason(league, team);
+  }
+
+  // A game on a team page → its day in the scores, with the game open. Back
+  // returns to the team page.
+  function openGameDay(gameId) {
+    const s = seasons.get(seasonKey(route.league, route.team)) || { games: seeded?.seasons?.[seasonKey(route.league, route.team)] };
+    const game = (s?.games || []).find((g) => g.id === gameId);
+    if (!game) return;
+    backStack.push({ route, scroll: scroller()?.scrollTop || 0 });
+    route = { view: "day" };
+    selected = dateKeyOf(new Date(game.start));
+    const mine = isFavorite(prefs(), game.home.team) || isFavorite(prefs(), game.away.team);
+    expandedId = `${mine ? "mine" : game.league}|${game.id}`;
+    scrollToGame = expandedId;
+    render();
+    loadBoard(selected);
+    scheduleRefresh();
+  }
+
+  async function loadTable(leagueKey, { force = false } = {}) {
+    if (seeded) return;
+    const have = tables.get(leagueKey);
+    if (have?.loading) return;
+    if (!force && have && Date.now() - have.loadedAt < (have.error ? RETRY_AFTER_ERROR_MS : TABLE_TTL_MS)) return;
+    tables.set(leagueKey, { ...(have || {}), loading: true });
+    try {
+      const data = cleanStandings(await request({ action: "standings", league: leagueKey }));
+      if (!data) throw new Error("bad table");
+      tables.set(leagueKey, { data, loadedAt: Date.now() });
+    } catch {
+      tables.set(leagueKey, { data: have?.data || null, error: true, loadedAt: Date.now() });
+    }
+    if (route.view === "table" && route.league === leagueKey) render();
+  }
+
+  const timeOf = (iso) => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+  const seasonKey = (leagueKey, team) => `${leagueKey}|${teamRef(team)}`;
+  async function loadSeason(leagueKey, team, { force = false } = {}) {
+    if (seeded) return;
+    const key = seasonKey(leagueKey, team);
+    const have = seasons.get(key);
+    if (have?.loading) return;
+    const live = (have?.games || []).some(isLive);
+    if (!force && have && Date.now() - have.loadedAt < (have.error ? RETRY_AFTER_ERROR_MS : live ? FRESH_MS * 2 : SEASON_TTL_MS)) return;
+    seasons.set(key, { ...(have || {}), loading: true });
+    try {
+      const body = await request({ action: "team", league: leagueKey, team: teamRef(team) });
+      seasons.set(key, { games: cleanGames(body?.games), loadedAt: Date.now() });
+    } catch {
+      seasons.set(key, { games: have?.games || null, error: true, loadedAt: Date.now() });
+    }
+    if (seasons.size > 20) seasons.delete(seasons.keys().next().value);
+    if (route.view === "team" && seasonKey(route.league, route.team) === key) render();
+  }
+
+  function subbarHtml(title, extra = "") {
+    return `<div class="scores-subbar">
+      <button type="button" class="scores-back" data-scores-back>‹ Back</button>
+      ${title ? `<h3 class="scores-subtitle">${title}</h3>` : ""}${extra}
+    </div>`;
+  }
+
+  function leagueSelectHtml(current) {
+    const p = prefs();
+    const on = enabledLeagueKeys(p);
+    const opt = (k) => `<option value="${k}"${k === current ? " selected" : ""}>${esc(LEAGUE_BY_KEY[k].label)}</option>`;
+    const off = LEAGUES.map((l) => l.key).filter((k) => !on.includes(k));
+    return `<select id="scoresTableLeague" class="scores-league-select" aria-label="League">
+      <optgroup label="Your leagues">${on.map(opt).join("")}</optgroup>
+      ${off.length ? `<optgroup label="More leagues">${off.map(opt).join("")}</optgroup>` : ""}
+    </select>`;
+  }
+
+  function renderTable() {
+    const league = LEAGUE_BY_KEY[route.league];
+    const entry = seeded?.tables?.[route.league] ? { data: seeded.tables[route.league] } : tables.get(route.league);
+    if (!entry) loadTable(route.league);
+    const p = prefs();
+    let body;
+    if (!entry?.data) {
+      body = `<p class="news-empty">${entry?.error ? "This table isn't available right now. Try Refresh." : "Loading the table…"}</p>`;
+    } else {
+      const cols = standingsColumns(league.key);
+      const legend = standingsLegend(entry.data);
+      const head = `<tr><th class="scores-tteam" scope="col">Team</th>${cols.map((c) => `<th scope="col"${c.wide ? ' class="is-wide"' : ""}>${esc(c.label)}</th>`).join("")}</tr>`;
+      const groups = orderStandingsGroups(entry.data, p);
+      body = groups.map((g) => `<section class="scores-tgroup">
+        ${g.name ? `<h4 class="scores-tgroup-name">${esc(g.name)}</h4>` : ""}
+        <table class="scores-table"><thead>${head}</thead><tbody>
+          ${g.rows.map((r) => {
+            const fav = isFavorite(p, r.team);
+            return `<tr class="${fav ? "is-fav" : ""}"${r.note?.color ? ` style="--note:${esc(r.note.color)}"` : ""}>
+              <td class="scores-tteam"><button type="button" class="scores-trow" data-scores-team="${esc(r.team.key)}" data-league="${esc(league.key)}"${teamRef(r.team) ? "" : " disabled"}${r.note ? ` title="${esc(r.note.text)}"` : ""}>
+                <span class="scores-tpos${r.note ? " has-note" : ""}">${r.rank}</span>${logoHtml(r.team)}<span class="scores-name">${esc(r.team.short)}</span>${fav ? `<span class="scores-star">${STAR}</span>` : ""}
+              </button></td>
+              ${cols.map((c) => `<td${c.wide ? ' class="is-wide"' : ""}>${esc(r.stats[c.key] || "–")}</td>`).join("")}
+            </tr>`;
+          }).join("")}
+        </tbody></table>
+      </section>`).join("");
+      if (legend.length) body += `<ul class="scores-legend">${legend.map((n) => `<li><i style="--note:${esc(n.color || "transparent")}"></i>${esc(n.text)}</li>`).join("")}</ul>`;
+      const foot = [entry.data.season, entry.error ? "Showing the last table loaded." : "", entry.loadedAt ? `Updated ${new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(entry.loadedAt))}` : ""].filter(Boolean);
+      body += `<div class="scores-foot">${foot.map(esc).join(" · ")}</div>`;
+    }
+    mountEl.innerHTML = `<div class="scores scores-page">${subbarHtml("", leagueSelectHtml(league.key))}${body}</div>`;
+  }
+
+  function renderTeam() {
+    const { team, league: leagueKey } = route;
+    const league = LEAGUE_BY_KEY[leagueKey];
+    const key = seasonKey(leagueKey, team);
+    const entry = seeded?.seasons?.[key] ? { games: seeded.seasons[key] } : seasons.get(key);
+    if (!entry) loadSeason(leagueKey, team);
+    const on = isFavorite(prefs(), team);
+    const games = entry?.games || null;
+    const record = games ? teamRecordFrom(games, team) : "";
+    let body;
+    if (!games) {
+      body = `<p class="news-empty">${entry?.error ? "This team's schedule isn't available right now. Try Refresh." : "Loading the schedule…"}</p>`;
+    } else if (!games.length) {
+      body = `<p class="news-empty">No games listed for this season yet.</p>`;
+    } else {
+      const season = arrangeTeamSchedule(games);
+      const multi = new Set(games.map((g) => g.league)).size > 1;
+      body = season.months.map((m) => `<section class="scores-month"><h4 class="scores-tgroup-name">${esc(m.label)}</h4>
+        <div class="scores-season">${m.games.map((g) => {
+          const row = seasonRow(g, team);
+          const right = row.outcome
+            ? `<span class="scores-res is-${row.outcome.toLowerCase()}">${row.outcome}</span><span class="scores-res-score">${esc(row.score)}</span>`
+            : `<span class="scores-res-when">${esc(g.state === "pre" ? g.detail || timeOf(g.start) : statusText(g))}</span>`;
+          const sub = [multi ? LEAGUE_BY_KEY[g.league].short : "", g.state === "pre" ? g.broadcasts[0] || "" : "", g.note].filter(Boolean).join(" · ");
+          return `<button type="button" class="scores-srow${g.id === season.next?.id ? " is-next" : ""}${isLive(g) ? " is-live" : ""}" data-scores-season-game="${esc(g.id)}">
+            <span class="scores-sdate"><b>${esc(new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(new Date(g.start)))}</b>${esc(new Intl.DateTimeFormat(undefined, { month: "numeric", day: "numeric" }).format(new Date(g.start)))}</span>
+            <span class="scores-sopp"><small>${row.home ? "vs" : "@"}</small>${logoHtml(row.opponent)}<span class="scores-sopp-text"><span class="scores-name">${esc(row.opponent.short)}</span>${sub ? `<small>${esc(sub)}</small>` : ""}</span></span>
+            <span class="scores-sres">${isLive(g) ? `<i class="scores-live-dot"></i><span class="scores-res-when">${esc(statusText(g))}</span>` : right}</span>
+          </button>`;
+        }).join("")}</div></section>`).join("");
+      if (entry.error) body = `<div class="scores-note">Showing the last schedule loaded.</div>` + body;
+    }
+    mountEl.innerHTML = `<div class="scores scores-page">
+      ${subbarHtml("")}
+      <div class="scores-teamhead"${team.color ? ` style="--tc:${esc(team.color)}"` : ""}>
+        ${logoHtml(team)}
+        <div class="scores-teamhead-text"><h3>${esc(team.name)}</h3><span>${esc([league.short, record].filter(Boolean).join(" · "))}</span></div>
+      </div>
+      <div class="scores-actions">
+        <button type="button" class="scores-follow${on ? " is-on" : ""}" data-scores-follow="${esc(team.key)}" data-league="${esc(leagueKey)}" aria-pressed="${on}">${STAR}<span>${on ? "Following" : "Follow"}</span></button>
+        <button type="button" class="scores-textlink" data-scores-table="${esc(leagueKey)}">${esc(league.short)} table ›</button>
+      </div>
+      ${body}
+    </div>`;
+    if (scrollToNext && games?.length) {
+      scrollToNext = false;
+      mountEl.querySelector(".scores-srow.is-next")?.scrollIntoView({ block: "center" });
+    }
   }
 
   // ── Teams & leagues dialog ──
@@ -555,11 +823,15 @@ export function createScoresModule(deps) {
     if (mountEl !== el) {
       mountEl = el;
       el.addEventListener("click", onClick);
+      el.addEventListener("change", (e) => {
+        if (e.target.id === "scoresTableLeague") { route = { view: "table", league: e.target.value }; render(); loadTable(route.league); }
+      });
     }
     if (!listening) { listening = true; document.addEventListener("visibilitychange", onVisibility); }
     render();
-    loadBoard(selected);
-    scheduleRefresh();
+    if (route.view === "table") loadTable(route.league);
+    else if (route.view === "team") loadSeason(route.league, route.team);
+    else { loadBoard(selected); scheduleRefresh(); }
   }
 
   function unmount() {
@@ -569,6 +841,8 @@ export function createScoresModule(deps) {
   }
 
   function refresh() {
+    if (route.view === "table") return loadTable(route.league, { force: true });
+    if (route.view === "team") return loadSeason(route.league, route.team, { force: true });
     failures = 0;
     schedule = { ...schedule, loadedAt: 0 };
     return loadBoard(selected, { force: true });
@@ -600,6 +874,8 @@ export function createScoresModule(deps) {
   // The view shows it on its next mount (news-ui.js showScores).
   let scrollToGame = "";
   function showGame(dateKey, gameId) {
+    route = { view: "day" };
+    backStack.length = 0;
     selected = dateKey || dateKeyOf();
     expandedId = gameId ? `mine|${gameId}` : null;
     scrollToGame = expandedId || "";
@@ -615,6 +891,8 @@ export function createScoresModule(deps) {
     if (seeded && board.days) seeded.days = Object.fromEntries(Object.entries(board.days).map(([k, v]) => [k, cleanGames(v)]));
     if (board?.date) selected = board.date;
     if (board?.schedule) schedule = { key: "seed", loadedAt: Date.now(), byToken: board.schedule, loading: false };
+    if (seeded && board.tables) seeded.tables = Object.fromEntries(Object.entries(board.tables).map(([k, v]) => [k, cleanStandings({ league: k, ...v })]));
+    if (seeded && board.seasons) seeded.seasons = Object.fromEntries(Object.entries(board.seasons).map(([k, v]) => [k, cleanGames(v)]));
     render();
     return seeded ? seeded.games.length : 0;
   }

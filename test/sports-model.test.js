@@ -6,8 +6,10 @@ import {
   LEAGUES, LEAGUE_BY_KEY, cleanTeam, cleanGame, cleanGames, sameTeam, compareGames, normName,
   normalizeSportsPrefs, isLeagueOn, enabledLeagueKeys, leaguesToRequest, addFavorite, removeFavorite,
   isFavorite, setLeagueOn, moveLeague, arrangeScores, shiftDateKey, dateStrip, dayLabel, isDateKey,
-  formatStart, statusText, resultLine, fixtureLine, nextRefreshMs, scoreboardCacheSeconds, LIVE_POLL_MS, MAX_FAVORITE_TEAMS
+  formatStart, statusText, resultLine, fixtureLine, nextRefreshMs, scoreboardCacheSeconds, LIVE_POLL_MS, MAX_FAVORITE_TEAMS,
+  cleanStandings, standingsColumns, standingsLegend, orderStandingsGroups, arrangeTeamSchedule, teamRecordFrom, STANDING_STAT_KEYS
 } from "../sports-model.js";
+import { seasonRow, teamRef, scheduleToken } from "../scores-ui.js";
 
 const team = (name, extra = {}) => ({ name, short: extra.short || name, abbr: extra.abbr || name.slice(0, 3), refs: extra.refs || {}, ...extra });
 const game = (id, league, home, away, extra = {}) => ({
@@ -25,6 +27,7 @@ describe("league catalog", () => {
       expect(LEAGUE_BY_KEY[k].on, k).toBe(true);
     }
     expect(LEAGUE_BY_KEY["premier-league"].on).toBe(false);
+    expect(LEAGUE_BY_KEY["conference-league"]).toMatchObject({ on: true, sport: "soccer", scope: "soccer" });
   });
 });
 
@@ -246,5 +249,86 @@ describe("refresh timing", () => {
     expect(scoreboardCacheSeconds([at(-200, "final")], "2026-10-07", NOW)).toBe(300);
     expect(scoreboardCacheSeconds([at(-200, "final")], "2026-10-01", NOW)).toBe(6 * 3600);
     expect(scoreboardCacheSeconds([], "2026-10-12", NOW)).toBe(300);
+  });
+});
+
+describe("league tables", () => {
+  const row = (name, rank, stats, note) => ({ team: { name, refs: { espn: String(rank) } }, rank, stats, note });
+  const raw = { league: "eredivisie", season: "2026-27", groups: [
+    { name: "", rows: [
+      row("AZ Alkmaar", 1, { pts: "15", gp: "5", gd: "+11", bogus: "x", w: "-" }, { text: "Champions League", color: "81D6AC" }),
+      row("Ajax Amsterdam", 2, { pts: "12" }, { text: "Champions League", color: "#81d6ac" }),
+      row("PEC Zwolle", 17, { pts: "2" }, { text: "Relegation", color: "#FF7F84" }),
+      { team: {}, rank: 3, stats: {} },
+    ] },
+    { name: "Empty", rows: [] },
+  ] };
+  it("keeps only the app's stat keys, drops unusable rows and empty groups", () => {
+    const t = cleanStandings(raw);
+    expect(t.groups).toHaveLength(1);
+    expect(t.groups[0].rows.map((r) => r.team.name)).toEqual(["AZ Alkmaar", "Ajax Amsterdam", "PEC Zwolle"]);
+    expect(t.groups[0].rows[0].stats).toEqual({ pts: "15", gp: "5", gd: "+11", w: "–" });
+    expect(t.groups[0].rows[0].note).toEqual({ text: "Champions League", color: "#81d6ac" });
+    expect(cleanStandings({ league: "cricket", groups: [] })).toBeNull();
+    for (const k of Object.keys(t.groups[0].rows[0].stats)) expect(STANDING_STAT_KEYS).toContain(k);
+  });
+  it("the legend lists each note once, in table order", () => {
+    expect(standingsLegend(cleanStandings(raw))).toEqual([{ text: "Champions League", color: "#81d6ac" }, { text: "Relegation", color: "#ff7f84" }]);
+  });
+  it("columns by sport; college shows conference and overall records; the phone set is short", () => {
+    const keys = (l, wide) => standingsColumns(l).filter((c) => wide || !c.wide).map((c) => c.label);
+    expect(keys("eredivisie")).toEqual(["GP", "W-D-L", "GD", "PTS"]);
+    expect(keys("nhl")).toEqual(["GP", "W", "L", "OTL", "PTS"]);
+    expect(keys("nfl")).toEqual(["W", "L", "PCT", "STRK"]);
+    expect(keys("nba")).toEqual(["W", "L", "PCT", "GB"]);
+    expect(keys("ncaaf")).toEqual(["CONF", "OVR"]);
+    expect(keys("conference-league", true)).toContain("GF");
+    expect(standingsColumns("cricket")).toEqual([]);
+  });
+  it("groups with a favorite come first", () => {
+    const t = cleanStandings({ league: "nfl", groups: [
+      { name: "AFC East", rows: [row("Buffalo Bills", 1, {})] },
+      { name: "NFC North", rows: [row("Minnesota Vikings", 1, {})] },
+    ] });
+    const prefs = addFavorite(undefined, cleanTeam({ name: "Minnesota Vikings" }, "nfl"), "nfl");
+    expect(orderStandingsGroups(t, prefs).map((g) => g.name)).toEqual(["NFC North", "AFC East"]);
+    expect(orderStandingsGroups(t, undefined).map((g) => g.name)).toEqual(["AFC East", "NFC North"]);
+  });
+});
+
+describe("a team's season", () => {
+  const NOW = Date.parse("2026-10-15T12:00:00Z");
+  const ID = { "Ajax Amsterdam": "139", "PSV Eindhoven": "148", "Hajduk Split": "4009" };
+  const g = (id, start, state, hs, as, home = "Ajax Amsterdam", away = "PSV Eindhoven", league = "eredivisie") => cleanGame({
+    id, league, start, state, home: { team: { name: home, refs: { espn: ID[home] } }, score: hs, winner: state === "final" && hs > as }, away: { team: { name: away, refs: { espn: ID[away] } }, score: as, winner: state === "final" && as > hs }
+  });
+  const games = [
+    g("c", "2026-10-22T19:00:00Z", "pre"), g("a", "2026-09-19T18:00:00Z", "final", 2, 2),
+    g("b", "2026-10-15T16:45:00Z", "final", 0, 2, "Hajduk Split", "Ajax Amsterdam", "conference-league"),
+    g("d", "2026-10-01T18:00:00Z", "pre"), // never updated: in the past
+  ];
+  it("orders by date, splits played from upcoming, groups by month", () => {
+    const s = arrangeTeamSchedule(games, { now: NOW, timeZone: "UTC" });
+    expect(s.results.map((x) => x.id)).toEqual(["a", "d", "b"]);
+    expect(s.upcoming.map((x) => x.id)).toEqual(["c"]);
+    expect(s.next.id).toBe("c");
+    expect(s.months.map((m) => [m.label, m.games.length])).toEqual([["September 2026", 1], ["October 2026", 3]]);
+  });
+  it("record from the team's side; soccer as W-D-L", () => {
+    const ajax = cleanTeam({ name: "Ajax Amsterdam", refs: { espn: "139" } }, "soccer");
+    expect(teamRecordFrom(games, ajax)).toBe("1-1-0");
+    expect(teamRecordFrom([], ajax)).toBe("");
+  });
+  it("a row from the team's side: opponent, venue, result", () => {
+    const ajax = cleanTeam({ name: "Ajax Amsterdam", refs: { espn: "139" } }, "soccer");
+    expect(seasonRow(games[2], ajax)).toMatchObject({ home: false, outcome: "W", score: "2–0", opponent: { name: "Hajduk Split" } });
+    expect(seasonRow(games[1], ajax)).toMatchObject({ home: true, outcome: "D", score: "2–2" });
+    expect(seasonRow(games[0], ajax)).toMatchObject({ outcome: "", score: "" });
+  });
+  it("team and schedule tokens", () => {
+    expect(teamRef({ refs: { espn: "16" } })).toBe("espn:16");
+    expect(teamRef({ refs: {} })).toBe("");
+    expect(scheduleToken({ league: "nfl", refs: { espn: "16" } })).toBe("nfl:espn:16");
+    expect(scheduleToken({ refs: { espn: "16" } })).toBe("");
   });
 });

@@ -42,6 +42,7 @@ export const LEAGUES = Object.freeze([
   // Off until switched on in Leagues.
   { key: "champions-league", label: "UEFA Champions League", short: "Champions League", sport: "soccer", scope: "soccer", group: "club", on: false },
   { key: "europa-league", label: "UEFA Europa League", short: "Europa League", sport: "soccer", scope: "soccer", group: "club", on: false },
+  { key: "conference-league", label: "UEFA Conference League", short: "Conference League", sport: "soccer", scope: "soccer", group: "club", on: true },
   { key: "premier-league", label: "Premier League", short: "Premier League", sport: "soccer", scope: "soccer", group: "club", on: false },
   { key: "la-liga", label: "La Liga", short: "La Liga", sport: "soccer", scope: "soccer", group: "club", on: false },
   { key: "bundesliga", label: "Bundesliga", short: "Bundesliga", sport: "soccer", scope: "soccer", group: "club", on: false },
@@ -394,4 +395,119 @@ export function scoreboardCacheSeconds(games, dateKey, nowMs = Date.now()) {
   if (list.some((g) => g.state === "pre" && Date.parse(g.start) - nowMs < 3 * 3_600_000)) return 60;
   if (dateKey < shiftDateKey(today, -1)) return 6 * 3600; // settled
   return 300;
+}
+
+// ── League tables (standings) ────────────────────────────────────────────────
+// A provider returns { league, season, groups: [{ name, rows }] } where a row is
+// { team, rank, note: { text, color }, stats: { [key]: "display string" } }.
+// Stat keys are the app's own, so the columns below never name a provider field:
+//   gp w l t otl pts pct gb gf ga gd streak seed ovr conf home away l10
+export const STANDING_STAT_KEYS = Object.freeze(["gp", "w", "l", "t", "otl", "pts", "pct", "gb", "gf", "ga", "gd", "streak", "seed", "ovr", "conf", "home", "away", "l10"]);
+
+// The columns a table shows, by league. `wide` columns appear only when there is
+// room (the view hides them on a phone).
+const COL = (key, label, wide = false) => Object.freeze({ key, label, wide });
+const STANDINGS_COLUMNS = {
+  soccer: [COL("gp", "GP"), COL("w", "W", true), COL("t", "D", true), COL("l", "L", true), COL("ovr", "W-D-L"), COL("gf", "GF", true), COL("ga", "GA", true), COL("gd", "GD"), COL("pts", "PTS")],
+  football: [COL("w", "W"), COL("l", "L"), COL("t", "T", true), COL("pct", "PCT"), COL("gf", "PF", true), COL("ga", "PA", true), COL("gd", "DIFF", true), COL("streak", "STRK")],
+  basketball: [COL("w", "W"), COL("l", "L"), COL("pct", "PCT"), COL("gb", "GB"), COL("home", "HOME", true), COL("away", "AWAY", true), COL("streak", "STRK", true)],
+  hockey: [COL("gp", "GP"), COL("w", "W"), COL("l", "L"), COL("otl", "OTL"), COL("pts", "PTS"), COL("gf", "GF", true), COL("ga", "GA", true), COL("gd", "DIFF", true), COL("streak", "STRK", true)],
+  baseball: [COL("w", "W"), COL("l", "L"), COL("pct", "PCT"), COL("gb", "GB"), COL("streak", "STRK", true)],
+  college: [COL("conf", "CONF"), COL("ovr", "OVR"), COL("streak", "STRK", true)],
+};
+export function standingsColumns(leagueKey) {
+  const league = LEAGUE_BY_KEY[leagueKey];
+  if (!league) return [];
+  if (league.college) return STANDINGS_COLUMNS.college;
+  return STANDINGS_COLUMNS[league.sport] || STANDINGS_COLUMNS.soccer;
+}
+
+function cleanStatValue(v) {
+  const s = str(v, 12);
+  return s === "-" ? "–" : s;
+}
+
+export function cleanStandings(raw) {
+  const league = LEAGUE_BY_KEY[str(raw?.league, 32)];
+  if (!league) return null;
+  const groups = [];
+  for (const g of Array.isArray(raw?.groups) ? raw.groups.slice(0, 60) : []) {
+    const rows = [];
+    for (const r of Array.isArray(g?.rows) ? g.rows.slice(0, 200) : []) {
+      const team = cleanTeam(r?.team, league.scope);
+      if (!team) continue;
+      const stats = {};
+      for (const k of STANDING_STAT_KEYS) { const v = cleanStatValue(r?.stats?.[k]); if (v) stats[k] = v; }
+      const rank = intOrNull(r?.rank);
+      const noteText = str(r?.note?.text, 60);
+      rows.push({
+        team,
+        rank: rank && rank > 0 && rank < 1000 ? rank : rows.length + 1,
+        note: noteText ? { text: noteText, color: hexColor(r.note.color) } : null,
+        stats,
+      });
+    }
+    if (rows.length) groups.push({ name: str(g?.name, 60), rows });
+  }
+  return { league: league.key, season: str(raw?.season, 40), groups };
+}
+
+// The qualification/relegation key under a soccer table: each distinct note once,
+// in the order it first appears.
+export function standingsLegend(standings) {
+  const seen = new Map();
+  for (const g of standings?.groups || []) for (const r of g.rows) {
+    if (r.note && !seen.has(r.note.text)) seen.set(r.note.text, r.note.color);
+  }
+  return [...seen].map(([text, color]) => ({ text, color }));
+}
+
+// Groups that hold a favorite first (in their provider order), then the rest.
+export function orderStandingsGroups(standings, prefs) {
+  const p = normalizeSportsPrefs(prefs);
+  const groups = standings?.groups || [];
+  const mine = (g) => g.rows.some((r) => isFavorite(p, r.team));
+  return [...groups.filter(mine), ...groups.filter((g) => !mine(g))];
+}
+
+// ── A team's season (the team page) ──────────────────────────────────────────
+// Every game the provider lists for one team, in date order, split into
+// `results` (played, newest last) and `upcoming` (live and to come), each
+// grouped by month for display. `next` is the game the page scrolls to.
+export function arrangeTeamSchedule(games, { now = Date.now(), timeZone } = {}) {
+  const list = cleanGames(games).sort((a, b) => Date.parse(a.start) - Date.parse(b.start) || (a.id < b.id ? -1 : 1));
+  const played = (g) => g.state === "final" || g.state === "postponed" || g.state === "canceled"
+    || (g.state === "pre" && Date.parse(g.start) < now - 12 * 3_600_000); // never updated: treat as past
+  const results = list.filter(played);
+  const upcoming = list.filter((g) => !played(g));
+  const monthKey = (iso) => new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", ...(timeZone ? { timeZone } : {}) }).format(new Date(iso));
+  const byMonth = (games) => {
+    const out = [];
+    for (const g of games) {
+      const label = monthKey(g.start);
+      if (!out.length || out[out.length - 1].label !== label) out.push({ label, games: [] });
+      out[out.length - 1].games.push(g);
+    }
+    return out;
+  };
+  return { results, upcoming, next: upcoming[0] || null, months: byMonth(list), total: list.length };
+}
+
+// One team's record across the games shown ("12-4-2" W-D-L for soccer, "9-3" or
+// "9-3-1" elsewhere). "" before any game is played.
+export function teamRecordFrom(games, team) {
+  let w = 0, l = 0, t = 0;
+  for (const g of games || []) {
+    if (g.state !== "final") continue;
+    const home = sameTeam(team, g.home.team);
+    if (!home && !sameTeam(team, g.away.team)) continue;
+    const me = home ? g.home : g.away, them = home ? g.away : g.home;
+    if (me.score === null || them.score === null) continue;
+    if (me.score > them.score || (me.score === them.score && me.winner)) w++;
+    else if (me.score < them.score || (me.score === them.score && them.winner)) l++;
+    else t++;
+  }
+  if (!w && !l && !t) return "";
+  const soccer = (games || []).some((g) => g.sport === "soccer");
+  return soccer ? `${w}-${t}-${l}` : t ? `${w}-${l}-${t}` : `${w}-${l}`;
 }

@@ -17,7 +17,7 @@ const LEAGUE_IDS = {
   ncaaf: 4479, ncaam: 4607,
   mls: 4346, eredivisie: 4337,
   "premier-league": 4328, bundesliga: 4331, "serie-a": 4332, "ligue-1": 4334, "la-liga": 4335,
-  "champions-league": 4480, "europa-league": 4481,
+  "champions-league": 4480, "europa-league": 4481, "conference-league": 5071,
   "nations-league": 4490, "world-cup": 4429,
 };
 

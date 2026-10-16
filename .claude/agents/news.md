@@ -98,6 +98,11 @@ changes to the News page (including Sports → Scores) only.
 - **Scores works like the ESPN app's Scores tab**: a broad board plus per-user
   favorites the app puts first. It must survive losing ESPN — **only an adapter may
   know a vendor's URLs or JSON**; everything else speaks the canonical model.
+- **Scores covers league tables and full team schedules** (2026-10-15), "unless it
+  becomes a data problem": both go through the scores function (CDN-cached, trimmed),
+  never Supabase. Tables and team pages live inside the Scores view with ‹ Back. A
+  soccer team's page spans **every competition**. The **UEFA Conference League** is
+  in the catalog and on by default.
 - **Dock ticker** (2026-10-14): above the weather / player slides, **a third of the
   dock's height**, **one item at a time**. **News first** (the Front page's lead
   stories), **then scores**: every game of a followed team on the days in view —
@@ -118,6 +123,9 @@ changes to the News page (including Sports → Scores) only.
 - **Internal keys don't change** (`read` page-access key, `media` section,
   `activeAppArea "media"` for Listen). Renaming synced keys makes settings revert on
   other devices.
+- **Scores names the season.** ESPN's default NHL table was still last season in
+  Oct 2026; `espnSeason` in `_scores-espn.mjs` decides per league. Check it before
+  blaming a stale table on caching.
 - Known open issue: NYT sign-in with Apple stalls after Face ID in the app
   (`ISSUES.md`) — read it before touching the sign-in sheet.
 

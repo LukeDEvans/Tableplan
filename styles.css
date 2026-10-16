@@ -23334,6 +23334,77 @@ body[data-theme="dark"] .scores { --scores-live: #ff7a66; }
 .scores-idle-lines b { font-weight: 700; color: var(--ink); }
 .scores-foot { font-size: 0.74rem; color: var(--muted); }
 
+/* League heading row: collapse toggle + Table link */
+.scores-sec-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.scores-sec-row > .scores-sec-head { flex: 1; min-width: 0; }
+.scores-sec-link, .scores-textlink { border: 0; background: none; padding: 2px 0; color: var(--accent-dark, var(--accent)); font-size: 0.78rem; font-weight: 700; white-space: nowrap; }
+.scores-sec-link:hover, .scores-textlink:hover { text-decoration: underline; }
+.scores-links { gap: 4px 14px; }
+
+/* Pages inside Scores: Back + title */
+.scores-subbar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.scores-back { flex-shrink: 0; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 5px 12px; font-size: 0.82rem; font-weight: 700; }
+.scores-back:hover { border-color: var(--accent); }
+.scores-subtitle { margin: 0; font-size: 1rem; font-weight: 800; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scores-league-select { flex: 1; min-width: 0; max-width: 340px; padding: 7px 10px; border-radius: 10px; font-size: 0.9rem; font-weight: 700; }
+
+/* Table and team pages read as one column, not the full width of a desktop. */
+.scores-page { max-width: 760px; }
+
+/* League table */
+.scores-tgroup { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.scores-tgroup-name { margin: 0; font-size: 0.76rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.scores-table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: 0.86rem; font-variant-numeric: tabular-nums; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.scores-table th { padding: 7px 6px; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.05em; color: var(--muted); text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.scores-table td { padding: 0 6px; text-align: right; white-space: nowrap; border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+.scores-table tr:first-child td { border-top: 0; }
+.scores-table th.scores-tteam, .scores-table td.scores-tteam { text-align: left; width: 100%; max-width: 0; padding-left: 0; }
+.scores-table th.scores-tteam { padding-left: 12px; }
+.scores-table tr.is-fav td { background: color-mix(in srgb, #d9a300 9%, transparent); }
+.scores-trow { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; padding: 7px 4px 7px 0; background: none; color: var(--ink); text-align: left; font-weight: 600; }
+.scores-trow:disabled { cursor: default; }
+.scores-trow .scores-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.scores-tpos { flex-shrink: 0; width: 24px; padding-left: 5px; border-left: 3px solid transparent; font-size: 0.76rem; color: var(--muted); text-align: left; }
+.scores-tpos.has-note { border-left-color: var(--note, transparent); }
+.scores-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.74rem; color: var(--muted); }
+.scores-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.scores-legend i { width: 10px; height: 10px; border-radius: 3px; background: var(--note); }
+@media (max-width: 560px) {
+  .scores-table .is-wide { display: none; }
+  .scores-table { font-size: 0.82rem; }
+  .scores-table th, .scores-table td { padding-left: 4px; padding-right: 4px; }
+}
+
+/* Team page */
+.scores-teamhead { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: linear-gradient(135deg, color-mix(in srgb, var(--tc, var(--news-sports1)) 26%, var(--surface)), var(--surface) 70%); }
+.scores-teamhead .scores-logo, .scores-teamhead .scores-logo img { width: 48px; height: 48px; }
+.scores-teamhead .scores-logo.is-missing i { font-size: 0.9rem; }
+.scores-teamhead-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.scores-teamhead-text h3 { margin: 0; font-size: 1.15rem; font-weight: 800; overflow-wrap: anywhere; }
+.scores-teamhead-text span { font-size: 0.82rem; color: var(--muted); font-weight: 600; }
+.scores-month { display: flex; flex-direction: column; gap: 6px; }
+.scores-season { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.scores-srow { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 8px 12px; background: none; color: var(--ink); text-align: left; border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+.scores-srow:first-child { border-top: 0; }
+.scores-srow:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.scores-srow.is-next { box-shadow: inset 3px 0 0 var(--news-sports1); }
+.scores-sdate { display: flex; flex-direction: column; font-size: 0.78rem; color: var(--muted); line-height: 1.2; font-variant-numeric: tabular-nums; }
+.scores-sdate b { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); }
+.scores-sopp { display: flex; align-items: center; gap: 7px; min-width: 0; font-weight: 600; font-size: 0.9rem; }
+.scores-sopp > small { width: 16px; flex-shrink: 0; font-size: 0.72rem; color: var(--muted); font-weight: 600; }
+.scores-sopp-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.scores-sopp-text .scores-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scores-sopp-text small { font-size: 0.7rem; font-weight: 500; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scores-sres { display: inline-flex; align-items: center; gap: 6px; font-size: 0.84rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.scores-res { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; font-size: 0.66rem; font-weight: 800; color: #fff; }
+.scores-res.is-w { background: #2e8b57; }
+.scores-res.is-l { background: #c8321e; }
+.scores-res.is-d { background: #8a8578; }
+.scores-res-when { font-size: 0.8rem; font-weight: 700; color: var(--muted); }
+.scores-srow.is-live .scores-res-when { color: var(--scores-live); }
+button.scores-idle { width: 100%; border: 0; background: none; color: inherit; text-align: left; border-radius: 10px; }
+button.scores-idle:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+
 /* Teams & leagues dialog */
 .scores-dialog-form { gap: 12px; }
 .scores-dialog-body { display: flex; flex-direction: column; gap: 8px; min-height: 240px; max-height: min(58dvh, 520px); overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }

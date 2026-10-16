@@ -12,12 +12,14 @@
 //   GET ?action=scoreboard&date=YYYY-MM-DD&leagues=nfl,nba,…   a day's games
 //   GET ?action=teams&league=nfl                               a league's teams
 //   GET ?action=schedule&teams=nfl:espn:16,…                   last + next game
+//   GET ?action=standings&league=nfl                           a league's table
+//   GET ?action=team&league=nfl&team=espn:16                   a team's whole season
 //   GET ?action=health                                         does each provider answer?
 //
 // Env: SCORES_PROVIDERS (order, default "espn,thesportsdb"), THESPORTSDB_KEY
 // (switches the standby provider on), SCORES_USER_AGENT (optional; unset = send none).
 import { LEAGUES, LEAGUE_BY_KEY, SCORES_MODEL_VERSION, isDateKey, scoreboardCacheSeconds } from "../../sports-model.js";
-import { providerChain, leagueScoreboard, leagueTeams, teamLastNext } from "./_scores-providers.mjs";
+import { providerChain, leagueScoreboard, leagueTeams, teamLastNext, leagueStandings, teamSeason } from "./_scores-providers.mjs";
 
 const ALLOWED_ORIGINS = new Set([
   "https://effervescent-malabi-e0af55.netlify.app",
@@ -49,7 +51,7 @@ export const handler = async (event, _context, deps = {}) => {
 
   const q = event.queryStringParameters || {};
   const action = String(q.action || "scoreboard");
-  const ctx = { chain: providerChain(env), env, fetchJson: deps.fetchJson || makeFetchJson(env, action === "health" ? String(q.ua || "") : "") };
+  const ctx = { chain: providerChain(env), env, dateKey: new Date(nowMs).toISOString().slice(0, 10), fetchJson: deps.fetchJson || makeFetchJson(env, action === "health" ? String(q.ua || "") : "") };
   const started = Date.now();
   const log = (fields) => console.log(JSON.stringify({ fn: "scores", action, ms: Date.now() - started, ...fields }));
 
@@ -87,6 +89,30 @@ export const handler = async (event, _context, deps = {}) => {
       log({ league: league.key, ok: r.ok, teams: r.teams.length });
       if (!r.ok) return respond(502, { error: "This league's team list is unavailable right now.", detail: r.error });
       return respond(200, { v: SCORES_MODEL_VERSION, league: league.key, provider: r.provider, teams: r.teams }, 24 * 3600);
+    }
+
+    // A league's table. Tables move only when games finish: 10 minutes.
+    if (action === "standings") {
+      const league = LEAGUE_BY_KEY[String(q.league || "")];
+      if (!league) return respond(400, { error: "Unknown league." });
+      const r = await leagueStandings(league.key, ctx);
+      log({ league: league.key, ok: r.ok, groups: r.standings?.groups.length || 0 });
+      if (!r.ok) return respond(502, { error: "This league's table is unavailable right now.", detail: r.error });
+      return respond(200, { v: SCORES_MODEL_VERSION, provider: r.provider, ...r.standings }, 600);
+    }
+
+    // Every game of one team's season (soccer: every competition).
+    if (action === "team") {
+      const league = LEAGUE_BY_KEY[String(q.league || "")];
+      const [provider, ref, ...rest] = String(q.team || "").split(":");
+      if (!league || rest.length || !/^[a-z0-9-]{1,24}$/.test(provider || "") || !/^[A-Za-z0-9_-]{1,40}$/.test(ref || "")) {
+        return respond(400, { error: "league and team (provider:id) are required." });
+      }
+      const r = await teamSeason(league.key, provider, ref, ctx);
+      log({ league: league.key, ok: r.ok, games: r.games.length });
+      if (!r.ok) return respond(502, { error: "This team's schedule is unavailable right now.", detail: r.error });
+      const live = r.games.some((g) => g.state === "live" || g.state === "delayed");
+      return respond(200, { v: SCORES_MODEL_VERSION, league: league.key, provider: r.provider, games: r.games }, live ? 30 : 300);
     }
 
     if (action === "schedule") {
