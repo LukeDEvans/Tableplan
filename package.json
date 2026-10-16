@@ -16,6 +16,7 @@
     "qa:p0p1": "node scripts/qa-p0p1.mjs",
     "qa:p0p1-extended": "node scripts/qa-p0p1-extended.mjs",
     "qa:reminders": "node scripts/qa-reminders.mjs",
+    "qa:recipe-photos": "node scripts/qa-recipe-photos.mjs",
     "qa:input-clear": "node scripts/qa-input-clear.mjs",
     "qa:settings": "node scripts/qa-settings.mjs",
     "qa:ticker": "node scripts/qa-ticker.mjs",

@@ -136,6 +136,8 @@ _(none)_
 
 
 ## P2
+- [ ] **[P2] Recipe rows: every app open writes all recipes back** (recipes · recipes-ui.js `hydrateRecipeRowsFromSupabase` · 2026-10-16)
+      After loading `eat_recipes`, hydration calls `writeAllRecipeRowsToSupabase()`, upserting every recipe (256 rows) on every open of every device. Writes use `return=minimal`, so it isn't egress, but it's needless load, and a device holding an older in-memory copy that saves a single recipe can overwrite a newer `photo_url` (or any field) written by another device — last writer wins. → Write back only rows that are missing remotely or newer locally. Noticed while building recipe photos; pre-existing. Verdict: CONFIRMED (code read).
 - [ ] **[P2] Reminders: not yet tried on an iPhone** (calendar · calendar/reminders-native.js · 2026-10-13)
       Phase 1 of IOS_NOTIFICATIONS_DESIGN.md is verified by unit tests (mock plugin), `scripts/qa-reminders.mjs` (web paths) and a Postgres check of the migration, but no TestFlight build has run it: iOS permission prompt, delivery with the app killed, survival across a reboot, and tap → event are UNVERIFIED. Also needs `npm run ios:sync` on the Mac (Podfile.lock). Verdict: UNVERIFIED until a build is on the phone.
 - [ ] **[P2] Google-backed plan events still use title-based ids** (calendar · app.js getPlanEventsForRange Google projection · 2026-10-12)
@@ -276,6 +278,8 @@ _(none)_
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+- [ ] **[P3] Recipe photos: retire the old `recipe-photo` proxy; add the orphan sweep** (recipes · netlify/functions/recipe-photo.js · 2026-10-16)
+      The client no longer calls `recipe-photo` (photos load from their public Storage URL — RECIPE_PHOTOS_DESIGN.md §4.2), but TestFlight builds from before that still do, so it stays deployed. Delete it once a newer TestFlight build has been out a while. Separately, no Storage object is ever deleted; the monthly orphan sweep (§4.7) isn't built. Verdict: CONFIRMED (deferred on purpose).
 - [x] **[P3] News paging: the inclusive `lte` cursor stops paging when ≥ a page of stories share one timestamp** (news · netlify/functions/_news-store.js:178 · 2026-10-06)
       `nextBefore` is null when a page's last `published_at` equals the cursor, so a tie group of ≥150 rows ends paging and older stories can't be reached via "Load more". Ties are common because email cards store the URL date at **midnight UTC** (every NYT/Economist email story of a day shares one timestamp; an Economist weekly edition alone is ~80). Smaller tie groups re-fetch rows already loaded, wasting page slots. Suggested direction: a keyset cursor on `(published_at, id)` (`or=(published_at.lt.X,and(published_at.eq.X,id.lt.Y))`). Verdict: PLAUSIBLE (needs ≥150 ties on a view; never observed).
       → Fixed: keyset cursor on (published_at, id). Tested. (2026-10-06)

@@ -15,7 +15,16 @@
 // Normalized shape: { name, prepTime, cookTime, time, servings, folderId,
 //                     sourceUrl, ingredients:[{amount,quantity,item,prep}], steps }
 
+// The page's own photo (JSON-LD image, else og:image) rides along as photoUrl,
+// a hotlinked URL — RECIPE_PHOTOS_DESIGN.md §4.5. "" when the page has none.
+const { websitePhotoFromHtml } = require("./_recipe-photo.js");
+
 function extractRecipeFromHtml(html, sourceUrl) {
+  const recipe = extractRecipeFieldsFromHtml(html, sourceUrl);
+  return { ...recipe, photoUrl: websitePhotoFromHtml(html, sourceUrl) };
+}
+
+function extractRecipeFieldsFromHtml(html, sourceUrl) {
   const jsonRecipes = findJsonLdBlocks(html)
     .flatMap(parseJsonLd)
     .map(findRecipeNode)

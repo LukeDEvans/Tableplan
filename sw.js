@@ -2,6 +2,20 @@
 // navigations keyed to "/" only when ok. Bumping the name also drops every
 // hashed /assets/ file the old worker accumulated across deploys.
 const CACHE = "live-v48";
+
+// Recipe photos (RECIPE_PHOTOS_DESIGN.md §4.3): own photos live in the PUBLIC
+// recipe-photos bucket at URLs that never change (every upload gets a new name),
+// so they're served cache-first from their own cache. It's kept apart from CACHE
+// so an app-version bump doesn't make every device re-download every photo, and
+// it's capped (oldest out first). Website photos are NOT cached here: they're
+// opaque cross-origin responses, which browsers charge several MB of quota each.
+const PHOTO_CACHE = "live-recipe-photos-v1";
+const PHOTO_CACHE_MAX = 400;
+const PHOTO_PATH = "/storage/v1/object/public/recipe-photos/";
+
+function isRecipePhotoRequest(url) {
+  return /\.supabase\.co$/i.test(url.hostname) && url.pathname.startsWith(PHOTO_PATH);
+}
 const PRECACHE = ["/", "/favicon.svg"];
 
 // Cross-origin hosts whose GET responses may be cached. Only versioned,
@@ -41,7 +55,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== PHOTO_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -73,6 +87,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (isRecipePhotoRequest(url) && !request.headers.has("range")) {
+    event.respondWith(recipePhotoResponse(request, event));
+    return;
+  }
+
   // Everything else that isn't an allowed static file goes straight to the
   // network (APIs, functions, cross-origin data, range requests).
   if (!isCacheableRequest(url) || request.headers.has("range")) return;
@@ -93,6 +112,33 @@ self.addEventListener("fetch", (event) => {
       .then((cached) => cached || network.then(({ res }) => res))
   );
 });
+
+// Cache-first for recipe photos, keyed by URL alone. An <img> asks in no-cors
+// mode (an opaque, unreadable response), so the worker re-asks in CORS mode to get
+// a real response it can check and store; if that fails it falls back to the
+// page's own request, uncached.
+async function recipePhotoResponse(request, event) {
+  const key = request.url;
+  try {
+    const cache = await caches.open(PHOTO_CACHE);
+    const hit = await cache.match(key);
+    if (hit) return hit;
+    const res = await fetch(key, { mode: "cors", credentials: "omit" });
+    if (res.ok && res.status === 200 && /^image\//i.test(res.headers.get("content-type") || "")) {
+      const copy = res.clone();
+      event.waitUntil(cache.put(key, copy).then(() => trimPhotoCache(cache)).catch(() => {}));
+    }
+    return res;
+  } catch {
+    return fetch(request);
+  }
+}
+
+async function trimPhotoCache(cache) {
+  const keys = await cache.keys(); // insertion order: oldest first
+  const extra = keys.length - PHOTO_CACHE_MAX;
+  for (let i = 0; i < extra; i++) await cache.delete(keys[i]);
+}
 
 // ── Push notifications ────────────────────────────────────────────────────────
 

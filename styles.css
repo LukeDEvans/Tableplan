@@ -8391,6 +8391,14 @@ textarea {
   max-height: 220px;
 }
 
+/* "Photo from the recipe's website" under a hotlinked photo (RECIPE_PHOTOS_DESIGN.md §4.1). */
+.recipe-photo-source-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .recipe-view-photo {
   max-height: 420px;
 }

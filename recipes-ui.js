@@ -17,6 +17,7 @@ import { makeSortable } from './sortable.js';
 import { usableViewportBottom } from './dock-space.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { findIngredientConflicts } from './food-restrictions.js';
+import { recipePhotoDisplayUrl, recipePhotoKind, recipePhotoThumbPath, pickImageUrl, absoluteHttpsUrl, recipesNeedingWebsitePhoto, applyWebsitePhotos, chunk } from './recipe-photos.js';
 
 // Module-scope copies of two tiny standalone helpers (identical to app.js) so the pure
 // exports and the factory share one definition without threading them through as deps.
@@ -420,26 +421,60 @@ export function createRecipesModule(deps) {
   let scanRecipeFiles = [];
   let scanRecipeImageEdits = new Map();
   const recipePhotoBucket = "recipe-photos";
+  // Recipe photo fallbacks (session-only): photos whose thumbnail is missing, and
+  // photos that failed to load at all (not retried on every render).
+  const missingRecipeThumbs = new Set();
+  const brokenRecipePhotos = new Set();
+  let recipePhotoFallbackInstalled = false;
+  // The photo the editor opened with, so Save knows an OWN photo was removed and can
+  // fall back to the website's photo (§4.1).
+  let recipePhotoAtOpen = "";
   const activeRecipeScrollPositions = new Map();
   const TIMER_RE = /\b((?:about|approximately|around)\s+)?(\d+(?:\.\d+)?)(\s*(?:to|-|or)\s*(\d+(?:\.\d+)?))?(\s*(?:minutes?|mins?|hours?|hrs?|seconds?|secs?))\b/gi;
 
-function recipePhotoProxyUrl(pathOrUrl) {
+// What an <img> loads for a recipe photo (RECIPE_PHOTOS_DESIGN.md §4.2). Own photos
+// come straight from the public bucket at a URL that never changes, so the browser
+// and the service worker cache them for good — no function call, no token in the
+// URL. Website photos are hotlinked as stored. (Was a Netlify proxy that signed a
+// fresh URL per view; the bucket is public, so it protected nothing and defeated
+// caching.)
+function recipePhotoProxyUrl(pathOrUrl, { thumb = false } = {}) {
   if (!pathOrUrl) return "";
-  // Non-Supabase URL (user-entered external link) — use as-is
-  if (pathOrUrl.startsWith("http") && !pathOrUrl.includes(".supabase.co")) return pathOrUrl;
-  // Extract storage path from full Supabase public or signed URL
-  const pub  = "/storage/v1/object/public/"  + recipePhotoBucket + "/";
-  const sign = "/storage/v1/object/sign/"    + recipePhotoBucket + "/";
-  let path = pathOrUrl;
-  const pi = pathOrUrl.indexOf(pub);
-  if (pi !== -1) path = pathOrUrl.slice(pi + pub.length);
-  else {
-    const si = pathOrUrl.indexOf(sign);
-    if (si !== -1) path = pathOrUrl.slice(si + sign.length).split("?")[0];
-  }
-  const token = getAuthSession()?.access_token || "";
-  return "/.netlify/functions/recipe-photo?path=" + encodeURIComponent(path) +
-    (token ? "&_token=" + encodeURIComponent(token) : "");
+  return recipePhotoDisplayUrl(pathOrUrl, { supabaseUrl: supabaseBaseUrl(), thumb });
+}
+
+// An <img> for a recipe photo, wired to the shared fallback (installRecipePhotoFallback):
+// a thumbnail that doesn't exist yet (photos from before thumbnails) retries the full
+// image; a website photo that's gone or hotlink-blocked is hidden.
+function recipePhotoImg(photoUrl, { className = "", alt = "", thumb = false, lazy = true } = {}) {
+  if (!photoUrl || brokenRecipePhotos.has(photoUrl)) return "";
+  installRecipePhotoFallback();
+  const kind = recipePhotoKind(photoUrl);
+  const useThumb = thumb && kind === "own" && !missingRecipeThumbs.has(photoUrl);
+  const src = recipePhotoProxyUrl(photoUrl, { thumb: useThumb });
+  if (!src) return "";
+  const full = useThumb ? recipePhotoProxyUrl(photoUrl) : "";
+  return `<img class="${escapeHtml(className)}" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"${lazy ? ' loading="lazy"' : ""} data-recipe-photo="${escapeHtml(photoUrl)}"${full ? ` data-recipe-photo-full="${escapeHtml(full)}"` : ""} />`;
+}
+
+// One capture-phase listener for every recipe photo (error events don't bubble).
+function installRecipePhotoFallback() {
+  if (recipePhotoFallbackInstalled || typeof document === "undefined") return;
+  recipePhotoFallbackInstalled = true;
+  document.addEventListener("error", (event) => {
+    const img = event.target;
+    if (!img || img.tagName !== "IMG" || !img.dataset?.recipePhoto) return;
+    const value = img.dataset.recipePhoto;
+    const full = img.dataset.recipePhotoFull;
+    if (full) {
+      missingRecipeThumbs.add(value);
+      delete img.dataset.recipePhotoFull;
+      img.src = full;
+      return;
+    }
+    brokenRecipePhotos.add(value);
+    img.hidden = true;
+  }, true);
 }
 
 function recipeTags() {
@@ -486,12 +521,14 @@ async function hydrateRecipeRowsFromSupabase() {
       await writeAllRecipeRowsToSupabase();
       render();
       scheduleLocalBackup();
+      scheduleWebsitePhotoBackfill();
       return;
     }
 
     await writeAllRecipeRowsToSupabase();
     setRowStorageReady(true);
     scheduleLocalBackup();
+    scheduleWebsitePhotoBackfill();
   } catch (error) {
     console.warn("Recipe row storage unavailable; using state storage for recipes.", error);
   }
@@ -962,7 +999,7 @@ function renderRecipeReviewBell() {
 
 function recipeReviewRowTemplate(item) {
   const recipe = item.recipe || {};
-  const photo = recipe.photoUrl ? recipePhotoProxyUrl(recipe.photoUrl) : "";
+  const photoImg = recipePhotoImg(recipe.photoUrl, { className: "recipe-review-thumb", thumb: true });
   const sourceUrl = String(recipe.sourceUrl || "").trim();
   const duplicate = sourceUrl && activeRecipes().some((existing) => String(existing.sourceUrl || "").trim() === sourceUrl);
   const queued = item.queuedAt ? new Date(item.queuedAt) : null;
@@ -970,8 +1007,8 @@ function recipeReviewRowTemplate(item) {
     ? queued.toLocaleDateString(undefined, { month: "short", day: "numeric" })
     : "";
   const meta = [RECIPE_REVIEW_SOURCE_LABELS[item.source] || RECIPE_REVIEW_SOURCE_LABELS.other, when].filter(Boolean).join(" · ");
-  const thumb = photo
-    ? `<img class="recipe-review-thumb" src="${escapeHtml(photo)}" alt="" loading="lazy" />`
+  const thumb = photoImg
+    ? photoImg
     : `<span class="recipe-review-thumb" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 2v7a3 3 0 0 0 6 0V2M6 2v20M17 2c-1.7 0-3 2.7-3 6s1.3 5 3 5 3 .6 3 2v7"/></svg></span>`;
   return `
     <div class="recipe-review-row">
@@ -1055,7 +1092,7 @@ function activeCookingTemplate(item) {
   return `
     <article class="active-cooking-card">
       <button class="active-cooking-thumb" type="button" data-view-active-recipe="${escapeHtml(item.id)}">
-        ${recipe.photoUrl ? `<img class="active-cooking-photo" src="${escapeHtml(recipePhotoProxyUrl(recipe.photoUrl))}" alt="" />` : ""}
+        ${recipePhotoImg(recipe.photoUrl, { className: "active-cooking-photo", thumb: true, lazy: false })}
         <span class="active-cooking-title">${escapeHtml(recipe.name)}</span>
         <div class="active-cooking-status">
           <span class="active-cooking-servings">${escapeHtml(formatServingsLabel(item.servings))}</span>
@@ -2031,7 +2068,7 @@ function recipeViewTemplate(recipe, requestedIngredientScale = 1) {
     ? (Number(recipe.groceryMealServings || 1) || 1) / baseServings
     : requestedIngredientScale;
   return `
-    ${recipe.photoUrl ? `<img class="recipe-view-photo" src="${escapeHtml(recipePhotoProxyUrl(recipe.photoUrl))}" alt="${escapeHtml(recipe.name)}" />` : ""}
+    ${recipePhotoImg(recipe.photoUrl, { className: "recipe-view-photo", alt: recipe.name, lazy: false })}
     <div class="recipe-view-meta">
       ${recipeTimePillsTemplate(recipe, "Flexible")}
       ${tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}
@@ -2118,7 +2155,7 @@ function activeRecipeViewTemplate(recipe, cookingItem) {
   const completedSteps = Array.isArray(cookingItem.completedSteps) ? cookingItem.completedSteps : [];
   const checkedIngredients = Array.isArray(cookingItem.checkedIngredients) ? cookingItem.checkedIngredients : [];
   return `
-    ${recipe.photoUrl ? `<img class="recipe-view-photo" src="${escapeHtml(recipePhotoProxyUrl(recipe.photoUrl))}" alt="${escapeHtml(recipe.name)}" />` : ""}
+    ${recipePhotoImg(recipe.photoUrl, { className: "recipe-view-photo", alt: recipe.name, lazy: false })}
     <div class="recipe-view-meta">
       ${recipeTimePillsTemplate(recipe, "Flexible")}
       <span class="serving-adjuster serving-static"><span>Servings</span><strong>${escapeHtml(String(servings))}</strong></span>
@@ -2187,7 +2224,7 @@ function cookLogTemplate(cookLog) {
 function cookLogPhotoTemplate(photoUrl) {
   return `
     <div class="cook-log-photo-wrap">
-      <img class="cook-log-photo" src="${escapeHtml(recipePhotoProxyUrl(photoUrl))}" alt="Cooked dish" />
+      ${recipePhotoImg(photoUrl, { className: "cook-log-photo", alt: "Cooked dish" })}
       <button class="secondary-btn compact-btn" type="button" data-use-log-photo="${escapeHtml(photoUrl)}">Use as recipe photo</button>
     </div>
   `;
@@ -2351,6 +2388,7 @@ function populateRecipeForm(recipe) {
   recipePhotoRemoved = false;
   elements.recipePhotoInput.value = "";
   elements.recipePhotoUrl.value = recipe?.photoUrl || "";
+  recipePhotoAtOpen = recipe?.photoUrl || "";
   updateRecipePhotoPreview(recipe?.photoUrl || "");
   renderIngredientRows(recipe ? normalizeIngredients(recipe.ingredients) : [blankIngredient()]);
   renderStepRows(recipe ? normalizeInstructionSteps(recipe.steps) : [""]);
@@ -2373,14 +2411,24 @@ function removeRecipePhotoSelection() {
   elements.recipePhotoInput.value = "";
   elements.recipePhotoUrl.value = "";
   updateRecipePhotoPreview("");
+  // Removing YOUR photo from a recipe that came from a website brings the website's
+  // photo back on save (decision 2026-10-16). Say so, so it isn't a surprise.
+  if (recipePhotoKind(recipePhotoAtOpen) === "own" && /^https?:\/\//i.test(elements.recipeSourceUrl.value.trim())) {
+    elements.recipePhotoPreview.textContent = "Your photo will be removed. The recipe website's photo will be used if it has one.";
+  }
 }
 
 function updateRecipePhotoPreview(photoUrl, file = null) {
   if (!elements.recipePhotoPreview) return;
-  const previewUrl = file ? URL.createObjectURL(file) : recipePhotoProxyUrl(photoUrl);
-  elements.recipePhotoPreview.innerHTML = previewUrl
-    ? `<img src="${escapeHtml(previewUrl)}" alt="Dish photo preview" />`
-    : "No photo selected.";
+  if (file) {
+    elements.recipePhotoPreview.innerHTML = `<img src="${escapeHtml(URL.createObjectURL(file))}" alt="Dish photo preview" />`;
+    return;
+  }
+  const img = recipePhotoImg(photoUrl, { alt: "Dish photo preview", lazy: false });
+  const note = recipePhotoKind(photoUrl) === "web"
+    ? `<span class="recipe-photo-source-note">Photo from the recipe's website. Choose a photo to use your own.</span>`
+    : "";
+  elements.recipePhotoPreview.innerHTML = img ? img + note : "No photo selected.";
 }
 
 function renderRecipeTagChoices(selectedTags = []) {
@@ -2418,6 +2466,10 @@ async function saveRecipeFromFormInner() {
   // than minting a duplicate recipe.
   elements.recipeId.value = id;
   const currentRecipe = activeRecipes().find((item) => item.id === id);
+  // Own photo removed (not replaced) on a recipe with a website: look the website's
+  // photo up again after saving (§4.1).
+  const restoreWebsitePhoto = recipePhotoRemoved && !pendingRecipePhotoFile
+    && recipePhotoKind(currentRecipe?.photoUrl || recipePhotoAtOpen) === "own";
   let photoUrl = recipePhotoRemoved ? "" : (elements.recipePhotoUrl.value || currentRecipe?.photoUrl || "");
   if (pendingRecipePhotoFile) {
     try {
@@ -2483,6 +2535,9 @@ async function saveRecipeFromFormInner() {
 
   if (needsNutrition && recipe.ingredients?.length) {
     autoEstimateNutrition(recipe.id);
+  }
+  if (restoreWebsitePhoto && recipe.sourceUrl) {
+    restoreWebsitePhotoFor(recipe.id).catch((error) => console.warn("Website photo lookup failed.", error));
   }
 }
 
@@ -3146,41 +3201,141 @@ function handleScanRecipePreviewAction(event) {
   updateScanSelectionStatus();
 }
 
+// Uploads the photo (1200 px) plus a 480 px thumbnail beside it at the derived
+// "-thumb" path (RECIPE_PHOTOS_DESIGN.md §4.4). Every upload gets a new file name,
+// so a photo's URL never changes and can be cached for a year. A failed thumbnail
+// never fails the upload: lists fall back to the full image.
 async function uploadRecipePhoto(file, recipeId, kind = "recipe") {
   if (!file) return "";
   if (!getSupabaseClient() || !getAuthSession()?.access_token) {
     throw new Error("Sign in before uploading recipe photos.");
   }
-  const imageBlob = await resizeRecipePhoto(file);
+  const { full, thumb } = await resizeRecipePhoto(file);
   const userId = getAuthSession().user?.id || "personal";
   const safeRecipeId = String(recipeId || createId("recipe")).replace(/[^a-z0-9-]/gi, "-");
   const path = `${userId}/${safeRecipeId}/${kind}-${Date.now()}.jpg`;
-  const { error } = await getSupabaseClient().storage
-    .from(recipePhotoBucket)
-    .upload(path, imageBlob, {
-      contentType: imageBlob.type,
-      cacheControl: "31536000",
-      upsert: false
-    });
+  const bucket = getSupabaseClient().storage.from(recipePhotoBucket);
+  const options = { contentType: "image/jpeg", cacheControl: "31536000", upsert: false };
+  const { error } = await bucket.upload(path, full, options);
   if (error) throw new Error(`${error.message}. Run supabase-photo-storage.sql if the photo bucket is not set up yet.`);
+  if (thumb) {
+    try {
+      const { error: thumbError } = await bucket.upload(recipePhotoThumbPath(path), thumb, options);
+      if (thumbError) console.warn("Recipe photo thumbnail upload failed.", thumbError);
+    } catch (thumbError) {
+      console.warn("Recipe photo thumbnail upload failed.", thumbError);
+    }
+  }
   return path;
 }
 
 async function resizeRecipePhoto(file) {
   const image = await imageElementFromFile(file);
-  const maxWidth = 1200;
+  try {
+    const full = await scaledJpeg(image, 1200, 0.82);
+    const thumb = await scaledJpeg(image, 480, 0.78).catch(() => null);
+    return { full, thumb };
+  } finally {
+    URL.revokeObjectURL(image.src);
+  }
+}
+
+function scaledJpeg(image, maxWidth, quality) {
   const scale = Math.min(1, maxWidth / image.naturalWidth);
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
   canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-  URL.revokeObjectURL(image.src);
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (!blob) reject(new Error("Could not prepare photo for upload."));
       else resolve(blob);
-    }, "image/jpeg", 0.82);
+    }, "image/jpeg", quality);
   });
+}
+
+// ── Website photos (RECIPE_PHOTOS_DESIGN.md §4.1, §4.5) ──────────────────────
+// Ask the server for recipe pages' own photos. URLs only; nothing is copied.
+const WEBSITE_PHOTO_BATCH = 6; // the function's per-call cap
+async function lookupWebsitePhotos(sourceUrls) {
+  const token = getAuthSession()?.access_token;
+  const urls = (sourceUrls || []).filter(Boolean).slice(0, WEBSITE_PHOTO_BATCH);
+  if (!token || !urls.length) return {};
+  const response = await fetch("/.netlify/functions/recipe-website-photo", {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ urls })
+  });
+  if (!response.ok) throw new Error(`Website photo lookup failed with status ${response.status}`);
+  const payload = await response.json().catch(() => ({}));
+  return payload?.photos && typeof payload.photos === "object" ? payload.photos : {};
+}
+
+// Your photo was removed (not replaced): bring back the website's photo, if the
+// page still has one. Only fills a recipe that is still photo-less.
+async function restoreWebsitePhotoFor(recipeId) {
+  const recipe = activeRecipes().find((item) => item.id === recipeId);
+  if (!recipe || recipe.photoUrl || !String(recipe.sourceUrl || "").trim()) return;
+  const photos = await lookupWebsitePhotos([String(recipe.sourceUrl).trim()]);
+  const live = activeRecipes().find((item) => item.id === recipeId);
+  if (!live || !applyWebsitePhotos([live], photos).length) return;
+  persist();
+  saveRecipeRow(live);
+  render();
+}
+
+// One-time backfill (Luke, 2026-10-16): recipes with a website link and no photo
+// get that website's photo. Runs once per device, a little after recipe rows load.
+// Idempotent — a recipe that has any photo is never touched — so a second device
+// only looks up what the first couldn't fill. Stops at the first failed call and
+// tries again next app open, so a broken endpoint costs one request per open.
+const WEBSITE_PHOTO_BACKFILL_KEY = "live-recipe-website-photo-backfill-v1";
+const WEBSITE_PHOTO_BACKFILL_DELAY_MS = 15000;
+let websitePhotoBackfillTimer = null;
+let websitePhotoBackfillRunning = false;
+
+function scheduleWebsitePhotoBackfill() {
+  if (websitePhotoBackfillTimer || websitePhotoBackfillRunning) return;
+  if (websitePhotoBackfillDone()) return;
+  websitePhotoBackfillTimer = setTimeout(() => {
+    websitePhotoBackfillTimer = null;
+    runWebsitePhotoBackfill().catch((error) => console.warn("Website photo backfill stopped.", error));
+  }, WEBSITE_PHOTO_BACKFILL_DELAY_MS);
+}
+
+function websitePhotoBackfillDone() {
+  try { return Boolean(localStorage.getItem(WEBSITE_PHOTO_BACKFILL_KEY)); } catch { return true; }
+}
+
+async function runWebsitePhotoBackfill() {
+  if (websitePhotoBackfillRunning || websitePhotoBackfillDone()) return;
+  if (!rowStorageCanWrite() || !getAuthSession()?.access_token || canUseLocalBackend()) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  websitePhotoBackfillRunning = true;
+  try {
+    const urls = [...new Set(recipesNeedingWebsitePhoto(activeRecipes()).map((item) => item.sourceUrl))];
+    let added = 0;
+    for (const batch of chunk(urls, WEBSITE_PHOTO_BATCH)) {
+      const photos = await lookupWebsitePhotos(batch); // throws → stop; retried next open
+      const wanted = new Set(batch);
+      const changedIds = new Set(applyWebsitePhotos(
+        activeRecipes().filter((recipe) => wanted.has(String(recipe.sourceUrl || "").trim())),
+        photos
+      ));
+      if (!changedIds.size) continue;
+      const changed = activeRecipes().filter((recipe) => changedIds.has(recipe.id));
+      persist();
+      saveRecipeRows(changed);
+      added += changed.length;
+    }
+    try {
+      localStorage.setItem(WEBSITE_PHOTO_BACKFILL_KEY, JSON.stringify({ at: new Date().toISOString(), looked: urls.length, added }));
+    } catch { /* private mode: it'll just run again, harmlessly */ }
+    console.info(`Website photo backfill: ${added} of ${urls.length} recipe pages had a photo.`);
+    if (added) render();
+  } finally {
+    websitePhotoBackfillRunning = false;
+  }
 }
 
 function setScanStatus(message) {
@@ -3207,8 +3362,19 @@ function parseRecipeHtml(html, sourceUrl) {
     folderId: "",
     sourceUrl,
     ingredients: arrayValue(recipe.recipeIngredient).map((line) => parseIngredientLine(String(line))),
-    steps: instructionsToText(recipe.recipeInstructions)
+    steps: instructionsToText(recipe.recipeInstructions),
+    photoUrl: pickImageUrl(recipe.image, sourceUrl) || documentMetaImage(document, sourceUrl)
   };
+}
+
+// og:image / twitter:image — the fallback when JSON-LD names no recipe image.
+function documentMetaImage(doc, sourceUrl) {
+  for (const name of ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]) {
+    const meta = doc.querySelector(`meta[property="${name}"], meta[name="${name}"]`);
+    const url = absoluteHttpsUrl(meta?.getAttribute("content") || "", sourceUrl);
+    if (url) return url;
+  }
+  return "";
 }
 
 function parseJsonLd(text) {
@@ -3851,6 +4017,7 @@ function initRecipeTimer() {
     recalculatePendingNutritionEstimate,
     recipeDefaultServings,
     recipeTags,
+    recipePhotoImg,
     rememberActiveRecipeScroll,
     removeRecipePhotoSelection,
     renderActiveCooking,
