@@ -18,7 +18,7 @@ import { icon as ldeIcon } from './live-icons.js';
 import { DIET_OPTIONS, ALLERGEN_OPTIONS, normalizeMemberDiets, normalizeDietEntry, mergeMemberDiets, isEmptyDiet, describeDiets, describeAllergies, foodRestrictionsContext } from './food-restrictions.js';
 import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, loadAvatar, resizeImageToAvatar, uploadAvatar, removeAvatar } from './profile.js';
 import { createWeatherModule } from './weather-ui.js';
-import { createNewsModule } from './news-ui.js';
+import { createNewsModule, isNewsletterBriefing } from './news-ui.js';
 import { createScoresModule } from './scores-ui.js';
 import { createNewsTickerModule } from './news-ticker.js';
 import { normalizeSportsPrefs } from './sports-model.js';
@@ -16579,13 +16579,13 @@ const MAIL_AI_FEATURES = [
     key: "nytMorningToArticle",
     defaultOn: true,
     label: "“The Morning” → article",
-    desc: "Converts NYT's daily The Morning email into a clean article you can read in News or listen to in Listen, then files the email away."
+    desc: "Converts NYT's daily The Morning email into a clean article you can listen to in Listen, then files the email away."
   },
   {
     key: "economistBriefToArticle",
     defaultOn: true,
     label: "“The world in brief” → article",
-    desc: "Same for The Economist's daily briefing — saved as an article you can read in News or listen to in Listen, email filed away."
+    desc: "Same for The Economist's daily briefing — saved as an article in Listen, email filed away."
   },
   {
     key: "nytNewsLinks",
@@ -27968,8 +27968,8 @@ const savedArticlesForNews = {
     if (savedListShown()) renderArticleList("articleList", activeSavedPub);
   },
   // Saved articles are removed once read (2026-09-21 storage audit), so what's
-  // here is what's left to read.
-  count: () => (state.savedArticles || []).length,
+  // here is what's left to read. Newsletter briefings live only in Listen.
+  count: () => newsSavedArticles().length,
 };
 
 const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio"];
@@ -35869,7 +35869,8 @@ function articleHistoryRowHtml(h) {
 function renderArticleHistoryList(listEl, pub) {
   const pubEntry = getReadPublications().find(p => p.key === pub);
   const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : pub === "nutritionfacts" ? "Nutrition Facts" : (pubEntry?.label || pub);
-  const history = [...(state.articleHistory || [])].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const history = (state.articleHistory || []).filter((h) => !isNewsletterBriefing(h))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   if (!history.length) {
     listEl.innerHTML = `<div class="article-empty"><p>No archived articles${pub === "all" ? "" : ` in ${pubName}`}.</p><p>Articles you mark read or delete appear here.</p></div>`;
     return;
@@ -35896,7 +35897,7 @@ function renderArticleSearchResults(containerId) {
   if (!resultsEl) return;
   const q = articleSearchQuery.trim().toLowerCase();
   if (!q) { resultsEl.innerHTML = `<div class="article-empty"><p>Type to search your saved articles.</p></div>`; return; }
-  const matches = (state.savedArticles || []).filter(a =>
+  const matches = newsSavedArticles().filter(a =>
     (a.title || "").toLowerCase().includes(q) ||
     (a.author || "").toLowerCase().includes(q) ||
     (a.url || "").toLowerCase().includes(q)
@@ -35907,13 +35908,18 @@ function renderArticleSearchResults(containerId) {
   if (matches.length) wireArticleRows(resultsEl, containerId);
 }
 
+// Saved articles as News shows them: everything except newsletter briefings,
+// which live only in Listen's queue (Luke, 2026-10-16).
+function newsSavedArticles() {
+  return (state.savedArticles || []).filter((a) => !isNewsletterBriefing(a));
+}
 function isNutritionFactsArticle(a) {
   const p = (a.publication || "").toLowerCase();
   const u = (a.url || "").toLowerCase();
   return p.includes("nutritionfacts") || u.includes("nutritionfacts.org");
 }
 function getFilteredSortedArticles(pub) {
-  const all = state.savedArticles || [];
+  const all = newsSavedArticles();
   const filtered = pub === "all" ? [...all]
     : pub === "nutritionfacts" ? all.filter(isNutritionFactsArticle)
     : all.filter(a => a.publication === pub);

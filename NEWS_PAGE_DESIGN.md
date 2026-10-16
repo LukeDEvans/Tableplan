@@ -28,7 +28,7 @@ section like a newspaper.
 | Q1b | Star Tribune has no sign-in support | **Add a Star Tribune sign-in field.** |
 | Q2 | Which papers? | **NYT, Economist, Star Tribune, The Athletic.** |
 | Q3 | What leads the Front page? | **Newsletter leads**: the first article linked in each paper's main newsletter, then newest first. |
-| Q4 | Newsletter briefings on News? | **Yes, on News and Media.** They keep going to Media as today. |
+| Q4 | Newsletter briefings on News? | ~~Yes, on News and Media.~~ **Superseded (Luke, 2026-10-16): Listen only.** News has no Briefings view, and Saved leaves them out. |
 | Q5 | ⋯ menu | **Send to Media, Open, Listen, Share, Hide.** |
 | Q6 | How long articles stay | **3 days.** |
 | Q7 | Playlist Publications tile | **One tier for all papers.** Per-paper tiers collapse to the highest. |
@@ -150,8 +150,8 @@ So "signed in" is checked with the saved-list pages the sync already uses:
 - **Feed** read on page open (at most once a minute) and on the refresh button.
   Read/Send/Hide are queued and flushed as one `updateNews` call (1.5 s idle, on
   leaving the page, on `visibilitychange`).
-- **Briefings** come from client state: `state.savedArticles` with id `news-*`
-  saved in the last 3 days. No server change.
+- **Briefings** (`state.savedArticles` with id `news-*`) are not shown in News
+  (2026-10-16); they appear only in Listen's queue.
 - **⋯ menu:** Send to Media (optimistic local add, same id as the server's copy),
   Open (adds to Media if needed and opens the Media reader), Listen (adds and
   starts the article's text-to-speech), Share (native share sheet, else copy link),

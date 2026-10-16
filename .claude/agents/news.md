@@ -1,6 +1,6 @@
 ---
 name: news
-description: Use for changes scoped to the News page — paper stories and sections, Briefings, the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), the Sports section's Scores, and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" area of app.js.
+description: Use for changes scoped to the News page — paper stories and sections, the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), the Sports section's Scores, and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" area of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -27,11 +27,11 @@ changes to the News page (including Sports → Scores) only.
 
 ## Your scope (edit these)
 - **`news-ui.js`** — `createNewsModule(deps)` (instantiated in app.js as `_news`):
-  the page shell (top bar, sidebar directory: Front page · Briefings · Saved ·
+  the page shell (top bar, sidebar directory: Front page · Saved ·
   sections · papers), story lists and the story ⋯ menu (**Save, Open, Listen, Share,
   Hide**), Sync Settings for paper sign-ins, and the mounts for the injected `saved`
   and `scores` interfaces. Pure helpers are exported top-level (`articlesForView`,
-  `arrangeFront`, `briefingsFrom`, `paperStatus`, `applyLocalDecisions`, …) and tested
+  `arrangeFront`, `isNewsletterBriefing`, `paperStatus`, `applyLocalDecisions`, …) and tested
   in `test/news-ui.test.js`.
 - **Scores** (Sports section, Scores tab): `scores-ui.js` (`createScoresModule`,
   mounted by news-ui through the injected `scores` interface), `sports-model.js` (pure
@@ -65,8 +65,8 @@ changes to the News page (including Sports → Scores) only.
   reader/Saved sections. Search: `showNewsApp`, `_news`, `openArticleFrom`,
   `closeArticleReader`, `savedArticles`.
 - **Data:** stories live server-side in `news_articles` (3-day window); a view is read
-  one page at a time. Client state: `savedArticles` (Saved; Briefings are its
-  `news-*` entries), `articleSync`, `articleSortOrder`, `readArticleIds`,
+  one page at a time. Client state: `savedArticles` (Saved, minus the `news-*`
+  newsletter briefings, which only Listen shows), `articleSync`, `articleSortOrder`, `readArticleIds`,
   `articleReadDates`, `articleHistory` (all in the `media` section);
   `state.sportsPrefs` (favorites, leagues, order — per user, `recreate` section).
   Scores themselves are never stored.
@@ -85,7 +85,12 @@ changes to the News page (including Sports → Scores) only.
   stories and saved articles; Listen and Watch have their own searches.
 - **Front page (2026-10-15):** no Briefings block and no Athletic stories (filtered in
   `_news-store.js` `feedQuery`/leads and again in `articlesForView`). The Athletic still
-  shows in Sports and under Papers; Briefings keep their sidebar view.
+  shows in Sports and under Papers.
+- **Briefings live only in Listen (Luke, 2026-10-16).** Newsletter briefings (The
+  Morning, The world in brief — saved articles with id `news-*`) appear nowhere in
+  News: no Briefings view (an old link opens the Front page), and they're filtered
+  out of Saved's list, search, count and archive (`isNewsletterBriefing`, app.js
+  `newsSavedArticles`). They still join Listen's queue like any saved article.
 - **No buttons beside the search box (2026-10-15):** Sync Settings opens from the gear
   menu; refreshing is **pull-to-refresh** (`wirePullToRefresh`: drag down from the top
   past `PULL_TRIGGER_PX`, or keep scrolling up at the top with a trackpad/wheel).

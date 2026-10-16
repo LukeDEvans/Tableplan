@@ -3,7 +3,7 @@
 // optimistic decisions that keep a racing load from undoing a tap.
 import { describe, it, expect } from "vitest";
 import {
-  articlesForView, arrangeFront, unreadCounts, briefingsFrom, signInsNeedCheck,
+  articlesForView, arrangeFront, unreadCounts, isNewsletterBriefing, signInsNeedCheck,
   paperStatus, sentArticleRecord, applyLocalDecisions, timeAgo, NEWS_SECTIONS, mergeArticles, signInBannerKind
 } from "../news-ui.js";
 import { createRequire } from "module";
@@ -53,15 +53,12 @@ describe("unreadCounts", () => {
   });
 });
 
-describe("briefingsFrom", () => {
-  it("newsletter articles (news-*) from the last 3 days, newest first", () => {
-    const saved = [
-      { id: "news-m1", title: "The Morning", savedAt: h(6) },
-      { id: "news-m0", title: "Old brief", savedAt: h(24 * 4) },
-      { id: "nl-x", title: "A sent article", savedAt: h(1) },
-      { id: "news-m2", title: "The world in brief", savedAt: h(2) }
-    ];
-    expect(briefingsFrom(saved, NOW).map((b) => b.id)).toEqual(["news-m2", "news-m1"]);
+describe("isNewsletterBriefing", () => {
+  it("newsletter articles (news-*) are briefings; other saved articles are not", () => {
+    expect(isNewsletterBriefing({ id: "news-m1", title: "The Morning" })).toBe(true);
+    expect(isNewsletterBriefing({ id: "nl-x", title: "A saved story" })).toBe(false);
+    expect(isNewsletterBriefing({ id: "article-1" })).toBe(false);
+    expect(isNewsletterBriefing(null)).toBe(false);
   });
 });
 
