@@ -93,6 +93,7 @@ import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
 import { usableViewportBottom } from './dock-space.js';
 import { installStatusTapScroll } from './status-tap-scroll.js';
+import { installInputClear } from './input-clear.js';
 import { makeReaderOrigin, readerReturnTarget, captureScroll, restoreScroll } from './reader-return.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
@@ -2154,6 +2155,7 @@ render();
 bindEvents();
 // iPhone app: tap the status bar to scroll the page/sheet in front back to the top.
 installStatusTapScroll();
+installInputClear();
 
 // Refresh task-time reminders every minute while the app is open: keep the
 // page notification dot current, and if the To-Do page is showing (panel
@@ -32933,7 +32935,7 @@ function syncMusicSearchBar(panel) {
   if (!input) {
     wrap.innerHTML = `<div class="music-search-bar">
         <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="search" id="musicSearchInput" class="music-search-input" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <input type="search" id="musicSearchInput" class="music-search-input" data-no-clear autocomplete="off" spellcheck="false" enterkeyhint="search">
         <button type="button" class="music-search-clear" data-music-search-clear aria-label="Clear search" hidden>${MUSIC_X_SVG}</button>
       </div>`;
     input = wrap.querySelector("#musicSearchInput");
@@ -34277,7 +34279,7 @@ function renderRadioPanel() {
     <div class="music-discover">
       <div class="music-search-bar">
         <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="search" id="radioSearchInput" class="music-search-input" placeholder="Search stations…" autocomplete="off" spellcheck="false" value="${escapeHtml(radioSearchQuery)}">
+        <input type="search" id="radioSearchInput" class="music-search-input" data-no-clear placeholder="Search stations…" autocomplete="off" spellcheck="false" value="${escapeHtml(radioSearchQuery)}">
         <button type="button" class="music-search-clear" id="radioSearchClear" aria-label="Clear search"${radioSearchQuery ? "" : " hidden"}>
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
