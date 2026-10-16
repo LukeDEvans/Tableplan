@@ -71,9 +71,11 @@ describe("email / extension inbox import", () => {
 
 describe("scan prompt", () => {
   it("asks for a budget category per line only when the household has categories", () => {
-    expect(receiptScanPrompt()).not.toContain("budgetCategory");
+    expect(receiptScanPrompt()).not.toContain('"b"');
     const p = receiptScanPrompt([{ key: "cat:food:groc", name: "Food · Groceries" }]);
-    expect(p).toContain("budgetCategory");
-    expect(p).toContain("cat:food:groc = Food · Groceries");
+    expect(p).toContain('"b"');
+    // Numbered, so the model writes a short number instead of the long key.
+    expect(p).toContain("1 = Food · Groceries");
+    expect(p).not.toContain("cat:food:groc");
   });
 });

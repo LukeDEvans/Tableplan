@@ -3,7 +3,13 @@ const { getGroupIdForUser, loadFinanceCategories } = require("./_finance-categor
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
+// Netlify ends a synchronous function at 30 s with a bare 504. Stop waiting on
+// the AI a few seconds before that so the app can show a real message.
+const FUNCTION_BUDGET_MS = 26000;
+const MIN_SCAN_MS = 8000;
+
 exports.handler = async (event) => {
+  const startedAt = Date.now();
   if (event.httpMethod !== "POST") return jsonResponse(405, { error: "Method not allowed." });
 
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -25,9 +31,11 @@ exports.handler = async (event) => {
     // Budget categories let the same read serve Finance (one receipts list):
     // each line gets a budget category. No categories → the scan works as before.
     const categories = await loadFinanceCategories(serviceKey, await getGroupIdForUser(serviceKey, userId));
-    const result = await scanReceiptFromImages(payload.images || [], { categories });
+    const timeoutMs = Math.max(MIN_SCAN_MS, FUNCTION_BUDGET_MS - (Date.now() - startedAt));
+    const result = await scanReceiptFromImages(payload.images || [], { categories, timeoutMs });
     return jsonResponse(200, { receipt: result.receipt, rawText: result.rawText, model: result.model });
   } catch (error) {
+    if (error?.code === "SCAN_TIMEOUT") return jsonResponse(504, { error: error.message });
     return jsonResponse(500, { error: error.message || "Receipt scan failed." });
   }
 };

@@ -1586,7 +1586,13 @@ async function scanReceiptImages() {
       body: JSON.stringify({ images })
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `Receipt scan failed with status ${response.status}`);
+    if (!response.ok) {
+      // A bare 502/504 (no JSON) is the host cutting the function off mid-read.
+      if (!payload.error && (response.status === 502 || response.status === 504)) {
+        throw new Error("This receipt took too long to read. Try again, or crop the photo to just the receipt.");
+      }
+      throw new Error(payload.error || `Receipt scan failed with status ${response.status}`);
+    }
     // Interpretation + the independent EXTRACTION record (engine/model/raw output).
     const draft = LiveReceiptDomain.normalizeReceipt({
       ...payload.receipt,
