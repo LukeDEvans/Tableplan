@@ -100,8 +100,9 @@
                 <button type="button" id="menuGroceryItemsBtn">Grocery Items</button>
                 <button type="button" id="menuIngredientOptionsBtn">Ingredient Options</button>
                 <button type="button" id="menuMealPlanSettingsBtn">Meals</button>
-                <button type="button" id="menuWatchServicesBtn">Watch</button>
-                <button type="button" id="menuWatchTheatersBtn">Movie Theaters</button>
+                <button type="button" id="menuWatchServicesBtn">Streaming Services</button>
+                <button type="button" id="menuWatchTheatersBtn">Theaters</button>
+                <button type="button" id="menuMailAutomationBtn">Automation</button>
                 <button type="button" id="menuFoodHealthSettingsBtn">Nutrition</button>
                 <button type="button" id="menuGroceryListBtn">Preferred Stores</button>
                 <button type="button" id="menuShopReceiptsBtn">Receipts</button>
@@ -409,8 +410,22 @@
         </section>
         <section class="planner-column do-column watch-page" id="watchMainPage" aria-label="Watch" hidden>
           <div class="article-page-inner">
+            <div class="article-layout watch-layout">
+            <nav class="article-sidebar watch-sidebar" id="watchSidebar" aria-label="Watch menu">
+              <button class="article-sidebar-tab is-active" type="button" data-watch-side="list" aria-current="true">
+                <svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span>Watch list</span>
+              </button>
+              <div class="watch-sidebar-spacer"></div>
+              <div class="article-sidebar-divider"></div>
+              <button class="article-sidebar-tab" type="button" data-watch-side="archive">
+                <svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg><span>Archive</span>
+              </button>
+            </nav>
             <div class="podcast-panel watch-page-panel" id="watchPagePanel">
               <div class="discover-head">
+                <button class="icon-btn mail-sidebar-toggle" type="button" id="watchSidebarToggle" title="Menu" aria-label="Toggle Watch menu" aria-controls="watchSidebar">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </button>
                 <input type="search" class="discover-search-input" id="discoverSearchInput" placeholder="Search movies, shows, videos…" aria-label="Search all media" autocomplete="off" />
                 <div class="discover-filter">
                 <button class="icon-btn discover-filter-btn" id="discoverFilterBtn" type="button" title="Filter search" aria-label="Filter search scope" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
@@ -419,6 +434,7 @@
               </div>
               <div class="discover-results" id="discoverResults" hidden></div>
               <div class="planner-grid" id="watchPlannerGrid"></div>
+            </div>
             </div>
           </div>
         </section>
@@ -429,20 +445,13 @@
               <form class="inline-form grocery-form" id="groceryForm">
                 <input id="groceryInput" placeholder="Add item" autocomplete="off" />
                 <button class="icon-btn grocery-nextstop-toggle" type="button" id="groceryNextStopToggle" title="Add to Next Stop" aria-pressed="false" aria-label="Add to Next Stop">
-                  <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/><path d="M6.38 18.7 4 21"/><path d="M17.64 18.67 20 21"/></svg>
+                  <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
                 </button>
                 <button class="icon-btn" title="Add item" aria-label="Add item">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                 </button>
               </form>
               <div class="grocery-list" id="groceryList"></div>
-            </div>
-            <div class="shop-page-actions">
-              <button class="secondary-btn" type="button" id="openShopReceiptsBtn">Receipts</button>
-              <button class="primary-btn icon-primary-btn" type="button" id="shopScanDirectBtn" title="Scan receipt" aria-label="Scan receipt">
-                <span aria-hidden="true">+</span>
-              </button>
-              <input class="visually-hidden" id="shopScanDirectInput" type="file" accept="image/*" capture="environment" />
             </div>
           </div>
         </section>
@@ -686,14 +695,6 @@
               <div class="mail-search-wrap">
                 <svg class="mail-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                 <input class="mail-search-input" id="newsSearchInput" type="search" placeholder="Search news" aria-label="Search news" />
-              </div>
-              <div class="mail-topbar-right">
-                <button class="icon-btn" type="button" id="newsSettingsBtn" title="Sync settings" aria-label="Sync settings: newspaper sign-ins">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                </button>
-                <button class="icon-btn" type="button" id="newsRefreshBtn" title="Refresh" aria-label="Refresh News">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                </button>
               </div>
             </div>
             <div class="article-layout">
@@ -941,7 +942,7 @@
           <div id="section-recipes">
             <label class="search">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
-              <input id="recipeSearch" type="search" placeholder="Search recipes, tags, ingredients" />
+              <input id="recipeSearch" type="search" data-no-clear placeholder="Search recipes, tags, ingredients" />
               <button class="search-clear-btn" id="clearRecipeSearchBtn" type="button" title="Clear search" aria-label="Clear recipe search" hidden>×</button>
             </label>
             <div class="folder-list recipe-tag-filter-list" id="folderList" aria-label="Recipe tags"></div>

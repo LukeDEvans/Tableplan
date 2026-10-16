@@ -43,6 +43,21 @@ changes to the Watch page only.
 - **Data (`watch` section):** `watchItems`, `watchPlans`, `watchSettings`,
   `watchShowtimesData`. Provider config (`jellyfin`, `mediaServices`) is in `config`.
 
+## Luke's decisions (keep them)
+- **Gear menu (2026-10-15):** **Streaming Services** (`watch-services` panel, laid out
+  like News › Sync Settings: one row per service, status, one Add/Remove button, the
+  explanation behind an (i); stored in `state.mediaServices`) and **Theaters** (`watch`
+  panel: saved theaters as rows with a Website link and remove; a name box that
+  searches Google for movie theaters as you type via `google-places`
+  `theater-autocomplete`, picking one saves its website from `theater-details`; "+"
+  saves a typed name without one). No Watch Tabs in settings: tabs are added from the
+  page's own "+" tab.
+- **Sidebar (2026-10-15):** a three-bar button left of the search opens `#watchSidebar`
+  (the shared article-sidebar: icon rail on wide screens, drawer on a phone) with
+  **Watch list** at the top and **Archive** pinned to the bottom. There is no Archive
+  button beside the tabs. The category tabs stay on the page because items are filed by
+  dragging them onto a tab.
+
 ## Domain landmines (do NOT change without flagging)
 - **Merges:** `watchItems` is an id-keyed union with tombstones (delete through
   `recordDeletion("watchItems", id)`), `watchPlans` merges per week

@@ -61,7 +61,7 @@ check(actions.length > 5, `Settings lists its rows (${actions.length})`);
 
 // The list Luke asked for (2026-10-14): exactly these rows, in this order.
 const labels = actions.map((a) => a.label);
-const expected = ["Display", "Pages", "Household", "Mail AI", "Voice", "Export My Data", "Global Pages", "Users", "Households", "Restore Backup", "API Usage", "Beta"];
+const expected = ["Display", "Pages", "Household", "Voice", "Export My Data", "Global Pages", "Users", "Households", "Restore Backup", "API Usage", "Beta"];
 check(JSON.stringify(labels) === JSON.stringify(expected), "Settings shows exactly the agreed rows", JSON.stringify(labels));
 const adminLabels = await page.evaluate(() => [...document.querySelectorAll(".settings-admin-section [data-context-settings-action]")].map((b) => b.textContent.trim()));
 check(adminLabels.includes("API Usage") && adminLabels.includes("Beta"), "API Usage and Beta sit under Admin", JSON.stringify(adminLabels));
@@ -115,9 +115,14 @@ for (const label of ["Assistant", "AI Action Log"]) {
   check(back === "Beta", `Beta › ${label} back arrow returns to Beta`, back);
 }
 
-// Mail AI: no long write-ups in the list; each (i) opens one in a small window.
-await openGeneral();
-await page.evaluate(() => document.querySelector('#contextSettingsBody [data-context-settings-action="mail-ai"]')?.click());
+// Mail › Automation (was Settings › Mail AI): opens from Mail's gear menu; no long
+// write-ups in the list; each (i) opens one in a small window.
+await visit("mail");
+await page.evaluate(() => { document.getElementById("appMenuBtn")?.click(); document.getElementById("menuMailAutomationBtn")?.click(); });
+await page.waitForTimeout(250);
+const autoTitle = await page.evaluate(() => document.getElementById("contextSettingsDialog")?.open && document.getElementById("contextSettingsTitle")?.textContent);
+check(autoTitle === "Automation", "Mail gear › Automation opens the Mail AI switches", String(autoTitle));
+await asAdmin(); // visiting Mail reloaded the page
 await page.waitForTimeout(200);
 const mailAi = await page.evaluate(() => {
   const body = document.getElementById("contextSettingsBody");
@@ -208,7 +213,7 @@ const menuFor = async (p) => {
   await page.evaluate(() => document.getElementById("appMenuBtn")?.click());
   return items;
 };
-const expectMenus = { finance: [], recreate: [], shop: ["Preferred Stores", "Receipts", "Price History"], news: ["Sync Settings"] };
+const expectMenus = { finance: [], recreate: [], shop: ["Preferred Stores", "Receipts", "Price History"], news: ["Sync Settings"], mail: ["Automation"], watch: ["Streaming Services", "Theaters"] };
 for (const [p, want] of Object.entries(expectMenus)) {
   const got = await menuFor(p);
   check(JSON.stringify(got) === JSON.stringify(want), `#${p} gear menu is ${want.length ? want.join(", ") : "empty"}`, JSON.stringify(got));
@@ -267,6 +272,86 @@ await page.waitForTimeout(300);
 const sync = await page.evaluate(() => { const b = document.getElementById("contextSettingsBody"); return { cookies: b.querySelectorAll("input[type=password]").length, text: b.innerText.trim() }; });
 check(sync.cookies === 0 && !/cookie/i.test(sync.text) && sync.text.length > 0, "News › Sync Settings has no subscriber cookies", JSON.stringify(sync));
 await page.evaluate(() => document.querySelectorAll("dialog[open]").forEach((d) => d.close()));
+
+// Watch (2026-10-15): Streaming Services looks like Sync Settings (rows, status,
+// one button, (i)); Theaters has a search box and "+", no Watch Tabs, no URL box.
+await visit("watch");
+await page.evaluate(() => { document.getElementById("appMenuBtn")?.click(); document.getElementById("menuWatchServicesBtn")?.click(); });
+await page.waitForTimeout(250);
+const svc = await page.evaluate(() => {
+  const b = document.getElementById("contextSettingsBody");
+  const first = b.querySelector("[data-watch-service]");
+  const before = first?.textContent.trim();
+  first?.click();
+  const after = b.querySelector(`[data-watch-service="${first?.dataset.watchService}"]`)?.textContent.trim();
+  b.querySelector(`[data-watch-service="${first?.dataset.watchService}"]`)?.click();
+  return { title: document.getElementById("contextSettingsTitle")?.textContent, rows: b.querySelectorAll(".sync-context-field").length, info: !!b.querySelector("[data-settings-info]"), before, after };
+});
+check(svc.title === "Streaming Services" && svc.rows > 5 && svc.info && svc.before !== svc.after, "Watch › Streaming Services: Sync-Settings rows with an (i), Add/Remove toggles", JSON.stringify(svc));
+await page.evaluate(() => { document.getElementById("contextSettingsDialog").close(); document.getElementById("appMenuBtn")?.click(); document.getElementById("menuWatchTheatersBtn")?.click(); });
+await page.waitForTimeout(250);
+const th = await page.evaluate(() => {
+  const b = document.getElementById("contextSettingsBody");
+  return { title: document.getElementById("contextSettingsTitle")?.textContent, text: b.innerText, url: !!b.querySelector('input[type="url"]'), plus: b.querySelector(".watch-theater-add")?.textContent.trim(), search: !!b.querySelector("#watchTheaterNameInput") };
+});
+check(th.title === "Theaters" && !/Watch Tabs|showtime links/i.test(th.text) && !th.url && th.plus === "+" && th.search, "Watch › Theaters: search box and +, no tabs, hint or URL box", JSON.stringify({ ...th, text: th.text.slice(0, 80) }));
+const thAdd = await page.evaluate(() => {
+  const b = document.getElementById("contextSettingsBody");
+  b.querySelector("#watchTheaterNameInput").value = "QA Cinema";
+  b.querySelector("#watchTheaterAddForm").requestSubmit();
+  return [...document.querySelectorAll("#contextSettingsBody .sync-context-label")].map((l) => l.textContent);
+});
+check(thAdd.includes("QA Cinema"), "Watch › Theaters: + adds a typed theater", JSON.stringify(thAdd));
+await page.evaluate(() => document.querySelector("#contextSettingsBody [data-delete-theater]")?.click());
+await page.evaluate(() => document.getElementById("contextSettingsDialog").close());
+// Watch sidebar: three-bar button, Archive at the bottom, no Archive button in the tab bar.
+const ws = await page.evaluate(() => {
+  const sb = document.getElementById("watchSidebar");
+  const tabs = [...(sb?.querySelectorAll("[data-watch-side]") || [])].map((t) => t.dataset.watchSide);
+  sb?.querySelector('[data-watch-side="archive"]')?.click();
+  const archiveOpen = document.getElementById("watchArchiveDialog")?.open;
+  document.getElementById("watchArchiveDialog")?.close();
+  return { toggle: !!document.getElementById("watchSidebarToggle"), tabs, archiveOpen, oldBtn: !!document.querySelector("[data-open-watch-archive]") };
+});
+check(ws.toggle && ws.tabs.at(-1) === "archive" && ws.archiveOpen && !ws.oldBtn, "Watch: three-bar menu with Archive at the bottom; old Archive button gone", JSON.stringify(ws));
+
+// Calendar month view spells the month out.
+await visit("plan");
+await page.evaluate(() => document.getElementById("titlePlanBtn")?.click()); // local dev may land on Home
+await page.waitForTimeout(800);
+const monthLabel = await page.evaluate(() => document.querySelector("#weekLabel .plan-label-short")?.textContent || document.getElementById("weekLabel")?.textContent || "");
+check(/^[A-Z][a-z]+ \d{4}$/.test(monthLabel.trim()) && monthLabel.trim().split(" ")[0].length > 3, "Calendar month view title spells the month out", monthLabel);
+
+// News: no gear or refresh button by the search box; Front page has no Briefings
+// block; pulling down at the top refreshes.
+await visit("news");
+const news = await page.evaluate(() => ({ gear: !!document.getElementById("newsSettingsBtn"), refresh: !!document.getElementById("newsRefreshBtn"), briefs: !!document.querySelector("#newsContent .news-briefs, #newsContent .news-brief-title"), hint: !!document.querySelector("#newsMainPage .news-pull-hint") }));
+check(!news.gear && !news.refresh && !news.briefs && news.hint, "News: no gear/refresh buttons, no Briefings on Front page, pull-to-refresh wired", JSON.stringify(news));
+
+// Shop: no Receipts / + under the list; the urgent toggle is a warning triangle.
+await visit("shop");
+const shop = await page.evaluate(() => ({ bottom: !!document.querySelector(".shop-page-actions, #openShopReceiptsBtn, #shopScanDirectBtn"), triangle: !!document.querySelector('#groceryNextStopToggle path[d^="M10.29 3.86"]') }));
+check(!shop.bottom && shop.triangle, "Shop: no Receipts/+ under the list; urgent toggle is a warning triangle", JSON.stringify(shop));
+
+// Shop list rows (Luke, 2026-10-15): name on one line at phone width; where it came
+// from, prep and recipes sit behind an (i) instead of under the name.
+await page.fill("#groceryInput", "toothbrush head replacement");
+await page.press("#groceryInput", "Enter");
+await page.waitForTimeout(500);
+const rowCheck = await page.evaluate(() => {
+  const wrap = [...document.querySelectorAll("#groceryList .grocery-item-wrap")].find((w) => /Toothbrush/i.test(w.textContent));
+  const name = wrap?.querySelector(".grocery-name");
+  const range = document.createRange(); if (name) range.selectNodeContents(name);
+  const btn = wrap?.querySelector("[data-grocery-info]");
+  const box = wrap?.querySelector("input[type=checkbox]");
+  btn?.click();
+  const pop = wrap?.querySelector("[data-grocery-info-pop]");
+  return { lines: name ? range.getClientRects().length : 0, oldLines: wrap?.querySelectorAll(".grocery-name small").length ?? -1, open: pop && !pop.hidden, text: pop?.innerText || "", ticked: box?.checked };
+});
+check(rowCheck.lines === 1 && rowCheck.oldLines === 0, "Shop: 'Toothbrush Head Replacement' fits on one line with no small print under it", JSON.stringify(rowCheck));
+check(rowCheck.open && /Manual/.test(rowCheck.text) && rowCheck.ticked === false, "Shop: (i) opens 'From Manual' without ticking the item", JSON.stringify(rowCheck));
+const mealInfo = await page.evaluate(() => window.__liveQA.groceryInfoFor({ notes: ["chopped"] }));
+check(mealInfo.some(([k, v]) => k === "From" && v === "Meal Plan") && mealInfo.some(([k]) => /^Recipes?$/.test(k)) && mealInfo.some(([k, v]) => k === "Prep" && v === "chopped"), "Shop: a meal-plan item's (i) lists its recipes and prep", JSON.stringify(mealInfo));
 
 // Recipe Box › Recently deleted: shows the last 30 days, purges older entries on open,
 // and restores a recipe.

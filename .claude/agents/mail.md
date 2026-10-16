@@ -21,7 +21,7 @@ changes to Mail only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `mail-frame.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
+- files: `mail-frame.js`, `mail-attachment-view.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/gmail-attachment.mjs`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
 - state: `mail*`
 
 ## Your scope (edit these)
@@ -32,7 +32,7 @@ changes to Mail only.
   `renderMailThread`, `renderMailMessage`, `openMailAttachment`,
   `loadMailEmbeddedImage`), the connect screen (`renderMailConnectState`), the
   **Mail suggestions** bell (`loadMailSuggestionsPanel`, `renderMailSuggestions`),
-  Settings → Mail AI (`MAIL_AI_FEATURES`; each row's write-up opens from its (i)
+  Mail → gear → Automation (`MAIL_AI_FEATURES`, panel kind `mail-ai`; each row's write-up opens from its (i)
   button). Search: `showMailApp`, `renderMail`, `MAIL_AI_FEATURES`.
 - **Server:** `gmail.js` (the session-authenticated action endpoint), `gmail-auth.js` /
   `gmail-callback.js` (OAuth with signed state via `_oauth-state.js`; the iPhone app
@@ -46,7 +46,7 @@ changes to Mail only.
   section: `mailAiSettings`, `mailMoveMemory`.
 
 ## Rules (from CLAUDE.md — do not drift)
-- **Every AI email feature has a toggle** in Settings → Mail AI: add it to
+- **Every AI email feature has a toggle** in Mail → gear → Automation: add it to
   `MAIL_AI_FEATURES` (the UI renders itself) and have the server check
   `state.mailAiSettings.<key>`. **On by default** (`defaultOn: true`; the server treats
   only an explicit `false` as off). **Exception: `assistantMailRead` stays OFF by
@@ -63,6 +63,15 @@ changes to Mail only.
   functions and dialogs) — don't rebuild it. `scheduled-email.js` keeps only the
   snooze wake.
 - "Save to News" is Mail's name for saving an email's article (News owns Saved).
+- **Attachments open inside the app** (Luke, 2026-10-15): every attachment, not just
+  PDFs. iPhone → the `AttachmentPreview` plugin (`ios/App/App/AttachmentPreviewPlugin.swift`,
+  Quick Look + Share), which downloads straight from `gmail-attachment.mjs`; web → the
+  `#mailAttachmentViewer` dialog (PDF / bitmap images / plain text inline, Download for
+  the rest). `gmail-attachment.mjs` streams raw bytes (Netlify's streamed limit is
+  20MB, vs ~6MB buffered, which with base64 meant 3.5MB); over ~19.5MB → Gmail. The
+  old base64 `attachment` action stays as the fallback (and serves `cid:` images).
+  **Security:** the sender controls the declared type — never render HTML/SVG in the
+  page, never create a blob with the sender's type (`mail-attachment-view.js`).
 
 ## Domain landmines (do NOT change without flagging)
 - **The sweep is bounded and idempotent** (ARCHITECTURE §8): claims a run atomically,

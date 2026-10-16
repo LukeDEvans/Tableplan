@@ -6291,9 +6291,13 @@ body[data-theme="dark"] .workout-pool-img {
 .grocery-item {
   position: relative;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) minmax(56px, auto) auto;
+  /* checkbox · name, then quantity and (i) as implicit columns that exist only
+     when the row has them, so names get the whole row (2026-10-15). */
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-auto-columns: auto;
+  grid-auto-flow: column;
   gap: 8px;
-  align-items: start;
+  align-items: center;
   padding: 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -6359,6 +6363,17 @@ body[data-theme="dark"] .workout-pool-img {
   font-weight: 850;
   white-space: nowrap;
 }
+.grocery-item.checked .grocery-info-btn { text-decoration: none; }
+.grocery-info-pop {
+  margin: 4px 2px 2px; padding: 9px 12px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-strong); color: var(--ink);
+  font-size: 0.84rem; line-height: 1.4;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.grocery-info-pop[hidden] { display: none; }
+.grocery-info-line { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; }
+.grocery-info-key { color: var(--muted); font-weight: 700; }
 
 .grocery-item.checked span {
   color: var(--muted);
@@ -10184,100 +10199,42 @@ body[data-theme="dark"] .watch-provider-link:hover {
   background: color-mix(in srgb, #f59e0b 30%, #fff);
 }
 
-/* Watch theater settings */
-
-.watch-theater-settings {
-  display: grid;
-  gap: 10px;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
-  margin-top: 6px;
-}
-
-.watch-theater-settings-head {
-  font-weight: 700;
-  font-size: 0.88rem;
-  color: var(--ink);
-}
-
-.watch-theater-settings-hint {
-  font-size: 0.82rem;
-  color: var(--muted);
-  margin: 0;
-}
-
-.watch-theater-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 4px;
-}
-
-.watch-theater-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: color-mix(in srgb, var(--ink) 4%, transparent);
-  border-radius: 8px;
-}
-
-.watch-theater-name {
-  flex: 1;
-  font-size: 0.88rem;
-  font-weight: 500;
-}
-
-.watch-theater-url-preview {
-  font-size: 0.75rem;
-  color: var(--accent-dark);
-  text-decoration: none;
-}
-
-.watch-theater-url-preview:hover {
-  text-decoration: underline;
-}
-
-.watch-theater-delete {
-  flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  opacity: 0.5;
-}
-
-.watch-theater-delete:hover {
-  opacity: 1;
-}
-
-.watch-theater-add-form {
-  display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: 6px;
-  align-items: start;
-}
-
+/* Watch › Theaters (2026-10-15): Sync-Settings-style rows + a Google theater search. */
+.watch-theater-settings { contain: inline-size; }
+.watch-theater-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.watch-theater-address { font-size: 0.76rem; color: var(--muted); overflow-wrap: anywhere; }
+.watch-theater-site { text-decoration: none; white-space: nowrap; }
+.watch-theater-delete { flex: 0 0 auto; width: 28px; height: 28px; }
+.watch-theater-add-form { display: flex; gap: 8px; align-items: flex-start; margin-top: 4px; }
+.watch-theater-search { position: relative; flex: 1 1 auto; min-width: 0; }
 .watch-theater-input {
-  padding: 7px 10px;
-  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
-  border-radius: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   font: inherit;
-  font-size: 0.86rem;
-  background: #fff;
+  font-size: 0.9rem;
+  background: var(--surface-strong);
   color: var(--ink);
 }
-
-.watch-theater-input:focus {
-  outline: none;
-  border-color: var(--accent);
+.watch-theater-input:focus { outline: none; border-color: var(--accent); }
+.watch-theater-add { flex: 0 0 auto; width: 40px; height: 40px; padding: 0; font-size: 1.3rem; }
+.watch-theater-suggestions {
+  margin-top: 4px;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: var(--surface-strong);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--ink) 14%, transparent);
 }
-
-.watch-theater-add-form .primary-btn {
-  white-space: nowrap;
-  min-height: 36px;
-  padding: 0 14px;
-  font-size: 0.86rem;
-}
+.watch-theater-suggestions[hidden] { display: none; }
+.watch-theater-suggestion { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 12px; border: 0; border-bottom: 1px solid var(--line); background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.watch-theater-suggestion:last-child { border-bottom: 0; }
+.watch-theater-suggestion:hover, .watch-theater-suggestion:focus-visible { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.watch-theater-suggestion-name { font-weight: 600; font-size: 0.88rem; }
+.watch-theater-status { margin: 0; font-size: 0.8rem; color: var(--muted); }
+.watch-theater-status:empty { display: none; }
 
 .watch-find-btn,
 .watch-load-providers-btn {
@@ -13145,16 +13102,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
   margin-bottom: 2px;
 }
 
-.shop-page-actions {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
-  flex-shrink: 0;
-}
-
 /* Shop's window is slimmed (Luke, 2026-10-06): the 10px buffer and the drop
    shadow are gone and the list's own gutter is trimmed from 16px to 10px, so the
    list gets about 36px more width. The blue window border stays (Luke,
@@ -13173,7 +13120,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
   padding-left: 10px;
   padding-right: 10px;
 }
-#shopMainPage .shop-page-actions { padding: 10px; }
 
 .shop-receipts-page {
   padding: 20px;
@@ -15255,6 +15201,38 @@ body.mail-menu-open .mail-thread-panel iframe { pointer-events: none; }
 .mail-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mail-attachment-size { color: var(--text-muted, #888); font-size: 0.75rem; flex-shrink: 0; }
 
+/* In-app attachment viewer (web; the iPhone app uses Quick Look) */
+.mail-att-viewer {
+  width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh;
+  margin: 0; padding: 0; border: 0;
+  background: var(--bg); color: var(--ink);
+  display: none; flex-direction: column;
+}
+.mail-att-viewer[open] { display: flex; }
+.mail-att-viewer::backdrop { background: rgba(0, 0, 0, 0.5); }
+.mail-att-viewer-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(8px + var(--safe-top)) 12px 8px;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.mail-att-viewer-name {
+  flex: 1; min-width: 0; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mail-att-viewer-download { flex-shrink: 0; height: 38px; }
+.mail-att-viewer-body { flex: 1; min-height: 0; overflow: auto; display: flex; }
+.mail-att-viewer-pdf { flex: 1; width: 100%; border: 0; background: var(--surface-strong); }
+.mail-att-viewer-img { margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
+.mail-att-viewer-text {
+  flex: 1; margin: 0; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 0.85rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.mail-att-viewer-empty { margin: auto; padding: 24px 16px; text-align: center; }
+.mail-att-viewer-empty p { margin: 0 0 14px; }
+.mail-att-viewer-download[hidden] { display: none; }
+.mail-att-viewer-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.mail-att-viewer-actions .secondary-btn { display: inline-grid; place-items: center; text-decoration: none; min-height: 38px; }
+
 /* Move to picker */
 .mail-move-wrap { position: relative; }
 .mail-move-picker {
@@ -15355,6 +15333,11 @@ body:has(#watchMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; disp
 body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 #watchMainPage .article-page-inner { min-height: 0; }
 .watch-page-panel { width: 100%; max-width: 1100px; margin: 0 auto; box-sizing: border-box; padding: 10px 14px 0; }
+/* Watch menu (2026-10-15): the shared sidebar, with Archive pinned to the bottom. */
+#watchMainPage .watch-layout { flex: 1; min-height: 0; }
+#watchMainPage .watch-page-panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow-y: auto; }
+.watch-sidebar-spacer { flex: 1; }
+#watchMainPage .discover-head .mail-sidebar-toggle { flex: 0 0 auto; }
 /* The All and Archive lists scroll within their panels, like .article-list */
 #mediaAllList, #mediaArchiveList { flex: 1; min-height: 0; overflow-y: auto; }
 
@@ -15768,24 +15751,24 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
    app-wide — it matches the Mail folder rail — and covers the Media tabs and
    Explore's trip list. */
 @media (min-width: 681px) {
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-layout { position: relative; padding-left: 60px; transition: padding-left 0.18s ease; }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-layout:has(.article-sidebar.is-collapsed) { padding-left: 0; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-layout { position: relative; padding-left: 60px; transition: padding-left 0.18s ease; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-layout:has(.article-sidebar.is-collapsed) { padding-left: 0; }
 
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar {
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar {
     position: absolute; left: 0; top: 0; bottom: 0;
     width: 60px; z-index: 15;
     background: var(--paper, #fff);
     overflow-y: auto; overflow-x: hidden;
     transition: width 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
   }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar.is-collapsed { transform: translateX(-100%); }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:hover { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar.is-collapsed { transform: translateX(-100%); }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:hover { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
 
   /* Rail state (not hovered): icons only, centered; hide text and headers. */
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
     padding-left: 0; padding-right: 0; margin-right: 0; width: 100%; justify-content: center; gap: 0; border-radius: 0;
   }
   /* Explore rail: keep each category's folder ICON visible (like Mail); hide the
@@ -23194,6 +23177,20 @@ body[data-theme="dark"] .news-page {
 
 /* Content */
 .news-content { flex-direction: column; }
+/* News pull-to-refresh label (2026-10-15). */
+#newsMainPage .article-layout { position: relative; }
+.news-pull-hint {
+  position: absolute; left: 50%; top: 6px; z-index: 12;
+  transform: translate(-50%, calc(var(--pull, 0px) * 0.35 - 6px));
+  padding: 5px 12px; border-radius: 999px;
+  background: var(--surface-strong); color: var(--muted);
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--ink) 12%, transparent);
+  font-size: 0.8rem; font-weight: 600; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity 0.15s ease;
+}
+.news-pull-hint.is-visible { opacity: 1; }
+.news-pull-hint.is-ready, .news-pull-hint.is-refreshing { color: var(--accent); border-color: var(--accent); }
 .news-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 14px clamp(12px, 3vw, 24px) 40px; display: flex; flex-direction: column; gap: 14px; }
 .news-scroll > * { width: 100%; max-width: 1080px; margin-inline: auto; }
 .news-head { display: flex; align-items: baseline; gap: 10px; }
@@ -23532,3 +23529,51 @@ button.scores-idle:hover { background: color-mix(in srgb, var(--ink) 5%, transpa
 .display-theme-text { display: grid; gap: 2px; min-width: 0; }
 .display-theme-name { color: var(--ink); font-size: 0.98rem; font-weight: 850; }
 .display-theme-desc { color: var(--muted); font-size: 0.8rem; line-height: 1.3; }
+
+/* App-wide text-box clear button (input-clear.js; CLAUDE.md "Text-box clear
+   button"). Shown at the right of any single-line text box the user has typed
+   into; positioned by the module. The invisible ::before widens the tap target
+   to 32px without growing the circle. */
+.live-input-clear {
+  /* !important on layout: page rules like ".some-form button { width: 100% }"
+     must never reach this button. */
+  position: absolute !important;
+  z-index: 2;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 20px !important;
+  min-width: 20px !important;
+  max-width: 20px !important;
+  height: 20px !important;
+  min-height: 20px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 50% !important;
+  background: color-mix(in srgb, var(--ink) 12%, transparent) !important;
+  color: var(--ink) !important;
+  opacity: 0.75;
+  box-shadow: none !important;
+  transform: none !important;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.live-input-clear::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+.live-input-clear:hover,
+.live-input-clear:active {
+  background: color-mix(in srgb, var(--ink) 20%, transparent) !important;
+  opacity: 1;
+}
+.live-input-clear svg { display: block; pointer-events: none; }
+
+/* One clear control per box: WebKit's own search "x" is hidden everywhere. */
+input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}

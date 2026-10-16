@@ -83,6 +83,12 @@ changes to the News page (including Sports → Scores) only.
   a general rule, not a per-button patch.
 - Article intake (extension, Add by URL, Scan, PDF) lands in News. News search covers
   stories and saved articles; Listen and Watch have their own searches.
+- **Front page (2026-10-15):** no Briefings block and no Athletic stories (filtered in
+  `_news-store.js` `feedQuery`/leads and again in `articlesForView`). The Athletic still
+  shows in Sports and under Papers; Briefings keep their sidebar view.
+- **No buttons beside the search box (2026-10-15):** Sync Settings opens from the gear
+  menu; refreshing is **pull-to-refresh** (`wirePullToRefresh`: drag down from the top
+  past `PULL_TRIGGER_PX`, or keep scrolling up at the top with a trackpad/wheel).
 - **Sync Settings lives on News** and shows **one button per paper** — Sign in *or*
   Sign out, from the phone's current status. Its write-up opens from an (i) button.
   **No subscriber cookies (Luke, 2026-10-14):** the paste-a-cookie section is gone;

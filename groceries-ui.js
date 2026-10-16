@@ -2441,8 +2441,6 @@ function setShopSpace(space) {
 function syncGroceryFormForSpace() {
   const form = document.getElementById("groceryForm");
   if (form) form.hidden = shopSpace !== "shop";
-  const actions = document.querySelector(".shop-page-actions");
-  if (actions) actions.hidden = shopSpace !== "shop";
 }
 
 function nextStopItemTemplate(item) {
@@ -2451,7 +2449,7 @@ function nextStopItemTemplate(item) {
       <label class="grocery-item">
         <input type="checkbox" data-nextstop-purchase="${escapeHtml(item.id)}" />
         <span class="grocery-name">${escapeHtml(item.name)}</span>
-        <span class="grocery-quantity">${escapeHtml(item.quantity || "")}</span>
+        ${item.quantity ? `<span class="grocery-quantity">${escapeHtml(item.quantity)}</span>` : ""}
       </label>
       <div class="grocery-swipe-actions">
         <button class="grocery-swipe-btn grocery-swipe-delete" type="button" data-nextstop-remove="${escapeHtml(item.id)}" aria-label="Remove">
@@ -2708,6 +2706,20 @@ function renderGroceries() {
     wrap.addEventListener("pointermove", handleGrocerySwipePointerMove);
     wrap.addEventListener("pointerup", handleGrocerySwipePointerEnd);
     wrap.addEventListener("pointercancel", handleGrocerySwipePointerEnd);
+  });
+  elements.groceryList.querySelectorAll("[data-grocery-info]").forEach((btn) => {
+    btn.addEventListener("pointerdown", (e) => e.stopPropagation()); // not a swipe or drag
+    btn.addEventListener("click", (e) => {
+      e.preventDefault(); // inside the row's label: don't tick the checkbox
+      e.stopPropagation();
+      const pop = elements.groceryList.querySelector(`[data-grocery-info-pop="${CSS.escape(btn.dataset.groceryInfo)}"]`);
+      if (!pop) return;
+      const open = pop.hidden;
+      elements.groceryList.querySelectorAll("[data-grocery-info-pop]").forEach((p) => { p.hidden = true; });
+      elements.groceryList.querySelectorAll("[data-grocery-info]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+      pop.hidden = !open;
+      btn.setAttribute("aria-expanded", String(open));
+    });
   });
   elements.groceryList.querySelectorAll("[data-grocery-action-edit]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -3073,21 +3085,42 @@ function groceryRowSourceLabel(row) {
     .join(" · ");
 }
 
+// What the (i) on a shopping-list row shows (Luke, 2026-10-15): where the item
+// came from, the recipes that call for it, how it's prepped, and the price
+// estimate. Kept off the row itself so names fit on one line.
+function groceryRowInfoLines(row) {
+  const lines = [];
+  const source = groceryRowSourceLabel(row) || (row.manual ? "Manual" : "");
+  if (source) lines.push(["From", source]);
+  const ids = [...new Set((row.sourceRecipeIds || [row.sourceRecipeId]).filter(Boolean))];
+  if (ids.length) {
+    const byId = new Map(activeRecipes().map((r) => [r.id, r.name]));
+    const names = ids.map((id) => byId.get(id)).filter(Boolean);
+    if (!names.length && row.sourceRecipeName) names.push(row.sourceRecipeName);
+    if (names.length) lines.push([names.length === 1 ? "Recipe" : "Recipes", names.join(", ")]);
+  } else if (row.sourceRecipeName) {
+    lines.push(["Recipe", row.sourceRecipeName]);
+  }
+  if (row.notes?.length) lines.push(["Prep", row.notes.join(" · ")]);
+  if (row.priceEstimate) {
+    lines.push(["Price", `${formatCurrency(row.priceEstimate.cost)} estimated · ${row.priceEstimate.source === "receipt" ? `from receipt ${formatReceiptObservationDate(row.priceEstimate.observedAt)}` : "manual estimate"}`]);
+  }
+  return lines;
+}
+
 function groceryItemTemplate(row) {
+  const info = groceryRowInfoLines(row);
   return `
     <div class="grocery-item-wrap" data-grocery-wrap-key="${escapeHtml(row.key)}">
       <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" data-grocery-row-key="${escapeHtml(row.key)}"${row.carried ? " data-grocery-carried" : ""} title="Drag or long-press to organize; Alt+Arrow to reorder" aria-roledescription="Sortable item">
         <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
-        <span class="grocery-name">
-          ${escapeHtml(row.displayName || row.item)}
-          ${row.notes?.length ? `<small>${escapeHtml(row.notes.join(" · "))}</small>` : ""}
-          ${groceryRowSourceLabel(row) ? `<small class="grocery-source-tag">${escapeHtml(groceryRowSourceLabel(row))}</small>` : ""}
-          ${row.priceEstimate ? `
-            <small>${formatCurrency(row.priceEstimate.cost)} estimated · ${row.priceEstimate.source === "receipt" ? `based on receipt ${escapeHtml(formatReceiptObservationDate(row.priceEstimate.observedAt))}` : "manual estimate"}</small>
-          ` : ""}
-        </span>
-        <span class="grocery-quantity">${escapeHtml(row.quantity || "")}</span>
+        <span class="grocery-name">${escapeHtml(row.displayName || row.item)}</span>
+        ${row.quantity ? `<span class="grocery-quantity">${escapeHtml(row.quantity)}</span>` : ""}
+        ${info.length ? `<button type="button" class="settings-info-btn grocery-info-btn" data-grocery-info="${escapeHtml(row.key)}" aria-expanded="false" aria-label="About ${escapeHtml(row.displayName || row.item)}">i</button>` : ""}
       </label>
+      ${info.length ? `<div class="grocery-info-pop" data-grocery-info-pop="${escapeHtml(row.key)}" hidden>
+        ${info.map(([k, v]) => `<div class="grocery-info-line"><span class="grocery-info-key">${escapeHtml(k)}</span><span>${escapeHtml(v)}</span></div>`).join("")}
+      </div>` : ""}
       <div class="grocery-swipe-actions">
         <button class="grocery-swipe-btn grocery-swipe-edit" type="button" data-grocery-action-edit="${escapeHtml(row.key)}" aria-label="Edit">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -5237,6 +5270,7 @@ function renderShopReceipts() {
   function setPendingReceiptDraft(v) { pendingReceiptDraft = v; }
 
   return {
+    groceryRowInfoLines,
     acquireGroceryStoreSearchLocation,
     addCurrentGroceryReviewItem,
     addEditReceiptLine,

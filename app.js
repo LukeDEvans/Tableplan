@@ -44,7 +44,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
@@ -52,6 +52,7 @@ import { createNativeReminderScheduler } from './calendar/reminders-native.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
+import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_TEXT_PREVIEW_MAX, attachmentViewKind, attachmentBlobType, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
@@ -93,6 +94,7 @@ import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
 import { usableViewportBottom } from './dock-space.js';
 import { installStatusTapScroll } from './status-tap-scroll.js';
+import { installInputClear } from './input-clear.js';
 import { makeReaderOrigin, readerReturnTarget, captureScroll, restoreScroll } from './reader-return.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
@@ -1055,6 +1057,7 @@ const elements = {
   menuFoodHealthSettingsBtn: document.querySelector("#menuFoodHealthSettingsBtn"),
   menuWatchServicesBtn: document.querySelector("#menuWatchServicesBtn"),
   menuWatchTheatersBtn: document.querySelector("#menuWatchTheatersBtn"),
+  menuMailAutomationBtn: document.querySelector("#menuMailAutomationBtn"),
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
   menuWorkoutLogsBtn: document.querySelector("#menuWorkoutLogsBtn"),
@@ -1109,7 +1112,6 @@ const elements = {
   watchPlannerGrid: document.querySelector("#watchPlannerGrid"), // on the Watch page (#watchMainPage)
   shopMainPage: document.querySelector("#shopMainPage"),
   shopReceiptsList: document.querySelector("#shopReceiptsList"),
-  openShopReceiptsBtn: document.querySelector("#openShopReceiptsBtn"),
   shopReceiptsDialog: document.querySelector("#shopReceiptsDialog"),
   closeShopReceiptsBtn: document.querySelector("#closeShopReceiptsBtn"),
   shopReceiptsListView: document.querySelector("#shopReceiptsListView"),
@@ -1130,8 +1132,6 @@ const elements = {
   deleteReceiptBtn: document.querySelector("#deleteReceiptBtn"),
   homeShopBtn: document.querySelector("#homeShopBtn"),
   titleShopBtn: document.querySelector("#titleShopBtn"),
-  shopScanDirectBtn: document.querySelector("#shopScanDirectBtn"),
-  shopScanDirectInput: document.querySelector("#shopScanDirectInput"),
   inventoryMainPage: document.querySelector("#inventoryMainPage"),
   inventoryPlannerGrid: document.querySelector("#inventoryPlannerGrid"),
   inventoryBoxDialog: document.querySelector("#inventoryBoxDialog"),
@@ -2156,6 +2156,7 @@ render();
 bindEvents();
 // iPhone app: tap the status bar to scroll the page/sheet in front back to the top.
 installStatusTapScroll();
+installInputClear();
 
 // Refresh task-time reminders every minute while the app is open: keep the
 // page notification dot current, and if the To-Do page is showing (panel
@@ -2589,8 +2590,26 @@ function bindEvents() {
   elements.menuPodcastSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("podcasts")));
   elements.menuPodcastPriorityBtn.addEventListener("click", () => openSettingsMenuDialog(showPodcastPriorityModal));
   elements.menuReadSyncBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("read-sync")));
-  elements.menuWatchServicesBtn.addEventListener("click", () => openSettingsMenuDialog(openDiscoverServicesDialog));
+  elements.menuWatchServicesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch-services")));
   elements.menuWatchTheatersBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch")));
+  elements.menuMailAutomationBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("mail-ai")));
+  // Watch's sidebar (Luke, 2026-10-15): three-bar button like News/Mail; Archive
+  // sits at the bottom of it (it used to be a button beside the tabs).
+  document.getElementById("watchSidebarToggle")?.addEventListener("click", () => {
+    const sb = document.getElementById("watchSidebar");
+    if (!sb) return;
+    if (window.innerWidth <= 680) sb.classList.toggle("is-expanded");
+    else sb.classList.toggle("is-collapsed");
+  });
+  document.getElementById("watchSidebar")?.addEventListener("click", (e) => {
+    const tab = e.target.closest("[data-watch-side]");
+    if (!tab) return;
+    if (window.innerWidth <= 680) document.getElementById("watchSidebar")?.classList.remove("is-expanded");
+    if (tab.dataset.watchSide === "archive") { openWatchArchive(); return; }
+    const input = document.getElementById("discoverSearchInput");
+    if (input?.value) { input.value = ""; runDiscoverSearch(""); }
+    renderWatchPlanner();
+  });
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
@@ -2944,23 +2963,12 @@ function bindEvents() {
   });
   elements.homeShopBtn.addEventListener("click", showShopApp);
   elements.titleShopBtn.addEventListener("click", showShopApp);
-  elements.openShopReceiptsBtn.addEventListener("click", openShopReceiptsDialog);
   elements.closeShopReceiptsBtn.addEventListener("click", closeShopReceiptsDialog);
   elements.shopReceiptEditBackBtn.addEventListener("click", closeReceiptEditView);
   elements.shopReceiptEditCloseBtn.addEventListener("click", closeShopReceiptsDialog);
   elements.addEditReceiptLineBtn.addEventListener("click", () => addEditReceiptLine());
   elements.deleteReceiptBtn.addEventListener("click", deleteReceipt);
   elements.receiptEditForm.addEventListener("submit", saveReceiptEdit);
-  elements.shopScanDirectBtn.addEventListener("click", () => elements.shopScanDirectInput.click());
-  elements.shopScanDirectInput.addEventListener("change", () => {
-    const files = [...(elements.shopScanDirectInput.files || [])];
-    if (!files.length) return;
-    openReceiptScanDialog();
-    setReceiptScanFiles(files.slice(0, 6));
-    setReceiptImageEdits(retainScanImageEdits(getReceiptScanFiles(), getReceiptImageEdits()));
-    elements.shopScanDirectInput.value = "";
-    updateReceiptScanSelectionStatus();
-  });
   elements.inventoryBoxDialog.addEventListener("click", closeDialogOnBackdropClick);
   document.querySelector("#closeInventoryBoxDialogBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
   document.querySelector("#cancelInventoryBoxBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
@@ -3797,6 +3805,13 @@ function setupDiagnostics() {
     trashSeed: (items) => { if (!localDevMode) return null; state.trashedRecipes = items.map(normalizeTrashedRecipe); return true; },
     trashIds: () => (localDevMode ? (state.trashedRecipes || []).map((t) => t.id) : null),
     openRecipeBox: () => { if (!localDevMode) return null; openRecipeBoxPage(); return true; },
+    // Shop (scripts/qa-settings.mjs): what a shopping-list row's (i) panel would say
+    // for a given row, with the first two real recipes standing in as its meal-plan sources.
+    groceryInfoFor: (row) => {
+      if (!localDevMode) return null;
+      const ids = activeRecipes().slice(0, 2).map((r) => r.id);
+      return _groceries.groceryRowInfoLines({ sources: ["mealplan"], sourceRecipeIds: ids, ...row });
+    },
     // Finance QA: one manual account in memory so the savings cards render (local dev only).
     financeSeedAccount: () => {
       if (!localDevMode) return null;
@@ -8211,7 +8226,8 @@ function setWeekToolsMode(mode) {
 function planViewLabel(format = "short") {
   const d = planViewDate;
   const monthFmt = format === "full" ? "long" : "short";
-  if (planViewMode === "month") return d.toLocaleDateString(undefined, { month: monthFmt, year: "numeric" });
+  // Month view always spells the month out: "October 2026" (Luke, 2026-10-15).
+  if (planViewMode === "month") return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
   if (planViewMode === "day") return d.toLocaleDateString(undefined, { weekday: "short", month: monthFmt, day: "numeric", year: "numeric" });
   if (planViewMode === "agenda") return "Upcoming";
   const weekStart = planWeekStart(d);
@@ -11485,49 +11501,156 @@ function formatAttachmentSize(bytes) {
   return b + " B";
 }
 
-// Attachments proxy through the gmail function as base64 (×1.33 size), and
-// Netlify caps responses at ~6MB — so cap the binary size we pull that way;
-// bigger files deep-link to Gmail web (zero hosting cost).
-const MAIL_ATTACHMENT_PROXY_LIMIT = 3500000;
+// Attachments open inside the app (mail-attachment-view.js): Quick Look on the
+// iPhone, an in-app viewer on the web. Files over the streamed limit (~19.5MB)
+// deep-link to Gmail. `mailAttachmentLegacyOnly` turns on when gmail-attachment
+// answers 404 (not deployed yet) — then the older base64 action is used, with
+// its 3.5MB limit.
+let mailAttachmentLegacyOnly = false;
+
+async function mailSessionToken() {
+  const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
+  return session?.data?.session?.access_token || "";
+}
+
+function offerMailAttachmentInGmail(reason, gmailUrl) {
+  if (confirm("Couldn't open this attachment here" + (reason ? ` (${reason})` : "") + ".\n\nOpen the email in Gmail instead?")) {
+    window.open(gmailUrl, "_blank");
+  }
+}
+
+// The attachment's bytes for the web viewer: the streamed endpoint first, the
+// legacy base64 action if that isn't deployed. → { bytes } | { tooLarge } | { error }
+async function loadMailAttachmentBytes({ messageId, attachmentId, filename, size }) {
+  if (!mailAttachmentLegacyOnly) {
+    const token = await mailSessionToken();
+    if (!token) return { error: "Not signed in." };
+    const r = await fetchAttachmentBytes({ messageId, attachmentId, filename, token });
+    if (r.ok) return { bytes: r.bytes };
+    if (r.reason === "tooLarge") return { tooLarge: true };
+    if (r.reason !== "notDeployed") return { error: r.error };
+    mailAttachmentLegacyOnly = true;
+  }
+  if (Number(size) > ATTACHMENT_LEGACY_MAX_BYTES) return { tooLarge: true };
+  const res = await callGmailApi({ action: "attachment", messageId, attachmentId });
+  if (!res?.data) return { error: lastGmailApiError || "Download failed." };
+  return { bytes: base64UrlToBytes(res.data) };
+}
 
 async function openMailAttachment(chip) {
   const { attMessage, attId, attName, attMime, attSize, attThread } = chip.dataset;
-  if (!attId) { window.open(`https://mail.google.com/mail/#all/${attThread || attMessage}`, "_blank"); return; }
-  if (Number(attSize) > MAIL_ATTACHMENT_PROXY_LIMIT) {
-    window.open(`https://mail.google.com/mail/#all/${attThread || attMessage}`, "_blank");
+  const gmailUrl = gmailThreadUrl(attThread || attMessage);
+  if (chooseAttachmentRoute({ size: attSize, hasId: !!attId, legacyOnly: mailAttachmentLegacyOnly }) === "gmail") {
+    window.open(gmailUrl, "_blank");
     return;
   }
+  if (chip.disabled) return;
   chip.disabled = true;
   chip.classList.add("is-loading");
-  const res = await callGmailApi({ action: "attachment", messageId: attMessage, attachmentId: attId });
-  chip.disabled = false;
-  chip.classList.remove("is-loading");
-  if (!res?.data) {
-    if (confirm("Couldn't download here" + (lastGmailApiError ? ` (${lastGmailApiError})` : "") + ".\n\nOpen the email in Gmail instead?")) {
-      window.open(`https://mail.google.com/mail/#all/${attThread || attMessage}`, "_blank");
+  const filename = attName || "attachment";
+  try {
+    const native = nativeAttachmentPreview();
+    if (native) {
+      if (!mailAttachmentLegacyOnly) {
+        const token = await mailSessionToken();
+        if (!token) { offerMailAttachmentInGmail("not signed in", gmailUrl); return; }
+        try {
+          await native.open({ url: NATIVE_API_BASE + ATTACHMENT_ENDPOINT, token, messageId: attMessage, attachmentId: attId, filename, mimeType: attMime || "" });
+          return;
+        } catch (e) {
+          if (e?.code === "TOO_LARGE") { window.open(gmailUrl, "_blank"); return; }
+          if (e?.code !== "NOT_DEPLOYED") { offerMailAttachmentInGmail(e?.message, gmailUrl); return; }
+          mailAttachmentLegacyOnly = true;
+        }
+      }
+      if (Number(attSize) > ATTACHMENT_LEGACY_MAX_BYTES) { window.open(gmailUrl, "_blank"); return; }
+      const res = await callGmailApi({ action: "attachment", messageId: attMessage, attachmentId: attId });
+      if (!res?.data) { offerMailAttachmentInGmail(lastGmailApiError, gmailUrl); return; }
+      try {
+        await native.openData({ data: res.data.replace(/-/g, "+").replace(/_/g, "/"), filename, mimeType: attMime || "" });
+      } catch (e) { offerMailAttachmentInGmail(e?.message, gmailUrl); }
+      return;
     }
-    return;
+    const got = await loadMailAttachmentBytes({ messageId: attMessage, attachmentId: attId, filename, size: attSize });
+    if (got.tooLarge) { window.open(gmailUrl, "_blank"); return; }
+    if (!got.bytes) { offerMailAttachmentInGmail(got.error, gmailUrl); return; }
+    showMailAttachmentViewer({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
+  } finally {
+    chip.disabled = false;
+    chip.classList.remove("is-loading");
   }
-  const b64 = res.data.replace(/-/g, "+").replace(/_/g, "/");
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  // SECURITY: the sender controls the declared MIME type, and blob: URLs run
-  // with THIS APP's origin — so only inert types may open as a tab. text/html
-  // or image/svg+xml would execute the sender's scripts with our session;
-  // they (and everything else) download as files instead.
-  const viewable = /^image\/(png|jpe?g|gif|webp|avif|bmp)$|^application\/pdf$|^text\/plain$/i.test(attMime);
-  const blob = new Blob([bytes], { type: viewable ? attMime : "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  if (viewable) {
-    window.open(url, "_blank");
+}
+
+// The web viewer: a full-window dialog over the Mail page. PDFs, bitmap images
+// and plain text show inline; other files get Download (and Open in Gmail).
+// SECURITY: see mail-attachment-view.js — only inert types are ever rendered,
+// and the blob never carries the sender's declared type.
+function showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }) {
+  document.getElementById("mailAttachmentViewer")?.remove();
+  const kind = attachmentViewKind(mimeType, filename);
+  const blob = new Blob([bytes], { type: attachmentBlobType(kind, mimeType, filename) });
+  const url = kind === "pdf" || kind === "image" ? URL.createObjectURL(blob) : "";
+
+  const dlg = document.createElement("dialog");
+  dlg.id = "mailAttachmentViewer";
+  dlg.className = "mail-att-viewer";
+  dlg.setAttribute("aria-label", filename);
+  dlg.innerHTML = `
+    <div class="mail-att-viewer-bar">
+      <button class="icon-btn mail-att-viewer-close" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+      <span class="mail-att-viewer-name"></span>
+      <button class="secondary-btn mail-att-viewer-download" type="button">Download</button>
+    </div>
+    <div class="mail-att-viewer-body"></div>`;
+  dlg.querySelector(".mail-att-viewer-name").textContent = filename;
+  const body = dlg.querySelector(".mail-att-viewer-body");
+  const downloadMailAttachment = () => {
+    saveFile(new Blob([bytes], { type: "application/octet-stream" }), filename).catch((e) => console.warn("attachment save failed", e));
+  };
+
+  if (kind === "pdf") {
+    const frame = document.createElement("iframe");
+    frame.className = "mail-att-viewer-pdf";
+    frame.title = filename;
+    frame.src = url;
+    body.appendChild(frame);
+  } else if (kind === "image") {
+    const img = document.createElement("img");
+    img.className = "mail-att-viewer-img";
+    img.alt = filename;
+    img.src = url;
+    body.appendChild(img);
+  } else if (kind === "text") {
+    const pre = document.createElement("pre");
+    pre.className = "mail-att-viewer-text";
+    let text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    if (text.length > ATTACHMENT_TEXT_PREVIEW_MAX) text = text.slice(0, ATTACHMENT_TEXT_PREVIEW_MAX) + "\n\n… (preview cut short — download for the whole file)";
+    pre.textContent = text;
+    body.appendChild(pre);
   } else {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = attName || "attachment";
-    a.click();
+    const empty = document.createElement("div");
+    empty.className = "mail-att-viewer-empty";
+    empty.innerHTML = `<p>This kind of file can't be previewed here.</p>
+      <div class="mail-att-viewer-actions">
+        <button class="primary-btn" type="button" data-att-download>Download</button>
+        <a class="secondary-btn" target="_blank" rel="noopener noreferrer">Open in Gmail</a>
+      </div>`;
+    empty.querySelector("a").href = gmailUrl;
+    empty.querySelector("[data-att-download]").addEventListener("click", () => downloadMailAttachment());
+    dlg.querySelector(".mail-att-viewer-download").hidden = true;
+    body.appendChild(empty);
   }
-  setTimeout(() => URL.revokeObjectURL(url), 120000);
+
+  dlg.querySelector(".mail-att-viewer-download").addEventListener("click", downloadMailAttachment);
+  dlg.querySelector(".mail-att-viewer-close").addEventListener("click", () => dlg.close());
+  dlg.addEventListener("close", () => {
+    if (url) URL.revokeObjectURL(url);
+    dlg.remove();
+  });
+  document.body.appendChild(dlg);
+  dlg.showModal();
 }
 
 // Renders each message body the way Gmail does: HTML mail goes into a
@@ -16361,6 +16484,8 @@ function updateSettingsMenuOptions() {
   elements.menuReadSyncBtn.hidden = activeAppArea !== "news"; // newspaper sign-ins: News, not Media
   elements.menuPodcastSettingsBtn.hidden = activeAppArea !== "media";
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
+  // Mail's AI features live in Mail's own gear menu as "Automation" (Luke, 2026-10-15).
+  elements.menuMailAutomationBtn.hidden = activeAppArea !== "mail";
   const isContacts = activeAppArea === "contacts";
   const impBtn = document.getElementById("menuContactsImportBtn");
   const expBtn = document.getElementById("menuContactsExportBtn");
@@ -16376,7 +16501,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "watch", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "watch-services", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16384,7 +16509,7 @@ function openContextSettingsDialog(kind) {
 }
 
 // Registry of AI email-processing features. Every new AI mail feature gets an
-// entry here (one line) and an on/off toggle appears in Settings → Mail AI.
+// entry here (one line) and an on/off toggle appears in Mail → gear → Automation.
 // The server-side function for each feature must check its flag in
 // state.mailAiSettings before acting.
 const MAIL_AI_FEATURES = [
@@ -16693,7 +16818,8 @@ function renderContextSettingsDialog(kind) {
   contextSettingsKind = kind;
   const titles = {
     general: "Settings",
-    watch: "Watch",
+    watch: "Theaters",
+    "watch-services": "Streaming Services",
     radio: "Radio",
     family: "Household",
     recreate: "Recreate",
@@ -16702,14 +16828,14 @@ function renderContextSettingsDialog(kind) {
     "read-sync": "Sync Settings",
     "api-usage": "API Usage",
     "assistant": "Assistant",
-    "mail-ai": "Mail AI",
+    "mail-ai": "Automation",
     "voice": "Voice",
     "podcasts": "Podcasts",
     "display": "Display",
     "beta": "Beta",
     "ai-log": "AI Action Log"
   };
-  const isSubPanel = !["general", "watch", "radio", "recreate", "read-sync"].includes(kind);
+  const isSubPanel = !["general", "watch", "watch-services", "radio", "recreate", "read-sync", "mail-ai"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
   elements.contextSettingsBackBtn.dataset.parent = SETTINGS_PANEL_PARENT[kind] || "general";
   elements.contextSettingsTitle.textContent = titles[kind] || "Settings";
@@ -16722,7 +16848,6 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="display">Display</button>
         <button type="button" data-context-settings-action="pages">Pages</button>
         <button type="button" data-context-settings-action="family">Household</button>
-        <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
         <button type="button" data-context-settings-action="export-data">Export My Data</button>
       </div>
@@ -17155,7 +17280,7 @@ function renderContextSettingsDialog(kind) {
           </div>
           <input type="checkbox" class="live-toggle" id="assistantFinanceToggle" aria-label="Assistant can read Finance" ${financeAccessOn ? "checked" : ""} />
         </div>
-        <p class="muted-label" style="margin:10px 0 0;font-size:0.78rem">Email access: ${mailAccessOn ? "on" : "off"} — change it in Settings → Mail AI.</p>
+        <p class="muted-label" style="margin:10px 0 0;font-size:0.78rem">Email access: ${mailAccessOn ? "on" : "off"} — change it in Mail → gear → Automation.</p>
       </div>
     `;
     document.getElementById("dailyBriefingToggle")?.addEventListener("change", (e) => {
@@ -17211,6 +17336,11 @@ function renderContextSettingsDialog(kind) {
 
   if (kind === "watch") {
     renderWatchContextSettings();
+    return;
+  }
+
+  if (kind === "watch-services") {
+    renderWatchServicesSettings();
     return;
   }
 
@@ -17336,82 +17466,119 @@ function renderContextSettingsDialog(kind) {
   `;
 }
 
+// Watch › Theaters (Luke, 2026-10-15): a Sync-Settings-style list of saved
+// theaters, and a name box that searches Google for movie theaters as you type.
+// Picking one saves its website; "+" saves a typed name without one. Watch tabs
+// are managed from the Watch page's own "+" tab.
+let watchTheaterSearchTimer = null;
+let watchTheaterSearchSeq = 0;
+let watchTheaterSessionToken = "";
+let watchTheaterSuggestions = [];
+
 function renderWatchContextSettings() {
   const theaters = state.watchSettings?.theaters || [];
-  const categories = state.watchSettings?.categories || [];
   elements.contextSettingsBody.innerHTML = `
-    <div class="watch-theater-settings">
-      <div class="watch-theater-settings-head">Watch Tabs</div>
-      <p class="watch-theater-settings-hint">Tabs filter the watch list by category.</p>
-      ${categories.length ? `<ul class="watch-theater-list">
-        ${categories.map((c) => `
-          <li class="watch-theater-item">
-            <span class="watch-theater-name">${escapeHtml(c.name)}</span>
-            <button class="icon-btn watch-theater-delete" type="button" data-delete-category="${escapeHtml(c.id)}" aria-label="Remove ${escapeHtml(c.name)}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
-          </li>`).join("")}
-      </ul>` : `<p class="watch-theater-settings-hint">No tabs added yet.</p>`}
-      <form class="watch-theater-add-form" id="watchCategoryAddForm">
-        <input class="watch-theater-input" id="watchCategoryNameInput" type="text" placeholder="Tab name (e.g. Sci-Fi)" autocomplete="off" required />
-        <button class="primary-btn" type="submit">Add Tab</button>
+    <div class="sync-context-settings watch-theater-settings">
+      ${theaters.length ? theaters.map((t) => `
+        <div class="sync-context-field">
+          <div class="sync-context-field-header">
+            <span class="watch-theater-text">
+              <span class="sync-context-label">${escapeHtml(t.name)}</span>
+              ${t.address ? `<span class="watch-theater-address">${escapeHtml(t.address)}</span>` : ""}
+            </span>
+            <span class="article-paper-login-actions">
+              ${t.url ? `<a class="sync-context-status sync-status-ok watch-theater-site" href="${escapeHtml(t.url)}" target="_blank" rel="noopener noreferrer">Website ↗</a>` : `<span class="sync-context-status sync-status-off">No website</span>`}
+              <button class="icon-btn watch-theater-delete" type="button" data-delete-theater="${escapeHtml(t.id)}" aria-label="Remove ${escapeHtml(t.name)}">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </span>
+          </div>
+        </div>`).join("") : `<p class="settings-panel-note">No theaters yet.</p>`}
+      <form class="watch-theater-add-form" id="watchTheaterAddForm" autocomplete="off">
+        <div class="watch-theater-search">
+          <input class="watch-theater-input" id="watchTheaterNameInput" type="text" placeholder="Search for a theater" autocomplete="off" aria-label="Theater name" aria-autocomplete="list" aria-controls="watchTheaterSuggestions" />
+          <div class="watch-theater-suggestions" id="watchTheaterSuggestions" role="listbox" hidden></div>
+        </div>
+        <button class="primary-btn icon-primary-btn watch-theater-add" type="submit" title="Add theater" aria-label="Add theater"><span aria-hidden="true">+</span></button>
       </form>
-    </div>
-    <div class="watch-theater-settings">
-      <div class="watch-theater-settings-head">Movie Theaters</div>
-      <p class="watch-theater-settings-hint">Saved theaters appear as showtime links on movies currently in theaters.</p>
-      ${theaters.length ? `<ul class="watch-theater-list">
-        ${theaters.map((t) => `
-          <li class="watch-theater-item">
-            <span class="watch-theater-name">${escapeHtml(t.name)}</span>
-            ${t.url ? `<a class="watch-theater-url-preview" href="${escapeHtml(t.url)}" target="_blank" rel="noopener noreferrer">link ↗</a>` : ""}
-            <button class="icon-btn watch-theater-delete" type="button" data-delete-theater="${escapeHtml(t.id)}" aria-label="Remove ${escapeHtml(t.name)}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
-          </li>`).join("")}
-      </ul>` : `<p class="watch-theater-settings-hint">No theaters added yet.</p>`}
-      <form class="watch-theater-add-form" id="watchTheaterAddForm">
-        <input class="watch-theater-input" id="watchTheaterNameInput" type="text" placeholder="Theater name" autocomplete="off" required />
-        <input class="watch-theater-input watch-theater-url-input" id="watchTheaterUrlInput" type="url" placeholder="Website URL (optional)" autocomplete="off" />
-        <button class="primary-btn" type="submit">Add Theater</button>
-      </form>
+      <p class="watch-theater-status" id="watchTheaterStatus" aria-live="polite"></p>
     </div>
   `;
-  elements.contextSettingsBody.querySelector("#watchCategoryAddForm")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const name = elements.contextSettingsBody.querySelector("#watchCategoryNameInput")?.value.trim();
-    if (!name) return;
+  const body = elements.contextSettingsBody;
+  const input = body.querySelector("#watchTheaterNameInput");
+  const list = body.querySelector("#watchTheaterSuggestions");
+  const status = body.querySelector("#watchTheaterStatus");
+  if (!watchTheaterSessionToken) watchTheaterSessionToken = createId("theater-search");
+  const renderSuggestions = () => {
+    list.hidden = !watchTheaterSuggestions.length;
+    list.innerHTML = watchTheaterSuggestions.map((sug, i) => `
+      <button type="button" class="watch-theater-suggestion" role="option" data-theater-suggestion="${i}">
+        <span class="watch-theater-suggestion-name">${escapeHtml(sug.name)}</span>
+        ${sug.address ? `<span class="watch-theater-address">${escapeHtml(sug.address)}</span>` : ""}
+      </button>`).join("");
+  };
+  const saveTheater = (theater) => {
     if (!state.watchSettings) state.watchSettings = { theaters: [], categories: [] };
-    if (!state.watchSettings.categories) state.watchSettings.categories = [];
-    state.watchSettings.categories.push({ id: createId("wcat"), name });
+    if (!Array.isArray(state.watchSettings.theaters)) state.watchSettings.theaters = [];
+    if (theater.placeId && state.watchSettings.theaters.some((t) => t.placeId === theater.placeId)) { renderWatchContextSettings(); return; }
+    state.watchSettings.theaters.push({ id: createId("theater"), ...theater });
     persist();
+    watchTheaterSuggestions = [];
+    watchTheaterSessionToken = "";
     renderWatchContextSettings();
-    renderWatchPlanner();
-  });
-  elements.contextSettingsBody.querySelectorAll("[data-delete-category]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (state.watchSettings?.categories) {
-        const id = btn.dataset.deleteCategory;
-        recordDeletion("watchSettings.categories", id);
-        state.watchSettings.categories = state.watchSettings.categories.filter((c) => c.id !== id);
-        if (activeWatchCategory === id) activeWatchCategory = "all";
-        persist();
-        renderWatchContextSettings();
-        renderWatchPlanner();
+  };
+  input.addEventListener("input", () => {
+    const q = input.value.trim();
+    window.clearTimeout(watchTheaterSearchTimer);
+    if (q.length < 2) { watchTheaterSuggestions = []; renderSuggestions(); status.textContent = ""; return; }
+    watchTheaterSearchTimer = window.setTimeout(async () => {
+      const seq = ++watchTheaterSearchSeq;
+      try {
+        const near = getGroceryStoreSearchLocation() || homeLocation() || null;
+        const res = await fetch(groceryPlacesApiUrl({
+          action: "theater-autocomplete", input: q, sessionToken: watchTheaterSessionToken,
+          ...(near ? { latitude: near.latitude, longitude: near.longitude } : {}),
+        }), groceryPlacesRequestOptions());
+        const data = await res.json().catch(() => ({}));
+        if (seq !== watchTheaterSearchSeq) return;
+        if (!res.ok) throw new Error(data.error || "Theater search isn't available right now.");
+        watchTheaterSuggestions = Array.isArray(data.suggestions) ? data.suggestions.slice(0, 6) : [];
+        status.textContent = watchTheaterSuggestions.length ? "" : "No theaters found. Tap + to add the name as typed.";
+      } catch (err) {
+        if (seq !== watchTheaterSearchSeq) return;
+        watchTheaterSuggestions = [];
+        status.textContent = `${err?.message || "Theater search isn't available right now."} Tap + to add the name as typed.`;
       }
+      renderSuggestions();
+    }, 280);
+  });
+  list.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-theater-suggestion]");
+    if (!btn) return;
+    const sug = watchTheaterSuggestions[Number(btn.dataset.theaterSuggestion)];
+    if (!sug) return;
+    status.textContent = "Adding…";
+    let details = null;
+    try {
+      const res = await fetch(groceryPlacesApiUrl({ action: "theater-details", placeId: sug.placeId, sessionToken: watchTheaterSessionToken, name: sug.name }), groceryPlacesRequestOptions());
+      details = (await res.json().catch(() => ({}))).theater || null;
+    } catch { /* save without the website */ }
+    saveTheater({
+      name: details?.name || sug.name,
+      url: details?.websiteUri || details?.googleMapsUri || "",
+      address: details?.address || sug.address || "",
+      placeId: sug.placeId,
     });
   });
-  elements.contextSettingsBody.querySelector("#watchTheaterAddForm")?.addEventListener("submit", (e) => {
+  body.querySelector("#watchTheaterAddForm")?.addEventListener("submit", (e) => {
     e.preventDefault();
-    const name = elements.contextSettingsBody.querySelector("#watchTheaterNameInput")?.value.trim();
-    const url = elements.contextSettingsBody.querySelector("#watchTheaterUrlInput")?.value.trim();
-    if (!name) return;
-    if (!state.watchSettings) state.watchSettings = { theaters: [], categories: [] };
-    state.watchSettings.theaters.push({ id: createId("theater"), name, url: url || "" });
-    persist();
-    renderWatchContextSettings();
+    const first = watchTheaterSuggestions[0];
+    if (first) { list.querySelector('[data-theater-suggestion="0"]')?.click(); return; }
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    saveTheater({ name, url: "" });
   });
-  elements.contextSettingsBody.querySelectorAll("[data-delete-theater]").forEach((btn) => {
+  body.querySelectorAll("[data-delete-theater]").forEach((btn) => {
     btn.addEventListener("click", () => {
       if (state.watchSettings?.theaters) {
         recordDeletion("watchSettings.theaters", btn.dataset.deleteTheater);
@@ -17421,6 +17588,44 @@ function renderWatchContextSettings() {
       }
     });
   });
+}
+
+// Watch › Streaming Services (Luke, 2026-10-15): laid out like News › Sync
+// Settings — one row per service with its status and one Add / Remove button;
+// the explanation opens from an (i).
+function renderWatchServicesSettings() {
+  const have = new Set(state.mediaServices || []);
+  elements.contextSettingsBody.innerHTML = `
+    <div class="sync-context-settings">
+      <div class="sync-context-heading">
+        <p class="sync-context-label">Services you subscribe to</p>
+        ${settingsInfoButton("watch-services", "streaming services")}
+      </div>
+      ${settingsInfoPanel("watch-services", "Mark the streaming services you subscribe to. When you search on Watch, titles on these services show first, under Your services.")}
+      ${DISCOVER_SERVICE_OPTIONS.map(([id, label]) => {
+        const on = have.has(id);
+        return `
+        <div class="sync-context-field">
+          <div class="sync-context-field-header">
+            <span class="sync-context-label">${escapeHtml(label)}</span>
+            <span class="article-paper-login-actions">
+              <span class="sync-context-status ${on ? "sync-status-ok" : "sync-status-off"}">${on ? "Subscribed" : "Not subscribed"}</span>
+              <button type="button" class="${on ? "secondary-btn" : "primary-btn"} compact-btn" data-watch-service="${escapeHtml(id)}" data-on="${on ? "1" : ""}">${on ? "Remove" : "Add"}</button>
+            </span>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>`;
+  elements.contextSettingsBody.querySelectorAll("[data-watch-service]").forEach((btn) => btn.addEventListener("click", () => {
+    const set = new Set(state.mediaServices || []);
+    if (btn.dataset.on) set.delete(btn.dataset.watchService); else set.add(btn.dataset.watchService);
+    state.mediaServices = [...set];
+    persist();
+    resetMediaHub(); // rebuild the registry with the new connected set
+    renderWatchServicesSettings();
+    const q = document.getElementById("discoverSearchInput")?.value.trim();
+    if (q) runDiscoverSearch(q); // re-split Your / Other services
+  }));
 }
 
 // Settings → Radio: manage custom stations (add by stream URL, remove). This is
@@ -20927,7 +21132,6 @@ function renderWatchPlanner() {
         }
       </div>
       <div class="watch-category-actions">
-        <button class="watch-corner-btn" type="button" data-open-watch-archive title="Archive" aria-label="Archive"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></button>
         <button class="watch-corner-btn" type="button" data-open-watch-search title="Add movie or TV show" aria-label="Add movie or TV show"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
       </div>
     </div>
@@ -21013,8 +21217,6 @@ function renderWatchPlanner() {
 
   bindWatchControls(elements.watchPlannerGrid);
 
-  elements.watchPlannerGrid.querySelector("[data-open-watch-archive]")
-    ?.addEventListener("click", openWatchArchive);
   updateTabIndicator(elements.watchPlannerGrid);
 }
 
@@ -28123,37 +28325,6 @@ function closeDiscoverFilterMenu() {
   }
 }
 
-function openDiscoverServicesDialog() {
-  const have = new Set(state.mediaServices || []);
-  const d = document.createElement("dialog");
-  d.className = "recipe-dialog auth-dialog";
-  d.innerHTML =
-    `<div class="recipe-form"><h3 style="margin:0 0 4px">Your services</h3>` +
-    `<p class="ingest-intro" style="margin:0 0 12px">Mark the streaming services you subscribe to. Titles on these show under <b>Your services</b> in Discover.</p>` +
-    `<div class="discover-services-list">` +
-      DISCOVER_SERVICE_OPTIONS.map(([id, label]) =>
-        `<label class="discover-service-row"><span>${escapeHtml(label)}</span>` +
-        `<input type="checkbox" class="live-toggle" data-svc="${escapeHtml(id)}"${have.has(id) ? " checked" : ""}></label>`).join("") +
-    `</div>` +
-    `<div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="primary-btn" id="discoverSvcDone" type="button">Done</button></div></div>`;
-  document.body.appendChild(d);
-  d.showModal();
-  d.addEventListener("close", () => d.remove());
-  d.querySelectorAll("[data-svc]").forEach((cb) => cb.addEventListener("change", () => {
-    const id = cb.dataset.svc;
-    const set = new Set(state.mediaServices || []);
-    if (cb.checked) set.add(id); else set.delete(id);
-    state.mediaServices = [...set];
-    persist();
-    resetMediaHub(); // rebuild the registry with the new connected set
-  }));
-  d.querySelector("#discoverSvcDone").addEventListener("click", () => {
-    d.remove();
-    const q = document.getElementById("discoverSearchInput")?.value.trim();
-    if (q) runDiscoverSearch(q); // re-render with the updated Your/Other split
-  });
-}
-
 
 // Universal search. Default target is the Watch page (its filter's types); the
 // Listen page passes its own results element and the audio types.
@@ -32872,7 +33043,7 @@ function syncMusicSearchBar(panel) {
   if (!input) {
     wrap.innerHTML = `<div class="music-search-bar">
         <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="search" id="musicSearchInput" class="music-search-input" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <input type="search" id="musicSearchInput" class="music-search-input" data-no-clear autocomplete="off" spellcheck="false" enterkeyhint="search">
         <button type="button" class="music-search-clear" data-music-search-clear aria-label="Clear search" hidden>${MUSIC_X_SVG}</button>
       </div>`;
     input = wrap.querySelector("#musicSearchInput");
@@ -34216,7 +34387,7 @@ function renderRadioPanel() {
     <div class="music-discover">
       <div class="music-search-bar">
         <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="search" id="radioSearchInput" class="music-search-input" placeholder="Search stations…" autocomplete="off" spellcheck="false" value="${escapeHtml(radioSearchQuery)}">
+        <input type="search" id="radioSearchInput" class="music-search-input" data-no-clear placeholder="Search stations…" autocomplete="off" spellcheck="false" value="${escapeHtml(radioSearchQuery)}">
         <button type="button" class="music-search-clear" id="radioSearchClear" aria-label="Clear search"${radioSearchQuery ? "" : " hidden"}>
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -39695,7 +39866,7 @@ function confirmAssistantAction(message) {
 async function runAssistantToolCall(name, input = {}) {
   if (!toolAllowed(name, assistantAccessFlags())) {
     const msg = name === "search_mail" || name === "read_mail_thread"
-      ? "Email access is switched off (Settings → Mail AI → “Assistant can read email”)."
+      ? "Email access is switched off (Mail → gear → Automation → “Assistant can read email”)."
       : name === "query_transactions"
         ? "Finance access is switched off (Settings → Assistant → “Assistant can read Finance”)."
         : `Unknown tool: ${name}`;

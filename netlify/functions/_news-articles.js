@@ -8,7 +8,7 @@ const { claudeCallComplete } = require("./_claude");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 // One entry per newsletter. `key` doubles as the settings toggle in
-// state.mailAiSettings (Settings → Mail AI).
+// state.mailAiSettings (Mail → gear → Automation).
 const NEWS_SOURCES = [
   {
     key: "nytMorningToArticle",

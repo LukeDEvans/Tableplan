@@ -12,7 +12,7 @@ const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const COLLECTION_RECIPE_CAP = 24;
 
 // One entry per publication. `key` doubles as the settings toggle in
-// state.mailAiSettings (Settings → Mail AI).
+// state.mailAiSettings (Mail → gear → Automation).
 const RECIPE_SOURCES = [
   {
     key: "nytCookingDigest",
