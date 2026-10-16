@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Briefings out of News (Listen only)** · #132 · **Netlify deploy** (web; the phone picks it up with the deploy). News has no Briefings view, and Saved leaves out The Morning / The world in brief; they still join Listen's queue. No migration, no new env vars.
+  Post-deploy:
+  1. News sidebar: Front page · Saved · sections · papers (no Briefings).
+  2. News → Saved (Recent and Email tabs, search, archive): no The Morning / The world in brief.
+  3. Listen's queue still lists today's briefings, and one plays.
+
 - **Receipt scan: long receipts no longer time out** · #131 · **Netlify deploy** (server + web; the phone gets the server half with the deploy). The AI now writes a compact reply per line, and if a read still runs long it stops at ~26 s with "This receipt took too long to read…" instead of a bare 504. No migration, no new env vars.
   Post-deploy:
   1. Rescan the long (30+ line) receipt that failed on 2026-10-16: the review opens with every line, prices, quantities for weighed items, and budget categories filled where expected.
