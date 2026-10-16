@@ -333,6 +333,26 @@ await visit("shop");
 const shop = await page.evaluate(() => ({ bottom: !!document.querySelector(".shop-page-actions, #openShopReceiptsBtn, #shopScanDirectBtn"), triangle: !!document.querySelector('#groceryNextStopToggle path[d^="M10.29 3.86"]') }));
 check(!shop.bottom && shop.triangle, "Shop: no Receipts/+ under the list; urgent toggle is a warning triangle", JSON.stringify(shop));
 
+// Shop list rows (Luke, 2026-10-15): name on one line at phone width; where it came
+// from, prep and recipes sit behind an (i) instead of under the name.
+await page.fill("#groceryInput", "toothbrush head replacement");
+await page.press("#groceryInput", "Enter");
+await page.waitForTimeout(500);
+const rowCheck = await page.evaluate(() => {
+  const wrap = [...document.querySelectorAll("#groceryList .grocery-item-wrap")].find((w) => /Toothbrush/i.test(w.textContent));
+  const name = wrap?.querySelector(".grocery-name");
+  const range = document.createRange(); if (name) range.selectNodeContents(name);
+  const btn = wrap?.querySelector("[data-grocery-info]");
+  const box = wrap?.querySelector("input[type=checkbox]");
+  btn?.click();
+  const pop = wrap?.querySelector("[data-grocery-info-pop]");
+  return { lines: name ? range.getClientRects().length : 0, oldLines: wrap?.querySelectorAll(".grocery-name small").length ?? -1, open: pop && !pop.hidden, text: pop?.innerText || "", ticked: box?.checked };
+});
+check(rowCheck.lines === 1 && rowCheck.oldLines === 0, "Shop: 'Toothbrush Head Replacement' fits on one line with no small print under it", JSON.stringify(rowCheck));
+check(rowCheck.open && /Manual/.test(rowCheck.text) && rowCheck.ticked === false, "Shop: (i) opens 'From Manual' without ticking the item", JSON.stringify(rowCheck));
+const mealInfo = await page.evaluate(() => window.__liveQA.groceryInfoFor({ notes: ["chopped"] }));
+check(mealInfo.some(([k, v]) => k === "From" && v === "Meal Plan") && mealInfo.some(([k]) => /^Recipes?$/.test(k)) && mealInfo.some(([k, v]) => k === "Prep" && v === "chopped"), "Shop: a meal-plan item's (i) lists its recipes and prep", JSON.stringify(mealInfo));
+
 // Recipe Box › Recently deleted: shows the last 30 days, purges older entries on open,
 // and restores a recipe.
 await visit("eat");
