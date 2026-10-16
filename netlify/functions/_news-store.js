@@ -85,6 +85,8 @@ function countsFromRows(rows) {
   return out;
 }
 
+const FRONT_PAPER_FILTER = "or(paper.is.null,paper.neq.athletic)";
+
 // PostgREST query string for one page of a view. Pure.
 //   view: { kind: "front" | "section" | "paper" | "sent", key }
 //   before: "<published_at ISO>|<id>" cursor — rows strictly after it in
@@ -103,6 +105,9 @@ function feedQuery(userId, { view = {}, before, q, limit = 150, nowMs = Date.now
   // Cursor and search are both OR groups; one and=(…) param holds them so they
   // combine with AND unambiguously.
   const groups = [];
+  // The Front page leaves out The Athletic (Luke, 2026-10-15); it still shows in
+  // Sports and under Papers. A story with no paper stays.
+  if ((view.kind || "front") === "front") groups.push(FRONT_PAPER_FILTER);
   const cur = parseCursor(before);
   // Keyset on (published_at, id) so stories sharing a timestamp page cleanly.
   if (cur) groups.push(`or(published_at.lt.${cur.at},and(published_at.eq.${cur.at},id.lt.${cur.id}))`);
@@ -187,7 +192,7 @@ async function loadFeedPage(serviceKey, userId, opts = {}) {
     const since = new Date(nowMs - LEAD_WINDOW_MS).toISOString();
     leads = await getRows(serviceKey, [
       `select=${COLUMNS}`, `user_id=eq.${enc(userId)}`, "hidden_at=is.null",
-      `lead_at=gte.${enc(since)}`, "order=lead_at.desc", "limit=12"
+      `lead_at=gte.${enc(since)}`, `and=${enc(`(${FRONT_PAPER_FILTER})`)}`, "order=lead_at.desc", "limit=12"
     ].join("&"), { fetchImpl });
   }
   const byId = new Map();
