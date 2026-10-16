@@ -12,6 +12,11 @@ Each entry: what shipped · PR · post-deploy steps.
 
 _Last deploy: 2026-10-15 (dock ticker, settings trim, page settings trim, Halloween purple + dark-mode mail)._
 
+- **Scores: Conference League, league tables, full team schedules** · PR #120
+  - UEFA Conference League added (on by default). League tables from the table button in the Scores bar, each league heading's **Table** link, or a game. Team pages list a team's whole season; soccer teams span every competition. Tables and team pages sit inside Scores with ‹ Back. New `scores` actions `standings` and `team` (CDN-cached, no Supabase). See SPORTS_SCORES_DESIGN.md.
+  - **Never checked against live ESPN** (the preview fetch wasn't approved), so check first after deploy: open `/.netlify/functions/scores?action=standings&league=nhl` and confirm the season is 2026-27 with games played. Then `?action=standings&league=eredivisie` (qualification notes) and `?action=team&league=eredivisie&team=espn:139` (Ajax: Eredivisie and Conference League games, past and upcoming). If a table shows last season, see `espnSeason` in `_scores-espn.mjs`.
+  - In the app: News → Sports → the table button: NFL by division, your teams highlighted. Tap Ajax in the Eredivisie table → its season. Tap a game → that day in Scores, ‹ Back returns. Needs a TestFlight build for the iPhone app.
+
 - **Clear button on every text box** · PR #125 · Once you type into a text box, an x on a shaded circle at its right edge empties it (app-wide, automatic for new boxes; not textareas, passwords, numbers or dates; recipe/music/radio search keep their own). Client-only, no function changes. Post-deploy: needs a TestFlight build. On the phone, type in Shop's add-item box and Calendar search, tap the x: the box empties and the keyboard stays up.
 
 - **Cold start: theme and icon hold, ticker shows with the dock** · PR #119
