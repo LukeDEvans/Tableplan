@@ -1,6 +1,7 @@
 const GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com/v1";
 const STORE_TYPES = ["grocery_store", "supermarket", "warehouse_store", "food_store", "market"];
 const RESTAURANT_TYPES = ["restaurant", "cafe", "bar", "bakery", "fast_food_restaurant"];
+const THEATER_TYPES = ["movie_theater"];
 const DEFAULT_SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 const ALLOWED_ORIGINS = new Set([
@@ -39,6 +40,31 @@ exports.handler = async (event) => {
           placeId: event.queryStringParameters?.placeId,
           sessionToken: event.queryStringParameters?.sessionToken,
           name: event.queryStringParameters?.name
+        })
+      });
+    }
+    // Watch › Theaters (2026-10-15): movie theaters only; details reuse the
+    // restaurant lookup, which returns the website.
+    if (action === "theater-autocomplete") {
+      return respond(200, {
+        suggestions: await fetchPlaceSuggestions({
+          apiKey,
+          input: event.queryStringParameters?.input,
+          sessionToken: event.queryStringParameters?.sessionToken,
+          latitude: event.queryStringParameters?.latitude,
+          longitude: event.queryStringParameters?.longitude,
+          types: THEATER_TYPES,
+          useBias: true
+        })
+      });
+    }
+    if (action === "theater-details") {
+      return respond(200, {
+        theater: await fetchRestaurantDetails({
+          apiKey,
+          placeId: event.queryStringParameters?.placeId,
+          sessionToken: event.queryStringParameters?.sessionToken,
+          name: event.queryStringParameters?.name || "Theater"
         })
       });
     }

@@ -78,6 +78,9 @@ almost all your work is there. Make focused changes to the Groceries domain only
   the returned-interface functions without updating callers.
 
 ## Luke's Shop decisions (keep them)
+- **Under the list (2026-10-15):** no Receipts or "+" scan buttons — Receipts is in the
+  gear menu and the receipt scanner is always in the header. The "Add to Next Stop"
+  (urgent) toggle beside Add item is a **warning triangle** (exclamation mark), not a clock.
 - **Gear menu (2026-10-14):** Preferred Stores, **Receipts** (the receipts list, which
   holds the Scan receipt button) and **Price History** (prices only) — two separate
   items. No Checklist item: it's configured from the Configure button under the list.

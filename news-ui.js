@@ -55,12 +55,87 @@ const sectionOf = (c) => (SECTION_LABEL[c?.section] ? c.section : "more");
 // The articles a sidebar view shows, newest first. `view`: { kind, key }.
 export function articlesForView(articles, view, query = "") {
   let list = (articles || []).filter((a) => a && a.id && a.url);
+  // Front page: no Athletic stories (Luke, 2026-10-15; the server leaves them out
+  // too). They still show in Sports and under Papers.
+  if (!view?.kind || view.kind === "front") list = list.filter((a) => a.paper !== "athletic");
   if (view?.kind === "section") list = list.filter((a) => sectionOf(a) === view.key);
   else if (view?.kind === "paper") list = list.filter((a) => a.paper === view.key);
   else if (view?.kind === "sent") list = list.filter((a) => a.sentAt);
   const q = String(query || "").trim().toLowerCase();
   if (q) list = list.filter((a) => `${a.title} ${a.subtitle || ""} ${a.source || ""}`.toLowerCase().includes(q));
   return list.sort((a, b) => cardTime(b) - cardTime(a));
+}
+
+// Pull-to-refresh (Luke, 2026-10-15): pulling down past the top of News refreshes
+// it. Touch: drag down from the top past PULL_TRIGGER_PX and let go. Trackpad /
+// wheel: keep scrolling up at the top until WHEEL_TRIGGER of upward scroll builds
+// up within WHEEL_WINDOW_MS. A small label at the top shows the state. Listeners
+// are passive, so normal scrolling is never held up.
+export const PULL_TRIGGER_PX = 80;
+const WHEEL_TRIGGER = 260;
+const WHEEL_WINDOW_MS = 700;
+const PULL_COOLDOWN_MS = 2500;
+
+function scrollerAtTop(target, root) {
+  for (let el = target; el && el !== root.parentElement; el = el.parentElement) {
+    if (el.scrollHeight > el.clientHeight + 1) {
+      const oy = getComputedStyle(el).overflowY;
+      if (oy === "auto" || oy === "scroll") return el.scrollTop <= 0;
+    }
+    if (el === root) break;
+  }
+  return true;
+}
+
+export function wirePullToRefresh(root, onRefresh, { now = () => Date.now() } = {}) {
+  if (!root || root.dataset.pullWired) return;
+  root.dataset.pullWired = "1";
+  const hint = document.createElement("div");
+  hint.className = "news-pull-hint";
+  hint.setAttribute("aria-hidden", "true");
+  // Lives beside the content (whose HTML is rebuilt on every render), over its top.
+  (root.parentElement || root).appendChild(hint);
+  let startY = null, pulled = 0, lastFire = 0, wheelSum = 0, wheelAt = 0;
+  const show = (dist) => {
+    pulled = dist;
+    hint.textContent = dist >= PULL_TRIGGER_PX ? "Release to refresh" : "Pull to refresh";
+    hint.style.setProperty("--pull", `${Math.min(dist, PULL_TRIGGER_PX * 1.4)}px`);
+    hint.classList.toggle("is-visible", dist > 12);
+    hint.classList.toggle("is-ready", dist >= PULL_TRIGGER_PX);
+  };
+  const fire = () => {
+    if (now() - lastFire < PULL_COOLDOWN_MS) return;
+    lastFire = now();
+    hint.textContent = "Refreshing…";
+    hint.classList.add("is-visible", "is-refreshing");
+    setTimeout(() => hint.classList.remove("is-visible", "is-ready", "is-refreshing"), 900);
+    onRefresh();
+  };
+  root.addEventListener("touchstart", (e) => {
+    startY = e.touches.length === 1 && scrollerAtTop(e.target, root) ? e.touches[0].clientY : null;
+    pulled = 0;
+  }, { passive: true });
+  root.addEventListener("touchmove", (e) => {
+    if (startY === null) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0 || !scrollerAtTop(e.target, root)) { startY = null; show(0); return; }
+    show(dy * 0.6);
+  }, { passive: true });
+  const end = () => {
+    if (startY !== null && pulled >= PULL_TRIGGER_PX) fire();
+    else hint.classList.remove("is-visible", "is-ready");
+    startY = null; pulled = 0;
+  };
+  root.addEventListener("touchend", end, { passive: true });
+  root.addEventListener("touchcancel", end, { passive: true });
+  root.addEventListener("wheel", (e) => {
+    if (e.deltaY >= 0 || !scrollerAtTop(e.target, root)) { wheelSum = 0; return; }
+    const t = now();
+    if (t - wheelAt > WHEEL_WINDOW_MS) wheelSum = 0;
+    wheelAt = t;
+    wheelSum += -e.deltaY;
+    if (wheelSum >= WHEEL_TRIGGER) { wheelSum = 0; fire(); }
+  }, { passive: true });
 }
 
 // The lead story plus the rest, in display order (Q3): newsletter leads from the
@@ -610,7 +685,6 @@ export function createNewsModule(deps) {
         : view.kind === "front" ? c.all : list.filter((a) => !a.readAt).length;
       const shown = `${list.length}${page.nextBefore ? "+" : ""} ${list.length === 1 && !page.nextBefore ? "story" : "stories"}`;
       body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : `${shown} · ${unread} unread`}</div>`;
-      if (view.kind === "front" && !query) body += briefingsHtml(briefings.slice(0, 4), true);
       if (!list.length) {
         body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing saved yet. Use ⋯ → Save on any story." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
       } else {
@@ -647,6 +721,15 @@ export function createNewsModule(deps) {
     load();
   }
 
+  // Refresh everything News shows (was the refresh button by the search box).
+  function refreshAll() {
+    if (onScores()) scores.refresh();
+    if (onSaved()) saved.refresh();
+    flush();
+    for (const p of pages.values()) p.loadedAt = 0; // every view re-reads when next shown
+    load(true);
+  }
+
   function wire() {
     if (wired) return;
     const page = $("newsMainPage");
@@ -658,14 +741,7 @@ export function createNewsModule(deps) {
       if (isNarrow()) sb.classList.toggle("is-expanded");
       else sb.classList.toggle("is-collapsed");
     });
-    $("newsSettingsBtn")?.addEventListener("click", () => openSignInSettings?.());
-    $("newsRefreshBtn")?.addEventListener("click", () => {
-      if (onScores()) scores.refresh();
-      if (onSaved()) saved.refresh();
-      flush();
-      for (const p of pages.values()) p.loadedAt = 0; // every view re-reads when next shown
-      load(true);
-    });
+    wirePullToRefresh($("newsContent"), refreshAll);
     // Search runs on the server (titles across the whole window), debounced.
     // Saved articles search on the device instead (they're local).
     $("newsSearchInput")?.addEventListener("input", (e) => {

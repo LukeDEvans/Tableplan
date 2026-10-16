@@ -122,7 +122,12 @@ describe("news_articles store", () => {
     expect(d).toContain('or(title.ilike."*U.S. lake street*",subtitle.ilike."*U.S. lake street*"))');
     expect(q).toContain("limit=200");
     expect(S.feedQuery(U, { view: { kind: "sent" } })).toContain("sent_at=not.is.null");
-    expect(S.feedQuery(U, { before: "not-a-cursor" })).not.toContain("and=");
+    // Front page leaves out The Athletic (2026-10-15); other views keep it.
+    expect(decodeURIComponent(S.feedQuery(U, { view: { kind: "front" } }))).toContain("or(paper.is.null,paper.neq.athletic)");
+    expect(decodeURIComponent(S.feedQuery(U, {}))).toContain("paper.neq.athletic");
+    expect(decodeURIComponent(S.feedQuery(U, { view: { kind: "section", key: "sports" } }))).not.toContain("athletic");
+    expect(decodeURIComponent(S.feedQuery(U, { view: { kind: "paper", key: "athletic" } }))).not.toContain("paper.neq.athletic");
+    expect(S.feedQuery(U, { before: "not-a-cursor" })).not.toContain("published_at.lt"); // a bad cursor is ignored
   });
   it("parseCursor refuses anything but <ISO>|<base-36 id>", () => {
     expect(S.parseCursor("2026-10-05T10:00:00Z|abc12")).toEqual({ at: "2026-10-05T10:00:00.000Z", id: "abc12" });

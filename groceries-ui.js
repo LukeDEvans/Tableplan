@@ -2441,8 +2441,6 @@ function setShopSpace(space) {
 function syncGroceryFormForSpace() {
   const form = document.getElementById("groceryForm");
   if (form) form.hidden = shopSpace !== "shop";
-  const actions = document.querySelector(".shop-page-actions");
-  if (actions) actions.hidden = shopSpace !== "shop";
 }
 
 function nextStopItemTemplate(item) {

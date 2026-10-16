@@ -62,6 +62,10 @@ changes to the Calendar (and its sibling Tasks) domain only.
   a derived mirror rebuilt in `persist()`; `state.mealPlanSharedEvents`; Tasks under
   the `do` section.
 
+## Luke's decisions (keep them)
+- **Month view title spells the month out** (2026-10-15): "October 2026", at every
+  width (`planViewLabel`), never "Oct, 2026".
+
 ## Domain landmines (do NOT change without flagging)
 - **The authority flip is HELD.** Never make `calendarSources` authoritative or
   write to it directly, and don't touch the calendar tombstone handling in

@@ -32,7 +32,7 @@ changes to Mail only.
   `renderMailThread`, `renderMailMessage`, `openMailAttachment`,
   `loadMailEmbeddedImage`), the connect screen (`renderMailConnectState`), the
   **Mail suggestions** bell (`loadMailSuggestionsPanel`, `renderMailSuggestions`),
-  Settings → Mail AI (`MAIL_AI_FEATURES`; each row's write-up opens from its (i)
+  Mail → gear → Automation (`MAIL_AI_FEATURES`, panel kind `mail-ai`; each row's write-up opens from its (i)
   button). Search: `showMailApp`, `renderMail`, `MAIL_AI_FEATURES`.
 - **Server:** `gmail.js` (the session-authenticated action endpoint), `gmail-auth.js` /
   `gmail-callback.js` (OAuth with signed state via `_oauth-state.js`; the iPhone app
@@ -46,7 +46,7 @@ changes to Mail only.
   section: `mailAiSettings`, `mailMoveMemory`.
 
 ## Rules (from CLAUDE.md — do not drift)
-- **Every AI email feature has a toggle** in Settings → Mail AI: add it to
+- **Every AI email feature has a toggle** in Mail → gear → Automation: add it to
   `MAIL_AI_FEATURES` (the UI renders itself) and have the server check
   `state.mailAiSettings.<key>`. **On by default** (`defaultOn: true`; the server treats
   only an explicit `false` as off). **Exception: `assistantMailRead` stays OFF by
