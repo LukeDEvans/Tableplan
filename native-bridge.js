@@ -192,6 +192,24 @@ export function nativeAppIcon() {
   return _appIcon;
 }
 
+// Email attachments in Quick Look (AttachmentPreview plugin): open({ url, token,
+// messageId, attachmentId, filename, mimeType }) downloads and shows the file;
+// openData({ data, filename, mimeType }) shows base64 bytes. null in a
+// browser/PWA or an app build from before the plugin existed → the web viewer.
+let _attachmentPreview;
+export function nativeAttachmentPreview() {
+  if (_attachmentPreview !== undefined) return _attachmentPreview;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _attachmentPreview = null;
+      return _attachmentPreview;
+    }
+    const p = registerPlugin("AttachmentPreview");
+    _attachmentPreview = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("AttachmentPreview")) ? p : null;
+  } catch { _attachmentPreview = null; }
+  return _attachmentPreview;
+}
+
 // The iPhone app runs at capacitor://localhost, so app.js's canUseLocalBackend()
 // (a hostname check) is TRUE there and URL helpers pick their local-dev-server
 // paths (/api/<name>, served by server.js on a laptop). The live site only routes

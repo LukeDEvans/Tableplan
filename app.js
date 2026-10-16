@@ -44,7 +44,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
@@ -52,6 +52,7 @@ import { createNativeReminderScheduler } from './calendar/reminders-native.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
+import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_TEXT_PREVIEW_MAX, attachmentViewKind, attachmentBlobType, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
@@ -11500,49 +11501,156 @@ function formatAttachmentSize(bytes) {
   return b + " B";
 }
 
-// Attachments proxy through the gmail function as base64 (×1.33 size), and
-// Netlify caps responses at ~6MB — so cap the binary size we pull that way;
-// bigger files deep-link to Gmail web (zero hosting cost).
-const MAIL_ATTACHMENT_PROXY_LIMIT = 3500000;
+// Attachments open inside the app (mail-attachment-view.js): Quick Look on the
+// iPhone, an in-app viewer on the web. Files over the streamed limit (~19.5MB)
+// deep-link to Gmail. `mailAttachmentLegacyOnly` turns on when gmail-attachment
+// answers 404 (not deployed yet) — then the older base64 action is used, with
+// its 3.5MB limit.
+let mailAttachmentLegacyOnly = false;
+
+async function mailSessionToken() {
+  const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
+  return session?.data?.session?.access_token || "";
+}
+
+function offerMailAttachmentInGmail(reason, gmailUrl) {
+  if (confirm("Couldn't open this attachment here" + (reason ? ` (${reason})` : "") + ".\n\nOpen the email in Gmail instead?")) {
+    window.open(gmailUrl, "_blank");
+  }
+}
+
+// The attachment's bytes for the web viewer: the streamed endpoint first, the
+// legacy base64 action if that isn't deployed. → { bytes } | { tooLarge } | { error }
+async function loadMailAttachmentBytes({ messageId, attachmentId, filename, size }) {
+  if (!mailAttachmentLegacyOnly) {
+    const token = await mailSessionToken();
+    if (!token) return { error: "Not signed in." };
+    const r = await fetchAttachmentBytes({ messageId, attachmentId, filename, token });
+    if (r.ok) return { bytes: r.bytes };
+    if (r.reason === "tooLarge") return { tooLarge: true };
+    if (r.reason !== "notDeployed") return { error: r.error };
+    mailAttachmentLegacyOnly = true;
+  }
+  if (Number(size) > ATTACHMENT_LEGACY_MAX_BYTES) return { tooLarge: true };
+  const res = await callGmailApi({ action: "attachment", messageId, attachmentId });
+  if (!res?.data) return { error: lastGmailApiError || "Download failed." };
+  return { bytes: base64UrlToBytes(res.data) };
+}
 
 async function openMailAttachment(chip) {
   const { attMessage, attId, attName, attMime, attSize, attThread } = chip.dataset;
-  if (!attId) { window.open(`https://mail.google.com/mail/#all/${attThread || attMessage}`, "_blank"); return; }
-  if (Number(attSize) > MAIL_ATTACHMENT_PROXY_LIMIT) {
-    window.open(`https://mail.google.com/mail/#all/${attThread || attMessage}`, "_blank");
+  const gmailUrl = gmailThreadUrl(attThread || attMessage);
+  if (chooseAttachmentRoute({ size: attSize, hasId: !!attId, legacyOnly: mailAttachmentLegacyOnly }) === "gmail") {
+    window.open(gmailUrl, "_blank");
     return;
   }
+  if (chip.disabled) return;
   chip.disabled = true;
   chip.classList.add("is-loading");
-  const res = await callGmailApi({ action: "attachment", messageId: attMessage, attachmentId: attId });
-  chip.disabled = false;
-  chip.classList.remove("is-loading");
-  if (!res?.data) {
-    if (confirm("Couldn't download here" + (lastGmailApiError ? ` (${lastGmailApiError})` : "") + ".\n\nOpen the email in Gmail instead?")) {
-      window.open(`https://mail.google.com/mail/#all/${attThread || attMessage}`, "_blank");
+  const filename = attName || "attachment";
+  try {
+    const native = nativeAttachmentPreview();
+    if (native) {
+      if (!mailAttachmentLegacyOnly) {
+        const token = await mailSessionToken();
+        if (!token) { offerMailAttachmentInGmail("not signed in", gmailUrl); return; }
+        try {
+          await native.open({ url: NATIVE_API_BASE + ATTACHMENT_ENDPOINT, token, messageId: attMessage, attachmentId: attId, filename, mimeType: attMime || "" });
+          return;
+        } catch (e) {
+          if (e?.code === "TOO_LARGE") { window.open(gmailUrl, "_blank"); return; }
+          if (e?.code !== "NOT_DEPLOYED") { offerMailAttachmentInGmail(e?.message, gmailUrl); return; }
+          mailAttachmentLegacyOnly = true;
+        }
+      }
+      if (Number(attSize) > ATTACHMENT_LEGACY_MAX_BYTES) { window.open(gmailUrl, "_blank"); return; }
+      const res = await callGmailApi({ action: "attachment", messageId: attMessage, attachmentId: attId });
+      if (!res?.data) { offerMailAttachmentInGmail(lastGmailApiError, gmailUrl); return; }
+      try {
+        await native.openData({ data: res.data.replace(/-/g, "+").replace(/_/g, "/"), filename, mimeType: attMime || "" });
+      } catch (e) { offerMailAttachmentInGmail(e?.message, gmailUrl); }
+      return;
     }
-    return;
+    const got = await loadMailAttachmentBytes({ messageId: attMessage, attachmentId: attId, filename, size: attSize });
+    if (got.tooLarge) { window.open(gmailUrl, "_blank"); return; }
+    if (!got.bytes) { offerMailAttachmentInGmail(got.error, gmailUrl); return; }
+    showMailAttachmentViewer({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
+  } finally {
+    chip.disabled = false;
+    chip.classList.remove("is-loading");
   }
-  const b64 = res.data.replace(/-/g, "+").replace(/_/g, "/");
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  // SECURITY: the sender controls the declared MIME type, and blob: URLs run
-  // with THIS APP's origin — so only inert types may open as a tab. text/html
-  // or image/svg+xml would execute the sender's scripts with our session;
-  // they (and everything else) download as files instead.
-  const viewable = /^image\/(png|jpe?g|gif|webp|avif|bmp)$|^application\/pdf$|^text\/plain$/i.test(attMime);
-  const blob = new Blob([bytes], { type: viewable ? attMime : "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  if (viewable) {
-    window.open(url, "_blank");
+}
+
+// The web viewer: a full-window dialog over the Mail page. PDFs, bitmap images
+// and plain text show inline; other files get Download (and Open in Gmail).
+// SECURITY: see mail-attachment-view.js — only inert types are ever rendered,
+// and the blob never carries the sender's declared type.
+function showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }) {
+  document.getElementById("mailAttachmentViewer")?.remove();
+  const kind = attachmentViewKind(mimeType, filename);
+  const blob = new Blob([bytes], { type: attachmentBlobType(kind, mimeType, filename) });
+  const url = kind === "pdf" || kind === "image" ? URL.createObjectURL(blob) : "";
+
+  const dlg = document.createElement("dialog");
+  dlg.id = "mailAttachmentViewer";
+  dlg.className = "mail-att-viewer";
+  dlg.setAttribute("aria-label", filename);
+  dlg.innerHTML = `
+    <div class="mail-att-viewer-bar">
+      <button class="icon-btn mail-att-viewer-close" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+      <span class="mail-att-viewer-name"></span>
+      <button class="secondary-btn mail-att-viewer-download" type="button">Download</button>
+    </div>
+    <div class="mail-att-viewer-body"></div>`;
+  dlg.querySelector(".mail-att-viewer-name").textContent = filename;
+  const body = dlg.querySelector(".mail-att-viewer-body");
+  const downloadMailAttachment = () => {
+    saveFile(new Blob([bytes], { type: "application/octet-stream" }), filename).catch((e) => console.warn("attachment save failed", e));
+  };
+
+  if (kind === "pdf") {
+    const frame = document.createElement("iframe");
+    frame.className = "mail-att-viewer-pdf";
+    frame.title = filename;
+    frame.src = url;
+    body.appendChild(frame);
+  } else if (kind === "image") {
+    const img = document.createElement("img");
+    img.className = "mail-att-viewer-img";
+    img.alt = filename;
+    img.src = url;
+    body.appendChild(img);
+  } else if (kind === "text") {
+    const pre = document.createElement("pre");
+    pre.className = "mail-att-viewer-text";
+    let text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    if (text.length > ATTACHMENT_TEXT_PREVIEW_MAX) text = text.slice(0, ATTACHMENT_TEXT_PREVIEW_MAX) + "\n\n… (preview cut short — download for the whole file)";
+    pre.textContent = text;
+    body.appendChild(pre);
   } else {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = attName || "attachment";
-    a.click();
+    const empty = document.createElement("div");
+    empty.className = "mail-att-viewer-empty";
+    empty.innerHTML = `<p>This kind of file can't be previewed here.</p>
+      <div class="mail-att-viewer-actions">
+        <button class="primary-btn" type="button" data-att-download>Download</button>
+        <a class="secondary-btn" target="_blank" rel="noopener noreferrer">Open in Gmail</a>
+      </div>`;
+    empty.querySelector("a").href = gmailUrl;
+    empty.querySelector("[data-att-download]").addEventListener("click", () => downloadMailAttachment());
+    dlg.querySelector(".mail-att-viewer-download").hidden = true;
+    body.appendChild(empty);
   }
-  setTimeout(() => URL.revokeObjectURL(url), 120000);
+
+  dlg.querySelector(".mail-att-viewer-download").addEventListener("click", downloadMailAttachment);
+  dlg.querySelector(".mail-att-viewer-close").addEventListener("click", () => dlg.close());
+  dlg.addEventListener("close", () => {
+    if (url) URL.revokeObjectURL(url);
+    dlg.remove();
+  });
+  document.body.appendChild(dlg);
+  dlg.showModal();
 }
 
 // Renders each message body the way Gmail does: HTML mail goes into a
