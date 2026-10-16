@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Receipt scan: long receipts no longer time out** · #131 · **Netlify deploy** (server + web; the phone gets the server half with the deploy). The AI now writes a compact reply per line, and if a read still runs long it stops at ~26 s with "This receipt took too long to read…" instead of a bare 504. No migration, no new env vars.
+  Post-deploy:
+  1. Rescan the long (30+ line) receipt that failed on 2026-10-16: the review opens with every line, prices, quantities for weighed items, and budget categories filled where expected.
+  2. In Netlify's function logs, `scan-receipt` for that scan finishes well under 26 s.
+  3. Scan a short receipt too and check nothing looks different in the review.
+
 - **Recipe photos** (RECIPE_PHOTOS_DESIGN.md steps 1–4) · #130 · **Netlify deploy + TestFlight build.** Own photos load from public Storage and are cached on each device; uploads add a thumbnail; broken photos are hidden; imported recipes carry the website's photo; removing your own photo brings the website's back; a one-time backfill adds website photos to recipes with a source link and no photo. No migration, no new env vars.
   Post-deploy:
   1. Open a recipe with your own photo: the request goes to `…/storage/v1/object/public/recipe-photos/…` (not `/.netlify/functions/recipe-photo`); after a reload it's served by the service worker.
