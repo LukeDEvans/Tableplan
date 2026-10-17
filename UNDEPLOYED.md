@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Mail: pinch to zoom an email** · #133 · **Netlify deploy** (web; the phone picks it up with the deploy). Two fingers zoom an email from its fitted size up to 4×; laptop trackpad pinch works too. Zoomed in, a sideways drag pans instead of paging. No migration, no new env vars.
+  Post-deploy:
+  1. iPhone: open an image-heavy newsletter, pinch out on a headline — it grows around your fingers and stays sharp; drag around in every direction; pinch back in to the fitted view.
+  2. While zoomed in, a one-finger sideways drag moves the email, not to the next email. Zoomed out, the swipe to the next email still works.
+  3. Laptop (Chrome): trackpad pinch over an email zooms only the email, not the whole page.
+
 - **Briefings out of News (Listen only)** · #132 · **Netlify deploy** (web; the phone picks it up with the deploy). News has no Briefings view, and Saved leaves out The Morning / The world in brief; they still join Listen's queue. No migration, no new env vars.
   Post-deploy:
   1. News sidebar: Front page · Saved · sections · papers (no Briefings).
