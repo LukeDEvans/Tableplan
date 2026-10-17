@@ -8743,7 +8743,11 @@ const mailPager = (() => {
     if (busy) return;
     tracking = false;
     const p = panel();
-    for (let el = target; el && el !== p && el.nodeType === 1; el = el.parentElement) {
+    // Walks out of the email's frame too (parentElement stops at the frame's
+    // <html>; carry on from the iframe element), so a zoomed-in email — whose
+    // .mail-msg-zoom wrapper scrolls sideways — pans instead of paging.
+    for (let el = target; el && el !== p && el.nodeType === 1;
+      el = el.parentElement || el.ownerDocument.defaultView?.frameElement || null) {
       if (el.matches("input, textarea, select, [contenteditable], .mail-reply-compose")) return;
       if (el.scrollWidth > el.clientWidth + 1 && /auto|scroll/.test(el.ownerDocument.defaultView.getComputedStyle(el).overflowX)) return;
     }
@@ -11807,6 +11811,9 @@ function mountMailMessageBody(holder, msg) {
     const showImages = true;
     const frame = buildMailFrame(msg.body, {
       showImages,
+      // Pinch to zoom the email (the app's viewport can't zoom); the frame
+      // comes back wrapped in a sideways-scrolling .mail-msg-zoom.
+      pinchZoom: true,
       onReady: (iframe, doc) => {
         linkifyMailDocument(doc);
         wireMailFrameAddressLinks(iframe);

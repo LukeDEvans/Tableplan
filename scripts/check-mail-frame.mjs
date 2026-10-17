@@ -34,7 +34,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "content-type": "text/html" });
     res.end(`<!doctype html><meta charset="utf-8"><style>
       body{margin:0} #pane{width:380px;height:700px;overflow:auto}
-      .mail-msg-frame{display:block;width:100%;border:0;min-height:40px}</style>
+      .mail-msg-frame{display:block;width:100%;border:0;min-height:40px}
+      .mail-msg-zoom{overflow-x:auto;overflow-y:hidden;max-width:100%} /* as styles.css */</style>
       <div id="pane"></div>
       <script type="module">
         import * as mf from "/mail-frame.js";
@@ -47,6 +48,7 @@ const server = http.createServer((req, res) => {
           const frame = mf.buildMailBodyFrame(html, {
             showImages: opts.showImages !== false,
             inlineImages: opts.inlineImages,
+            pinchZoom: Boolean(opts.pinchZoom),
             onReady: (iframe, doc) => {
               // two frames later the first fit has been applied and painted
               requestAnimationFrame(() => requestAnimationFrame(() => resolve({
@@ -57,7 +59,9 @@ const server = http.createServer((req, res) => {
               })));
             },
           });
-          window.frame = frame;
+          // With pinchZoom the module returns the frame's zoom wrapper.
+          window.host = frame.frame ? frame : null;
+          window.frame = frame.frame || frame;
           pane.appendChild(frame);
         });
         window.harnessReady = true;
@@ -215,6 +219,56 @@ try {
     return { calls, max: window.mf.MAIL_EMBEDDED_IMAGE_MAX };
   }, GIF.toString("base64"));
   check("attachment calls per email are capped", capResult.calls === capResult.max, `${capResult.calls} calls for 20 embedded images`);
+
+  // ── 6. Pinch to zoom (pinchZoom, as the Mail page mounts it) ──
+  // A touch page, so CDP can send real two-finger touches into the frame.
+  const tctx = await browser.newContext({ viewport: { width: 400, height: 800 }, hasTouch: true, isMobile: true });
+  const tpage = await tctx.newPage();
+  tpage.on("pageerror", (e) => pageErrors.push(String(e)));
+  await tpage.goto(base + "/");
+  await tpage.waitForFunction(() => window.harnessReady === true);
+  const zoomState = () => tpage.evaluate(() => {
+    const r = window.frame.getBoundingClientRect();
+    return { w: r.width, h: r.height, left: window.host.scrollLeft, scrollW: window.host.scrollWidth, hostW: window.host.clientWidth,
+      bodyZoom: Number(window.frame.contentDocument.body.style.zoom || 1) };
+  });
+  const rz = await tpage.evaluate((h) => window.mount(h, { pinchZoom: true }), newsletter);
+  check("a zoomable frame is readable just as fast", rz.readyMs < READY_BUDGET_MS, `${rz.readyMs}ms`);
+  await tpage.waitForTimeout(300);
+  const z0 = await zoomState();
+  check("a zoomable frame starts fitted to the pane", Math.abs(z0.w - z0.hostW) < 2 && z0.scrollW <= z0.hostW + 1, `${Math.round(z0.w)}px in ${z0.hostW}px`);
+  const cdp = await tctx.newCDPSession(tpage);
+  const pinch = async (from, to, cx = 190, cy = 250) => {
+    const pts = (d) => [{ x: cx - d, y: cy, id: 1 }, { x: cx + d, y: cy, id: 2 }];
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: pts(from) });
+    for (let i = 1; i <= 10; i++) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: pts(from + ((to - from) * i) / 10) });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await tpage.waitForTimeout(250);
+  };
+  await pinch(30, 90); // fingers spread to 3× their distance
+  const z1 = await zoomState();
+  check("pinching out zooms the email in", z1.w > z0.w * 2.6 && z1.bodyZoom > z0.bodyZoom * 2.6, `${Math.round(z0.w)}px → ${Math.round(z1.w)}px wide`);
+  check("the frame's height grows with the zoom (no clipping)", z1.h > z0.h * 2.6, `${Math.round(z0.h)}px → ${Math.round(z1.h)}px`);
+  check("the zoomed email scrolls sideways, kept around the pinch", z1.scrollW > z1.hostW && z1.left > 100, `scrollLeft ${Math.round(z1.left)}`);
+  await pinch(90, 10); // pinch all the way in: stops at the fitted size
+  const z2 = await zoomState();
+  check("pinching in returns to the fitted size, not smaller", Math.abs(z2.w - z0.w) < 2 && Math.abs(z2.h - z0.h) < 6 && z2.scrollW <= z2.hostW + 1,
+    `${Math.round(z2.w)}×${Math.round(z2.h)} vs ${Math.round(z0.w)}×${Math.round(z0.h)}`);
+  await tctx.close();
+
+  // Laptop: a trackpad pinch arrives as ctrl+wheel.
+  await page.evaluate((h) => window.mount(h, { pinchZoom: true }), newsletter);
+  await page.waitForTimeout(300);
+  const w0 = await page.evaluate(() => window.frame.getBoundingClientRect().width);
+  await page.mouse.move(190, 250);
+  await page.keyboard.down("Control");
+  for (let i = 0; i < 5; i++) await page.mouse.wheel(0, -20);
+  await page.keyboard.up("Control");
+  await page.waitForTimeout(400);
+  const w1 = await page.evaluate(() => window.frame.getBoundingClientRect().width);
+  check("a trackpad pinch (ctrl+wheel) zooms the email", w1 > w0 * 1.5, `${Math.round(w0)}px → ${Math.round(w1)}px`);
 
   check("no uncaught errors in the page", pageErrors.length === 0, pageErrors.join(" | "));
 } finally {

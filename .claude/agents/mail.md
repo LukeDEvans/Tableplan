@@ -58,6 +58,13 @@ changes to Mail only.
   › Mail Reading and the "Display images" menu item are gone). Images never touch
   Supabase. Run `npm run check:mail-frame` after
   any frame change.
+- **Pinch to zoom (Luke, 2026-10-16):** an email can be pinched in and out (iPhone
+  two-finger pinch; laptop trackpad pinch = ctrl+wheel / Safari gesture events). The
+  app's viewport is `user-scalable=no`, so the frame zooms itself (`pinchZoom` option,
+  mail-frame.js "Pinch to zoom"): from the fitted size up to 4×, the spot between the
+  fingers held still, the `.mail-msg-zoom` wrapper scrolling sideways. Layout never
+  reflows, only scale changes. While zoomed in, a one-finger sideways drag pans the
+  email instead of paging to the next one (the pager walks out of the frame).
 - The Mail suggestions bell follows the notifications-window rules.
 - **Removed (Luke, 2026-10-14):** the weekly review email (Settings › Email, its
   functions and dialogs) — don't rebuild it. `scheduled-email.js` keeps only the

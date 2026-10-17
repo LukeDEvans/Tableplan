@@ -302,7 +302,14 @@ const FRAME_END_ID = "liv-mail-frame-end";
 //                   the mail app's own wiring (linkify, mailto, swipe pager).
 //   inlineImages  — { attachments, load(attachment) → Promise<base64url> } for
 //                   the email's embedded (cid:) images.
-export function buildMailBodyFrame(html, { showImages = false, onReady = null, inlineImages = null } = {}) {
+//   pinchZoom     — let the reader pinch (or ctrl/trackpad-pinch on a laptop)
+//                   to zoom the email in and out. The app's viewport forbids
+//                   page zoom, so this is done here: see "Pinch to zoom" below.
+//                   When on, the return value is a wrapper <div
+//                   class="mail-msg-zoom"> holding the iframe (wrapper.frame).
+//
+// Returns the iframe, or its zoom wrapper when pinchZoom is on.
+export function buildMailBodyFrame(html, { showImages = false, onReady = null, inlineImages = null, pinchZoom = false } = {}) {
   const prepared = prepareMailImages(sanitizeMailFrameHtml(html), { block: !showImages });
   const bodyHtml = prepared.html;
   const iframe = document.createElement("iframe");
@@ -326,7 +333,9 @@ export function buildMailBodyFrame(html, { showImages = false, onReady = null, i
     // text-size-adjust: iOS inflates paragraph text in a block it considers too
     // wide (any email the fit below zooms down) but leaves the email's fixed
     // pixel line-heights alone, so lines printed on top of each other.
-    '<style>:root{color-scheme:light}html{-webkit-text-size-adjust:100%;text-size-adjust:100%}html,body{margin:0;padding:0}' +
+    // touch-action: two-finger pinches are the frame's own (see "Pinch to
+    // zoom"); one-finger drags still scroll the panes outside it natively.
+    '<style>:root{color-scheme:light}html{-webkit-text-size-adjust:100%;text-size-adjust:100%' + (pinchZoom ? ';touch-action:pan-x pan-y' : '') + '}html,body{margin:0;padding:0}' +
     'body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#202124;background:#fff;word-break:break-word}' +
     'img{max-width:100%;height:auto}table{max-width:100%}' +
     // A blocked remote image, or an embedded one not fetched yet, has no src —
@@ -339,6 +348,39 @@ export function buildMailBodyFrame(html, { showImages = false, onReady = null, i
     `<i id="${FRAME_END_ID}" hidden></i>` +
     "</body></html>";
 
+  // With pinchZoom the iframe sits in a wrapper that scrolls sideways when the
+  // reader has zoomed in; the thread pane outside still scrolls up and down.
+  const host = pinchZoom ? document.createElement("div") : null;
+  if (host) {
+    host.className = "mail-msg-zoom";
+    host.appendChild(iframe);
+    host.frame = iframe;
+  }
+  // The width the email is fitted to: the wrapper's (the iframe itself grows
+  // past it when zoomed in), else the iframe's.
+  const paneWidth = () => (host ? host.clientWidth : iframe.clientWidth) || 1;
+
+  // The fit's results at the reader's zoom of 1, kept so a pinch can rescale
+  // without re-measuring the email on every finger move.
+  let fitZoom = 1;     // the body zoom that fits the email to the pane
+  let fitHeight = 40;  // the frame height at that fit
+  let userZoom = 1;    // the reader's own pinch zoom on top of the fit (1–MAX)
+  let pinching = false;
+
+  // Shows the fitted email at the reader's zoom. Layout inside the frame is
+  // unchanged at any zoom (frame width and body zoom grow by the same factor),
+  // so text and images simply get bigger and the wrapper scrolls sideways.
+  const applyZoom = () => {
+    const b = iframe.contentDocument?.body;
+    if (!b) return;
+    const u = userZoom;
+    const z = fitZoom * u;
+    b.style.zoom = Math.abs(z - 1) > 0.03 ? z : "";
+    iframe.style.width = u > 1 ? `${Math.round(paneWidth() * u)}px` : "";
+    iframe.style.height = Math.min(Math.round((fitHeight - 4) * u + 4), 30000 * u) + "px";
+    if (host) host.classList.toggle("is-zoomed", u > 1);
+  };
+
   // Scale the email to fill the pane: fixed-width designs (newsletters are
   // typically ~600px) zoom up to the available width; overflowing ones zoom
   // down to fit. Height then tracks the scaled content.
@@ -347,8 +389,23 @@ export function buildMailBodyFrame(html, { showImages = false, onReady = null, i
       const doc = iframe.contentDocument;
       const b = doc?.body;
       if (!b) return;
+      // Measure at the pane's width with no zoom; the reader's zoom goes back on
+      // below, along with the sideways scroll the narrower measure would clamp.
+      const keepLeft = host ? host.scrollLeft : 0;
+      // Zoomed in, the frame is many times taller than the email at its fit,
+      // and the frame's own height props up documentElement.scrollHeight — so
+      // measure at the fitted height, holding the thread pane's scroll still.
+      let scroller = null, keepTop = 0;
+      // (4px under it: the measure below adds 4, so an unchanged email lands
+      // on the same height instead of creeping taller on every re-fit.)
+      if (host) {
+        scroller = verticalScroller();
+        keepTop = scroller ? scroller.scrollTop : 0;
+        iframe.style.height = Math.max(fitHeight - 4, 40) + "px";
+      }
+      iframe.style.width = "";
       b.style.zoom = "";
-      const avail = iframe.clientWidth || 1;
+      const avail = paneWidth();
       let z = 1;
       let design = 0;
       doc.querySelectorAll("table[width],td[width],table[style*='width'],div[style*='width']").forEach((el) => {
@@ -359,7 +416,8 @@ export function buildMailBodyFrame(html, { showImages = false, onReady = null, i
       const wide = Math.max(b.scrollWidth, doc.documentElement.scrollWidth);
       if (wide > avail + 4) z = avail / wide;
       else if (design && design < avail - 8) z = Math.min(avail / design, 1.75);
-      if (Math.abs(z - 1) > 0.03) b.style.zoom = z;
+      if (Math.abs(z - 1) <= 0.03) z = 1;
+      if (z !== 1) b.style.zoom = z;
       // zoom is approximate on nested fixed-width layouts: if the doc still
       // spills past the pane it would be clipped (scrolling="no"), so tighten.
       // Read the root's width only: body.scrollWidth is in body's own unzoomed
@@ -367,23 +425,130 @@ export function buildMailBodyFrame(html, { showImages = false, onReady = null, i
       // email was zoomed down twice.
       if (z < 1) {
         const still = doc.documentElement.scrollWidth;
-        if (still > avail + 4) b.style.zoom = z * (avail / still);
+        if (still > avail + 4) { z *= avail / still; b.style.zoom = z; }
       }
       // Measure the VISUAL height: with zoom applied, scrollHeight alone can
       // undershoot by a few px, which used to leave a nested scrollbar.
       const visual = Math.ceil(b.getBoundingClientRect().bottom + (doc.defaultView?.scrollY || 0));
       const h = Math.max(doc.documentElement.scrollHeight, visual) + 4;
-      iframe.style.height = Math.min(Math.max(h, 40), 30000) + "px";
+      fitZoom = z;
+      fitHeight = Math.min(Math.max(h, 40), 30000);
+      applyZoom();
+      if (host && keepLeft) host.scrollLeft = keepLeft;
+      if (scroller) scroller.scrollTop = keepTop;
     } catch {}
   };
   // Coalesce refit bursts into one measure per frame. Deferring to the next
   // animation frame also breaks any synchronous ResizeObserver feedback (the
   // zoom fitAndSize applies changes body size, which would otherwise re-notify).
+  // Mid-pinch the body changes size on every move; the pinch re-fits once at
+  // its end instead.
   let fitPending = false;
   const scheduleFit = () => {
     if (fitPending) return;
     fitPending = true;
-    requestAnimationFrame(() => { fitPending = false; fitAndSize(); loadNearImages(); });
+    requestAnimationFrame(() => { fitPending = false; if (!pinching) fitAndSize(); loadNearImages(); });
+  };
+
+  // ── Pinch to zoom ──────────────────────────────────────────────────────────
+  // index.html's viewport has user-scalable=no (the app must not zoom as a
+  // whole), so the email zooms itself. Two fingers in the frame pinch between
+  // the fitted size and MAX_ZOOM, keeping the spot between the fingers still;
+  // one finger then pans (the wrapper sideways, the thread pane up and down).
+  // A laptop trackpad pinch arrives as ctrl+wheel (Chrome) or gesture events
+  // (Safari). Touch coordinates are frame-relative; the frame never scrolls
+  // internally, so frame rect + clientX/Y is the finger's viewport position.
+  const MAX_ZOOM = 4;
+  const clampZoom = (u) => Math.min(MAX_ZOOM, Math.max(1, u));
+  // The nearest ancestor that scrolls vertically (the thread pane).
+  const verticalScroller = () => {
+    for (let el = host?.parentElement; el; el = el.parentElement) {
+      if (el.scrollHeight > el.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
+    }
+    return document.scrollingElement;
+  };
+  // Zoom to `u`, keeping the email point under viewport (vx, vy) under it.
+  let anchor = null; // { ax, ay } in fitted (zoom 1) pixels from the frame's top-left
+  const setAnchor = (vx, vy) => {
+    const r = iframe.getBoundingClientRect();
+    anchor = { ax: (vx - r.left) / userZoom, ay: (vy - r.top) / userZoom };
+  };
+  const zoomAround = (u, vx, vy) => {
+    if (!anchor) setAnchor(vx, vy);
+    userZoom = clampZoom(u);
+    applyZoom();
+    const hr = host.getBoundingClientRect();
+    host.scrollLeft = Math.max(0, anchor.ax * userZoom - (vx - hr.left));
+    const scroller = verticalScroller();
+    if (scroller) scroller.scrollTop += (iframe.getBoundingClientRect().top + anchor.ay * userZoom) - vy;
+    loadNearImages();
+  };
+  const endPinch = () => {
+    pinching = false;
+    anchor = null;
+    if (userZoom < 1.05) userZoom = 1;
+    fitAndSize();
+    loadNearImages();
+  };
+  const wirePinch = (doc) => {
+    let startDist = 0, startZoom = 1;
+    const fingers = (e) => {
+      const r = iframe.getBoundingClientRect();
+      const [a, b] = e.touches;
+      return {
+        dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+        x: r.left + (a.clientX + b.clientX) / 2,
+        y: r.top + (a.clientY + b.clientY) / 2,
+      };
+    };
+    doc.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 2) return;
+      const f = fingers(e);
+      pinching = true;
+      startDist = f.dist;
+      startZoom = userZoom;
+      setAnchor(f.x, f.y);
+    }, { passive: true });
+    doc.addEventListener("touchmove", (e) => {
+      if (!pinching || e.touches.length !== 2) return;
+      if (e.cancelable) e.preventDefault();
+      const f = fingers(e);
+      zoomAround(startZoom * (f.dist / startDist), f.x, f.y);
+    }, { passive: false });
+    const lift = (e) => { if (pinching && e.touches.length < 2) endPinch(); };
+    doc.addEventListener("touchend", lift, { passive: true });
+    doc.addEventListener("touchcancel", lift, { passive: true });
+
+    // Trackpad pinch in Chrome/Edge/Firefox: ctrl+wheel. Settles 200ms after the last tick.
+    let wheelTimer = 0;
+    doc.addEventListener("wheel", (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const r = iframe.getBoundingClientRect();
+      const vx = r.left + e.clientX, vy = r.top + e.clientY;
+      if (!pinching) { pinching = true; setAnchor(vx, vy); }
+      zoomAround(userZoom * Math.exp(-e.deltaY * 0.01), vx, vy);
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(endPinch, 200);
+    }, { passive: false });
+
+    // Trackpad pinch in desktop Safari. (iOS also sends these alongside the
+    // touch events above, so they're only used where there's no touch.)
+    if (!("ontouchstart" in window)) {
+      let gestureStart = 1;
+      doc.addEventListener("gesturestart", (e) => {
+        e.preventDefault();
+        const r = iframe.getBoundingClientRect();
+        pinching = true; gestureStart = userZoom;
+        setAnchor(r.left + e.clientX, r.top + e.clientY);
+      });
+      doc.addEventListener("gesturechange", (e) => {
+        e.preventDefault();
+        const r = iframe.getBoundingClientRect();
+        zoomAround(gestureStart * e.scale, r.left + e.clientX, r.top + e.clientY);
+      });
+      doc.addEventListener("gestureend", (e) => { e.preventDefault(); endPinch(); });
+    }
   };
 
   // Runs once, as soon as the email's markup is in the frame.
@@ -393,6 +558,7 @@ export function buildMailBodyFrame(html, { showImages = false, onReady = null, i
     ready = true;
     iframe.dataset.ready = "1";
     try { onReady?.(iframe, doc); } catch {}
+    if (host) { try { wirePinch(doc); } catch {} }
     fitAndSize();
     try {
       // Re-fit whenever an image settles — load AND error both finalize layout,
@@ -414,12 +580,13 @@ export function buildMailBodyFrame(html, { showImages = false, onReady = null, i
     // size doesn't change (e.g. same-metrics font swaps).
     let n = 0;
     const t = setInterval(() => { fitAndSize(); if (++n >= 6) clearInterval(t); }, 400);
-    // Refit when the pane width changes (sidebar toggle, window resize)
-    let lastW = iframe.clientWidth;
+    // Refit when the pane width changes (sidebar toggle, window resize). With
+    // pinchZoom the wrapper is the pane; the iframe's own width follows the zoom.
+    let lastW = paneWidth();
     if (typeof ResizeObserver !== "undefined") {
       new ResizeObserver(() => {
-        if (iframe.clientWidth !== lastW) { lastW = iframe.clientWidth; fitAndSize(); }
-      }).observe(iframe);
+        if (paneWidth() !== lastW) { lastW = paneWidth(); fitAndSize(); }
+      }).observe(host || iframe);
     }
     if (inlineImages) fillEmbeddedImages(doc, inlineImages).catch(() => {});
     startImageLoader(doc);
@@ -508,5 +675,5 @@ export function buildMailBodyFrame(html, { showImages = false, onReady = null, i
     if (!ready) setUp(doc);
     else fitAndSize();
   });
-  return iframe;
+  return host || iframe;
 }

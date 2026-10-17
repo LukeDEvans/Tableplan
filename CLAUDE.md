@@ -131,11 +131,12 @@ Every AI email-processing feature MUST have an on/off toggle in Mail → gear me
 
 ## Mail reading frame
 
-An HTML email is read in a sandboxed frame built by **`mail-frame.js`** (sanitizing, image handling, fit/size); `app.js` only injects the mail app's wiring (`onReady`) and the embedded-image fetch. Three rules, each learned the hard way:
+An HTML email is read in a sandboxed frame built by **`mail-frame.js`** (sanitizing, image handling, fit/size); `app.js` only injects the mail app's wiring (`onReady`) and the embedded-image fetch. Four rules, each learned the hard way:
 
 - **Set the frame up when its markup is parsed, never on `load`.** `load` waits for every image, which is what made image-heavy email slow to open (12.5s in the check's 30-image email; the fix made it ~40ms). Images then fill in and each one re-fits the height.
 - **`loading="lazy"` does nothing in this frame** — the sandbox has scripting off, and browsers ignore lazy loading without scripting. Remote images are parked on `data-lz-src` and given their source from the parent as they near the screen. An image the email hides is never fetched.
 - **Remote images always load, with trackers stripped** (Luke, 2026-10-08; made permanent 2026-10-14 — there is no switch and no Settings → Mail Reading): 1×1 images and known open-tracking URLs are removed before the frame is built. `mail-frame.js` still supports `block`, but the app never uses it. Images never touch Supabase: remote ones go sender → device, embedded (`cid:`) ones go through the `attachment` action (Netlify → Gmail), capped per email and cached for the session.
+- **Pinch to zoom is the frame's own** (Luke, 2026-10-16): index.html's viewport is `user-scalable=no`, so the Mail page mounts frames with `pinchZoom: true` and `mail-frame.js` scales the fitted email itself (1–4×), inside a `.mail-msg-zoom` wrapper that scrolls sideways. A re-fit while zoomed measures at the fitted size and puts the zoom and scroll back; don't measure the frame at its zoomed height.
 
 After changing the frame run **`npm run check:mail-frame`** (`scripts/check-mail-frame.mjs`): self-contained headless Chromium against the real module with deliberately slow images. It checks when the email becomes readable and exactly which images are requested. No iOS WebKit there, so a frame change still needs a look on the phone.
 

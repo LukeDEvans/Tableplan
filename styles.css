@@ -18152,6 +18152,18 @@ body.app-authed #appLockScreen { display: none; }
   background: #fff;
   border-radius: 8px;
 }
+/* Pinch-to-zoom holder for the email frame (mail-frame.js "Pinch to zoom"):
+   scrolls sideways once the reader has zoomed in; the thread pane still
+   scrolls up and down. The frame inside grows wider than this when zoomed. */
+.mail-msg-zoom {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 8px;
+  max-width: 100%;
+}
+.mail-msg-zoom.is-zoomed .mail-msg-frame { max-width: none; border-radius: 0; }
 /* "Images aren't shown · Display images" bar (remote images blocked by default) */
 .mail-images-blocked-bar {
   display: flex;
