@@ -23,6 +23,7 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "live-chat-history",       // CHAT_STORAGE_KEY — AI chat history
   "live_watch_search_scope", // WATCH_SCOPE_KEY — watch search scope
   "live-explore-last-trip",  // last-opened trip id (account-owned)
+  "live-explore-places-v1",  // Explore's looked-up trip destinations + home (account-owned)
   "live-travel-mode-trip",   // active Travel-Mode trip id (account-owned)
   "live-history-queue-v1",   // HISTORY_QUEUE_KEY (history-log.js) — unsent permanent-history rows
   "live-queue-held-v1",      // QUEUE_HELD_KEY — id of the episode/article last loaded in this device's player

@@ -23592,3 +23592,95 @@ input[type="search"]::-webkit-search-cancel-button {
   appearance: none;
   display: none;
 }
+
+/* ── Page groups: the landing links and the page-title menu (page-groups.js) ──
+   Six headings that open like an accordion, one at a time. On the landing page
+   the headings keep the links' look and the pages sit under them a size smaller;
+   in the page-title menu the headings keep the script face and the pages drop to
+   the app's own font. */
+.page-groups .page-group { display: flex; flex-direction: column; align-items: center; }
+.page-groups .page-group[hidden] { display: none; }
+.page-groups .page-group-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.page-group-chevron {
+  width: 0.8em;
+  height: 0.8em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.18s ease;
+  transform-box: fill-box;
+  transform-origin: center;
+  overflow: visible;
+  flex: none;
+}
+.page-group.is-open > .page-group-head .page-group-chevron { transform: rotate(180deg); }
+.page-group-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0 6px;
+}
+.page-group-pages[hidden] { display: none; }
+
+/* Landing page */
+.home-links.page-groups { gap: 8px; min-width: min(240px, 80vw); }
+.home-links .page-group-pages > button {
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+.home-links .page-group-pages > button:hover,
+.home-links .page-group-pages > button:focus-visible { color: var(--accent); }
+
+/* Page-title menu */
+.page-title-menu.page-groups { gap: 0; padding: 8px 16px 10px; max-height: calc(100dvh - 120px); overflow-y: auto; }
+.page-title-menu .page-group-head { min-height: 40px; }
+.page-title-menu .page-group-head .page-group-chevron { width: 0.45em; height: 0.45em; }
+.page-title-menu .page-group-pages > button {
+  min-height: 36px;
+  font-family: inherit;
+  font-size: 1.02rem;
+  font-weight: 750;
+  color: var(--muted);
+}
+.page-title-menu .page-group-pages > button:hover,
+.page-title-menu .page-group-pages > button:focus-visible { color: var(--accent); }
+/* The page you're on: marked, not removed. */
+.page-title-menu .page-group-pages > button.is-current { color: var(--accent); cursor: default; }
+
+/* A closed group whose page has something to review carries the underline too. */
+.page-groups .page-group:not(.is-open) > .page-group-head.has-group-notif > span {
+  text-decoration: underline;
+  text-decoration-color: #b3261e;
+  text-decoration-thickness: max(1px, 0.05em);
+  text-underline-offset: 0.22em;
+  text-decoration-skip-ink: none;
+}
+
+/* ── Scores page (its own page under Recreate since 2026-10-17) ── */
+.scores-page { display: flex; flex-direction: column; min-height: 0; }
+.scores-page[hidden] { display: none; }
+.scores-page-inner { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.scores-page .news-scroll { flex: 1; }
+
+/* ── Explore sections (explore-scope.js) ── */
+#exploreMainPage > .explore-landing[hidden],
+#exploreMainPage > #exploreTripsShell[hidden] { display: none; }
+.explore-landing { overflow-y: auto; }
+.explore-landing-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+.explore-landing-hint { flex: 1 1 200px; color: var(--muted); font-size: 0.88rem; }
+.explore-back-btn { flex: none; }

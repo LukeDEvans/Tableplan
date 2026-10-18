@@ -4,6 +4,11 @@
 app", favorites per user, and "robust, so if ESPN stops being an option it doesn't
 require a total rebuild"). This is the scores build NEWS_PAGE_DESIGN.md §1 deferred.
 
+**Moved 2026-10-17 (Luke):** Scores is now its own page, **Scores**, in the
+Recreate menu group (`showScoresApp`, route `#scores`). News → Sports keeps only the
+stories; a ticker game opens on the Scores page. Everything below about the view
+itself still holds; read "News → Sports opens on Scores" as "the Scores page".
+
 ## 1. Intent
 
 News → Sports opens on **Scores**: a day's games across the leagues Luke follows

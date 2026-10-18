@@ -34,6 +34,8 @@ import { SPEED_MIN, SPEED_MAX, snapPlaybackSpeed, stepPlaybackSpeed, formatSpeed
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
+import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea } from './page-groups.js';
+import * as ExploreScope from './explore-scope.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
 import { normalizeExternalEvent } from './calendar/normalize.js';
@@ -173,6 +175,12 @@ function wirePartyAdder(dialog, chipsEl) {
   input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); add(); } });
 }
 let exploreOpenTripId = null;
+// Explore sections' place lookups (explore-scope.js; see renderExploreLanding).
+const EXPLORE_PLACE_CACHE_KEY = "live-explore-places-v1";
+const EXPLORE_PLACE_MISS_TTL = 7 * 864e5;
+let explorePlaceCache = null;
+let explorePlaceQueue = [];
+let explorePlaceTimer = null;
 let exploreActiveDayKey = ""; // selected day in the trip day tabs
 let travelStayEditingIdx = new Set();
 let travelMovementEditingIdx = new Set();
@@ -638,7 +646,8 @@ async function refreshChangedSectionsOnResume() {
 // The pages people can turn on or off (Settings › Pages, Household › Members can
 // access, Admin › Global Pages). One switch per page in the page menu; features
 // that live inside a page share its switch (Luke, 2026-10-14): Tasks is part of
-// Calendar, Contacts of Mail, Exercise and Explore of Recreate.
+// Calendar, Contacts of Mail; Recreate's switch covers Explore, Exercise, Leisure
+// and Scores (Luke, 2026-10-17).
 const PAGE_ACCESS_GROUPS = [
   { key: "plan",     label: "Calendar",  keys: ["plan", "do"],                  note: "Includes Tasks" },
   { key: "finance",  label: "Finance",   keys: ["finance"] },
@@ -646,7 +655,7 @@ const PAGE_ACCESS_GROUPS = [
   { key: "mail",     label: "Mail",      keys: ["mail", "contacts"],            note: "Includes Contacts" },
   { key: "eat",      label: "Meal Plan", keys: ["eat"] },
   { key: "news",     label: "News",      keys: ["news"] },
-  { key: "recreate", label: "Recreate",  keys: ["recreate", "play", "explore"], note: "Includes Exercise and Explore" },
+  { key: "recreate", label: "Recreate",  keys: ["recreate", "play", "explore"], note: "Explore, Exercise, Leisure and Scores" },
   { key: "shop",     label: "Shop",      keys: ["shop"] },
   { key: "watch",    label: "Watch",     keys: ["watch"] },
 ];
@@ -1145,8 +1154,20 @@ const elements = {
   inventoryItemNotesInput: document.querySelector("#inventoryItemNotesInput"),
   recreateMainPage: document.querySelector("#recreateMainPage"),
   recreatePlannerGrid: document.querySelector("#recreatePlannerGrid"),
-  homeRecreateBtn: document.querySelector("#homeRecreateBtn"),
-  titleRecreateBtn: document.querySelector("#titleRecreateBtn"),
+  homeExploreBtn: document.querySelector("#homeExploreBtn"),
+  titleExploreBtn: document.querySelector("#titleExploreBtn"),
+  homeExerciseBtn: document.querySelector("#homeExerciseBtn"),
+  titleExerciseBtn: document.querySelector("#titleExerciseBtn"),
+  homeLeisureBtn: document.querySelector("#homeLeisureBtn"),
+  titleLeisureBtn: document.querySelector("#titleLeisureBtn"),
+  homeScoresBtn: document.querySelector("#homeScoresBtn"),
+  titleScoresBtn: document.querySelector("#titleScoresBtn"),
+  homeWeatherBtn: document.querySelector("#homeWeatherBtn"),
+  titleWeatherBtn: document.querySelector("#titleWeatherBtn"),
+  homeListenBtn: document.querySelector("#homeListenBtn"),
+  titleListenBtn: document.querySelector("#titleListenBtn"),
+  homePageGroups: document.querySelector("#homePageGroups"),
+  scoresMainPage: document.querySelector("#scoresMainPage"),
   financeMainPage: document.querySelector("#financeMainPage"),
   financePlannerGrid: document.querySelector("#financePlannerGrid"),
   homeFinanceBtn: document.querySelector("#homeFinanceBtn"),
@@ -1615,8 +1636,9 @@ const PAGE_NOTIF_BUTTONS = {
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
   do: ["planTasksBtn"], // Tasks notif dot now lives on the Calendar page's bell
   eat: ["homeEatBtn", "titleMealPlanBtn"],
-  // explore: shown on Recreate's links + its Travel card (see setPageNotifCount)
-  media: ["miniPlayerInfoBtn"], // Media opens from the bottom dock's mini-player (no home / menu entry)
+  explore: ["homeExploreBtn", "titleExploreBtn"],
+  // Listen: the menus and the bottom dock's mini-player
+  media: ["homeListenBtn", "titleListenBtn", "miniPlayerInfoBtn"],
 };
 
 // A News article sent to Media (news-ui.js ⋯ → Send to Media / Open / Listen) is
@@ -1632,16 +1654,12 @@ function addAcceptedNewsArticle(article) {
 const pageNotifCounts = {};
 function setPageNotifCount(page, count) {
   pageNotifCounts[page] = count;
-  // Explore lives inside Recreate (Travel card): its dot shows on Recreate's
-  // links unless Recreate has its own count.
-  const recreateOn = (pageNotifCounts.recreate || 0) > 0 || (pageNotifCounts.explore || 0) > 0;
-  if (page === "explore" || page === "recreate") {
-    ["homeRecreateBtn", "titleRecreateBtn"].forEach((key) => elements[key]?.classList.toggle("has-notif-dot", recreateOn));
-    document.querySelector("[data-recreate-travel]")?.classList.toggle("has-notif-dot", (pageNotifCounts.explore || 0) > 0);
-  }
   (PAGE_NOTIF_BUTTONS[page] || []).forEach((key) => {
     elements[key]?.classList.toggle("has-notif-dot", count > 0);
   });
+  // A group heading carries the mark of any page inside it (page-groups.js).
+  syncPageGroups(elements.homePageGroups);
+  syncPageGroups(elements.pageTitleMenu);
 }
 
 applyThemeMode();
@@ -1685,9 +1703,9 @@ const _weather = createWeatherModule({
 const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent, searchWeatherLocations } = _weather;
 
 // ── Scores (scores-ui.js, SPORTS_SCORES_DESIGN.md) ─────────────────────
-// The Scores view inside News → Sports. Reads only the app's own scores function;
-// favorites and league choices are this user's state.sportsPrefs. News mounts it
-// through the deferred interface below.
+// The Scores page (under Recreate since 2026-10-17; it was News → Sports → Scores).
+// Reads only the app's own scores function; favorites and league choices are this
+// user's state.sportsPrefs. showScoresApp mounts it.
 const _scores = createScoresModule({
   escapeHtml: (...a) => escapeHtml(...a),
   showToast: (...a) => showMailToast(...a),
@@ -1715,7 +1733,6 @@ const _news = createNewsModule({
   onSentToMedia: (...a) => addAcceptedNewsArticle(...a),
   openInMedia: (id) => openArticleFrom(id),
   listenInMedia: (id) => listenToArticle(id),
-  scores: { mount: (...a) => mountScores(...a), unmount: (...a) => unmountScores(...a), refresh: (...a) => refreshScores(...a) },
   // Saved articles + the reader (the former Media → Publications; MEDIA_SPLIT_DESIGN.md).
   // Thunks: savedArticlesForNews is declared further down (consts aren't hoisted).
   saved: {
@@ -1736,12 +1753,12 @@ const _news = createNewsModule({
     };
   },
 });
-const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus, signInStatus: newsSignInStatus, setDeviceTrail: setNewsDeviceTrail, showScores: showNewsScores, tickerLeads: newsTickerLeads, openStory: openNewsStory } = _news;
+const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus, signInStatus: newsSignInStatus, setDeviceTrail: setNewsDeviceTrail, tickerLeads: newsTickerLeads, openStory: openNewsStory } = _news;
 
 // ── Dock ticker (news-ticker.js) ────────────────────────────────────────
 // The headlines-and-scores strip along the top of the bottom dock: News's lead
 // stories, then the followed teams' games. Data only through News and Scores
-// above; a tap opens the story, or the game in News → Sports → Scores.
+// above; a tap opens the story, or the game on the Scores page.
 const _newsTicker = createNewsTickerModule({
   escapeHtml: (...a) => escapeHtml(...a),
   getState: () => state,
@@ -1754,7 +1771,7 @@ const _newsTicker = createNewsTickerModule({
   getLeads: (...a) => newsTickerLeads(...a),
   getBoard: (...a) => getScoresBoard(...a),
   openStory: (id) => { if (!openNewsStory(id)) showNewsApp(); },
-  openGame: (dateKey, id) => { showScoresGame(dateKey, id); showNewsApp(); showNewsScores(); },
+  openGame: (dateKey, id) => { showScoresGame(dateKey, id); showScoresApp(); },
 });
 const { init: initNewsTicker, refresh: refreshNewsTicker } = _newsTicker;
 
@@ -2390,10 +2407,17 @@ function bindEvents() {
   elements.appMenu.addEventListener("click", (event) => event.stopPropagation());
   elements.pageTitleBtn.addEventListener("click", togglePageTitleMenu);
   elements.pageTitleMenu.addEventListener("click", (event) => event.stopPropagation());
-  elements.titleMealPlanBtn.addEventListener("click", showEatApp);
-  elements.titleToDoListBtn.addEventListener("click", showDoApp);
-  elements.titleWatchBtn.addEventListener("click", showWatchApp);
-  elements.titleRecreateBtn.addEventListener("click", showRecreateApp);
+  // Both page menus: the group headings open like an accordion (page-groups.js),
+  // and every page button opens its page.
+  wirePageGroups(elements.homePageGroups);
+  wirePageGroups(elements.pageTitleMenu);
+  for (const row of pageNavButtons()) {
+    elements[row.home]?.addEventListener("click", row.open);
+    elements[row.title]?.addEventListener("click", (event) => {
+      if (row.areas.includes(activeAppArea)) { event.stopPropagation(); closePageTitleMenu(); return; }
+      row.open(event);
+    });
+  }
   document.getElementById("homeBriefingRefresh")?.addEventListener("click", () => {
     const todayKey = dateKeyFromDate(new Date());
     try { localStorage.removeItem(`briefing_ai_${todayKey}`); } catch { /* ok */ }
@@ -2405,13 +2429,6 @@ function bindEvents() {
     }
     renderHomeBriefingPanels();
   });
-  elements.homeEatBtn.addEventListener("click", showEatApp);
-  elements.homeDoBtn.addEventListener("click", showDoApp);
-  elements.homeWatchBtn.addEventListener("click", showWatchApp);
-  elements.homeRecreateBtn.addEventListener("click", showRecreateApp);
-  elements.titleRecreateBtn.addEventListener("click", showRecreateApp);
-  elements.homePlanBtn.addEventListener("click", showPlanApp);
-  elements.titlePlanBtn.addEventListener("click", showPlanApp);
   // Contacts lives inside Mail: a sidebar entry under the folders (and a button on
   // the not-connected screen). Choosing a mail folder leaves contacts mode.
   document.getElementById("mailContactsBtn")?.addEventListener("click", showContactsApp);
@@ -2449,12 +2466,6 @@ function bindEvents() {
   document.getElementById("menuContactsImportBtn")?.addEventListener("click", () => { closeAppMenu(); document.getElementById("contactsImportInput")?.click(); });
   document.getElementById("menuContactsExportBtn")?.addEventListener("click", () => { closeAppMenu(); exportContactsVcf(); });
   document.getElementById("contactsImportInput")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; if (f) f.text().then(importContactsVcf); e.target.value = ""; });
-  elements.homeFinanceBtn?.addEventListener("click", showFinanceApp);
-  elements.titleFinanceBtn?.addEventListener("click", showFinanceApp);
-  elements.homeMailBtn?.addEventListener("click", showMailApp);
-  elements.titleMailBtn?.addEventListener("click", showMailApp);
-  elements.homeNewsBtn?.addEventListener("click", showNewsApp);
-  elements.titleNewsBtn?.addEventListener("click", showNewsApp);
   elements.mailConnectBtn?.addEventListener("click", connectGmail);
   elements.mailComposeBtn?.addEventListener("click", showMailCompose);
   document.getElementById("mailSuggCheckNow")?.addEventListener("click", async (e) => {
@@ -2962,8 +2973,6 @@ function bindEvents() {
       writeLocalBackup().catch(() => {});
     }
   });
-  elements.homeShopBtn.addEventListener("click", showShopApp);
-  elements.titleShopBtn.addEventListener("click", showShopApp);
   elements.closeShopReceiptsBtn.addEventListener("click", closeShopReceiptsDialog);
   elements.shopReceiptEditBackBtn.addEventListener("click", closeReceiptEditView);
   elements.shopReceiptEditCloseBtn.addEventListener("click", closeShopReceiptsDialog);
@@ -3100,8 +3109,11 @@ function handleHashNavigation() {
     sweat: showPlayApp,
     shop: showShopApp,
     watch: showWatchApp,
-    recreate: showRecreateApp,
-    explore: showExploreApp, // no nav link (it's Recreate's Travel card); the hash still opens it
+    recreate: showRecreateApp, // Recreate is a menu group now; its old hash opens Leisure
+    leisure: showRecreateApp,
+    exercise: showPlayApp,
+    scores: showScoresApp,
+    explore: showExploreApp,
     finance: showFinanceApp,
     schedule: showPlanApp,
     contacts: showContactsApp,
@@ -3801,6 +3813,23 @@ function setupDiagnostics() {
   // persist/merge + boot-empty guards + auto-rule dedup directly, instead of
   // fragile gesture/UI simulation.
   window.__liveQA = {
+    // Page groups + Recreate pages (scripts/qa-page-groups.mjs): trips, a home, looked-up
+    // places (so Explore sorts without the network), workouts and sailing entries.
+    // Local dev only.
+    recreateSeed: ({ trips, home, places, workouts, sailingLog, notif } = {}) => {
+      if (!localDevMode) return null;
+      if (trips) state.trips = trips.map((t) => ({ ...defaultTrip(t), ...t }));
+      if (home !== undefined) setHomeLocation(home);
+      if (places) { Object.assign(explorePlaceStore(), places); saveExplorePlaceStore(); }
+      if (workouts) state.workouts = normalizeWorkouts(workouts);
+      if (sailingLog) state.sailingLog = sailingLog;
+      if (notif) Object.entries(notif).forEach(([page, n]) => setPageNotifCount(page, n));
+      render();
+      return true;
+    },
+    tripById: (id) => (localDevMode ? (state.trips || []).find((t) => t.id === id) || null : null),
+    activeArea: () => (localDevMode ? activeAppArea : null),
+    goHome: () => { if (!localDevMode) return null; showHomeApp(); return true; },
     // Recently deleted recipes (scripts/qa-settings.mjs): seed the trash with given
     // deletedAt dates and read back which entries are left.
     trashSeed: (items) => { if (!localDevMode) return null; state.trashedRecipes = items.map(normalizeTrashedRecipe); return true; },
@@ -6203,8 +6232,12 @@ function normalizePageVisibility(visibility) {
 // Inventory is a space of the Shop page (Luke, 2026-10-06): whoever can open Shop
 // can open Inventory. An "inventory" entry left in a saved disabled-pages list
 // from before is ignored.
+// Inventory is a space of Shop; Scores sits with Recreate's pages and shares
+// its switch (Settings › Pages › Recreate).
 function accessPageKey(page) {
-  return page === "inventory" ? "shop" : page;
+  if (page === "inventory") return "shop";
+  if (page === "scores") return "recreate";
+  return page;
 }
 
 function isPageEnabled(page) {
@@ -8290,6 +8323,11 @@ function hideAllPages() {
   }
   elements.mailMainPage.hidden = true;
   document.getElementById("exploreMainPage").hidden = true;
+  if (elements.scoresMainPage && !elements.scoresMainPage.hidden) {
+    elements.scoresMainPage.hidden = true;
+    unmountScores(); // stop its refresh timer
+    refreshNewsTicker(); // followed teams may have changed (re-reads cached boards)
+  }
 }
 
 function activateEatShell() {
@@ -8352,26 +8390,40 @@ function showWatchApp(event) {
   renderWatchTab();
 }
 
-// Recreate is the hub for Explore (travel), Exercise and Leisure (hobbies): it's
-// reachable when any of the three is on, and shows a row for each that is.
-function recreateHubEnabled(check = isPageEnabled) {
-  return check("recreate") || check("play") || check("explore");
-}
-
+// Recreate is a menu group (page-groups.js) of four pages: Explore, Exercise,
+// Leisure and Scores. Leisure keeps the old Recreate page's area and markup
+// (`recreate`, #recreateMainPage): the hobbies, one row each.
 function showRecreateApp(event) {
   event?.stopPropagation();
-  if (!recreateHubEnabled()) { showHomeApp(); return; }
+  if (!isPageEnabled("recreate")) { showHomeApp(); return; }
   activeAppArea = "recreate";
   hideAllPages();
   elements.recreateMainPage.hidden = false;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Recreate");
-  setPageHash("recreate");
+  setPageTitle("Leisure");
+  setPageHash("leisure");
   activeRecreateHobby = null; // always land on the activity cards
   renderRecreatePage();
   closePageTitleMenu();
   closeAppMenu();
+}
+
+// Scores (scores-ui.js, SPORTS_SCORES_DESIGN.md): scores, schedules and tables,
+// its own page under Recreate since 2026-10-17. Sports stories stay in News.
+function showScoresApp(event) {
+  event?.stopPropagation?.();
+  if (!isPageEnabled("scores") || !elements.scoresMainPage) { showHomeApp(); return; }
+  activeAppArea = "scores";
+  hideAllPages();
+  elements.scoresMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Scores");
+  setPageHash("scores");
+  closePageTitleMenu();
+  closeAppMenu();
+  mountScores(document.getElementById("scoresPageMount"));
 }
 
 function showFinanceApp(event) {
@@ -12091,7 +12143,10 @@ function currentMainPageTitle() {
   if (activeAppArea === "watch") return "Watch";
   if (activeAppArea === "media") return "Listen";
   if (activeAppArea === "shop") return "Shop";
-  if (activeAppArea === "recreate") return "Recreate";
+  if (activeAppArea === "recreate") return "Leisure";
+  if (activeAppArea === "scores") return "Scores";
+  if (activeAppArea === "news") return "News";
+  if (activeAppArea === "weather") return "Weather";
   if (activeAppArea === "finance") return "Finance";
   if (activeAppArea === "mail") return "Mail";
   if (activeAppArea === "explore") return "Explore";
@@ -13239,9 +13294,11 @@ function openWorkoutDetail(context = {}) {
   requestAnimationFrame(() => elements.workoutDetailName.focus());
 }
 
-function openNewWorkoutDialog() {
+// `type` presets the kind ("timed" | "reps" | "game"); a click event or nothing
+// means Timed, as before.
+function openNewWorkoutDialog(type) {
   activeWorkoutDetail = { isNew: true };
-  const details = defaultExerciseDetails("timed");
+  const details = defaultExerciseDetails(["timed", "reps", "game"].includes(type) ? type : "timed");
   elements.workoutDetailLabel.textContent = "Exercise";
   elements.workoutDetailTitle.textContent = "New Exercise";
   elements.workoutDetailName.value = "";
@@ -14629,26 +14686,35 @@ function workoutsByRecency() {
   });
 }
 
+// Exercise (Luke, 2026-10-17): the Recreate look — a heading per kind of workout
+// over a sideways-scrolling row of its cards, each row ending in a "+" card that
+// starts a new workout of that kind. Hold a card for Edit / Delete.
+// (A function, not a const: renderPlayPlanner runs in the first render, before a
+// const this far down the file would be initialized.)
+function exerciseSections() {
+  return [
+    { type: "reps",  title: "Strength", add: "Add workout" },
+    { type: "timed", title: "Cardio",   add: "Add workout" },
+    { type: "game",  title: "Games",    add: "Add game" },
+  ];
+}
+
 function renderPlayPlanner() {
   if (!elements.playPlannerGrid) return;
+  const EXERCISE_SECTIONS = exerciseSections();
   const workouts = workoutsByRecency();
-  elements.playPlannerGrid.innerHTML = `
-    <div class="workout-pool">
-      ${workouts.length
-        ? workouts.map(workoutPoolCardTemplate).join("")
-        : `<div class="empty-state">Add exercises in Settings → Play → Workouts to get started.</div>`}
-    </div>
-    <div class="workout-pool-footer">
-      <button class="primary-btn icon-primary-btn" type="button" id="openNewWorkoutBtn" title="Add exercise" aria-label="Add exercise">
-        <span aria-hidden="true">+</span>
-      </button>
-    </div>
-  `;
-  wireWorkoutPoolCards(elements.playPlannerGrid, { swipe: true });
-  elements.playPlannerGrid.querySelector("#openNewWorkoutBtn")?.addEventListener("click", openNewWorkoutDialog);
-  // The same cards are a row on the Recreate page; keep it current after a
-  // workout is added / edited / logged / deleted.
-  if (activeAppArea === "recreate" && !activeRecreateHobby) renderRecreatePage();
+  const ofType = (type) => workouts.filter((w) => (EXERCISE_SECTIONS.some((s) => s.type === w.type) ? w.type : "timed") === type);
+  elements.playPlannerGrid.innerHTML = `<div class="recreate-hub">${EXERCISE_SECTIONS.map((sec) => {
+    const list = ofType(sec.type);
+    return recreateSectionTemplate(sec.type, sec.title, `
+      ${list.map(workoutPoolCardTemplate).join("")}
+      ${recreateAddCardTemplate(`data-exercise-new="${sec.type}"`, sec.add, list.length ? "" : "None yet")}`);
+  }).join("")}</div>`;
+  const grid = elements.playPlannerGrid;
+  wireWorkoutPoolCards(grid, { longPress: true });
+  grid.querySelectorAll("[data-exercise-new]").forEach((btn) => {
+    btn.addEventListener("click", () => openNewWorkoutDialog(btn.dataset.exerciseNew));
+  });
 }
 
 // Wire workout cards (workoutPoolCardTemplate) inside `root`: tap → record,
@@ -16360,41 +16426,55 @@ function setPageTitle(title) {
   updateScopeToggleUi();
 }
 
+// The landing page's links and the page-title menu (page-groups.js, Luke 2026-10-17):
+// six headings — Plan, Inform, Resource, Media, Message, Recreate — that open one
+// at a time. One row per page: its two buttons, the switch that shows it, the
+// app areas that count as "on this page", and how to open it.
+function pageNavButtons() {
+  return [
+    { home: "homePlanBtn",     title: "titlePlanBtn",      page: "plan",     areas: ["plan"],               open: showPlanApp },
+    { home: "homeEatBtn",      title: "titleMealPlanBtn",  page: "eat",      areas: ["eat"],                open: showEatApp },
+    // Tasks opens its window over the Calendar (showDoApp), so it's never "current".
+    { home: "homeDoBtn",       title: "titleToDoListBtn",  page: "do",       areas: [],                     open: showDoApp, also: ["plan"] },
+    { home: "homeNewsBtn",     title: "titleNewsBtn",      page: "news",     areas: ["news"],               open: showNewsApp },
+    { home: "homeWeatherBtn",  title: "titleWeatherBtn",   page: "weather",  areas: ["weather"],            open: showWeatherApp },
+    { home: "homeFinanceBtn",  title: "titleFinanceBtn",   page: "finance",  areas: ["finance"],            open: showFinanceApp },
+    { home: "homeShopBtn",     title: "titleShopBtn",      page: "shop",     areas: ["shop", "inventory"],  open: showShopApp },
+    { home: "homeWatchBtn",    title: "titleWatchBtn",     page: "watch",    areas: ["watch"],              open: showWatchApp },
+    { home: "homeListenBtn",   title: "titleListenBtn",    page: "read",     areas: ["media"],              open: showListenApp },
+    { home: "homeMailBtn",     title: "titleMailBtn",      page: "mail",     areas: ["mail", "contacts"],   open: showMailApp },
+    { home: "homeExploreBtn",  title: "titleExploreBtn",   page: "explore",  areas: ["explore"],            open: showExploreApp },
+    { home: "homeExerciseBtn", title: "titleExerciseBtn",  page: "play",     areas: ["play"],               open: showPlayApp },
+    { home: "homeLeisureBtn",  title: "titleLeisureBtn",   page: "recreate", areas: ["recreate"],           open: showRecreateApp },
+    { home: "homeScoresBtn",   title: "titleScoresBtn",    page: "scores",   areas: ["scores"],             open: showScoresApp },
+  ];
+}
+
+function pageNavShown(row) {
+  return isPagePersonallyEnabled(row.page) && (row.also || []).every((p) => isPagePersonallyEnabled(p));
+}
+
+// The page menu lists every page, with the one you're on marked rather than
+// removed (a group can hold a single page — Message — and shouldn't vanish).
 function updatePageTitleMenu() {
-  elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPagePersonallyEnabled("eat");
-  elements.titleToDoListBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no top-level nav button
-  elements.titleWatchBtn.hidden = activeAppArea === "watch" || !isPagePersonallyEnabled("watch");
-  elements.titleShopBtn.hidden = activeAppArea === "shop" || activeAppArea === "inventory" || !isPagePersonallyEnabled("shop");
-  elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !recreateHubEnabled(isPagePersonallyEnabled);
-  if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
-  elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
-  elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
-  if (elements.titleNewsBtn) elements.titleNewsBtn.hidden = activeAppArea === "news" || !isPagePersonallyEnabled("news");
-  const menu = elements.pageTitleMenu;
-  const btns = [...menu.querySelectorAll("button")];
-  btns.sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()));
-  btns.forEach((btn) => menu.appendChild(btn));
+  for (const row of pageNavButtons()) {
+    const btn = elements[row.title];
+    if (!btn) continue;
+    btn.hidden = !pageNavShown(row);
+    const current = row.areas.includes(activeAppArea);
+    btn.classList.toggle("is-current", current);
+    if (current) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
+  }
+  syncPageGroups(elements.pageTitleMenu);
 }
 
 function updatePageVisibility() {
-  elements.homeEatBtn.hidden = !isPagePersonallyEnabled("eat");
-  elements.homeDoBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no home-screen button
-  elements.homeWatchBtn.hidden = !isPagePersonallyEnabled("watch");
-  elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
-  elements.homeRecreateBtn.hidden = !recreateHubEnabled(isPagePersonallyEnabled);
-  if (elements.homeFinanceBtn) elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");
-  elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
+  for (const row of pageNavButtons()) {
+    if (elements[row.home]) elements[row.home].hidden = !pageNavShown(row);
+  }
   const mailContactsBtn = document.getElementById("mailContactsBtn");
   if (mailContactsBtn) mailContactsBtn.hidden = !isPagePersonallyEnabled("contacts");
-  elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
-  if (elements.homeNewsBtn) elements.homeNewsBtn.hidden = !isPagePersonallyEnabled("news");
-  // Home buttons stay in alphabetical order (Luke, 2026-10-06), like the page menu.
-  const homeLinks = elements.homeMailBtn.closest(".home-links");
-  if (homeLinks) {
-    [...homeLinks.querySelectorAll(":scope > button")]
-      .sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()))
-      .forEach((btn) => homeLinks.appendChild(btn));
-  }
+  syncPageGroups(elements.homePageGroups);
   updatePageVisibilityControls();
 }
 
@@ -17861,6 +17941,9 @@ function togglePageTitleMenu(event) {
 }
 
 function openPageTitleMenu() {
+  // Opens on the group of the page you're on; the others stay closed.
+  updatePageTitleMenu();
+  openPageGroup(elements.pageTitleMenu, groupForArea(activeAppArea));
   elements.pageTitleMenu.hidden = false;
   elements.pageTitleBtn.setAttribute("aria-expanded", "true");
   window.requestAnimationFrame(() => elements.pageTitleMenu.classList.add("is-open"));
@@ -22736,23 +22819,72 @@ const RECREATE_HOBBY_ICONS = {
 };
 const RECREATE_TRAVEL_ICON = `<img class="workout-pool-img" src="./activity-travel.png" alt="Travel" width="52" height="52" draggable="false" />`;
 
-// Explore → Travel card subtitle: upcoming trips (planning / booked / traveling).
-function recreateTravelSummary() {
-  const trips = (state.trips || []).filter((t) => t && !t.deletedAt);
-  let upcoming = 0;
-  try { upcoming = trips.filter((t) => { const s = TravelModel.deriveStatus(t); return s !== "idea" && s !== "completed"; }).length; }
-  catch { upcoming = 0; }
-  if (upcoming) return `${upcoming} upcoming ${upcoming === 1 ? "trip" : "trips"}`;
-  return trips.length ? `${trips.length} ${trips.length === 1 ? "trip" : "trips"}` : "Plan a trip";
-}
-
-// One Recreate subsection: a heading over a horizontally scrolling row of cards.
+// One Recreate-style subsection: a heading over a horizontally scrolling row of
+// cards. Explore, Exercise and Leisure all use it.
 function recreateSectionTemplate(key, title, cardsHtml) {
   return `
-    <section class="recreate-section" data-recreate-section="${key}" aria-label="${escapeHtml(title)}">
+    <section class="recreate-section" data-recreate-section="${escapeHtml(key)}" aria-label="${escapeHtml(title)}">
       <h2 class="recreate-section-title">${escapeHtml(title)}</h2>
       <div class="recreate-row">${cardsHtml}</div>
     </section>`;
+}
+
+// The "+" card that ends every row. `attrs` is the data attribute its handler finds.
+function recreateAddCardTemplate(attrs, label, sub = "") {
+  return `
+    <div class="workout-pool-card-wrap">
+      <button class="workout-pool-card recreate-add-card" type="button" ${attrs} aria-label="${escapeHtml(label)}">
+        <span class="workout-pool-icon" aria-hidden="true">+</span>
+        <span class="workout-pool-title">${escapeHtml(label)}</span>
+        <span class="workout-pool-last">${escapeHtml(sub)}</span>
+      </button>
+    </div>`;
+}
+
+// A plain card: icon, title, one line under it.
+function recreateCardTemplate(attrs, icon, title, sub = "") {
+  return `
+    <div class="workout-pool-card-wrap">
+      <button class="workout-pool-card" type="button" ${attrs}>
+        <span class="workout-pool-icon" aria-hidden="true">${icon}</span>
+        <span class="workout-pool-title">${escapeHtml(title)}</span>
+        <span class="workout-pool-last">${escapeHtml(sub)}</span>
+      </button>
+    </div>`;
+}
+
+
+function sailLogCardLine(entry) {
+  const when = entry.date ? new Date(entry.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "No date";
+  const where = entry.departurePort && entry.arrivalPort ? `${entry.departurePort} → ${entry.arrivalPort}` : entry.vesselName || entry.locationName || entry.waters || "";
+  return { when, where };
+}
+
+// Leisure (Luke, 2026-10-17): one row per hobby. The first card opens the hobby's
+// full view (the sailing log; the metronome, scores and practice log); then the
+// hobby's own items — sailing entries, piano scores — and a "+" to add one.
+function renderLeisureRows() {
+  const RECREATE_ROW_MAX = 12; // cards per row before the "+" (the hobby card opens the rest)
+  const rows = [];
+  for (const h of visibleRecreateHobbies()) {
+    let cards = recreateCardTemplate(`data-open-hobby="${escapeHtml(h.key)}"`, RECREATE_HOBBY_ICONS[h.key] || "🎯", h.label, recreateHobbySummary(h.key));
+    if (h.key === "sailing") {
+      const entries = sailingLogList().slice().sort((a, b) => `${b.date}${b.startTime || ""}`.localeCompare(`${a.date}${a.startTime || ""}`));
+      cards += entries.slice(0, RECREATE_ROW_MAX).map((e) => {
+        const { when, where } = sailLogCardLine(e);
+        return recreateCardTemplate(`data-leisure-sail="${escapeHtml(e.id)}"`, "⛵", when, where);
+      }).join("");
+      cards += recreateAddCardTemplate("data-leisure-new-sail", "New entry");
+    } else if (h.key === "piano") {
+      // The synced score list — no need to load the score engine just to list them.
+      const works = cadenceLibrary || cadenceMergedLibrary([]);
+      cards += works.slice(0, RECREATE_ROW_MAX).map((w) => recreateCardTemplate(
+        `data-leisure-score="${escapeHtml(w.id)}"`, cadenceScoreIconSvg(), w.title || "Untitled", w.composer || "")).join("");
+      cards += recreateAddCardTemplate("data-leisure-import-score", "Import score", cadenceImporting ? "Importing…" : "MusicXML file");
+    }
+    rows.push(recreateSectionTemplate(h.key, h.label, cards));
+  }
+  return rows;
 }
 
 function renderRecreatePage() {
@@ -22762,44 +22894,9 @@ function renderRecreatePage() {
     activeRecreateHobby = null;
   }
 
-  // Landing: three subsections — Explore, Exercise, Leisure — each a
-  // horizontally scrolling row of cards. Exercise and Explore used to be their
-  // own pages; they're reached from here now (#sweat / #explore still route).
   if (!activeRecreateHobby) {
-    const sections = [];
-    if (isPagePersonallyEnabled("explore")) {
-      const dot = (pageNotifCounts.explore || 0) > 0 ? " has-notif-dot" : "";
-      sections.push(recreateSectionTemplate("explore", "Explore", `
-        <div class="workout-pool-card-wrap">
-          <button class="workout-pool-card${dot}" type="button" data-recreate-travel>
-            <span class="workout-pool-icon" aria-hidden="true">${RECREATE_TRAVEL_ICON}</span>
-            <span class="workout-pool-title">Travel</span>
-            <span class="workout-pool-last">${escapeHtml(recreateTravelSummary())}</span>
-          </button>
-        </div>`));
-    }
-    if (isPagePersonallyEnabled("play")) {
-      const workouts = workoutsByRecency();
-      sections.push(recreateSectionTemplate("exercise", "Exercise", `
-        ${workouts.map(workoutPoolCardTemplate).join("")}
-        <div class="workout-pool-card-wrap">
-          <button class="workout-pool-card recreate-add-card" type="button" data-recreate-new-workout aria-label="Add exercise">
-            <span class="workout-pool-icon" aria-hidden="true">+</span>
-            <span class="workout-pool-title">Add exercise</span>
-            <span class="workout-pool-last">${workouts.length ? "" : "No exercises yet"}</span>
-          </button>
-        </div>`));
-    }
-    if (isPagePersonallyEnabled("recreate")) sections.push(recreateSectionTemplate("leisure", "Leisure", visible.length ? visible.map((h) => `
-      <div class="workout-pool-card-wrap">
-        <button class="workout-pool-card" type="button" data-open-hobby="${escapeHtml(h.key)}">
-          <span class="workout-pool-icon" aria-hidden="true">${RECREATE_HOBBY_ICONS[h.key] || "🎯"}</span>
-          <span class="workout-pool-title">${escapeHtml(h.label)}</span>
-          <span class="workout-pool-last">${escapeHtml(recreateHobbySummary(h.key))}</span>
-        </button>
-      </div>
-    `).join("") : `<div class="empty-state">Turn on hobbies in Settings → Recreate → Hobbies.</div>`));
-    elements.recreatePlannerGrid.innerHTML = `<div class="recreate-hub">${sections.join("")}</div>`;
+    elements.recreatePlannerGrid.innerHTML = `<div class="recreate-hub">${renderLeisureRows().join("")}
+      <input type="file" id="leisureScoreInput" accept=".xml,.musicxml,.mxl" hidden /></div>`;
     const grid = elements.recreatePlannerGrid;
     grid.querySelectorAll("[data-open-hobby]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -22807,9 +22904,21 @@ function renderRecreatePage() {
         renderRecreatePage();
       });
     });
-    grid.querySelector("[data-recreate-travel]")?.addEventListener("click", showExploreApp);
-    grid.querySelector("[data-recreate-new-workout]")?.addEventListener("click", openNewWorkoutDialog);
-    wireWorkoutPoolCards(grid.querySelector('[data-recreate-section="exercise"]') || grid, { longPress: true });
+    grid.querySelectorAll("[data-leisure-sail]").forEach((btn) => {
+      btn.addEventListener("click", () => openSailLogDialog(btn.dataset.leisureSail));
+    });
+    grid.querySelector("[data-leisure-new-sail]")?.addEventListener("click", () => openSailLogDialog(null));
+    grid.querySelectorAll("[data-leisure-score]").forEach((btn) => {
+      btn.addEventListener("click", () => { activeRecreateHobby = "piano"; openCadenceWork(btn.dataset.leisureScore); });
+    });
+    const scoreInput = grid.querySelector("#leisureScoreInput");
+    grid.querySelector("[data-leisure-import-score]")?.addEventListener("click", () => scoreInput?.click());
+    scoreInput?.addEventListener("change", (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      activeRecreateHobby = "piano"; // the import opens the new score
+      handleCadenceImport(f);
+    });
     return;
   }
 
@@ -40775,14 +40884,231 @@ function showExploreApp(event) {
   closeAppMenu();
   wireExploreTabs();
   refreshExploreNotifications();
-  // Reopen the most recently viewed trip (survives reloads via localStorage)
-  renderExploreSidebar(exploreOpenTripId || localStorage.getItem("live-explore-last-trip"));
   // Restore Travel Mode if it was active for a still-traveling trip.
   if (activeTravelTripId) {
     const t = (state.trips || []).find(x => x.id === activeTravelTripId);
-    if (t && TravelModel.isTraveling(t)) enterTravelMode(t.id);
-    else { activeTravelTripId = null; try { localStorage.removeItem("live-travel-mode-trip"); } catch { /* ignore */ } }
+    if (t && TravelModel.isTraveling(t)) { showExploreTrips(t.id); enterTravelMode(t.id); return; }
+    activeTravelTripId = null; try { localStorage.removeItem("live-travel-mode-trip"); } catch { /* ignore */ }
   }
+  // Explore opens on its sections (Local / State / Country / World).
+  showExploreLanding();
+}
+
+// ── Explore sections (explore-scope.js, Luke 2026-10-17) ─────────────────────
+// The page opens on four rows of trip cards — Local, State, Country, World —
+// sorted by how far each destination is from home, each ending in a "+" that
+// starts a trip in that row. A trip opens in the trips view (sidebar + trip),
+// whose back arrow returns here. Hold or right-click a card to move it to another
+// row; the choice is saved on the trip (`trip.scope`) and wins over the sorting.
+//
+// Places are looked up with OpenStreetMap Nominatim (the same service the trip
+// map uses), at most one request a second, and cached on this device only — the
+// result is never written into synced state, so sorting costs no Supabase writes.
+
+// (Its cache key, miss lifetime and queue are declared near the top of the file,
+// with exploreOpenTripId, so a render during boot can't reach them uninitialized.)
+
+function explorePlaceStore() {
+  if (!explorePlaceCache) {
+    try { explorePlaceCache = JSON.parse(localStorage.getItem(EXPLORE_PLACE_CACHE_KEY) || "{}") || {}; }
+    catch { explorePlaceCache = {}; }
+  }
+  return explorePlaceCache;
+}
+function saveExplorePlaceStore() {
+  try { localStorage.setItem(EXPLORE_PLACE_CACHE_KEY, JSON.stringify(explorePlaceCache || {})); } catch { /* full or private */ }
+}
+const explorePlaceKey = (q) => TravelGeo.geoKey(q);
+function explorePlaceOf(query) {
+  const hit = explorePlaceStore()[explorePlaceKey(query)];
+  return hit && !hit.miss ? hit : null;
+}
+function explorePlaceNeedsLookup(key) {
+  const hit = explorePlaceStore()[key];
+  if (!hit) return true;
+  return !!hit.miss && Date.now() - (hit.at || 0) > EXPLORE_PLACE_MISS_TTL;
+}
+
+// Home, with its country and state (looked up once from its coordinates).
+function exploreHomePlace() {
+  const home = homeLocation();
+  if (!home) return null;
+  const key = `home:${home.latitude.toFixed(3)},${home.longitude.toFixed(3)}`;
+  const hit = explorePlaceStore()[key];
+  if (hit && !hit.miss) return hit;
+  queueExplorePlaceLookup(key, { reverse: home });
+  return { lat: home.latitude, lng: home.longitude, country: "", state: "" };
+}
+
+function queueExplorePlaceLookup(key, job) {
+  if (!key || !explorePlaceNeedsLookup(key)) return;
+  if (explorePlaceQueue.some((j) => j.key === key)) return;
+  explorePlaceQueue.push({ key, ...job });
+  if (!explorePlaceTimer) explorePlaceTimer = setTimeout(runExplorePlaceQueue, 50);
+}
+
+async function runExplorePlaceQueue() {
+  explorePlaceTimer = null;
+  const job = explorePlaceQueue.shift();
+  if (!job) return;
+  let place = null;
+  try {
+    const base = "https://nominatim.openstreetmap.org/";
+    const url = job.reverse
+      ? `${base}reverse?format=json&addressdetails=1&zoom=10&lat=${job.reverse.latitude}&lon=${job.reverse.longitude}`
+      : `${base}search?format=json&addressdetails=1&limit=1&q=${encodeURIComponent(job.query)}`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (res.ok) {
+      const body = await res.json();
+      place = ExploreScope.placeFromNominatim(Array.isArray(body) ? body[0] : body);
+    }
+  } catch { place = null; }
+  explorePlaceStore()[job.key] = place ? { ...place, at: Date.now() } : { miss: true, at: Date.now() };
+  saveExplorePlaceStore();
+  if (place && exploreLandingShown()) renderExploreLanding();
+  // Nominatim asks for at most one request a second.
+  if (explorePlaceQueue.length) explorePlaceTimer = setTimeout(runExplorePlaceQueue, 1100);
+}
+
+function exploreLandingShown() {
+  return activeAppArea === "explore" && !document.getElementById("exploreLanding")?.hidden;
+}
+
+function showExploreLanding() {
+  const landing = document.getElementById("exploreLanding");
+  const shell = document.getElementById("exploreTripsShell");
+  if (!landing || !shell) return;
+  shell.hidden = true;
+  landing.hidden = false;
+  renderExploreLanding();
+}
+
+// The trips view (sidebar + trip). With a trip id, opens that trip.
+function showExploreTrips(tripId) {
+  const landing = document.getElementById("exploreLanding");
+  const shell = document.getElementById("exploreTripsShell");
+  if (landing) landing.hidden = true;
+  if (shell) shell.hidden = false;
+  renderExploreSidebar(tripId || null);
+}
+
+function exploreTripCardTemplate(trip) {
+  let status = "";
+  try { status = TravelModel.deriveStatus(trip); } catch { status = ""; }
+  const statusLabel = { idea: "Idea", planning: "Planning", booked: "Booked", traveling: "Traveling", completed: "Done" }[status] || "";
+  const when = trip.startDate ? new Date(trip.startDate + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+  const sub = [trip.destination && trip.destination !== trip.name ? trip.destination : "", when || statusLabel].filter(Boolean).join(" · ");
+  return recreateCardTemplate(`data-explore-card="${escapeHtml(trip.id)}"`, RECREATE_TRAVEL_ICON, trip.name || trip.destination || "Trip", sub);
+}
+
+function renderExploreLanding() {
+  const landing = document.getElementById("exploreLanding");
+  if (!landing) return;
+  const trips = travelTrips().filter((t) => t && !t.deletedAt).slice()
+    .sort((a, b) => TravelModel.compareForHome(a, b));
+  const home = exploreHomePlace();
+  // Look up destinations not sorted yet (queued, one a second, cached per device).
+  if (home) {
+    for (const t of trips) {
+      if (ExploreScope.isExploreScope(t.scope)) continue;
+      const dest = String(t.destination || "").trim();
+      if (dest) queueExplorePlaceLookup(explorePlaceKey(dest), { query: dest });
+    }
+  }
+  const groups = ExploreScope.groupTrips(trips, { home, placeOf: explorePlaceOf });
+  const count = pageNotifCounts.explore || 0;
+  const rows = ExploreScope.EXPLORE_SCOPES.map((sc) => recreateSectionTemplate(sc.key, sc.label, `
+    ${groups[sc.key].map(exploreTripCardTemplate).join("")}
+    ${recreateAddCardTemplate(`data-explore-add="${sc.key}"`, "New trip", groups[sc.key].length ? "" : "No trips yet")}`));
+  if (groups.unsorted.length) {
+    rows.push(recreateSectionTemplate("unsorted", "Not sorted yet", groups.unsorted.map(exploreTripCardTemplate).join("")));
+  }
+  landing.innerHTML = `
+    <div class="explore-landing-bar">
+      ${home ? "" : `<span class="explore-landing-hint">Add your home in your profile to sort trips by distance.</span>`}
+      <button class="secondary-btn" type="button" data-explore-all>All trips</button>
+      ${count ? `<button class="icon-btn mail-notifications-btn" type="button" data-explore-inbox title="Notifications" aria-label="Notifications"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="mail-notif-badge">${count}</span></button>` : ""}
+    </div>
+    ${rows.join("")}`;
+  landing.querySelectorAll("[data-explore-card]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.lpFired) return;
+      showExploreTrips(btn.dataset.exploreCard);
+    });
+    btn.addEventListener("contextmenu", (e) => {
+      if (btn.dataset.lpFired) { e.preventDefault(); return; }
+      openExploreScopeMenu(e, btn.dataset.exploreCard);
+    });
+    wireExploreCardLongPress(btn);
+  });
+  landing.querySelectorAll("[data-explore-add]").forEach((btn) => {
+    btn.addEventListener("click", () => showTravelNewTripDialog({ scope: btn.dataset.exploreAdd }));
+  });
+  landing.querySelector("[data-explore-all]")?.addEventListener("click", () => showExploreTrips(null));
+  landing.querySelector("[data-explore-inbox]")?.addEventListener("click", openExploreProposalsPanel);
+}
+
+// Touch: hold a trip card for its move menu (a sideways swipe scrolls the row).
+function wireExploreCardLongPress(btn) {
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  btn.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    delete btn.dataset.lpFired;
+    sx = e.clientX; sy = e.clientY;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      btn.dataset.lpFired = "1";
+      setTimeout(() => { delete btn.dataset.lpFired; }, 800);
+      navigator.vibrate?.(10);
+      openExploreScopeMenu({ preventDefault() {}, stopPropagation() {}, clientX: sx, clientY: sy }, btn.dataset.exploreCard);
+    }, 500);
+  });
+  btn.addEventListener("pointermove", (e) => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) cancel(); });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => btn.addEventListener(ev, cancel));
+}
+
+function openExploreScopeMenu(event, tripId) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+  const trip = travelTrips().find((t) => t.id === tripId);
+  if (!trip) return;
+  const current = ExploreScope.isExploreScope(trip.scope) ? trip.scope : "";
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    ${ExploreScope.EXPLORE_SCOPES.map((sc) => `<button type="button" role="menuitem" data-explore-move="${sc.key}"${current === sc.key ? ' aria-checked="true"' : ""}>Move to ${escapeHtml(sc.label)}</button>`).join("")}
+    ${current ? `<button type="button" role="menuitem" data-explore-move="">Sort by distance</button>` : ""}
+    <button type="button" role="menuitem" data-explore-edit>Edit trip</button>`;
+  document.body.append(menu);
+  const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(event.clientY || 10, usableViewportBottom() - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+  menu.querySelectorAll("[data-explore-move]").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeFolderMenu();
+    setTripScope(tripId, b.dataset.exploreMove);
+  }));
+  menu.querySelector("[data-explore-edit]")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeFolderMenu();
+    showTravelEditTripDialog(tripId);
+  });
+}
+
+// "" clears the user's choice, so the trip is sorted by distance again.
+function setTripScope(tripId, scope) {
+  const trip = travelTrips().find((t) => t.id === tripId);
+  if (!trip) return;
+  if (ExploreScope.isExploreScope(scope)) trip.scope = scope;
+  else delete trip.scope;
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (exploreLandingShown()) renderExploreLanding();
 }
 
 let exploreTripQuery = "";
@@ -40860,6 +41186,7 @@ function exploreTripTabHtml(trip) {
 function renderExploreSidebar(preserveSelectedId, { listOnly = false } = {}) {
   const list = document.getElementById("exploreTripList");
   if (!list) return;
+  if (!listOnly && !preserveSelectedId && exploreLandingShown()) renderExploreLanding();
   const trips = travelTrips();
   if (!trips.length) {
     list.innerHTML = `<p class="explore-sidebar-empty">No trips yet</p>`;
@@ -40923,6 +41250,9 @@ function showExploreTripEmpty() {
 function openExploreTrip(tripId) {
   const trip = (state.trips || []).find(t => t.id === tripId);
   if (!trip) return;
+  // A trip always shows in the trips view, wherever it was opened from.
+  const landing = document.getElementById("exploreLanding");
+  if (landing && !landing.hidden) { landing.hidden = true; document.getElementById("exploreTripsShell").hidden = false; }
   if (exploreOpenTripId !== tripId) exploreActiveDayKey = ""; // new trip starts on Day 1
   exploreOpenTripId = tripId;
   localStorage.setItem("live-explore-last-trip", tripId); // reopen this trip on next visit
@@ -41114,6 +41444,8 @@ function wireExploreTabs() {
 
   // Notifications button opens the Explore review inbox (proposed changes).
   document.getElementById("exploreNotificationsBtn")?.addEventListener("click", openExploreProposalsPanel);
+
+  document.getElementById("exploreBackBtn")?.addEventListener("click", showExploreLanding);
 
   document.getElementById("exploreAddTripBtn")?.addEventListener("click", () => {
     showTravelNewTripDialog();
@@ -44614,7 +44946,8 @@ function showTravelLegDialog(trip, dateKey, sectionKey, onSave, existingItem = n
   fromInput.focus();
 }
 
-function showTravelNewTripDialog() {
+// `scope` (Explore's "+" cards) files the new trip in that row and opens it.
+function showTravelNewTripDialog({ scope = "" } = {}) {
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
   const partyOptions = travelPartyOptions();
@@ -44660,12 +44993,13 @@ function showTravelNewTripDialog() {
         endDate: d.querySelector("#tnEnd").value || "",
         party
       });
+      if (ExploreScope.isExploreScope(scope)) trip.scope = scope;
       if (!Array.isArray(state.trips)) state.trips = [];
       state.trips.push(trip);
       persist();
       syncTripToCalendar(trip);
       d.remove();
-      if (activeAppArea === "explore") renderExploreSidebar(trip.id);
+      if (activeAppArea === "explore") showExploreTrips(trip.id);
     } catch (err) {
       alert("Error creating trip: " + err.message);
     }

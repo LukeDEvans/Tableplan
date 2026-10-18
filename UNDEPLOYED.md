@@ -10,6 +10,15 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Grouped page menus; Recreate → Explore, Exercise, Leisure, Scores** · #134 · **Netlify deploy** (web; the phone picks it up with the deploy). Landing links and the page menu are six groups that open one at a time (Plan, Inform, Resource, Media, Message, Recreate); Listen and Weather are back in the menus; Scores is its own page under Recreate (News → Sports is stories only); Exercise and Leisure are rows of cards; Explore opens on Local / State / Country / World rows of trips. No migration, no new env vars.
+  Post-deploy:
+  1. iPhone, landing page: tap Plan, then Inform — only one group is open at a time; each page opens. Tasks opens its window over the Calendar.
+  2. Page menu from any page: it opens on that page's group with the page highlighted.
+  3. Recreate → Scores shows today's games; tap a game in the dock ticker — it opens on the Scores page. News → Sports has stories only.
+  4. Explore (with a home set in the profile): trips move into Local / State / Country / World within a few seconds; hold a card → Move to …; a row's + starts a trip there. Check "Not sorted yet" for anything misread.
+  5. Exercise: Strength / Cardio / Games rows; hold a card for Edit / Delete. Leisure: Sailing and Piano rows.
+  6. A mail or finance notification underlines the closed group's heading (Message / Resource).
+
 - **Mail: pinch to zoom an email** · #133 · **Netlify deploy** (web; the phone picks it up with the deploy). Two fingers zoom an email from its fitted size up to 4×; laptop trackpad pinch works too. Zoomed in, a sideways drag pans instead of paging. No migration, no new env vars.
   Post-deploy:
   1. iPhone: open an image-heavy newsletter, pinch out on a headline — it grows around your fingers and stays sharp; drag around in every direction; pinch back in to the fitted view.

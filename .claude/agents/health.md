@@ -1,6 +1,6 @@
 ---
 name: health
-description: Use for changes scoped to Health / Exercise — food-health checklists and logs, person goals, and the "sweat" exercise area (workout cards in Recreate's Exercise row). Owns food-health*.js and the sweat/food-health sections of app.js. Daily Dozen and nutrition modules belong to the recipes agent (Decision #3).
+description: Use for changes scoped to Health / Exercise — food-health checklists and logs, person goals, and the "sweat" exercise area (the Exercise page in the Recreate menu group). Owns food-health*.js and the sweat/food-health sections of app.js. Daily Dozen and nutrition modules belong to the recipes agent (Decision #3).
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -30,8 +30,12 @@ changes to the Health / Nutrition / Exercise domain only.
   food-health / nutrition-checklist sections. Search: `health`, `nutrition`,
   `dailyDozen`, `sweat`, `exercise`.
 - **Data:** health/nutrition/exercise state sections.
-- **Where it lives:** no home-grid or page-menu entry — the workout cards are Recreate's
-  **Exercise** row (`wireWorkoutPoolCards`; route `#sweat` still opens the full Exercise page).
+- **Where it lives:** **Exercise** in the **Recreate** menu group (routes `#sweat`,
+  `#exercise`). Since 2026-10-17 (Luke) it has the Recreate look: a row per kind —
+  **Strength** (reps), **Cardio** (timed), **Games** — of sideways-scrolling workout cards,
+  each row ending in a **+** that starts a workout of that kind
+  (`openNewWorkoutDialog(type)`). Hold a card for Edit / Delete (`wireWorkoutPoolCards`
+  with `longPress`).
 
 ## Domain landmines (do NOT change without flagging)
 - **This domain overlaps with Recipes / Meal-Plan.** `daily-dozen.js`,

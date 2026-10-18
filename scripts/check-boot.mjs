@@ -208,6 +208,8 @@ async function main() {
   await visitDomain(page, "Contacts", "contactsMainPage", async () => {
     await page.click("#pageTitleBtn");
     await page.waitForTimeout(300);
+    // The page menu is grouped (page-groups.js): open "Message", then Mail.
+    await page.click('#pageTitleMenu [data-page-group="message"] .page-group-head');
     await page.click("#titleMailBtn");
     await page.waitForTimeout(300);
     await page.evaluate(() => {
@@ -220,6 +222,7 @@ async function main() {
   await visitDomain(page, "News", "newsMainPage", async () => {
     await page.click("#pageTitleBtn");
     await page.waitForTimeout(300);
+    await page.click('#pageTitleMenu [data-page-group="inform"] .page-group-head');
     await page.click("#titleNewsBtn");
   });
 
