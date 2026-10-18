@@ -72,6 +72,8 @@ try {
   await page.waitForTimeout(300);
 
   const goHome = () => page.evaluate(() => window.__liveQA.goHome());
+  // Group headings slide open/closed (~200ms); wait for the slide to finish.
+  const tapHead = async (sel) => { await page.click(sel); await page.waitForTimeout(320); };
   const area = () => page.evaluate(() => window.__liveQA.activeArea());
   const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
   const visibleIn = (sel) => page.evaluate((s) => [...document.querySelectorAll(s)].filter((b) => b.offsetParent).map((b) => b.textContent.trim()), sel);
@@ -82,16 +84,30 @@ try {
   check(JSON.stringify(heads) === JSON.stringify(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]), "six group headings, in order", heads.join(", "));
   check((await visibleIn("#homePageGroups .page-group-pages > button")).length === 0, "all groups start closed");
   await shot("home-closed");
-  await page.click('#homePageGroups [data-page-group="plan"] .page-group-head');
+  await tapHead('#homePageGroups [data-page-group="plan"] .page-group-head');
   check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["Calendar", "Meal Plan", "Tasks"]), "Plan opens Calendar, Meal Plan, Tasks");
-  await page.click('#homePageGroups [data-page-group="inform"] .page-group-head');
+  await tapHead('#homePageGroups [data-page-group="inform"] .page-group-head');
   check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["News", "Weather"]), "opening Inform closes Plan");
+  // The switch slides: partway through, Plan is still closing and Inform still opening.
+  const mid = await page.evaluate(async () => {
+    const q = (k) => document.querySelector(`#homePageGroups [data-page-group="${k}"] .page-group-pages`);
+    document.querySelector('#homePageGroups [data-page-group="plan"] .page-group-head').click();
+    await new Promise((r) => setTimeout(r, 90));
+    const plan = q("plan"), inform = q("inform");
+    const h = (el) => el.getBoundingClientRect().height;
+    const res = { planH: h(plan), planFull: plan.scrollHeight, informH: h(inform), informHidden: inform.hidden };
+    document.querySelector('#homePageGroups [data-page-group="inform"] .page-group-head').click(); // back to Inform
+    return res;
+  });
+  await page.waitForTimeout(320);
+  check(mid.planH > 0 && mid.planH < mid.planFull && mid.informH > 0 && !mid.informHidden, "switching groups slides (old closing, new opening at once)", JSON.stringify(mid));
+  check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["News", "Weather"]), "a quick second tap ends in the right state");
   check(await page.getAttribute('#homePageGroups [data-page-group="inform"] .page-group-head', "aria-expanded") === "true", "the open heading says it's expanded");
-  await page.click('#homePageGroups [data-page-group="inform"] .page-group-head');
+  await tapHead('#homePageGroups [data-page-group="inform"] .page-group-head');
   check((await visibleIn("#homePageGroups .page-group-pages > button")).length === 0, "tapping the open heading closes it");
-  await page.click('#homePageGroups [data-page-group="media"] .page-group-head');
+  await tapHead('#homePageGroups [data-page-group="media"] .page-group-head');
   check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["Watch", "Listen"]), "Media holds Watch and Listen");
-  await page.click('#homePageGroups [data-page-group="recreate"] .page-group-head');
+  await tapHead('#homePageGroups [data-page-group="recreate"] .page-group-head');
   check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["Explore", "Exercise", "Leisure", "Scores"]), "Recreate holds Explore, Exercise, Leisure, Scores");
   check(await fits(), "landing fits the phone width");
   await shot("home-recreate");
@@ -101,7 +117,7 @@ try {
   await page.evaluate(() => window.__liveQA.recreateSeed({ notif: { mail: 0 } }));
 
   console.log("Page-title menu");
-  await page.click('#homePageGroups [data-page-group="media"] .page-group-head');
+  await tapHead('#homePageGroups [data-page-group="media"] .page-group-head');
   await page.click("#homeListenBtn");
   await page.waitForTimeout(300);
   check(await area() === "media", "Listen opens from the landing page");
@@ -110,7 +126,7 @@ try {
   check(JSON.stringify(await visibleIn("#pageTitleMenu .page-group-pages > button")) === JSON.stringify(["Watch", "Listen"]), "the menu opens on the current page's group");
   check(await page.evaluate(() => document.getElementById("titleListenBtn").classList.contains("is-current")), "the current page is marked, not removed");
   await shot("menu-media");
-  await page.click('#pageTitleMenu [data-page-group="recreate"] .page-group-head');
+  await tapHead('#pageTitleMenu [data-page-group="recreate"] .page-group-head');
   check(JSON.stringify(await visibleIn("#pageTitleMenu .page-group-pages > button")) === JSON.stringify(["Explore", "Exercise", "Leisure", "Scores"]), "opening Recreate in the menu closes Media");
   check(await fits(), "menu fits the phone width");
   await shot("menu-recreate");
@@ -216,7 +232,7 @@ try {
   await goHome();
   await page.waitForTimeout(300);
   await page.setViewportSize({ width: 360, height: 740 });
-  await page.click('#homePageGroups [data-page-group="recreate"] .page-group-head').catch(() => {});
+  await tapHead('#homePageGroups [data-page-group="recreate"] .page-group-head').catch(() => {});
   check(await fits(), "landing fits 360px");
 
   check(errors.length === 0, "no page errors", errors.join(" | "));

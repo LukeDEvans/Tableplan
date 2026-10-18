@@ -30,6 +30,7 @@ Status: **Built on `claude/page-groups`, PR #134 (2026-10-17). Not deployed.** R
 - The page menu opens on the current page's group and marks the current page (it isn't removed, so Message never vanishes).
 - A page's notification mark carries up to its group's heading while the group is closed.
 - A group with no visible pages (all switched off) is hidden.
+- Switching groups **slides** (Luke, 2026-10-18): the old group closes while the new one opens, ~0.2s, pages fading with it (`slidePanel` in `page-groups.js`; off under Reduce Motion). The page menu opening on the current group doesn't slide. No arrows beside the headings (removed 2026-10-18).
 
 **Scores**: `#scoresMainPage`, `showScoresApp`, route `#scores`, `activeAppArea === "scores"`. `scores-ui.js` refreshes only while that area is shown. News no longer takes a `scores` dependency; News → Sports is stories only. The dock ticker opens games on the Scores page. Scores shares **Recreate's** page switch (`accessPageKey`).
 

@@ -35,15 +35,52 @@ export function groupForArea(area) {
 
 const groupsIn = (root) => [...(root?.querySelectorAll(".page-group[data-page-group]") || [])];
 
-// Open one group (or none with key null), closing the rest.
-export function openPageGroup(root, key) {
+// Open one group (or none with key null), closing the rest. With `animate`
+// (taps on a heading), the closing group slides shut while the new one slides
+// open, both at once (Luke, 2026-10-18). Without it (the page menu opening on
+// the current page's group), it just shows. Reduced motion skips the slide.
+const SLIDE_MS = 200;
+const reducedMotion = () => !!globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+export function openPageGroup(root, key, { animate = false } = {}) {
+  const slide = animate && !reducedMotion();
   for (const group of groupsIn(root)) {
     const open = !!key && group.dataset.pageGroup === key;
+    const was = group.classList.contains("is-open");
     group.classList.toggle("is-open", open);
     group.querySelector(".page-group-head")?.setAttribute("aria-expanded", String(open));
     const panel = group.querySelector(".page-group-pages");
-    if (panel) panel.hidden = !open;
+    if (!panel) continue;
+    if (!slide || open === was) { settlePanel(panel, open); continue; }
+    slidePanel(panel, open);
   }
+}
+
+// Final state, no animation (also cancels one in progress).
+function settlePanel(panel, open) {
+  panel._slide = (panel._slide || 0) + 1;
+  panel.classList.remove("is-sliding");
+  panel.style.height = "";
+  panel.hidden = !open;
+}
+
+// Animate the panel's height between 0 and its content. A newer call wins: a
+// slide that finishes after another has started leaves the panel alone.
+function slidePanel(panel, open) {
+  const token = (panel._slide = (panel._slide || 0) + 1);
+  panel.hidden = false;
+  const full = panel.scrollHeight;
+  panel.classList.add("is-sliding");
+  panel.style.height = `${open ? 0 : full}px`;
+  void panel.offsetHeight; // commit the start height before changing it
+  panel.style.height = `${open ? full : 0}px`;
+  const done = () => { if (panel._slide === token) settlePanel(panel, open); };
+  panel.addEventListener("transitionend", function end(e) {
+    if (e.target !== panel || e.propertyName !== "height") return;
+    panel.removeEventListener("transitionend", end);
+    done();
+  });
+  setTimeout(done, SLIDE_MS + 80); // in case transitionend never fires
 }
 
 export function openGroupKey(root) {
@@ -60,7 +97,7 @@ export function wirePageGroups(root) {
     event.preventDefault();
     event.stopPropagation();
     const key = head.closest(".page-group")?.dataset.pageGroup || null;
-    openPageGroup(root, openGroupKey(root) === key ? null : key);
+    openPageGroup(root, openGroupKey(root) === key ? null : key, { animate: true });
   });
 }
 
