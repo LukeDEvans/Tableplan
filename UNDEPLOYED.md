@@ -10,4 +10,6 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_(nothing undeployed)_
+- **Page menus: no arrows on the group headings** · #136 · **TestFlight build** (client-only; the laptop needs a Netlify deploy). The Plan / Inform / Resource / Media / Message / Recreate headings on the landing page and in the page menu no longer show a ▾ arrow; tapping them still opens and closes the group. No migration, no new env vars.
+  Post-deploy:
+  1. Landing page and page menu: headings are plain words; tapping one opens it and closes the other.
