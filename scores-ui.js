@@ -1,4 +1,4 @@
-// scores-ui.js — the Scores view (SPORTS_SCORES_DESIGN.md), shown in News → Sports.
+// scores-ui.js — the Scores page (SPORTS_SCORES_DESIGN.md), under Recreate since 2026-10-17.
 //
 // A day's games across the leagues the user follows, favorites pinned first.
 // Data comes only from the app's own scores function (netlify/functions/
@@ -129,7 +129,7 @@ export function createScoresModule(deps) {
   let scrollToNext = false;   // a team page just opened: bring its next game into view
 
   const prefs = () => normalizeSportsPrefs(getState()?.sportsPrefs);
-  const isShown = () => !!mountEl?.isConnected && getActiveAppArea?.() === "news" && !document.hidden;
+  const isShown = () => !!mountEl?.isConnected && getActiveAppArea?.() === "scores" && !document.hidden;
   const fmt = () => ({ now: new Date() });
   const darkTheme = () => {
     const mode = document.body?.dataset?.theme;
@@ -817,7 +817,7 @@ export function createScoresModule(deps) {
     if (t.dataset?.scoresLeague) { setPrefs(setLeagueOn(prefs(), t.dataset.scoresLeague, t.checked)); renderDialog(); }
   }
 
-  // ── Interface (news-ui.js mounts this into the Sports section) ──
+  // ── Interface (app.js's showScoresApp mounts this on the Scores page) ──
   function mount(el) {
     if (!el) return;
     if (mountEl !== el) {
@@ -871,7 +871,7 @@ export function createScoresModule(deps) {
   }
 
   // Open a day with one game expanded (and in view) — a tap on a ticker game.
-  // The view shows it on its next mount (news-ui.js showScores).
+  // The view shows it on its next mount (app.js showScoresApp).
   let scrollToGame = "";
   function showGame(dateKey, gameId) {
     route = { view: "day" };

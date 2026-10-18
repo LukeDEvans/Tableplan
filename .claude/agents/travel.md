@@ -1,6 +1,6 @@
 ---
 name: travel
-description: Use for changes scoped to the Travel domain — trips, itineraries, bookings/ingest, geo & transitions, route optimization, and Travel Mode. Explore opens from the Travel card in Recreate. Owns travel-*.js and the "explore" area of app.js.
+description: Use for changes scoped to the Travel domain — trips, itineraries, bookings/ingest, geo & transitions, route optimization, and Travel Mode. Explore is in the Recreate menu group and opens on Local / State / Country / World rows of trips (explore-scope.js). Owns travel-*.js and the "explore" area of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -20,7 +20,7 @@ changes to the Travel domain only. (In the UI this domain is surfaced as
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `travel-*.js`, `booking-scan.js`, `netlify/functions/travel-time.js`, `netlify/functions/scan-booking.js`, `netlify/functions/maps-static.js`
+- files: `travel-*.js`, `explore-scope.js`, `booking-scan.js`, `netlify/functions/travel-time.js`, `netlify/functions/scan-booking.js`, `netlify/functions/maps-static.js`
 - state: `trips`, `travelIdeas`, `travelHome`
 
 ## Your scope (edit these)
@@ -30,9 +30,20 @@ changes to the Travel domain only. (In the UI this domain is surfaced as
 - **`app.js`:** the Travel/Explore sections — `activeAppArea === "explore"`. Search:
   `travel`, `itinerary`, `explore`.
 - **Data:** `state.travel*`; the canonical travel shapes live in `travel-model.js`.
-- **Where it lives:** no home-grid or page-menu entry — Explore opens from the **Travel
-  card** in Recreate's Explore row (`renderRecreatePage`; route `#explore` still works). Its
-  notifications underline Recreate's links and the Travel card's title.
+- **Where it lives:** **Explore** in the **Recreate** menu group (landing page + page menu;
+  `page-groups.js`). Its notifications underline its menu buttons (and the closed group's
+  heading).
+- **Explore sections (Luke, 2026-10-17):** the page opens on four rows of trip cards —
+  **Local, State, Country, World** (`#exploreLanding`, `renderExploreLanding`) — each
+  ending in a **+** that starts a trip in that row. Trips are sorted **automatically** by
+  comparing the destination with the Profile's home (`explore-scope.js`, pure: Local =
+  within 100 km, then same state, same country, else World); a trip with no destination
+  or no match shows under **Not sorted yet**. Hold / right-click a card to **move** it;
+  the choice is saved as `trip.scope` and wins over the sorting ("Sort by distance"
+  clears it). Destinations and home are looked up with Nominatim, one a second, cached
+  **on the device only** (`live-explore-places-v1`, account-scoped) — never synced state.
+  A card opens the trips view (`#exploreTripsShell`: sidebar + trip), whose back arrow
+  returns to the rows; any `openExploreTrip` call switches to it.
 ## Domain landmines (do NOT change without flagging)
 - **Cross-domain flows go through documented interfaces, not internals.**
   "Send-to-Explore" from other domains (e.g. media/watch → a trip idea) and the

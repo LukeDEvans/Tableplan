@@ -29,8 +29,9 @@ The page is **Listen** to Luke, but **internal keys did not change** (decision 6
 `activeAppArea` is `"media"`, the page-access key is `read`, `#media` / `#read` /
 `#listen` all open it, and the data stays in the `media` state section. Change
 visible labels only; renaming synced keys makes settings revert on other devices.
-Listen has no home-grid or page-menu entry — it opens from the **bottom dock's
-mini-player** (`miniPlayerInfoBtn`), where its notification dot also sits.
+Listen is in the **Media** menu group (with Watch) on the landing page and the page
+menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-player**
+(`miniPlayerInfoBtn`). Its notification mark shows on both.
 
 ## Your scope (edit these)
 - **Queue & library logic (pure, tested):** `media-queue-order.js` (the order the

@@ -16,6 +16,10 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
+- [ ] **[P3] Exercise swipe-to-edit handlers now unused** (exercise · app.js handleWorkoutPoolPointerDown/Move/End · 2026-10-17)
+      Exercise became sideways-scrolling rows (page groups PR), so its cards use hold-for-menu like Recreate's rows did; nothing passes `swipe: true` to `wireWorkoutPoolCards` any more, and the `.workout-pool-swipe-*` markup in `workoutPoolCardTemplate` is never revealed. → Delete the swipe handlers, their CSS and the hidden swipe buttons once Luke is happy with hold-for-menu. Verdict: CONFIRMED (grep).
+- [ ] **[P2] Explore sorting not tried against the live geocoder** (travel · app.js runExplorePlaceQueue · 2026-10-17)
+      Verified with seeded places (scripts/qa-page-groups.mjs) and unit tests; the sandbox couldn't reach Nominatim. Not verified: real search/reverse responses for Luke's trips, and that one-a-second pacing feels fine with many unsorted trips. → After deploy: open Explore with a home set; trips should drift into rows over a few seconds; check "Not sorted yet" for anything misread. Verdict: OPEN.
 - [ ] **[P2] Themes: hard-coded colors that no theme reaches** (design tokens · styles.css · 2026-10-14)
       About 1,100 literal colors remain (218 `#fff`, `#888`, `#92400e`, `#b3261e`, the dock's own palette, and others). The main pages, cards, dialogs, menus and buttons are token-based and pass the Halloween contrast check. Less-used screens (Listen, Watch, Mail, Recreate subpages, Cadence) weren't screenshotted and may show Classic colors inside Halloween. → Sweep page by page: swap literals for tokens, look at each page in Halloween light and dark. THEMES_DESIGN.md → Known gaps. Verdict: CONFIRMED (count by grep).
 - [ ] **[P2] Classic fails the contrast check the Halloween theme passes** (design tokens · styles.css :root · 2026-10-14)
