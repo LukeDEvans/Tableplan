@@ -23605,21 +23605,6 @@ input[type="search"]::-webkit-search-cancel-button {
   align-items: center;
   gap: 6px;
 }
-.page-group-chevron {
-  width: 0.8em;
-  height: 0.8em;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  transition: transform 0.18s ease;
-  transform-box: fill-box;
-  transform-origin: center;
-  overflow: visible;
-  flex: none;
-}
-.page-group.is-open > .page-group-head .page-group-chevron { transform: rotate(180deg); }
 .page-group-pages {
   display: flex;
   flex-direction: column;
@@ -23642,7 +23627,6 @@ input[type="search"]::-webkit-search-cancel-button {
 /* Page-title menu */
 .page-title-menu.page-groups { gap: 0; padding: 8px 16px 10px; max-height: calc(100dvh - 120px); overflow-y: auto; }
 .page-title-menu .page-group-head { min-height: 40px; }
-.page-title-menu .page-group-head .page-group-chevron { width: 0.45em; height: 0.45em; }
 .page-title-menu .page-group-pages > button {
   min-height: 36px;
   font-family: inherit;
