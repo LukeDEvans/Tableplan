@@ -23836,3 +23836,102 @@ input[type="search"]::-webkit-search-cancel-button {
 }
 .explore-landing-hint { flex: 1 1 200px; color: var(--muted); font-size: 0.88rem; }
 .explore-back-btn { flex: none; }
+
+/* ── Views: the view band (views.js, VIEWS_DESIGN.md §4) ──
+   The current view's name in the page menus' script face, with ‹ › on either
+   side. On the landing page it sits under the logo; while the page menu is open
+   it takes the page title's place in the header. Swipes count only on the band
+   (touch-action keeps the page from scrolling sideways under the finger). */
+.view-band {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  max-width: 100%;
+}
+.view-band[hidden] { display: none; }
+.view-band-name {
+  display: inline-block;
+  min-width: 5.2em;
+  padding: 0 0.15em 0 0.05em;
+  color: var(--ink);
+  font-family: "Great Vibes", cursive;
+  font-size: clamp(1.7rem, 4.4vw, 2.4rem);
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+  white-space: nowrap;
+  cursor: default;
+}
+.view-band.is-switchable .view-band-name { cursor: grab; }
+.view-band-step {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.view-band-step svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.view-band-step:hover,
+.view-band-step:focus-visible { color: var(--accent); outline: 0; }
+/* Someone with one view sees the name only (decision 12). */
+.view-band:not(.is-switchable) .view-band-step { display: none; }
+/* The name slides out the way the finger went and the next one slides in. */
+.view-band-name.is-leaving-left { animation: view-band-out-left 0.14s ease forwards; }
+.view-band-name.is-leaving-right { animation: view-band-out-right 0.14s ease forwards; }
+.view-band-name.is-entering-left { animation: view-band-in-left 0.16s ease; }
+.view-band-name.is-entering-right { animation: view-band-in-right 0.16s ease; }
+@keyframes view-band-out-left { to { opacity: 0; transform: translateX(-24px); } }
+@keyframes view-band-out-right { to { opacity: 0; transform: translateX(24px); } }
+@keyframes view-band-in-left { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+@keyframes view-band-in-right { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .view-band-name { animation: none !important; }
+}
+/* Landing page: under the logo, just above the links. */
+.home-hero > .view-band { margin: -6px 0 -10px; }
+/* Header: the band replaces the page title while the page menu is open. */
+.page-title-wrap.is-view-band > h1 { display: none; }
+.view-band-header .view-band-name { line-height: 1.5; }
+@media (max-width: 380px) {
+  .view-band-header .view-band-name { min-width: 4.6em; }
+}
+
+/* Household and Business list their pages flat, without group headings
+   (page-groups.js setFlatPageGroups): the pages take the headings' look. */
+.page-groups.is-flat .page-group-head { display: none; }
+.page-groups.is-flat .page-group-pages > button:first-child { margin-top: 0; }
+.page-groups.is-flat .page-group-pages > button:last-child { margin-bottom: 0; }
+.home-links.page-groups.is-flat { gap: 12px; }
+.home-links.page-groups.is-flat .page-group-pages { gap: 12px; }
+.home-links.is-flat .page-group-pages > button {
+  color: var(--accent);
+  font-size: 1.05rem;
+  font-weight: 850;
+}
+.home-links.is-flat .page-group-pages > button:hover,
+.home-links.is-flat .page-group-pages > button:focus-visible { color: var(--window-border); }
+.page-title-menu.is-flat .page-group-pages > button {
+  min-height: 44px;
+  font-family: "Great Vibes", cursive;
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-weight: 700;
+  color: var(--ink);
+}
+.page-title-menu.is-flat .page-group-pages > button.is-current { color: var(--accent); }

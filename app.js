@@ -34,7 +34,8 @@ import { SPEED_MIN, SPEED_MAX, snapPlaybackSpeed, stepPlaybackSpeed, formatSpeed
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
-import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea } from './page-groups.js';
+import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
+import { VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView } from './views.js';
 import * as ExploreScope from './explore-scope.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
@@ -339,7 +340,7 @@ const STATE_SECTIONS = {
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "sportsPrefs", "displayPrefs", "recreateSettingStamps"],
+  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "sportsPrefs", "displayPrefs", "viewDisplayPrefs", "recreateSettingStamps"],
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
@@ -1037,6 +1038,8 @@ const elements = {
   cancelAuthBtn: document.querySelector("#cancelAuthBtn"),
   pageTitle: document.querySelector("#pageTitle"),
   pageTitleWrap: document.querySelector("#pageTitleWrap"),
+  headerViewBand: document.querySelector("#headerViewBand"),
+  homeViewBand: document.querySelector("#homeViewBand"),
   pageTitleText: document.querySelector("#pageTitleText"),
   pageTitleBtn: document.querySelector("#pageTitleBtn"),
   pageTitleMenu: document.querySelector("#pageTitleMenu"),
@@ -2411,6 +2414,9 @@ function bindEvents() {
   // and every page button opens its page.
   wirePageGroups(elements.homePageGroups);
   wirePageGroups(elements.pageTitleMenu);
+  // Views (views.js): the band, its chevrons, and the arrow keys.
+  applyView(currentViewKey(), { quiet: true });
+  document.addEventListener("keydown", handleViewArrowKey);
   for (const row of pageNavButtons()) {
     elements[row.home]?.addEventListener("click", row.open);
     elements[row.title]?.addEventListener("click", (event) => {
@@ -3080,6 +3086,7 @@ async function initializeApp() {
     maybeShowHydrationOverlay();
     await hydrateStateFromSharedStorage();
   }
+  refreshAvailableViews(); // the group role is known now (views.js)
   await hydrateRecipeRowsFromSupabase();
   resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
@@ -3098,7 +3105,13 @@ async function initializeApp() {
 }
 
 function handleHashNavigation() {
-  const rawHash = window.location.hash.slice(1);
+  // "household/calendar": switch to that view first (if this person has it);
+  // an old route with no view opens wherever the page lives (views.js).
+  const { view: hashView, rest: rawHash } = splitViewHash(window.location.hash.slice(1));
+  if (hashView && currentViewList().includes(hashView)) {
+    currentViewKey.chosen = true;
+    applyView(hashView, { keepPage: true });
+  }
   const [hashBase, hashQuery] = rawHash.split("?");
   const hash = hashBase.toLowerCase();
   const hashParams = new URLSearchParams(hashQuery || "");
@@ -3131,7 +3144,7 @@ function handleHashNavigation() {
 }
 
 function setPageHash(hash) {
-  history.replaceState(null, "", hash ? "#" + hash : location.pathname);
+  history.replaceState(null, "", hash ? "#" + viewedHash(hash) : location.pathname);
   window.scrollTo({ top: 0, behavior: "instant" });
 }
 
@@ -3306,6 +3319,7 @@ async function signInLocalDev() {
   updateAuthUi();
   maybeShowHydrationOverlay();
   await hydrateStateFromSharedStorage(); // loads data/tableplan-state.json via the local provider
+  refreshAvailableViews();
   render();
 }
 
@@ -3826,6 +3840,15 @@ function setupDiagnostics() {
       if (notif) Object.entries(notif).forEach(([page, n]) => setPageNotifCount(page, n));
       render();
       return true;
+    },
+    // Views (scripts/qa-views.mjs): the view on screen, and acting as a household
+    // member (Household only) or the admin. Local dev only.
+    view: () => (localDevMode ? currentViewKey() : null),
+    viewsAsRole: (role) => {
+      if (!localDevMode) return null;
+      currentViewList.known = availableViews({ isAdmin: role === "admin" });
+      applyView(startingView(currentViewKey(), currentViewList.known), { quiet: true });
+      return currentViewList.known;
     },
     tripById: (id) => (localDevMode ? (state.trips || []).find((t) => t.id === id) || null : null),
     activeArea: () => (localDevMode ? activeAppArea : null),
@@ -4533,7 +4556,10 @@ const GROUP_LOAD_RETRY_DELAYS_MS = [1000, 3000]; // 3 attempts total
 function loadOrCreateUserGroup() {
   if (!supabaseClient || !authSession?.access_token) return Promise.resolve();
   if (!groupLoadInFlight) {
-    groupLoadInFlight = runLoadOrCreateUserGroup().finally(() => { groupLoadInFlight = null; });
+    groupLoadInFlight = runLoadOrCreateUserGroup().finally(() => {
+      groupLoadInFlight = null;
+      refreshAvailableViews(); // the role decides which views this person has (views.js)
+    });
   }
   return groupLoadInFlight;
 }
@@ -5163,6 +5189,9 @@ function defaultState() {
     // Only explicit choices are stored; until this person picks a mode, the old
     // household-wide `themeMode` still applies (THEMES_DESIGN.md).
     displayPrefs: {},
+    // The admin's Household and Business looks (views.js; Personal uses
+    // displayPrefs above). { household: { mode, theme }, business: { … } }
+    viewDisplayPrefs: {},
     pianoSongs: [],
     // Cadence canonical metadata (bytes live in the cadence-blobs bucket).
     cadenceWorks: [],
@@ -5345,6 +5374,7 @@ function normalizeState(parsed) {
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
     sportsPrefs: normalizeSportsPrefs(parsed?.sportsPrefs),
     displayPrefs: cleanDisplayPrefs(parsed?.displayPrefs),
+    viewDisplayPrefs: cleanViewDisplayPrefs(parsed?.viewDisplayPrefs, { modes: ["light", "dark", "auto"], themes: THEME_CHOICES }),
     pianoSongs: normalizePianoSongs(parsed?.pianoSongs),
     // Cadence records are re-normalized by the music/* domain factories when the
     // subsystem loads; here we only guard the container shape (keep it dumb/sync).
@@ -6336,11 +6366,28 @@ function markDisplayPrefsKnown() {
   applyThemeMode();
 }
 
+// The display prefs of the view on screen (views.js): Personal — or the only
+// view of someone with one — uses the person's displayPrefs; the admin's
+// Household and Business use state.viewDisplayPrefs, with their own default
+// themes until he picks one.
+function currentViewDisplayPrefs() {
+  return displayPrefsForView(currentViewKey(), {
+    base: currentDisplayPrefs(),
+    viewPrefs: state.viewDisplayPrefs,
+    available: currentViewList(),
+  });
+}
+
 function applyThemeMode() {
-  const prefs = currentDisplayPrefs();
+  const base = currentDisplayPrefs();
+  const prefs = currentViewDisplayPrefs();
   const systemDark = Boolean(window.matchMedia?.("(prefers-color-scheme: dark)")?.matches);
-  const resolved = resolveTheme(prefs, { systemDark, now: new Date() });
+  const now = new Date();
+  const resolved = resolveTheme(prefs, { systemDark, now });
   applyResolvedTheme(resolved, document);
+  // The iPhone icon follows the primary view only, so switching views never
+  // makes iOS announce an icon change.
+  const iconTheme = resolveTheme(base, { systemDark, now });
   elements.themeModeInputs?.forEach((input) => {
     input.checked = input.value === prefs.mode;
   });
@@ -6351,8 +6398,8 @@ function applyThemeMode() {
     try { window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => applyThemeMode()); } catch { /* old WebKit */ }
     document.addEventListener("visibilitychange", () => { if (!document.hidden) applyThemeMode(); });
   }
-  if (syncAppIcon.ready) writeDisplayCache(prefs, resolved);
-  syncAppIcon(resolved.icon);
+  if (syncAppIcon.ready) writeDisplayCache(base, resolved);
+  syncAppIcon(iconTheme.icon);
   return resolved;
 }
 
@@ -6375,7 +6422,14 @@ function syncAppIcon(name) {
 
 function setDisplayPref(key, value) {
   syncAppIcon.ready = true; // a choice made here is this person's
-  state.displayPrefs = cleanDisplayPrefs({ ...(state.displayPrefs || {}), [key]: value });
+  const view = currentViewKey();
+  if ((key === "mode" || key === "theme") && view !== primaryView(currentViewList())) {
+    // The admin's Household / Business look (views.js).
+    const own = { ...((state.viewDisplayPrefs || {})[view] || {}), [key]: value };
+    state.viewDisplayPrefs = cleanViewDisplayPrefs({ ...(state.viewDisplayPrefs || {}), [view]: own }, { modes: ["light", "dark", "auto"], themes: THEME_CHOICES });
+  } else {
+    state.displayPrefs = cleanDisplayPrefs({ ...(state.displayPrefs || {}), [key]: value });
+  }
   applyThemeMode();
   persist();
 }
@@ -6897,6 +6951,7 @@ function mergeStates(newer, older) {
   merged.recreateHobbies = { ...(older.recreateHobbies || {}), ...(newer.recreateHobbies || {}) };
   merged.sportsPrefs = { ...(older.sportsPrefs || {}), ...(newer.sportsPrefs || {}) }; // each field then goes by its own stamp
   merged.displayPrefs = { ...(older.displayPrefs || {}), ...(newer.displayPrefs || {}) }; // each field then goes by its own stamp
+  merged.viewDisplayPrefs = { ...(older.viewDisplayPrefs || {}), ...(newer.viewDisplayPrefs || {}) }; // each view then goes by its own stamp
   merged.articleSync = { ...(older.articleSync || {}), ...(newer.articleSync || {}) };
   merged.groceryPricingSettings = { ...(older.groceryPricingSettings || {}), ...(newer.groceryPricingSettings || {}) };
   merged.collapsedSections = { ...(older.collapsedSections || {}), ...(newer.collapsedSections || {}) };
@@ -16416,7 +16471,224 @@ function openPlayTaskMenu(event) {
 
 
 
+// ── Views: Personal, Household, Business (views.js, VIEWS_DESIGN.md) ─────────
+// The view band — the view's name in the script face under the landing logo,
+// and in the header while the page menu is open — switches views by a swipe on
+// it, its ‹ › chevrons, or the arrow keys. Each view shows its own pages and its
+// own look. Only the admin has more than one view for now; everyone else has
+// Household. This is the view shell (build step 2): every view still shows the
+// same data.
+//
+// State hangs off the functions (not module lets) because applyThemeMode runs
+// at module load, before a let declared down here would exist (TDZ).
+// This device's last view and view list: "live-view-v1" (account-scoped, listed
+// in auth-account-reset.js). Spelled out, not a module const (TDZ, as above).
+function readViewCache() {
+  try { return JSON.parse(localStorage.getItem("live-view-v1") || "null"); } catch { return null; }
+}
+function writeViewCache() {
+  // Only once the real list is known: a boot-time guess must not overwrite the
+  // last view the person actually used.
+  if (!currentViewList.known) return;
+  try {
+    const next = JSON.stringify({ view: currentViewKey(), views: currentViewList() });
+    if (localStorage.getItem("live-view-v1") !== next) localStorage.setItem("live-view-v1", next);
+  } catch { /* storage blocked: next launch opens in the default view */ }
+}
+
+// Which views this person has. Until their group role has loaded, the list this
+// device saw last time stands in, so a cold start doesn't flash the wrong view.
+function currentViewList() {
+  if (currentViewList.known) return currentViewList.known;
+  const cached = readViewCache();
+  return Array.isArray(cached?.views) && cached.views.length ? cached.views : ["household"];
+}
+
+function currentViewKey() {
+  if (currentViewKey.view) return currentViewKey.view;
+  return startingView(readViewCache()?.view, currentViewList());
+}
+
+function viewIsSwitchable() {
+  return currentViewList().length > 1;
+}
+
+// Called once the group role is known (after sign-in / local dev). The role is
+// the server's, so a device can't give itself more views.
+function refreshAvailableViews() {
+  // Group not loaded (offline at boot): keep the device's last-known list.
+  if (!localDevMode && !userGroup?.role) return;
+  const isAdmin = localDevMode || userGroup?.role === "admin";
+  currentViewList.known = availableViews({ isAdmin });
+  // A view picked this session wins; otherwise the last one used on this device.
+  const last = currentViewKey.chosen ? currentViewKey.view : readViewCache()?.view;
+  const start = startingView(last, currentViewList.known);
+  applyView(start, { quiet: true });
+}
+
+// Each page's key in pageNavButtons() for an app area (null for Home). Areas
+// with no menu entry of their own belong to the page that holds them.
+function pageKeyForArea(area) {
+  if (!area || area === "home") return null;
+  if (area === "contacts") return "mail";
+  if (area === "do") return "plan";
+  const row = pageNavButtons().find((r) => r.areas.includes(area));
+  return row ? row.page : area;
+}
+
+// Opening a page the current view doesn't hold (the dock, a link, a reminder)
+// moves to a view that does — Personal holds them all (decision 17). Someone
+// with only Household stays put.
+function followAreaIntoView(area) {
+  const page = pageKeyForArea(area);
+  if (!page || viewHasPage(currentViewKey(), page)) return;
+  const target = viewForPage(page, currentViewKey(), currentViewList());
+  if (target && target !== currentViewKey()) applyView(target, { quiet: true, keepPage: true });
+}
+
+// Switch to `view`. `direction` (-1 / +1) animates the band's name the way the
+// finger went. `keepPage` skips the "page isn't in this view → landing" step
+// (the caller is about to show a page itself).
+function applyView(view, { direction = 0, quiet = false, keepPage = false } = {}) {
+  const list = currentViewList();
+  if (!list.includes(view)) view = startingView(view, list);
+  const changed = currentViewKey.view !== view;
+  currentViewKey.view = view;
+  writeViewCache();
+  document.body.dataset.view = view;
+  const flat = isFlatView(view);
+  setFlatPageGroups(elements.homePageGroups, flat);
+  setFlatPageGroups(elements.pageTitleMenu, flat);
+  if (!changed && quiet) { renderViewBands(0); return; }
+  applyThemeMode();
+  renderViewBands(direction);
+  updatePageVisibility();
+  syncPageGroups(elements.homePageGroups);
+  if (!elements.pageTitleMenu.hidden) {
+    updatePageTitleMenu();
+    if (!flat) openPageGroup(elements.pageTitleMenu, groupForArea(activeAppArea));
+  }
+  if (keepPage || quiet) return;
+  // A page this view doesn't hold → its landing page; otherwise stay put.
+  const page = pageKeyForArea(activeAppArea);
+  if (page && !viewHasPage(view, page)) {
+    showHomeApp();
+    return;
+  }
+  if (activeAppArea === "home") setPageHash(""); else refreshViewHash();
+}
+
+function stepCurrentView(direction) {
+  if (!viewIsSwitchable()) return;
+  currentViewKey.chosen = true;
+  applyView(stepView(currentViewKey(), direction, currentViewList()), { direction });
+}
+
+// Both bands show the current view's name; chevrons only for someone who can
+// switch. The name slides out the way the finger went and the next slides in.
+function renderViewBands(direction = 0) {
+  const name = VIEW_LABELS[currentViewKey()] || "";
+  const switchable = viewIsSwitchable();
+  for (const band of [elements.homeViewBand, elements.headerViewBand]) {
+    if (!band) continue;
+    band.classList.toggle("is-switchable", switchable);
+    band.setAttribute("aria-label", switchable ? `View: ${name}. Swipe or use the arrows to switch.` : `View: ${name}`);
+    const label = band.querySelector(".view-band-name");
+    if (!label) continue;
+    if (!band.dataset.wired) wireViewBand(band);
+    if (band === elements.homeViewBand) band.hidden = false;
+    if (!direction || label.textContent === "" || band.offsetParent === null) {
+      label.className = "view-band-name";
+      label.textContent = name;
+      continue;
+    }
+    // Finger right (direction -1): the old name leaves to the right.
+    const out = direction < 0 ? "is-leaving-right" : "is-leaving-left";
+    const into = direction < 0 ? "is-entering-right" : "is-entering-left";
+    const token = (label._swap = (label._swap || 0) + 1);
+    label.className = `view-band-name ${out}`;
+    window.setTimeout(() => {
+      if (label._swap !== token) return;
+      label.textContent = name;
+      label.className = `view-band-name ${into}`;
+    }, 130);
+  }
+}
+
+// Swipes count on the band only (decision 9), so card rows, the iOS edge
+// swipe and the menus keep their own gestures.
+function wireViewBand(band) {
+  band.dataset.wired = "1";
+  let start = null;
+  band.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const step = event.target.closest("[data-view-step]");
+    if (step) { stepCurrentView(Number(step.dataset.viewStep)); return; }
+    // The header band stands in for the page title: tapping the name closes the menu.
+    if (band === elements.headerViewBand && event.target.closest(".view-band-name")) closePageTitleMenu();
+  });
+  band.addEventListener("touchstart", (event) => {
+    const t = event.touches[0];
+    start = t && event.touches.length === 1 ? { x: t.clientX, y: t.clientY } : null;
+  }, { passive: true });
+  band.addEventListener("touchend", (event) => {
+    const t = event.changedTouches[0];
+    if (!start || !t) return;
+    const step = swipeStep(t.clientX - start.x, t.clientY - start.y);
+    start = null;
+    if (step) stepCurrentView(step);
+  });
+  band.addEventListener("touchcancel", () => { start = null; }, { passive: true });
+  // Mouse / pen drag on a laptop counts too.
+  band.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "touch") return;
+    start = { x: event.clientX, y: event.clientY, pointer: true };
+  });
+  band.addEventListener("pointerup", (event) => {
+    if (event.pointerType === "touch" || !start?.pointer) return;
+    const step = swipeStep(event.clientX - start.x, event.clientY - start.y);
+    start = null;
+    if (step) stepCurrentView(step);
+  });
+}
+
+// Left / right arrow keys switch views on the landing page or while the page
+// menu is open — never while typing or inside a dialog.
+function handleViewArrowKey(event) {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  if (!viewIsSwitchable()) return;
+  const onLanding = activeAppArea === "home" && !elements.homeMainPage.hidden;
+  const menuOpen = !elements.pageTitleMenu.hidden;
+  if (!onLanding && !menuOpen) return;
+  const target = event.target;
+  if (target?.closest?.("input, textarea, select, [contenteditable=''], [contenteditable='true'], dialog[open]")) return;
+  if (document.querySelector("dialog[open]")) return;
+  event.preventDefault();
+  stepCurrentView(event.key === "ArrowLeft" ? -1 : 1);
+}
+
+// The header band takes the page title's place while the page menu is open.
+function showHeaderViewBand(show) {
+  if (!elements.headerViewBand) return;
+  if (show) renderViewBands(0);
+  elements.headerViewBand.hidden = !show;
+  elements.pageTitleWrap.classList.toggle("is-view-band", show);
+}
+
+// Routes carry their view ("household/calendar") for someone with more than
+// one; old routes without one still open (handleHashNavigation).
+function viewedHash(hash) {
+  return viewIsSwitchable() ? viewHash(currentViewKey(), hash) : hash;
+}
+function refreshViewHash() {
+  const { rest } = splitViewHash(window.location.hash.slice(1));
+  if (!rest) return;
+  history.replaceState(null, "", "#" + viewedHash(rest));
+}
+
 function setPageTitle(title) {
+  followAreaIntoView(activeAppArea);
   elements.pageTitleText.textContent = title;
   elements.pageTitleBtn.setAttribute("aria-label", `Open page directory from ${title}`);
   elements.pageTitleWrap.hidden = activeAppArea === "home";
@@ -16451,7 +16723,8 @@ function pageNavButtons() {
 }
 
 function pageNavShown(row) {
-  return isPagePersonallyEnabled(row.page) && (row.also || []).every((p) => isPagePersonallyEnabled(p));
+  return viewHasPage(currentViewKey(), row.page)
+    && isPagePersonallyEnabled(row.page) && (row.also || []).every((p) => isPagePersonallyEnabled(p));
 }
 
 // The page menu lists every page, with the one you're on marked rather than
@@ -16807,7 +17080,12 @@ async function previewVoice(voiceId, btn) {
 }
 
 function displaySettingsTemplate() {
-  const prefs = currentDisplayPrefs();
+  // The view on screen (views.js): each of the admin's views keeps its own look.
+  const prefs = currentViewDisplayPrefs();
+  const viewName = VIEW_LABELS[currentViewKey()] || "";
+  const viewNote = viewIsSwitchable()
+    ? `<p class="display-hint">This is the look for your <strong>${escapeHtml(viewName)}</strong> view. Each view keeps its own; switch views to set another.</p>`
+    : "";
   const now = new Date();
   const seasonNow = seasonalTheme(now);
   const ends = seasonEnds(now);
@@ -16836,6 +17114,7 @@ function displaySettingsTemplate() {
       </div>` : "";
   return `
     <div class="display-settings">
+      ${viewNote}
       <section class="display-group">
         <h3 class="display-group-title">Mode</h3>
         <div class="display-seg" role="radiogroup" aria-label="Mode">
@@ -16861,7 +17140,7 @@ function displaySettingsTemplate() {
             </label>`).join("")}
         </div>
       </section>
-      ${iconRow}
+      ${currentViewKey() === primaryView(currentViewList()) ? iconRow : ""}
       <p class="display-hint">Your mode and theme are just yours. They don't change what anyone else in the household sees.</p>
     </div>`;
 }
@@ -17946,6 +18225,7 @@ function openPageTitleMenu() {
   // Opens on the group of the page you're on; the others stay closed.
   updatePageTitleMenu();
   openPageGroup(elements.pageTitleMenu, groupForArea(activeAppArea));
+  showHeaderViewBand(true);
   elements.pageTitleMenu.hidden = false;
   elements.pageTitleBtn.setAttribute("aria-expanded", "true");
   window.requestAnimationFrame(() => elements.pageTitleMenu.classList.add("is-open"));
@@ -17953,6 +18233,7 @@ function openPageTitleMenu() {
 
 function closePageTitleMenu() {
   if (elements.pageTitleMenu.hidden) return;
+  showHeaderViewBand(false);
   elements.pageTitleMenu.classList.remove("is-open");
   elements.pageTitleBtn.setAttribute("aria-expanded", "false");
   window.setTimeout(() => {

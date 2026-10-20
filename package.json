@@ -21,6 +21,7 @@
     "qa:settings": "node scripts/qa-settings.mjs",
     "qa:ticker": "node scripts/qa-ticker.mjs",
     "qa:page-groups": "node scripts/qa-page-groups.mjs",
+    "qa:views": "node scripts/qa-views.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },

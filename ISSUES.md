@@ -16,6 +16,10 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
+- [ ] **[P2] Older app builds drop the Household / Business looks** (views · app.js STATE_SECTIONS recreate · 2026-10-20)
+      `viewDisplayPrefs` is a new key in the `recreate` row. An older build saving that row writes only the keys it knows, so the admin's per-view Display choices reset to the defaults (Household theme / Urban Greens) until picked again. No data beyond those choices is affected; Personal's `displayPrefs` is untouched. → Goes away once every device runs a build with the view shell (next TestFlight). Verdict: CONFIRMED (by reading).
+- [ ] **[P2] View band not tried on the iPhone yet** (views · views.js / app.js wireViewBand · 2026-10-20)
+      Verified headless (Chromium touch events) at 390 and 360 px: `npm run qa:views`, 62 checks. Not verified: WebKit touch on the band, the header band beside the gear and scan buttons on a real phone, the Great Vibes face in the band (the sandbox can't load Google Fonts), and the first launch after install (the admin sees Household until his role loads, once). → First TestFlight build: swipe the band on the landing page and in the open page menu; check the band doesn't crowd the header buttons. Verdict: OPEN.
 - [ ] **[P3] Exercise swipe-to-edit handlers now unused** (exercise · app.js handleWorkoutPoolPointerDown/Move/End · 2026-10-17)
       Exercise became sideways-scrolling rows (page groups PR), so its cards use hold-for-menu like Recreate's rows did; nothing passes `swipe: true` to `wireWorkoutPoolCards` any more, and the `.workout-pool-swipe-*` markup in `workoutPoolCardTemplate` is never revealed. → Delete the swipe handlers, their CSS and the hidden swipe buttons once Luke is happy with hold-for-menu. Verdict: CONFIRMED (grep).
 - [ ] **[P2] Explore sorting not tried against the live geocoder** (travel · app.js runExplorePlaceQueue · 2026-10-17)
