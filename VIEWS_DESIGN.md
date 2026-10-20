@@ -1,6 +1,6 @@
 # Views: Personal, Household, Business — design & plan
 
-Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) merged to `main` in #140 (§13); not deployed. Step 1's migration drafted (`migrations/2026-10-20-views-spaces.sql`, §2.1); not applied. Steps 3–9 not started.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
+Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) merged to `main` in #140 (§13); not deployed. Step 1's migration (`migrations/2026-10-20-views-spaces.sql`, §2.1) applied to prod 2026-10-20. Steps 3–9 not started.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
 
 Goal: the app splits into three views, each with its own pages, data and look:
 - **Personal** is the user's own space.
@@ -217,7 +217,7 @@ The migration must be **safe with older clients**. Older TestFlight builds don't
 
 ## 9. Build order
 
-1. **Spaces + access:** `live_spaces` / `live_space_members`, the `tableplan_states` clause, locking `role` against self-promotion, Business space for Luke. One migration, drafted as `migrations/2026-10-20-views-spaces.sql`; applied in the Supabase SQL editor after Luke's OK. Checked against a recreated copy of the live schema: `scripts/check-views-spaces-migration.mjs` (27 checks).
+1. **Spaces + access:** `live_spaces` / `live_space_members`, the `tableplan_states` clause, locking `role` against self-promotion, Business space for Luke. Done: `migrations/2026-10-20-views-spaces.sql`, applied in the Supabase SQL editor 2026-10-20 and checked read-only afterwards (one business space with Luke as owner; members can't update `role`; spaces read-only to clients). Checked against a recreated copy of the live schema: `scripts/check-views-spaces-migration.mjs` (27 checks).
 2. **View shell:**
    - the band on the landing page and in the open page menu;
    - swipe on the band, chevrons and arrow keys;

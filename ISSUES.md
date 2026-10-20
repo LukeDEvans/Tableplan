@@ -13,8 +13,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 ---
 
 ## P0
-- [ ] **[P0] A household member can make herself admin** (security · live_group_members RLS + grants · 2026-10-20)
-      Policy "members can update own row" plus a table-wide UPDATE grant to `authenticated` lets any member PATCH her own row's `role` to `admin` (reproduced in PGlite against the live policies). Admin unlocks every page, admin settings and, with the views shell, all three views. → Fixed by `migrations/2026-10-20-views-spaces.sql` §3 (UPDATE limited to `display_name` + `personal_disabled_pages`), which waits on Luke's OK. Verdict: CONFIRMED.
+- [x] **[P0] A household member can make herself admin** (security · live_group_members RLS + grants · 2026-10-20)
+      Policy "members can update own row" plus a table-wide UPDATE grant to `authenticated` lets any member PATCH her own row's `role` to `admin` (reproduced in PGlite against the live policies). Admin unlocks every page, admin settings and, with the views shell, all three views. → Fixed by `migrations/2026-10-20-views-spaces.sql` §3 (UPDATE limited to `display_name` + `personal_disabled_pages`), applied 2026-10-20; checked afterwards: `authenticated` can no longer UPDATE `role`. Verdict: FIXED.
 
 ## P1
 - [ ] **[P2] Server group lookups use `limit=1` with no ordering** (auth/state · netlify/functions/_state-sections.js:32, simplefin.js:354, _finance-categories.js:14, _gcal.js:186, _gmail-shared.js:325, _news-articles.js:125, chat.js:193, admin-data.js:99, send-invite.js:83 · 2026-10-20)

@@ -1,6 +1,6 @@
 -- Views: spaces for Business, and a locked-down admin role (VIEWS_DESIGN.md §2, build step 1).
 --
--- DRAFT — not applied. Apply in the Supabase SQL editor after Luke's OK.
+-- Applied to prod 2026-10-20 by Luke in the Supabase SQL editor (PR #142).
 -- Idempotent: safe to re-run.
 --
 -- What each view maps to:
