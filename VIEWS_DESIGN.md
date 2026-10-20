@@ -1,6 +1,6 @@
 # Views: Personal, Household, Business — design & plan
 
-Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) merged to `main` in #140 (§13); not deployed. Steps 1 and 3–9 not started.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
+Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) merged to `main` in #140 (§13); not deployed. Step 1's migration drafted (`migrations/2026-10-20-views-spaces.sql`, §2.1); not applied. Steps 3–9 not started.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
 
 Goal: the app splits into three views, each with its own pages, data and look:
 - **Personal** is the user's own space.
@@ -27,28 +27,35 @@ The look and UI are the same in all three views, including the dock and the news
 
 ### 2.1 Spaces
 
-Each view is backed by a **space**:
+*Revised 2026-10-20 after reading the live database (migration `migrations/2026-10-20-views-spaces.sql`, step 1).*
+
+| View | Where it lives | State rows |
+|---|---|---|
+| **Personal** | the user (no table) | `u-<uid>:<section>` — already exists |
+| **Household** | the existing household group: `live_groups` + `live_group_members` | `<groupId>:<section>` — already exists |
+| **Business** | **new** `live_spaces` + `live_space_members` | `<spaceId>:<section>` in `tableplan_states` |
 
 ```sql
 create table live_spaces (
-  id         uuid primary key default gen_random_uuid(),
-  kind       text not null check (kind in ('personal','household','business')),
-  name       text not null,
-  created_by uuid references auth.users,
-  created_at timestamptz default now()
+  id uuid primary key default gen_random_uuid(),
+  kind text not null default 'business' check (kind in ('business')),
+  name text not null, created_by uuid not null references auth.users,
+  created_at timestamptz not null default now()
 );
 create table live_space_members (
   space_id uuid references live_spaces on delete cascade,
   user_id  uuid references auth.users on delete cascade,
-  role     text not null,            -- household: admin|member; business: owner|manager|employee
+  role text not null check (role in ('owner','manager','employee')),
+  display_name text not null default '', joined_at timestamptz not null default now(),
   primary key (space_id, user_id)
 );
--- RLS: members read their own spaces and memberships; only owners/admins change membership. No anon.
 ```
 
-- **Household = the existing household group** (`live_group`). *Check in code:* if `live_group` already has an id and a members list, Household **reuses it**, either as a view over it or by adding `kind` to it, instead of duplicating it. Its shared data rows stay where they are.
-- **Personal** needs no membership row. It is keyed by `user_id` and can never be shared.
-- **Business** gets new rows. For now there's one business with Luke as **owner** and only member. The roles exist from day one, so adding employees later doesn't change the shape.
+- **Why Business doesn't reuse `live_groups`:** about eight Netlify functions find "the user's group" with `live_group_members?user_id=eq.X&limit=1` and no ordering. A second membership there could make any of them pick the business group (SimpleFIN writing balances into business rows, for example). Separate tables can't be picked up by them.
+- **Access:** members can read their spaces and member lists; nobody can create a space or change membership from the app. Until the Business roles are decided (decision 24), that goes through the service role only.
+- **State rows:** `tableplan_states` RLS gets one more condition, "member of the space this row belongs to". The existing three (Luke's legacy `personal` row, `u-<uid>` rows, household group rows) are copied unchanged, so Personal and Household access doesn't change. Business rows use the existing section sync, and only Luke loads them, so egress stays small.
+- **Security fix in the same migration:** today any household member can set her own `live_group_members.role` to `admin` (an own-row update policy plus a table-wide UPDATE grant). The views are admin-only and decided by that role, so clients may now update only `display_name` and `personal_disabled_pages` on their own row, which is all the app sends. Anon's leftover privileges on the group tables are revoked.
+- **Seed:** one business space named "Business" (placeholder) with Luke as owner.
 
 ### 2.2 Where data lives
 
@@ -210,7 +217,7 @@ The migration must be **safe with older clients**. Older TestFlight builds don't
 
 ## 9. Build order
 
-1. **Spaces + access:** tables, RLS, the admin-only gate, Business space for Luke. One migration (gated, applied via the Supabase MCP after Luke's OK).
+1. **Spaces + access:** `live_spaces` / `live_space_members`, the `tableplan_states` clause, locking `role` against self-promotion, Business space for Luke. One migration, drafted as `migrations/2026-10-20-views-spaces.sql`; applied in the Supabase SQL editor after Luke's OK. Checked against a recreated copy of the live schema: `scripts/check-views-spaces-migration.mjs` (27 checks).
 2. **View shell:**
    - the band on the landing page and in the open page menu;
    - swipe on the band, chevrons and arrow keys;
