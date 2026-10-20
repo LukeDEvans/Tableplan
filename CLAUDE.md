@@ -43,10 +43,16 @@ bottom of this file.
   `get_project` API can report **`ACTIVE_HEALTHY`** even while the dashboard shows
   billing / quota / egress problems. Cross-check the dashboard (usage, billing,
   logs) — a green API status is **not** proof the project is healthy.
-- **Applying DB changes:** the bundled Supabase MCP has been unreliable here
-  (crypto errors) and no DB password/PAT ships in the repo, so DDL/migrations and
-  Storage RLS policies are applied via the **Supabase SQL editor** (or `migrations/`
-  run there). Don't assume programmatic DDL access.
+- **Applying DB changes** (updated 2026-10-20): with Luke's OK for the specific
+  migration, apply it through the Supabase MCP **`execute_sql`** (Luke chose this,
+  2026-10-20). `apply_migration`, and any `execute_sql` containing **`DROP`**, need an
+  approval prompt that doesn't reach a phone session, so they come back `cancelled`:
+  run the additive statements without the `DROP`s (`create … if not exists`, a fresh
+  `create policy` on a new table), run any `revoke` separately, and if a `DROP` is
+  truly needed, ask Luke to run that part in the SQL editor. Then add a row to
+  `supabase_migrations.schema_migrations` (version, name, a one-line `statements`
+  note, `created_by` = 'claude') so the history stays complete, and verify with
+  read-only queries (policies, `has_table_privilege`, row counts).
 
 ## Architecture
 

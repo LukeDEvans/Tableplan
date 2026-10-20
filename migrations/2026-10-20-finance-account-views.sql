@@ -1,7 +1,8 @@
 -- Personal finance accounts: which bank accounts belong to one member only
 -- (FINANCE_SPLIT_DESIGN.md §2.2, build step 1).
 --
--- DRAFT — not applied. Apply in the Supabase SQL editor after Luke's OK.
+-- Applied to prod 2026-10-20 by Claude via the Supabase MCP execute_sql, after Luke's OK
+-- (statements containing DROP were left out: the table was new, so nothing to drop).
 -- Idempotent: safe to re-run.
 --
 -- A row = that SimpleFIN account is Personal to `owner_id`; no row = Household
