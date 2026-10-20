@@ -10,6 +10,11 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Finance follows the view (step 2)** · #148 · **Netlify deploy + TestFlight build** (client-only). Personal shows the person's own Finance only once they own a personal account (none do until step 3), so **nothing visible changes**: Personal and Household both show the household's Finance as today. One tiny read of the person's own `live_finance_account_views` rows with the business-space load. No migration, no schema bump, no new env vars.
+  Post-deploy:
+  1. Finance opens as before in Personal and Household for Luke, and for Marijane.
+  2. Supabase API logs: one `live_finance_account_views?owner_id=eq.…&limit=1` read per app start, nothing on a timer.
+
 - **Finance: personal accounts split on the server (step 1)** · #146 · **Netlify deploy** (server functions only; no app change). The `live_finance_account_views` table is **already applied** (2026-10-20) and empty, so nothing changes until accounts are marked Personal (step 3). No new env vars.
   Post-deploy:
   1. Finance opens as before for Luke and Marijane: same accounts, balances, transactions.
