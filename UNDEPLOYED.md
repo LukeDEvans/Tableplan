@@ -10,6 +10,14 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Views: each view reads its own data; Business calendar; layers; game card** · #143 · **Netlify deploy + TestFlight build** (client-only; the database change, #142, is already applied). Household reads the household rows (Calendar, Tasks, Watch, Listen, Shop), Personal your own (Shop stays the household list), Business its own Calendar. Personal's Calendar can show Household and Business as layers (Calendar sidebar › Show in my Personal calendar). A ticker tap in Household/Business opens a small game card. **Luke's wife's Calendar/Tasks/Watch/Listen switch to the household rows** (hers are empty today). No migration, no new env vars.
+  Post-deploy:
+  1. Personal: your 4 calendar events, 16 podcasts and Watch list look as before.
+  2. Swipe to Household: Calendar is empty (the household calendar), Listen shows the household's podcast list, Shop's list is the same in both.
+  3. Swipe to Business: add an event; it shows only in Business. Back in Personal, turn on Business under Show in my Personal calendar: it appears, marked; tap it → Open in Business.
+  4. Play a podcast, swipe views: it keeps playing (check Up Next).
+  5. Wife's phone: the same Meal Plan, Shop, Finance; Calendar/Tasks show the household's.
+  6. Supabase API logs for 48h: no repeated full reads of tableplan_states on view switches.
 - **Views: Personal, Household, Business (the view shell)** · #140 · **Netlify deploy + TestFlight build** (client-only). The view band under the landing logo and in the open page menu; swipe on it, its ‹ ›, or ←/→ to switch views. Household (six pages, flat) and Business (Calendar) for the admin; **Luke's wife sees Household only** (its six pages) once this is live. Each view keeps its own Display look. Same data in every view for now. No migration, no new env vars.
   Post-deploy:
   1. iPhone: landing page — swipe the band right: Household (navy/blush), again: Business (Urban Greens), again: Personal. Chevrons and the swipe both work; the band doesn't crowd anything.
