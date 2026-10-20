@@ -6,6 +6,8 @@
 
 import webpush from "web-push";
 import { ingestFeed, storeNeedsBackfill, trimAccountsToDays, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } from "./_finance-ingest.js";
+import financeSplit from "./_finance-split.js";
+const { personalScopeId, loadAccountViews, splitAccounts } = financeSplit;
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"]; // NOTE: "finance" is intentionally excluded — never feed financial data into AI prompts
@@ -221,7 +223,7 @@ function splitAccessUrl(accessUrl) {
 
 const numOrNull = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
 
-async function snapshotFinanceBalances(serviceKey) {
+export async function snapshotFinanceBalances(serviceKey) {
   const headers = sbHeaders(serviceKey);
   const linkRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=like.simplefin*&select=id,state`, { headers });
   if (!linkRes.ok) throw new Error(`simplefin rows ${linkRes.status}`);
@@ -252,6 +254,13 @@ async function snapshotFinanceBalances(serviceKey) {
       const data = await bridge.json().catch(() => null);
       const liveById = new Map((data?.accounts || []).map((a) => [String(a.id || ""), a]));
 
+      // Personal accounts (FINANCE_SPLIT_DESIGN.md §2.1): household accounts go to
+      // the household's cache / store / history, each personal account only to its
+      // owner's. Fail closed: if the assignments can't be read, write nothing for
+      // this group today (tomorrow's run catches up).
+      const views = await loadAccountViews({ serviceKey, groupId });
+      if (!views.ok) { console.error("[fin-snapshot] account views unreadable — skipped group"); continue; }
+
       // Pre-warm the interactive accounts cache with the same normalized shape
       // simplefin.js writes, so a phone load served from here is identical to a
       // live fetch. Best-effort — a snapshot failure must not block the cache
@@ -274,66 +283,86 @@ async function snapshotFinanceBalances(serviceKey) {
           }))
         }));
         const errors = bridgeErrorsForDisplay(data.errors);
+        const { household, byOwner } = splitAccounts(normalized, views.map);
         // Cache keeps the 45-day shape even on the 90-day backfill pull, so the
         // client's feed (and its month-actuals coverage) is unchanged.
-        const cached = trimAccountsToDays(normalized, 45);
-        await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+        const warm = (id, accts) => fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
           method: "POST",
           headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
-          body: JSON.stringify({ id: `finaccts_${groupId}`, state: { accounts: cached, errors, fetchedAt: new Date().toISOString() }, updated_at: new Date().toISOString() })
+          body: JSON.stringify({ id, state: { accounts: trimAccountsToDays(accts, 45), errors, fetchedAt: new Date().toISOString() }, updated_at: new Date().toISOString() })
         }).then((r) => { if (!r.ok) console.error(`[fin-snapshot] cache warm ${r.status}`); }).catch((e) => console.error("[fin-snapshot] cache warm threw", e.name || "error"));
+        await warm(`finaccts_${groupId}`, household);
+        for (const [owner, own] of Object.entries(byOwner)) await warm(`finaccts_${personalScopeId(owner)}`, own);
         // Durable store ingest — additive, failure-isolated (never blocks the
         // cache warm above or the balance snapshot below).
         if (needsBackfill !== null) {
-          try { await ingestFeed({ serviceKey, groupId, accounts: normalized }); }
+          try { await ingestFeed({ serviceKey, groupId, accounts: household }); }
           catch (e) { console.error("[fin-ingest] failed", e.message || "error"); }
+          for (const [owner, own] of Object.entries(byOwner)) {
+            try { await ingestFeed({ serviceKey, groupId: personalScopeId(owner), accounts: own }); }
+            catch (e) { console.error("[fin-ingest] personal failed", e.message || "error"); }
+          }
         }
       }
 
-      const finRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`, { headers });
-      const finRows = finRes.ok ? await finRes.json() : [];
-
-      // Rolling daily backup of the household finance section, so budget
-      // categories and transaction annotations are always recoverable if any
-      // client ever wipes them. A snapshot that is EMPTIER than the newest
-      // stored one is skipped, so a wipe can never poison the backup — the last
-      // healthy copy survives. Kept per date; window trimmed to ~21 days.
-      try { await backupFinanceSection(headers, groupId, finRows[0]?.state); }
-      catch (e) { console.error("[fin-backup] failed:", e.name || "error"); }
-
-      const accounts = finRows[0]?.state?.financeAccounts || [];
-
-      const balances = {};
-      let netWorth = 0, any = false;
-      for (const a of accounts) {
-        const live = a.linkedId ? liveById.get(a.linkedId) : null;
-        const bal = live && live.balance != null ? parseFloat(live.balance)
-          : (a.manualBalance != null && a.manualBalance !== "" ? Number(a.manualBalance) : null);
-        if (bal === null || !Number.isFinite(bal)) continue;
-        balances[a.id] = Math.round(bal * 100) / 100;
-        netWorth += bal; any = true;
+      // Household: backup + balance history from the household finance section,
+      // never counting an account assigned to someone personally.
+      await snapshotScope(headers, groupId, liveById, (linkedId) => !views.map.has(linkedId));
+      // Each owner's personal finance section and history.
+      for (const owner of new Set(views.map.values())) {
+        await snapshotScope(headers, personalScopeId(owner), liveById, (linkedId) => views.map.get(linkedId) === owner);
       }
-      if (!any) continue;
-
-      const histId = `finhist_${groupId}`;
-      const histRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(histId)}&select=state`, { headers });
-      const histRows = histRes.ok ? await histRes.json() : [];
-      const days = (histRows[0]?.state?.days && typeof histRows[0].state.days === "object") ? histRows[0].state.days : {};
-      days[dateKey(new Date())] = { netWorth: Math.round(netWorth * 100) / 100, balances };
-      const keys = Object.keys(days).sort();
-      for (let i = 0; i < keys.length - 730; i++) delete days[keys[i]];
-
-      const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
-        method: "POST",
-        headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({ id: histId, state: { days }, updated_at: new Date().toISOString() })
-      });
-      if (!up.ok) console.error(`[fin-snapshot] save ${up.status}`);
-      else console.log(`[fin-snapshot] recorded ${Object.keys(balances).length} balances`);
     } catch (e) {
       console.error("[fin-snapshot] group failed:", e.name || "error"); // names only — no URLs in logs
     }
   }
+}
+
+// One scope's finance backup + daily balance history: the household
+// (`<groupId>:finance` → finhist_<groupId>) or a member's personal accounts
+// (`u-<id>:finance` → finhist_u-<id>). `counts(linkedId)` says whether a linked
+// account's live balance belongs in this scope (manual accounts always do).
+async function snapshotScope(headers, scopeId, liveById, counts) {
+  const finRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(scopeId + ":finance")}&select=state`, { headers });
+  const finRows = finRes.ok ? await finRes.json() : [];
+
+  // Rolling daily backup of the finance section, so budget categories and
+  // transaction annotations are always recoverable if any client ever wipes
+  // them. A snapshot that is EMPTIER than the newest stored one is skipped, so a
+  // wipe can never poison the backup — the last healthy copy survives. Kept per
+  // date; window trimmed to ~21 days.
+  try { await backupFinanceSection(headers, scopeId, finRows[0]?.state); }
+  catch (e) { console.error("[fin-backup] failed:", e.name || "error"); }
+
+  const accounts = finRows[0]?.state?.financeAccounts || [];
+  const balances = {};
+  let netWorth = 0, any = false;
+  for (const a of accounts) {
+    if (a.linkedId && !counts(String(a.linkedId))) continue;
+    const live = a.linkedId ? liveById.get(a.linkedId) : null;
+    const bal = live && live.balance != null ? parseFloat(live.balance)
+      : (a.manualBalance != null && a.manualBalance !== "" ? Number(a.manualBalance) : null);
+    if (bal === null || !Number.isFinite(bal)) continue;
+    balances[a.id] = Math.round(bal * 100) / 100;
+    netWorth += bal; any = true;
+  }
+  if (!any) return;
+
+  const histId = `finhist_${scopeId}`;
+  const histRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(histId)}&select=state`, { headers });
+  const histRows = histRes.ok ? await histRes.json() : [];
+  const days = (histRows[0]?.state?.days && typeof histRows[0].state.days === "object") ? histRows[0].state.days : {};
+  days[dateKey(new Date())] = { netWorth: Math.round(netWorth * 100) / 100, balances };
+  const keys = Object.keys(days).sort();
+  for (let i = 0; i < keys.length - 730; i++) delete days[keys[i]];
+
+  const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+    method: "POST",
+    headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ id: histId, state: { days }, updated_at: new Date().toISOString() })
+  });
+  if (!up.ok) console.error(`[fin-snapshot] save ${up.status}`);
+  else console.log(`[fin-snapshot] recorded ${Object.keys(balances).length} balances`);
 }
 
 // How "rich" a finance state is — used to refuse backing up a wipe over a

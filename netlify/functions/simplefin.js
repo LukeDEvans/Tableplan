@@ -13,6 +13,7 @@
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const { ingestFeed, remapAccount, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } = require("./_finance-ingest.js");
 const { loadFinanceCategories } = require("./_finance-categories.js");
+const { personalScopeId, loadAccountViews, splitAccounts, accountsForMember, ownsAny } = require("./_finance-split.js");
 const { receiptPrompt, modelText, receiptFromModel, receiptFingerprint, saveImportedReceipt } = require("./_receipt-extract.js");
 
 exports.handler = async (event) => {
@@ -73,14 +74,21 @@ exports.handler = async (event) => {
 
     if (action === "history") {
       // Daily balance snapshots recorded by the briefing job (finhist_ row is
-      // service-only; this is the sole client-facing read path).
+      // service-only; this is the sole client-facing read path). A member with
+      // personal accounts also gets their own history (FINANCE_SPLIT_DESIGN.md).
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(`finhist_${groupId}`)}&select=state`,
         { headers: svc(serviceKey), cache: "no-store" }
       );
       if (!res.ok) return cors(json(502, { error: "History load failed." }));
       const rows = await res.json();
-      return cors(json(200, { days: rows[0]?.state?.days || {} }));
+      const out = { days: rows[0]?.state?.days || {} };
+      const views = await loadAccountViews({ serviceKey, groupId });
+      if (views.ok && ownsAny(views.map, userId)) {
+        const mine = await loadRawCache(serviceKey, `finhist_${personalScopeId(userId)}`);
+        out.personalDays = mine?.days || {};
+      }
+      return cors(json(200, out));
     }
 
     if (action === "scanReceipt") {
@@ -177,6 +185,17 @@ exports.handler = async (event) => {
       const ACCOUNTS_CACHE_TTL_MS = 25 * 3600 * 1000;
       const ACCOUNTS_MIN_INTERVAL_MS = 4 * 3600 * 1000;
       const cacheId = `finaccts_${groupId}`;
+      // Personal accounts (FINANCE_SPLIT_DESIGN.md): which bank accounts belong
+      // to one member only. Fail closed — if the assignments can't be read, serve
+      // and save nothing rather than risk a personal account reaching others.
+      const views = await loadAccountViews({ serviceKey, groupId });
+      if (!views.ok) return cors(json(503, { error: "Couldn't load your accounts right now — try again in a moment." }));
+      const personalCacheId = `finaccts_${personalScopeId(userId)}`;
+      const mineCache = ownsAny(views.map, userId) ? await loadRawCache(serviceKey, personalCacheId) : null;
+      const serve = (cache, cached) => cors(json(200, {
+        accounts: accountsForMember({ householdAccounts: cache?.accounts, personalAccounts: mineCache?.accounts, views: views.map, userId }),
+        errors: bridgeErrorsForDisplay(cache?.errors), cached, fetchedAt: cache?.fetchedAt || null,
+      }));
       const cache = await loadRawCache(serviceKey, cacheId);
       const lastFetchedAt = cache?.fetchedAt ? new Date(cache.fetchedAt).getTime() : 0;
       const age = Date.now() - lastFetchedAt;
@@ -184,13 +203,11 @@ exports.handler = async (event) => {
       // calls this so it can show real (cron-warmed) balances without a bridge
       // fetch leaving from the home IP and burning the bank's request budget.
       if (body.cacheOnly) {
-        if (cache) return cors(json(200, { accounts: cache.accounts, errors: bridgeErrorsForDisplay(cache.errors), cached: true, fetchedAt: cache.fetchedAt }));
+        if (cache) return serve(cache, true);
         return cors(json(200, { accounts: [], errors: ["No cached bank data yet — open the app in production once to warm the cache."], cached: true, fetchedAt: null }));
       }
       const wantsFresh = !cache || age >= ACCOUNTS_CACHE_TTL_MS || (body.force && age >= ACCOUNTS_MIN_INTERVAL_MS);
-      if (!wantsFresh) {
-        return cors(json(200, { accounts: cache.accounts, errors: bridgeErrorsForDisplay(cache.errors), cached: true, fetchedAt: cache.fetchedAt }));
-      }
+      if (!wantsFresh) return serve(cache, true);
 
       const row = await loadSecretRow(serviceKey, groupId);
       const accessUrl = row?.state?.accessUrl;
@@ -207,7 +224,7 @@ exports.handler = async (event) => {
       });
       if (!res.ok) {
         // Bridge hiccup: serve stale cache rather than a hard error if we have one.
-        if (cache) return cors(json(200, { accounts: cache.accounts, errors: bridgeErrorsForDisplay(cache.errors), cached: true, fetchedAt: cache.fetchedAt }));
+        if (cache) return serve(cache, true);
         return cors(json(502, { error: `Bridge fetch failed (${res.status}).` }));
       }
       const data = await res.json().catch(() => null);
@@ -231,19 +248,41 @@ exports.handler = async (event) => {
       }));
       const errors = bridgeErrorsForDisplay(data.errors);
       const fetchedAt = new Date().toISOString();
-      await saveRawCache(serviceKey, cacheId, { accounts, errors, fetchedAt });
+      // Household accounts to the household's cache and store; each personal
+      // account only to its owner's (FINANCE_SPLIT_DESIGN.md §2.1).
+      const { household, byOwner } = splitAccounts(accounts, views.map);
+      await saveRawCache(serviceKey, cacheId, { accounts: household, errors, fetchedAt });
+      for (const [owner, own] of Object.entries(byOwner)) {
+        await saveRawCache(serviceKey, `finaccts_${personalScopeId(owner)}`, { accounts: own, errors, fetchedAt });
+      }
       // Durable transaction store (FINANCE_TRANSACTIONS_DESIGN.md §3): keep every
       // real bridge pull. Additive + failure-isolated — never fails this response.
       // (The one-time 90-day backfill happens in the daily cron, not here.)
-      try { await ingestFeed({ serviceKey, groupId, accounts }); }
+      try { await ingestFeed({ serviceKey, groupId, accounts: household }); }
       catch (e) { console.error("[fin-ingest] failed", e.message || "error"); }
-      return cors(json(200, { accounts, errors, cached: false, fetchedAt }));
+      for (const [owner, own] of Object.entries(byOwner)) {
+        try { await ingestFeed({ serviceKey, groupId: personalScopeId(owner), accounts: own }); }
+        catch (e) { console.error("[fin-ingest] personal failed", e.message || "error"); }
+      }
+      return cors(json(200, {
+        accounts: accountsForMember({ householdAccounts: household, personalAccounts: byOwner[userId], views: views.map, userId }),
+        errors, cached: false, fetchedAt,
+      }));
     }
 
     if (action === "remapAccount") {
       // Merge an old account (left over from a SimpleFIN relink) into the account
       // that replaced it — FINANCE_TRANSACTIONS_DESIGN.md §12. "Live" accounts come
       // from the finaccts_ cache, so this never calls the bridge.
+      // Personal accounts (FINANCE_SPLIT_DESIGN.md §5): after a relink the new
+      // account id isn't assigned yet, so its rows sit in the household store.
+      // Merging one needs the account move (step 3), which marks the new id
+      // and moves its rows first — until then, refuse rather than half-merge.
+      const views = await loadAccountViews({ serviceKey, groupId });
+      if (!views.ok) return cors(json(503, { error: "Couldn't load your accounts right now — try again in a moment." }));
+      if (views.map.has(String(body.oldAccountId || "")) || views.map.has(String(body.newAccountId || ""))) {
+        return cors(json(409, { error: "Merging a personal account isn't available yet." }));
+      }
       const cache = await loadRawCache(serviceKey, `finaccts_${groupId}`);
       const liveAccountIds = (cache?.accounts || []).map((a) => String(a?.id || "")).filter(Boolean);
       if (!liveAccountIds.length) return cors(json(409, { error: "No bank data yet — refresh first." }));

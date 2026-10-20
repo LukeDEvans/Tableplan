@@ -80,6 +80,7 @@ all your work is there. Make focused changes to the Finance domain only.
   only, not `finance-ui.js`'s render/handlers. Verify UI changes by hand and say so.
 
 ## ⛔ Domain landmines (do NOT change without flagging — load-bearing)
+- **Personal accounts are private, split on the server (Luke, 2026-10-20 — FINANCE_SPLIT_DESIGN.md).** One SimpleFIN connection; `netlify/functions/_finance-split.js` sorts every pulled account by `live_finance_account_views` (row = personal to its owner). Household accounts → `finaccts_<groupId>` / store `group_id <groupId>` / `finhist_<groupId>`; personal → the same with `u-<owner>`. Every `accounts` response goes through `accountsForMember`; unreadable assignments fail closed (never save or serve). Decisions: personal spending never counts toward the household budget; receipts stay in Shop; income/people stay household; personal alerts go only to the owner.
 - **The sync/hydration gate STAYS in app.js and is NOT in this module:**
   `financeSectionHydrated`, the `guardBootEmptyFinance(...)` calls, the `mergeStates`
   finance deep-merge (`mergeFinance*` from `finance-sync.js`), and the
