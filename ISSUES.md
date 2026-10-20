@@ -13,9 +13,16 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 ---
 
 ## P0
-_(none)_
+- [x] **[P0] A household member can make herself admin** (security · live_group_members RLS + grants · 2026-10-20)
+      Policy "members can update own row" plus a table-wide UPDATE grant to `authenticated` lets any member PATCH her own row's `role` to `admin` (reproduced in PGlite against the live policies). Admin unlocks every page, admin settings and, with the views shell, all three views. → Fixed by `migrations/2026-10-20-views-spaces.sql` §3 (UPDATE limited to `display_name` + `personal_disabled_pages`), applied 2026-10-20; checked afterwards: `authenticated` can no longer UPDATE `role`. Verdict: FIXED.
 
 ## P1
+- [ ] **[P2] Server group lookups use `limit=1` with no ordering** (auth/state · netlify/functions/_state-sections.js:32, simplefin.js:354, _finance-categories.js:14, _gcal.js:186, _gmail-shared.js:325, _news-articles.js:125, chat.js:193, admin-data.js:99, send-invite.js:83 · 2026-10-20)
+      Each picks "the user's group" from `live_group_members` with `limit=1`. Harmless while everyone has one membership; a second one (another household, or Business if it ever moved into `live_groups`) would make the pick arbitrary. Business uses separate tables for this reason (VIEWS_DESIGN §2.1). → Add `&order=joined_at.asc` (matching the client) in one shared helper when next touching these. Verdict: CONFIRMED (grep).
+- [ ] **[P3] An empty household group in prod** (data · live_groups 7fc129be… · 2026-10-20)
+      Created 2026-06-11 two minutes before the real one; no members, no state rows. Harmless. → Delete in the SQL editor if wanted. Verdict: CONFIRMED (read-only query).
+- [ ] **[P3] Changing a member's role from Settings never worked** (household · app.js setGroupMemberRole · 2026-10-20)
+      It PATCHes another member's row, but the only update policy is own-row, so it silently changes nothing (and `"hoh"` isn't a role the app reads). The views migration keeps it that way. → Decide whether admins should change roles; if so, a service-role function with an admin check. Verdict: CONFIRMED (by reading the policy).
 - [ ] **[P2] Older app builds drop the Household / Business looks** (views · app.js STATE_SECTIONS recreate · 2026-10-20)
       `viewDisplayPrefs` is a new key in the `recreate` row. An older build saving that row writes only the keys it knows, so the admin's per-view Display choices reset to the defaults (Household theme / Urban Greens) until picked again. No data beyond those choices is affected; Personal's `displayPrefs` is untouched. → Goes away once every device runs a build with the view shell (next TestFlight). Verdict: CONFIRMED (by reading).
 - [ ] **[P2] View band not tried on the iPhone yet** (views · views.js / app.js wireViewBand · 2026-10-20)
