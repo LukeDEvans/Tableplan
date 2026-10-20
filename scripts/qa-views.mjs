@@ -268,6 +268,29 @@ try {
   while (await view() !== "personal") await go(1);
   await page.evaluate(() => { window.__liveQA.setLayerForQa("household", false); window.__liveQA.setLayerForQa("business", false); });
 
+  console.log("Finance follows the view once there are personal accounts");
+  while (await view() !== "personal") await go(1);
+  check((await scopes()).finance === "household", "no personal accounts: Personal shows the household's Finance (as before)");
+  await page.evaluate(() => window.__liveQA.personalFinanceForQa(true));
+  await page.waitForTimeout(600);
+  check((await scopes()).finance === "personal", "with personal accounts: Personal reads the person's own Finance");
+  await page.evaluate(() => document.querySelector("#homeFinanceBtn").click());
+  await page.waitForTimeout(800);
+  const summary = await page.evaluate(() => document.querySelector(".fin-household-summary")?.textContent.replace(/\s+/g, " ") || "");
+  check(/Household/.test(summary) && /Open in Household/.test(summary), "Personal Finance shows the Household card", summary.slice(0, 80));
+  check(await fits(), "Personal Finance fits 390px");
+  await shot("finance-personal");
+  await page.click('[data-fin-action="open-household"]');
+  await page.waitForTimeout(800);
+  check(await view() === "household" && (await scopes()).finance === "household" && await area() === "finance", "Open in Household switches views and stays on Finance", `${await view()} / ${(await scopes()).finance} / ${await area()}`);
+  check(!(await page.evaluate(() => !!document.querySelector(".fin-household-summary"))), "no Household card in Household");
+  check(!(await page.evaluate(() => window.__liveQA.shadowOnDeviceForQa())).includes("finance"), "the finance copy not on screen is never saved on the device");
+  await page.evaluate(() => window.__liveQA.personalFinanceForQa(false));
+  await page.waitForTimeout(400);
+  await goHome();
+  while (await view() !== "personal") await go(1);
+  check((await scopes()).finance === "household", "turning it off: Personal shows the household's Finance again");
+
   console.log("The ticker's game card");
   const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; });
   const t = (name, abbr) => ({ name, short: name, abbr, refs: { espn: abbr } });

@@ -383,13 +383,16 @@ const SECTION_SCOPE = {
   health: "household",
   inventory: "household", // Stock: one shared record of where things are
   travel: "toggle",
-  finance: "household",   // one shared household budget
+  // Household budget by default; a member's own accounts can live in their
+  // personal row (FINANCE_SPLIT_DESIGN.md) — the view decides (views.js).
+  finance: "toggle",
   contacts: "household",  // one shared address book (feeds the birthday calendar)
 };
 const SCOPE_PREFS_KEY = "live-section-scopes-v1";
 const SHADOW_KEY = "live-shadow-sections-v1";    // the old single-copy shape, read once to upgrade
 const SHADOW_KEY_V2 = "live-shadow-sections-v2"; // { section: { scope: data } }
 const BUSINESS_SPACE_KEY = "live-business-space-v1";
+const PERSONAL_FINANCE_KEY = "live-personal-finance-v1"; // does this person own personal finance accounts?
 
 // Active scope per toggleable section — sticky, defaults to personal.
 let sectionScopes = (() => {
@@ -402,6 +405,14 @@ let sectionScopes = (() => {
 // could be saved to the personal row. Refreshed by loadBusinessSpace().
 let businessSpace = (() => {
   try { const b = JSON.parse(localStorage.getItem(BUSINESS_SPACE_KEY) || "null"); return b?.id ? b : null; } catch { return null; }
+})();
+
+// Whether this person owns any personal finance accounts (their rows in
+// live_finance_account_views — FINANCE_SPLIT_DESIGN.md). Until they do, the
+// Personal view keeps showing the household's Finance. Kept on the device
+// (account-scoped); refreshed by loadPersonalFinanceFlag().
+let hasPersonalFinance = (() => {
+  try { return localStorage.getItem(PERSONAL_FINANCE_KEY) === "1"; } catch { return false; }
 })();
 
 // The scopes of each toggleable section that are NOT on screen, keyed by scope:
@@ -422,9 +433,10 @@ function sectionScope(section) {
   if (kind !== "toggle") return kind;
   if (sectionScopes[section] === "business") return section === "plan" && businessSpace?.id ? "business" : "personal";
   if (sectionScopes[section]) return sectionScopes[section] === "household" ? "household" : "personal";
-  // Defaults: Shop opens on the household list (the meal plan populates it);
-  // every other toggleable page opens on the personal view.
-  return section === "grocery" ? "household" : "personal";
+  // Defaults: Shop opens on the household list (the meal plan populates it), and
+  // Finance on the household budget (as it always has); every other toggleable
+  // page opens on the personal view.
+  return section === "grocery" || section === "finance" ? "household" : "personal";
 }
 
 function scopeRowIds(stateId) {
@@ -467,7 +479,10 @@ function scopeData(section, scope) {
 
 function persistShadowSections() {
   try {
-    localStorage.setItem(SHADOW_KEY_V2, JSON.stringify(shadowSections));
+    // Finance never sits on the device (see financeSectionHydrated): the copy of
+    // the finance scope not on screen stays in memory only.
+    const { finance, ...onDevice } = shadowSections;
+    localStorage.setItem(SHADOW_KEY_V2, JSON.stringify(onDevice));
     localStorage.removeItem(SHADOW_KEY);
   } catch { /* full */ }
 }
@@ -1835,7 +1850,11 @@ const _finance = createFinanceModule({
   getContextSettingsKind: () => contextSettingsKind, // read-only getter (changes per settings panel)
   // Durable transaction store (finance-txn-store.js) — deferred getters: userGroup /
   // authSession resolve at call time, never at module load (boot-safety guard).
-  getFinanceStoreGroupId: () => userGroup?.id || null,
+  // The transaction store of the Finance scope on screen: the household's, or this
+  // member's own (`u-<id>`) for their personal accounts (FINANCE_SPLIT_DESIGN.md).
+  getFinanceStoreGroupId: () => (sectionScope("finance") === "personal" ? (authSession?.user?.id ? `u-${authSession.user.id}` : null) : (userGroup?.id || null)),
+  getFinanceScope: () => sectionScope("finance"),
+  openHouseholdFinance: () => { if (currentViewList().includes("household")) { currentViewKey.chosen = true; applyView("household", { keepPage: true }); } },
   canUseFinanceStore: () => !localDevMode && canUseCloudStorage() && !!authSession?.access_token,
   fetchSupabaseJson: (...a) => fetchSupabaseJson(...a),
   writeSupabaseJson: (...a) => writeSupabaseJson(...a),
@@ -1852,7 +1871,7 @@ const {
   invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick,
   refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu,
   renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth,
-  getFinanceLinkStatus,
+  getFinanceLinkStatus, onFinanceScopeChanged,
 } = _finance;
 
 // ── Groceries domain (extracted to groceries-ui.js) ─────────────────────────
@@ -3880,6 +3899,8 @@ function setupDiagnostics() {
     planSeedForQa: (events) => { if (!localDevMode) return null; state.planEvents = events; planRangeCache.clear(); persist(); return true; },
     planEventsInRangeForQa: (a, b) => (localDevMode ? getPlanEventsForRange(a, b).map((e) => ({ id: e.id, title: e.title, source: e.source, layerView: e.layerView || null })) : null),
     setLayerForQa: (view, on) => { if (!localDevMode) return null; setPlanLayer(view, on); return true; },
+    personalFinanceForQa: (on) => { if (!localDevMode) return null; setPersonalFinanceFlag(on); return true; },
+    shadowOnDeviceForQa: () => (localDevMode ? Object.keys(JSON.parse(localStorage.getItem("live-shadow-sections-v2") || "{}")) : null),
     tickerGameForQa: (dateKey, id) => { if (!localDevMode) return null; openTickerGameCard(dateKey, id); return true; },
     viewsAsRole: (role) => {
       if (!localDevMode) return null;
@@ -16580,14 +16601,16 @@ function alignScopesToView() {
     if (!(sharedStorageReady || localDevMode)) return;
     const view = currentViewKey();
     const hasBusiness = Boolean(businessSpace?.id);
+    const financeBefore = sectionScope("finance");
     for (const section of VIEW_TOGGLE_SECTIONS) {
       if (SECTION_SCOPE[section] !== "toggle") continue;
-      const want = scopeForView(view, section, { hasBusiness });
+      const want = scopeForView(view, section, { hasBusiness, hasPersonalFinance });
       if (sectionScope(section) === want) continue;
       try { await setSectionScope(section, want, { quick: true }); }
       catch (e) { console.warn(`[views] ${section} → ${want} failed:`, e.message); }
     }
     planRangeCache.clear();
+    if (sectionScope("finance") !== financeBefore) onFinanceScopeChanged(); // bank feed, store and history follow
     if (activeAppArea === "plan") renderPlanPage();
     if (activeAppArea === "home") renderHomeBriefing(); // the Calendar / Tasks glance reads the view's rows
   };
@@ -16599,6 +16622,7 @@ function alignScopesToView() {
 // small read at sign-in, kept on the device for the next cold start.
 async function loadBusinessSpace() {
   if (localDevMode || !authSession?.access_token || !authSession?.user?.id) return;
+  loadPersonalFinanceFlag(); // in parallel; a tiny read of this member's own rows
   if (userGroup?.role !== "admin") { saveBusinessSpace(null); return; }
   try {
     const res = await fetch(
@@ -16611,6 +16635,27 @@ async function loadBusinessSpace() {
     saveBusinessSpace(row ? { id: row.live_spaces.id, name: row.live_spaces.name, role: row.role } : null);
   } catch { /* offline: keep the device's copy */ }
 }
+// Does this member own any personal finance accounts? Their own rows only (RLS);
+// a missing table (migration not applied) or an error keeps what the device knew.
+async function loadPersonalFinanceFlag() {
+  try {
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/live_finance_account_views?owner_id=eq.${encodeURIComponent(authSession.user.id)}&select=linked_id&limit=1`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    setPersonalFinanceFlag(Array.isArray(rows) && rows.length > 0);
+  } catch { /* offline: keep the device's copy */ }
+}
+function setPersonalFinanceFlag(on) {
+  const next = Boolean(on);
+  try { if (next) localStorage.setItem(PERSONAL_FINANCE_KEY, "1"); else localStorage.removeItem(PERSONAL_FINANCE_KEY); } catch { /* storage blocked */ }
+  if (next === hasPersonalFinance) return;
+  hasPersonalFinance = next;
+  alignScopesToView(); // Personal's Finance switches to (or back from) the person's own accounts
+}
+
 function saveBusinessSpace(space) {
   businessSpace = space?.id ? space : null;
   try {

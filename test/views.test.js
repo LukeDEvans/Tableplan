@@ -181,3 +181,20 @@ describe("views: which row each view reads", () => {
     expect(layerViewsFor("personal", null)).toEqual([]);
   });
 });
+
+describe("views: Finance follows the view once the person has personal accounts", () => {
+  it("Household always reads household finance", () => {
+    expect(scopeForView("household", "finance", { hasPersonalFinance: true })).toBe("household");
+  });
+  it("Personal reads personal finance only when the person has some", () => {
+    expect(scopeForView("personal", "finance", { hasPersonalFinance: false })).toBe("household");
+    expect(scopeForView("personal", "finance", { hasPersonalFinance: true })).toBe("personal");
+  });
+  it("Business (no Finance page) doesn't swap away from what Personal reads", () => {
+    expect(scopeForView("business", "finance", { hasPersonalFinance: true })).toBe("personal");
+    expect(scopeForView("business", "finance", {})).toBe("household");
+  });
+  it("finance is one of the view-driven sections", () => {
+    expect(VIEW_TOGGLE_SECTIONS).toContain("finance");
+  });
+});
