@@ -265,7 +265,7 @@ The migration must be **safe with older clients**. Older TestFlight builds don't
 ## 11. Open
 
 - **Business permissions** (decision 24): what a manager vs an employee can do. Decide before anyone else is invited.
-- **Finance accounts per view** (decision 5): all finance data is in the household row, which every member reads, so a UI-only "Personal" account wouldn't be private. Either accept that (UI-only), or move personal accounts to a personal row, which is a finance restructure with a `STATE_SCHEMA_VERSION` bump. Held for Luke (ISSUES.md).
+- **Finance accounts per view** (decision 5): Luke chose real privacy with one SimpleFIN connection split on the server (2026-10-20). Plan and open questions: [FINANCE_SPLIT_DESIGN.md](FINANCE_SPLIT_DESIGN.md).
 - **Wife's Personal view:** she has none for now. If she gets one later, her current per-user items (reminders, display) carry over without migration.
 
 ## 12. Tests
