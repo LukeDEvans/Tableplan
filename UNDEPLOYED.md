@@ -10,6 +10,13 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Views: Personal, Household, Business (the view shell)** · #140 · **Netlify deploy + TestFlight build** (client-only). The view band under the landing logo and in the open page menu; swipe on it, its ‹ ›, or ←/→ to switch views. Household (six pages, flat) and Business (Calendar) for the admin; **Luke's wife sees Household only** (its six pages) once this is live. Each view keeps its own Display look. Same data in every view for now. No migration, no new env vars.
+  Post-deploy:
+  1. iPhone: landing page — swipe the band right: Household (navy/blush), again: Business (Urban Greens), again: Personal. Chevrons and the swipe both work; the band doesn't crowd anything.
+  2. Open Calendar, open the page menu — the band replaces the title; swipe it; Calendar stays. Switch to Household from News — you land on the Household landing page.
+  3. Close and reopen the app — it opens in the last view used.
+  4. Wife's phone: "Household" band, no chevrons, Calendar / Meal Plan / Finance / Shop / Watch / Listen only; her theme unchanged.
+  5. Settings › Display in Household changes Household's look only.
 - **Themes: Household and Urban Greens** · #138 · **TestFlight build** (client-only; the laptop needs a Netlify deploy). Two new themes in Settings › Display, each with light and dark: Household (navy, dusty blue, blush, sage) and Urban Greens (the logo's green and gray, with black and white). Classic stays the default. No migration, no new env vars.
   Post-deploy:
   1. Settings › Display: pick Household, then Urban Greens, in Light and Dark — Calendar, Meal Plan, Shop, Finance and News read clearly.
