@@ -17,6 +17,8 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "tableplan-state-v1",      // STORAGE_KEY — the full state mirror (all sections)
   "tableplan-trips-v1",      // TRIP_BACKUP_KEY — travel backup (restored by applyStoredState)
   "live-shadow-sections-v1", // SHADOW_KEY — scope-inactive section rows
+  "live-shadow-sections-v2", // SHADOW_KEY_V2 — the same, keyed by scope (views.js)
+  "live-business-space-v1",  // BUSINESS_SPACE_KEY — the admin's business space id (views.js)
   "live-section-scopes-v1",  // SCOPE_PREFS_KEY — per-section personal/household scope
   "eat-calendars-v1",        // CALENDAR_CACHE_KEY — linked-calendar events cache
   "live_plan_ics_cache",     // subscribed ICS/Amion events cache

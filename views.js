@@ -160,3 +160,69 @@ export function displayPrefsForView(view, { base, viewPrefs, available } = {}) {
     icon: false,
   };
 }
+
+// ── Which data row each view reads (build step 4) ─────────────────────────────
+// The sections that can live in a household row or a personal row (app.js
+// SECTION_SCOPE "toggle"); the Calendar can also live in the business row.
+// Everything else has one fixed home (Meal Plan, Finance… household; Exercise,
+// Leisure… personal) and no view changes that.
+export const VIEW_TOGGLE_SECTIONS = Object.freeze(["grocery", "do", "watch", "media", "plan", "travel"]);
+
+// The row a view reads for a toggleable section:
+//   Household → the household row, for everything.
+//   Personal  → the person's own rows, except Shop: the shopping list is the
+//               household's (the meal plan fills it), as it has always opened.
+//   Business  → the business row for the Calendar; the rest as in Personal
+//               (Business has no other pages yet).
+// `hasBusiness` is false until the business space has loaded (or for someone
+// with none); the Calendar then stays personal rather than pointing nowhere.
+export function scopeForView(view, section, { hasBusiness = false } = {}) {
+  // Explore isn't a Household page, so its trips stay on the person's own row.
+  // (Swapping it would also wake the trip safety net in applyStoredState, which
+  // restores a device's trip backup into an empty incoming row — copying
+  // personal trips into the household's.)
+  if (section === "travel") return "personal";
+  if (view === "household") return "household";
+  if (section === "grocery") return "household";
+  if (view === "business" && section === "plan" && hasBusiness) return "business";
+  return "personal";
+}
+
+// The scopes a section can be in, for this person.
+export function scopesForSection(section, { toggle = true, hasBusiness = false } = {}) {
+  if (!toggle) return [];
+  return section === "plan" && hasBusiness ? ["personal", "household", "business"] : ["personal", "household"];
+}
+
+// A section's row id in a scope. null when it can't be addressed (no user id
+// for a personal row, no space for a business row).
+export function rowIdForScope({ stateId, userId, businessId } = {}, section, scope) {
+  if (scope === "personal") return userId ? `u-${userId}:${section}` : null;
+  if (scope === "business") return businessId ? `${businessId}:${section}` : null;
+  return stateId ? `${stateId}:${section}` : null;
+}
+
+// Shadow store (the scopes of a section not on screen), keyed by scope:
+//   { [section]: { [scope]: { key: value } } }
+// Older devices kept one unkeyed copy per section — always "the other one" of
+// personal / household — so it converts by the section's current scope.
+export function upgradeShadowStore(v1, currentScope) {
+  const out = {};
+  for (const [section, data] of Object.entries(v1 && typeof v1 === "object" ? v1 : {})) {
+    if (!data || typeof data !== "object") continue;
+    const other = currentScope(section) === "personal" ? "household" : "personal";
+    out[section] = { [other]: data };
+  }
+  return out;
+}
+
+// Which other views' calendars the Personal calendar shows as layers (decision
+// 2–3: the person opts in; Household and Business never show Personal items).
+export function layerViewsFor(view, layers, { hasBusiness = false } = {}) {
+  if (view !== "personal") return [];
+  const on = layers && typeof layers === "object" ? layers : {};
+  const out = [];
+  if (on.household) out.push("household");
+  if (on.business && hasBusiness) out.push("business");
+  return out;
+}

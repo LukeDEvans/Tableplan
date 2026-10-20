@@ -87,6 +87,7 @@ const SHARED_STATE = {
   themeMode: "app setting (legacy household display mode; displayPrefs replaces it per person)",
   displayPrefs: "app setting (per-person display mode + theme, theme.js)",
   viewDisplayPrefs: "app setting (per-person display for the Household and Business views, views.js)",
+  viewLayers: "app setting (per-person layers on the Personal calendar, views.js)",
   collapsedSections: "app setting",
   apiUsage: "app-wide usage tracking",
   aiSettings: "assistant",

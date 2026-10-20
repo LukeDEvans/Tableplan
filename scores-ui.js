@@ -100,6 +100,28 @@ const CLOSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6
 
 // ── Module ───────────────────────────────────────────────────────────────────
 
+// The small game card the dock's ticker opens in the Household and Business views
+// (VIEWS_DESIGN.md decision 15): Scores is a Personal page, so a tap there shows
+// the game in place instead of switching views. `esc` escapes text for HTML.
+export function gameCardHtml(game, esc, fmt = {}) {
+  if (!game) return `<p class="game-card-empty">This game isn't on the board right now.</p>`;
+  const league = LEAGUE_BY_KEY[game.league];
+  const side = (s) => `
+    <div class="game-card-side${s.winner ? " is-winner" : ""}">
+      <span class="game-card-team">${esc(s.team.name || s.team.short || s.team.abbr || "")}${s.record ? ` <small>${esc(s.record)}</small>` : ""}</span>
+      <span class="game-card-score">${s.score === null ? "" : esc(String(s.score))}${s.pens !== null && s.pens !== undefined ? ` <small>(${esc(String(s.pens))})</small>` : ""}</span>
+    </div>`;
+  const extra = [game.note, game.situation, game.venue, game.broadcasts?.length ? game.broadcasts.join(", ") : ""].filter(Boolean);
+  return `
+    <div class="game-card-head">
+      <span class="game-card-league">${esc(league?.label || game.league || "")}</span>
+      <span class="game-card-status${game.state === "live" ? " is-live" : ""}">${esc(statusText(game, fmt))}</span>
+    </div>
+    ${side(game.away)}
+    ${side(game.home)}
+    ${extra.length ? `<p class="game-card-extra">${extra.map((x) => esc(x)).join(" · ")}</p>` : ""}`;
+}
+
 export function createScoresModule(deps) {
   const { escapeHtml: esc, showToast, getState, persist, canUseLocalBackend, isNativeApp, getActiveAppArea } = deps;
 

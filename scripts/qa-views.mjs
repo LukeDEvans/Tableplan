@@ -7,6 +7,8 @@
 // reload; and a household member seeing Household only.
 //
 //   node scripts/qa-views.mjs [url]   (default http://localhost:4174/; needs `npm run dev:local`)
+//   Start from a clean local state (delete data/tableplan-state.json first): local dev
+//   keeps one state file across runs, so a crashed run's layer switches would linger.
 //   QA_VIEWS_SHOT=/path/prefix → also saves screenshots
 import { chromium } from "playwright";
 import { existsSync } from "node:fs";
@@ -40,8 +42,8 @@ try {
     await page.goto(URL + path, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => document.body.classList.contains("app-authed") || (document.getElementById("lockDevSignInBtn") && !document.getElementById("lockDevSignInBtn").hidden), { timeout: 20000 });
     if (!(await page.evaluate(() => document.body.classList.contains("app-authed")))) await page.click("#lockDevSignInBtn");
-    await page.waitForFunction(() => !!window.__liveQA?.view, { timeout: 20000 });
-    await page.waitForTimeout(700);
+    await page.waitForFunction(() => !!window.__liveQA?.viewsReady?.(), { timeout: 20000 });
+    await page.waitForTimeout(400);
   };
   const view = () => page.evaluate(() => window.__liveQA.view());
   const area = () => page.evaluate(() => window.__liveQA.activeArea());
@@ -198,6 +200,92 @@ try {
   console.log("Display per view");
   await goHome();
   check(await palette() === "urbangreens", "Business keeps its own look after reload");
+
+  console.log("Each view reads its own rows");
+  const scopes = () => page.evaluate(() => window.__liveQA.scopes());
+  const go = async (dir) => { await page.click(`#homeViewBand [data-view-step="${dir}"]`); await page.waitForTimeout(500); };
+  await goHome();
+  await page.evaluate(() => window.__liveQA.businessSpaceForQa({ id: "biz-qa", name: "Business", role: "owner" }));
+  while (await view() !== "personal") await go(1);
+  let sc = await scopes();
+  check(sc.plan === "personal" && sc.media === "personal" && sc.watch === "personal" && sc.do === "personal" && sc.travel === "personal" && sc.grocery === "household", "Personal: own rows, Shop is the household list", JSON.stringify(sc));
+  await page.evaluate(() => window.__liveQA.planSeedForQa([{ id: "ev-mine", title: "Dentist", date: "2026-10-21", allDay: true }]));
+  await go(-1);
+  check(await view() === "household", "→ Household");
+  sc = await scopes();
+  check(sc.plan === "household" && sc.media === "household" && sc.watch === "household" && sc.do === "household" && sc.grocery === "household" && sc.travel === "personal", "Household: its pages read the household row; Explore's trips stay personal", JSON.stringify(sc));
+  let evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
+  check(!evs.some((e) => e.id === "ev-mine"), "Household doesn't show Personal events", JSON.stringify(evs));
+  await page.evaluate(() => window.__liveQA.planSeedForQa([{ id: "ev-home", title: "Family dinner", date: "2026-10-21", allDay: true }]));
+  await go(-1);
+  check(await view() === "business", "→ Business");
+  sc = await scopes();
+  check(sc.plan === "business", "Business: the Calendar reads the business row", JSON.stringify(sc));
+  evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
+  check(!evs.some((e) => e.id === "ev-home" || e.id === "ev-mine"), "Business starts with its own empty calendar", JSON.stringify(evs));
+  await page.evaluate(() => window.__liveQA.planSeedForQa([{ id: "ev-work", title: "Shift", date: "2026-10-21", allDay: true }]));
+  await go(-1);
+  check(await view() === "personal", "→ Personal again");
+  evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
+  check(evs.some((e) => e.id === "ev-mine") && !evs.some((e) => e.id === "ev-home" || e.id === "ev-work"), "Personal: its own event back; no layers until switched on", JSON.stringify(evs));
+  await page.evaluate(() => { window.__liveQA.setLayerForQa("household", true); window.__liveQA.setLayerForQa("business", true); });
+  evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
+  const home = evs.find((e) => e.id === "ev-home"), work = evs.find((e) => e.id === "ev-work");
+  check(home?.source === "layer" && home.layerView === "household" && work?.layerView === "business" && evs.some((e) => e.id === "ev-mine"), "layers on: Household and Business events show, marked", JSON.stringify(evs));
+  await page.evaluate(() => document.querySelector("#homePlanBtn").click());
+  await page.waitForTimeout(600);
+  const layerRows = await page.evaluate(() => [...document.querySelectorAll("[data-layer-toggle]")].map((b) => b.dataset.layerToggle + ":" + b.getAttribute("aria-checked")));
+  check(JSON.stringify(layerRows) === JSON.stringify(["household:true", "business:true"]), "the sidebar's layer switches reflect them", JSON.stringify(layerRows));
+  await page.evaluate(() => window.__liveQA.setLayerForQa("business", false));
+  evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
+  check(!evs.some((e) => e.id === "ev-work") && evs.some((e) => e.id === "ev-home"), "turning one off hides just that one");
+  // Open a layered event: it switches to its own view.
+  await page.evaluate(() => window.__liveQA.setLayerForQa("business", true));
+  await page.evaluate(() => { window.planViewDateForQa = true; });
+  const opened = await page.evaluate(async () => {
+    const pill = document.querySelector('[data-plan-event-id="ev-work"]');
+    return Boolean(pill);
+  });
+  if (opened) {
+    await page.click('[data-plan-event-id="ev-work"]');
+    await page.waitForTimeout(300);
+    const btn = await page.$("[data-plan-detail-layer]");
+    check(Boolean(btn), "a layered event's detail offers Open in Business");
+    if (btn) { await btn.click(); await page.waitForTimeout(800); }
+    check(await view() === "business" && await area() === "plan", "…which switches to Business, on the Calendar", `${await view()} / ${await area()}`);
+    const detail = await page.evaluate(() => { const p = document.getElementById("planDetailPanel"); return p && !p.hidden ? p.textContent : ""; });
+    check(/Shift/.test(detail) && /Edit/.test(detail), "…and opens it there as an ordinary, editable event", detail.slice(0, 80));
+    await page.evaluate(() => document.querySelector("[data-plan-detail-close]")?.click());
+    await page.waitForTimeout(200);
+  } else {
+    console.log("  (layered event not in the visible calendar range — open-in-view check skipped)");
+  }
+  // Layers never appear outside Personal
+  await page.evaluate(() => window.__liveQA.goHome());
+  while (await view() !== "household") await go(1);
+  evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
+  check(!evs.some((e) => e.source === "layer"), "no layers in Household", JSON.stringify(evs));
+  while (await view() !== "personal") await go(1);
+  await page.evaluate(() => { window.__liveQA.setLayerForQa("household", false); window.__liveQA.setLayerForQa("business", false); });
+
+  console.log("The ticker's game card");
+  const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; });
+  const t = (name, abbr) => ({ name, short: name, abbr, refs: { espn: abbr } });
+  await page.evaluate((board) => window.__liveQA.scoresSetBoard(board), { date: today, games: [{ id: "g-qa", league: "nfl", start: new Date().toISOString(), state: "live", detail: "3rd 5:32", home: { team: t("Minnesota Vikings", "MIN"), score: 21 }, away: { team: t("Green Bay Packers", "GB"), score: 17 } }] });
+  while (await view() !== "household") await go(1);
+  await page.evaluate((d) => window.__liveQA.tickerGameForQa(d, "g-qa"), today);
+  await page.waitForTimeout(400);
+  const card = await page.evaluate(() => { const d = document.getElementById("gameCardDialog"); return d?.open ? d.textContent.replace(/\s+/g, " ") : ""; });
+  check(/Minnesota Vikings/.test(card) && /21/.test(card) && /3rd 5:32/.test(card), "in Household a ticker tap opens the game card", card.slice(0, 90));
+  check(await view() === "household" && await area() !== "scores", "…and stays in Household");
+  const glance = await page.evaluate(() => document.getElementById("homeBriefing")?.textContent.replace(/\s+/g, " ") || "");
+  check(!/Shift|Dentist/.test(glance), "Home's calendar glance shows Household's events, not Business or Personal", glance.slice(0, 120));
+  check(await fits(), "the card fits 390px");
+  await shot("game-card");
+  await page.click("[data-game-card-close]");
+  await page.waitForTimeout(200);
+  check(!(await page.evaluate(() => document.getElementById("gameCardDialog")?.open)), "Close shuts it");
+  while (await view() !== "personal") await go(1);
 
   console.log("A household member");
   await page.evaluate(() => window.__liveQA.viewsAsRole("member"));

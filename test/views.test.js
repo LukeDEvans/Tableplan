@@ -133,3 +133,51 @@ describe("views: display per view", () => {
     expect(cleanViewDisplayPrefs(null, { modes: MODES, themes: THEMES })).toEqual({});
   });
 });
+
+import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor } from "../views.js";
+
+describe("views: which row each view reads", () => {
+  it("Household reads the household row for every Household page", () => {
+    for (const s of VIEW_TOGGLE_SECTIONS.filter((x) => x !== "travel")) expect(scopeForView("household", s, { hasBusiness: true })).toBe("household");
+  });
+  it("Explore's trips always stay on the person's own row (not a Household page)", () => {
+    for (const v of ["household", "personal", "business"]) expect(scopeForView(v, "travel", { hasBusiness: true })).toBe("personal");
+  });
+  it("Personal reads personal rows, but Shop stays the household list", () => {
+    expect(scopeForView("personal", "plan")).toBe("personal");
+    expect(scopeForView("personal", "media")).toBe("personal");
+    expect(scopeForView("personal", "grocery")).toBe("household");
+  });
+  it("Business reads the business row for the Calendar once the space is known", () => {
+    expect(scopeForView("business", "plan", { hasBusiness: true })).toBe("business");
+    expect(scopeForView("business", "plan", { hasBusiness: false })).toBe("personal");
+    expect(scopeForView("business", "media", { hasBusiness: true })).toBe("personal");
+    expect(scopeForView("business", "grocery", { hasBusiness: true })).toBe("household");
+  });
+  it("only the Calendar has a business scope", () => {
+    expect(scopesForSection("plan", { hasBusiness: true })).toEqual(["personal", "household", "business"]);
+    expect(scopesForSection("plan", { hasBusiness: false })).toEqual(["personal", "household"]);
+    expect(scopesForSection("media", { hasBusiness: true })).toEqual(["personal", "household"]);
+    expect(scopesForSection("eat", { toggle: false })).toEqual([]);
+  });
+  it("row ids per scope", () => {
+    const ids = { stateId: "g1", userId: "u9", businessId: "b5" };
+    expect(rowIdForScope(ids, "plan", "household")).toBe("g1:plan");
+    expect(rowIdForScope(ids, "plan", "personal")).toBe("u-u9:plan");
+    expect(rowIdForScope(ids, "plan", "business")).toBe("b5:plan");
+    expect(rowIdForScope({ stateId: "g1" }, "plan", "business")).toBe(null);
+    expect(rowIdForScope({ stateId: "g1" }, "plan", "personal")).toBe(null);
+  });
+  it("an old shadow copy files under the scope that isn't showing", () => {
+    const v1 = { plan: { planEvents: [1] }, media: { podcasts: [2] }, junk: null };
+    const scope = (s) => (s === "plan" ? "personal" : "household");
+    expect(upgradeShadowStore(v1, scope)).toEqual({ plan: { household: { planEvents: [1] } }, media: { personal: { podcasts: [2] } } });
+    expect(upgradeShadowStore(null, scope)).toEqual({});
+  });
+  it("layers: only in Personal, only what the person turned on", () => {
+    expect(layerViewsFor("personal", { household: true, business: true }, { hasBusiness: true })).toEqual(["household", "business"]);
+    expect(layerViewsFor("personal", { business: true }, { hasBusiness: false })).toEqual([]);
+    expect(layerViewsFor("household", { household: true, business: true }, { hasBusiness: true })).toEqual([]);
+    expect(layerViewsFor("personal", null)).toEqual([]);
+  });
+});
