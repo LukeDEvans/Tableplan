@@ -1,6 +1,6 @@
 # Finance: personal accounts — design & plan
 
-Status: **DRAFT for Luke's review (2026-10-20). Nothing built.** Follows VIEWS_DESIGN.md decision 5 and Luke's choice of "Option 2" (2026-10-20): personal accounts are **truly private**, not just hidden, using **one SimpleFIN connection** that the server splits.
+Status: **APPROVED (Luke, 2026-10-20; recommendations accepted, §3). Step 1 built on `claude/finance-split-step1` (§6); its migration not applied.** Follows VIEWS_DESIGN.md decision 5 and Luke's choice of "Option 2" (2026-10-20): personal accounts are **truly private**, not just hidden, using **one SimpleFIN connection** that the server splits.
 
 Goal: Luke marks some accounts **Personal**. Their balances, transactions, labels and history then live only in Luke's own data. His wife's app never receives them, not even in the background. Household accounts work exactly as today.
 
@@ -90,19 +90,13 @@ Nothing new reads on a timer. The split adds one tiny read per bank pull (the as
 
 ---
 
-## 3. Questions for Luke
+## 3. Decisions (Luke, 2026-10-20: "go with your recommendations")
 
-1. **Which accounts are Personal?** You'll pick them in the app; nothing moves until you confirm the dry run. Likely candidates are the ones with owner "Luke". Marijane's and Sophia's stay Household (Marijane has no Personal view).
-2. **Personal spending and the household budget.** When you pay a household expense from a personal card, should it:
-   - (a) stay personal (the household budget never sees it), or
-   - (b) be "sent" to the household budget one transaction at a time, as a shared expense?
-
-   Recommendation: (a), with (b) later if you miss it. Transfers from a joint account to a personal one still show on the joint side, as today.
-3. **Receipts.** Receipts are one shared Shop list. Should a receipt linked to a personal-account transaction stay visible in Shop's receipts (only the bank match is personal), or be hidden from Marijane too? Recommendation: stays in Shop. It's a shopping record, and only the bank side is private.
-4. **Income and people** (`financePeople`, incomes) stay household? Recommendation: yes.
-5. **The daily finance email / alerts.** Should alerts for personal accounts (low balance, a dropped connection) go only to you? Recommendation: yes.
-
----
+1. **Which accounts are Personal:** Luke picks them in the app (step 3); nothing moves until he confirms the dry run. Marijane's and Sophia's accounts stay Household (Marijane has no Personal view).
+2. **Personal spending stays personal.** The household budget never sees it. A household bill paid on a personal card doesn't count toward the household budget; a "send to household" action can come later if missed. Transfers from a joint account still show on the joint side.
+3. **Receipts stay in Shop's shared list.** Only the bank side (the transaction match) is private.
+4. **Income and people stay household.**
+5. **Alerts for a personal account go only to its owner.**
 
 ## 4. Build order
 
@@ -119,3 +113,20 @@ Each step is its own PR with QA. Steps 1 and 3 touch production data and wait fo
 - **Old app builds.** The schema bump blocks their finance saves. Marijane's phone needs the new build before step 3.
 - **SimpleFIN account ids change on a relink** (`remapAccount`). The assignment must follow a remap, or a re-linked personal account would land in household paths. Step 1 handles that: a remap carries the row over.
 - **Partial move.** The move runs in one server function and is idempotent: re-running finishes a half-done move, never duplicates.
+
+## 6. As built: step 1 (branch `claude/finance-split-step1`, 2026-10-20)
+
+Nothing is marked Personal yet, so step 1 changes nothing anyone sees. Its tests prove what happens once an account is.
+
+- **`migrations/2026-10-20-finance-account-views.sql`**: `live_finance_account_views` (a row = that SimpleFIN account is personal to `owner_id`). The owner reads their own rows; nobody else reads any; **no app can write**, only the server. Checked in PGlite (`scripts/check-finance-account-views-migration.mjs`, 9 checks).
+- **`netlify/functions/_finance-split.js`**: loads the assignments (a missing table = none, i.e. today; any other read error = **fail closed**), splits accounts, and builds what one member receives (household accounts plus only their own personal ones, marked `scope: "personal"`).
+- **`simplefin.js`**:
+  - `accounts` saves household accounts to `finaccts_<groupId>` and each personal account to `finaccts_u-<owner>`; the transaction store gets `group_id = u-<owner>` rows for them.
+  - It filters every response, so even a cache written before an account was marked never reaches another member.
+  - Unreadable assignments → 503, nothing saved or served.
+  - `history` adds the owner's `personalDays`.
+  - `remapAccount` refuses a personal account until step 3 can move the relinked account first.
+- **Daily snapshot** (`daily-briefing.js` `snapshotFinanceBalances`, exported for tests): the same split for the cache and the store. Household backup and history (`snapshotScope`) skip assigned accounts; each owner gets `finbackup_u-<owner>` and `finhist_u-<owner>` from `u-<owner>:finance`. Unreadable assignments → the group is skipped that day.
+- **Tests:** `test/finance-split.test.js` (14). The pure split; `accounts` with no, one and stale assignments as Luke and as Marijane; fail-closed; history; remap refusal; the daily snapshot's caches, store rows, history, backup and fail-closed.
+- **Deploy order:** either. Before the migration the server reads "no personal accounts", which is today's behaviour.
+- **Known gap (until step 3):** after a SimpleFIN relink, a personal account's new id isn't assigned yet, so it lands in the household paths until it's merged. Step 3's move marks the new id and moves its rows. Logged in ISSUES.md.

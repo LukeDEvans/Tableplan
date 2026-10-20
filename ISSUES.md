@@ -17,8 +17,10 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
       Policy "members can update own row" plus a table-wide UPDATE grant to `authenticated` lets any member PATCH her own row's `role` to `admin` (reproduced in PGlite against the live policies). Admin unlocks every page, admin settings and, with the views shell, all three views. → Fixed by `migrations/2026-10-20-views-spaces.sql` §3 (UPDATE limited to `display_name` + `personal_disabled_pages`), applied 2026-10-20; checked afterwards: `authenticated` can no longer UPDATE `role`. Verdict: FIXED.
 
 ## P1
-- [ ] **[P1] Finance accounts per view: decided, not built** (views · finance · 2026-10-20)
-      Luke chose real privacy (personal accounts' data never reaches other members), one SimpleFIN connection split on the server. Design and open questions: FINANCE_SPLIT_DESIGN.md. Verdict: OPEN (build).
+- [ ] **[P1] Finance accounts per view: step 1 built, steps 2–4 to go** (views · finance · 2026-10-20)
+      Server split built (FINANCE_SPLIT_DESIGN.md §6); the client per-view Finance (step 2, `STATE_SCHEMA_VERSION` 8) and the move (step 3) remain. Verdict: OPEN (build).
+- [ ] **[P2] A relinked personal account lands in household paths until merged** (finance · netlify/functions/simplefin.js remapAccount · 2026-10-20)
+      After a SimpleFIN relink the account gets a new id with no assignment, so its balance and new transactions go to the household cache/store until the old→new merge runs. Merging a personal account is refused until step 3's move can mark the new id and move its rows. → Step 3: the merge marks the new id first and moves its household rows to `u-<owner>`. Verdict: OPEN.
 - [ ] **[P2] Switching views swaps Listen's lists under a playing episode** (views · app.js alignScopesToView · 2026-10-20)
       Listen reads the household row in Household and the personal row in Personal, so Up Next and the library change on a switch. The playing item keeps playing (it's held by the engine), but what plays next comes from the view you're in. Not verified with audio (headless). → First TestFlight build: play a podcast, swipe views, check it keeps going and that Up Next is the expected list. Verdict: OPEN.
 - [ ] **[P2] Household tasks show on the Personal calendar but not in Personal's Tasks window** (views · app.js getPlanEventsForRange · 2026-10-20)
