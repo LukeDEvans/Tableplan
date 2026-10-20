@@ -1,6 +1,6 @@
 # Views: Personal, Household, Business — design & plan
 
-Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) merged to `main` in #140 (§13); not deployed. Step 1's migration (`migrations/2026-10-20-views-spaces.sql`, §2.1) applied to prod 2026-10-20. Steps 3–6 and 8 built on `claude/views-data` (§14). Step 7 partly (Google calendars need nothing extra; Finance accounts wait on a decision, §11). Step 9 (TestFlight) is Luke's.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
+Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) merged to `main` in #140 (§13) and deployed 2026-10-20 with the data split (#143). Step 1's migration (`migrations/2026-10-20-views-spaces.sql`, §2.1) applied to prod 2026-10-20. Steps 3–6 and 8 built on `claude/views-data` (§14). Step 7 partly (Google calendars need nothing extra; Finance accounts wait on a decision, §11). Step 9 (TestFlight) is Luke's.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
 
 Goal: the app splits into three views, each with its own pages, data and look:
 - **Personal** is the user's own space.
