@@ -19,6 +19,12 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 ## P1
 - [x] **[P2] On the iPhone, one music search source never answers** (music · music-streaming.js search · 2026-10-21)
       Listen › Music search stayed on "Searching…" on the iPhone (Luke); Apple Music playback from Recently played still works. A provider's search never settled, so the whole search waited. Couldn't tell which from here (no device, no archive.org access): suspects are the native Apple Music `api` call or the Internet Archive fetch through CapacitorHttp. → Fixed the symptom with a 12 s per-provider limit (#156); the note under the results now names the source that timed out. Next: on the phone, see which source the note names, then fix that source. → 2026-10-21: on the TestFlight build results took the full 12 s and were all Apple Music, so the stalled source was Internet Archive / Musopen. Luke chose to stop searching them (#158). Verdict: FIXED.
+- [ ] **[P2] Dutch practice runs on a provisional word list** (language · language-nl-starter.js · 2026-10-20)
+      Luke's Rosetta Stone "November 2026" Dutch list wasn't available (not in repo/Drive/Gmail; RS's public course-contents PDFs are the 2011 edition, titles only). The game ships with an original starter set, every entry `provisional`. → When the list arrives, add it as a verified level (LANGUAGE_PRACTICE.md §4). Verdict: OPEN (needs input).
+- [ ] **[P3] An older app build re-saving `recreate` drops the Dutch progress keys from the row** (language · app.js STATE_SECTIONS · 2026-10-20)
+      Same class as viewDisplayPrefs: an old TestFlight build lists the section's keys itself. A device that already holds the progress keeps it (the merge takes the larger counters), so only a fresh device after such a save would start empty. → Ship the TestFlight build with this change. Verdict: CONFIRMED (mitigated).
+- [ ] **[P3] Practicing the same word offline on two devices at once keeps the larger count, not the sum** (language · language-progress.js mergeWordStats · 2026-10-20)
+      Chosen so stale copies can never lower progress. Verdict: ACCEPTED.
 - [ ] **[P1] Finance accounts per view: step 1 built, steps 2–4 to go** (views · finance · 2026-10-20)
       Server split built (FINANCE_SPLIT_DESIGN.md §6); the client per-view Finance (step 2, `STATE_SCHEMA_VERSION` 8) and the move (step 3) remain. Verdict: OPEN (build).
 - [ ] **[P2] A relinked personal account lands in household paths until merged** (finance · netlify/functions/simplefin.js remapAccount · 2026-10-20)
