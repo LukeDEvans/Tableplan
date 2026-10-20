@@ -124,10 +124,11 @@ personalLayers: { "<spaceId>:<calendarId>": { calendar: true } }
 - Finger moves **right**: the view to the left slides in (Personal → Household → Business → Personal).
 - Finger moves **left**: the opposite direction (decision 8).
 
-**Where swipes count (decision 9):** only on the **view band**. Swipes anywhere else keep their normal meaning:
-- card rows scroll as usual;
-- iOS's edge-swipe "back" is untouched;
-- the page dropdown's accordion is unaffected.
+**Where swipes count (decision 9, changed by decision 24):**
+- on the **landing page**, a swipe **anywhere on the page** (not only the band), except from a text box or something that scrolls sideways itself;
+- on a page, only on the **view band** in the open page menu. Swipes anywhere else on a page keep their normal meaning (card rows scroll, iOS's edge swipe, the menu's accordion).
+
+**Switching from a page (decision 25):** with the page menu open, a swipe, the chevrons or the arrow keys change **only the menu**: the band shows the new view's name and the menu lists its pages. The page on screen, its data and its look stay as they are until a page in the new view is picked; picking one switches the view and opens that page. Closing the menu without picking keeps the current view.
 
 The band is shown:
 - on the **landing page**, below the LDE sailboat logo;
@@ -136,7 +137,7 @@ The band is shown:
 In both places it uses the cursive font of the page-menu tabs and the Meal Plan.
 
 **Fallbacks (decision 10):**
-- **‹ ›** chevrons on either side of the view name;
+- **‹ ›** chevrons on either side of the view name in the page menu (not on the landing page, decision 24);
 - the **left/right arrow keys** on the laptop, active on the landing page or while the page menu is open.
 
 **Starting view (decision 11):**
@@ -260,6 +261,12 @@ The migration must be **safe with older clients**. Older TestFlight builds don't
 21. Watch & Listen play positions: **shared, last played wins**.
 22. Meal Plan: **one plan, Household's**, shown and edited from Personal.
 23. Mail AI recipe toggles: **stay in Mail AI**, with a link from Meal Plan settings. This closes the SETTINGS_AUDIT open item.
+
+Later the same day (Luke, 2026-10-20, after the first deploy):
+
+24. Landing page: **no chevrons**; on the phone a **swipe anywhere on the landing page** switches views (replaces decision 9 there; the page menu keeps band-only swipes and its chevrons).
+25. From an open page, switching views in the menu **doesn't change the screen** until a page in the new view is picked.
+26. The **Overview** (the day's write-up with Calendar / Tasks / Tonight) moves off the bottom of the landing page, where it widened the page and let it scroll sideways. It's **"Overview" at the top** of the landing links and the page menu and opens **a window over the current page**. **Personal view only.**
 24. Business roles: **decided later**. Keep owner/manager/employee in the data now; define permissions with a security review before the first invite.
 
 ## 11. Open
@@ -337,3 +344,10 @@ Read from the live database first (read-only): Luke's own Calendar (4 events), L
 - **Retired:** the household/personal switch (`setAllScopes`, the header toggle markup and CSS).
 - **Verified:** `npm test` (2558; the views tests now actually run, since vitest's include list was missing them); `npm run qa:views` 83/83 (rows per view, Business calendar, layers on/off, open-in-view, game card, Home glance, household member); `qa:page-groups` 47/47; `qa-gcal` 20/20; `qa-settings`; boot check.
 - **Not verified:** against the real database with two devices; the iPhone app; Listen playback across a switch (ISSUES.md).
+
+## 15. As built: Overview window, landing swipes, menu-only switching (decisions 24–26, 2026-10-20)
+
+- **Overview:** `#overviewDialog` (index.html) holds the old home briefing (`renderHomeBriefing` / `renderHomeBriefingPanels`, same ids). `openOverview()` from `#homeOverviewBtn` / `#titleOverviewBtn`, the first entry in each menu, shown only when the view (the menu's view, for the page menu) is Personal. The AI write-up is fetched only when the window opens, not on every landing visit. Its Calendar / Tasks / Tonight panels close the window and open the page. Picking Overview from a menu showing Personal switches to Personal first.
+- **Landing swipes:** `wireLandingSwipe()` on `#homeMainPage` (same 36 px, clearly-sideways rule); skipped from inputs, from anything that scrolls sideways, and while a dialog is open. The landing band has no chevrons and no touch handler of its own (mouse drag and the arrow keys still work on a laptop).
+- **Menu-only switching:** `menuViewKey()` is the view the open page menu shows (`menuViewKey.view`, null = the current view). `stepCurrentView` routes to `stepMenuView` while the menu is open on a page; `syncPageMenuToView()` lists that view's pages (flat or grouped) and the Overview entry. `commitMenuView()` runs when a page (or Overview) is picked: `applyView(view, { keepPage: true })`, then the page opens. Opening or closing the menu drops an unpicked view.
+- **Checks:** `qa:views` 105/105 (no landing chevrons, Overview placement / window / panel, swipes on the logo and the list, the menu showing Personal and Business while Household's Calendar stays, closing keeps the view, picking News / Calendar / Overview switches), `qa:page-groups`, boot check, full suite.

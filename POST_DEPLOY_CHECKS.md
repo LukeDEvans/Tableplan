@@ -5,6 +5,16 @@ shipped yet is listed in [UNDEPLOYED.md](UNDEPLOYED.md).) When deploying, move e
 UNDEPLOYED.md entry's "After deploying" steps here under a heading for that deploy.
 Tick items off as they're done; delete a deploy's section once it's all ticked.
 
+## 2026-10-20 deploy #2 (Overview window, landing swipes, menu-only view switching)
+Web deploy plus a TestFlight build from `main`. Service worker cache bumped to v51 (hard-refresh once on the laptop; Marijane just reloads). No migrations, no new env vars.
+
+- **Overview, landing swipes, menu-only switching** · #151 · Overview (the day's write-up) is no longer under the landing links: it's "Overview" at the top of the landing list and the page menu, Personal only, and opens a window. No chevrons on the landing band; a swipe anywhere on the landing page switches views. From a page, switching views in the open menu changes only the menu until a page is picked.
+  Post-deploy:
+  1. iPhone, landing page in Personal: Overview at the top of the list; no sideways scroll; tap it → the window with today's write-up; Close.
+  2. Swipe left/right anywhere on the landing page (logo, list, empty space): the view changes. Overview disappears in Household and Business.
+  3. On Calendar, open the page menu, swipe the band to Household: the menu lists Household's pages but the Calendar behind is unchanged; tap Calendar → Household's Calendar. Close the menu without picking → nothing changes.
+  4. Marijane (web): no Overview, no chevrons, nothing else different.
+
 ## 2026-10-20 deploy (views: Personal / Household / Business; finance split steps 1–2; Household and Urban Greens themes; page-menu polish)
 Web deploy plus a TestFlight build from `main`. Service worker cache bumped to v50, so hard-refresh once on the laptop; Marijane uses the web app, so she only needs to reload. Migrations already applied (views spaces, finance account views); no new env vars. Changed Netlify functions: `simplefin`, `daily-briefing`.
 

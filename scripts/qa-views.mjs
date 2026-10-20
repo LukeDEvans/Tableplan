@@ -84,11 +84,30 @@ try {
   check(order, "the band sits between the logo and the links");
   const font = await page.evaluate(() => getComputedStyle(document.querySelector("#homeViewBand .view-band-name")).fontFamily);
   check(/Great Vibes/.test(font), "the band uses the script face", font);
-  check((await visibleIn("#homeViewBand .view-band-step")).length === 2, "chevrons on either side");
+  check((await visibleIn("#homeViewBand .view-band-step")).length === 0, "no chevrons on the landing band (swipe the page instead)");
+  check(await page.evaluate(() => { const o = document.getElementById("homeOverviewBtn"); const head = document.querySelector("#homePageGroups .page-group-head"); return !!o?.offsetParent && o.getBoundingClientRect().bottom <= head.getBoundingClientRect().top; }), "Overview sits at the top of the landing links");
+  check(!(await page.evaluate(() => document.getElementById("homeBriefing")?.offsetParent)), "no overview under the landing links");
+
+  console.log("The Overview window (Personal only)");
+  await page.click("#homeOverviewBtn");
+  await page.waitForTimeout(400);
+  const ov = await page.evaluate(() => { const d = document.getElementById("overviewDialog"); return d?.open ? d.textContent.replace(/\s+/g, " ") : ""; });
+  check(/Overview/.test(ov) && /Calendar/.test(ov) && /Tasks/.test(ov), "Overview opens a window with the write-up", ov.slice(0, 90));
+  check(await fits(), "the Overview window fits 390px");
+  await shot("overview");
+  await page.click("#closeOverviewBtn");
+  await page.waitForTimeout(200);
+  check(!(await page.evaluate(() => document.getElementById("overviewDialog").open)), "Close shuts it");
+  await page.click("#homeOverviewBtn");
+  await page.waitForTimeout(300);
+  await page.click("#hbCalPanel");
+  await page.waitForTimeout(500);
+  check(await area() === "plan" && !(await page.evaluate(() => document.getElementById("overviewDialog").open)), "its Calendar panel closes it and opens the Calendar");
+  await goHome();
   check(JSON.stringify(await visibleIn("#homePageGroups .page-group-head")) === JSON.stringify(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]), "Personal keeps the six groups");
   await shot("personal");
 
-  console.log("Swiping on the band");
+  console.log("Swiping on the landing page");
   await swipe("#homeViewBand", 90);
   check(await view() === "household", "finger right → Household");
   await page.waitForTimeout(100);
@@ -97,6 +116,7 @@ try {
   check((await visibleIn("#homePageGroups .page-group-head")).length === 0, "no group headings in Household");
   check(await palette() === "household", "Household wears the Household theme", await palette());
   check(await fits(), "Household landing fits 390px");
+  check(!(await page.evaluate(() => document.getElementById("homeOverviewBtn").offsetParent)), "no Overview in Household");
   await shot("household");
   await swipe("#homeViewBand", 90);
   check(await view() === "business", "finger right again → Business (wraps)");
@@ -114,15 +134,11 @@ try {
   await swipe("#homeViewBand", 60, 80);
   check(await view() === "household", "a mostly vertical drag doesn't switch");
   await swipe(".home-logo", 120);
-  check(await view() === "household", "a swipe off the band doesn't switch");
+  check(await view() === "business", "a swipe anywhere on the page switches too (on the logo)");
+  await swipe("#homePageGroups", -120);
+  check(await view() === "household", "…and on the page list");
 
-  console.log("Chevrons and arrow keys");
-  await page.click('#homeViewBand [data-view-step="1"]');
-  await page.waitForTimeout(300);
-  check(await view() === "personal", "› steps right");
-  await page.click('#homeViewBand [data-view-step="-1"]');
-  await page.waitForTimeout(300);
-  check(await view() === "household", "‹ steps left");
+  console.log("Arrow keys");
   await page.keyboard.press("ArrowRight");
   await page.waitForTimeout(300);
   check(await view() === "personal", "→ key steps right on the landing page");
@@ -148,35 +164,54 @@ try {
   check(await fits(), "header band + menu fit 390px");
   await shot("menu-household");
   await swipe("#headerViewBand", -90);
-  check(await view() === "personal", "swiping the header band switches views");
-  check(await area() === "plan", "Calendar stays open (Personal has it)");
+  check(await bandName("#headerViewBand") === "Personal", "swiping the header band shows Personal in the band");
+  check(JSON.stringify(await visibleIn("#pageTitleMenu .page-group-head")) === JSON.stringify(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]), "…and Personal's pages in the menu");
+  check(await view() === "household" && await area() === "plan" && (await page.evaluate(() => window.__liveQA.scopes())).plan === "household", "the page doesn't change yet: still Household's Calendar");
+  check(await palette() === "household", "…in Household's look");
   check(!(await page.evaluate(() => document.querySelector("#pageTitleMenu").hidden)), "the menu stays open");
-  check(JSON.stringify(await visibleIn("#pageTitleMenu .page-group-head")) === JSON.stringify(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]), "menu shows Personal's groups");
+  check(!!(await page.evaluate(() => document.getElementById("titleOverviewBtn").offsetParent)), "Overview is listed at the top of Personal's menu");
   await page.keyboard.press("ArrowRight");
   await page.waitForTimeout(300);
-  check(await view() === "business", "→ key works while the menu is open");
-  check(await area() === "plan", "Calendar stays open (Business has it)");
+  check(await bandName("#headerViewBand") === "Business" && JSON.stringify(await flatPages("#pageTitleMenu")) === JSON.stringify(["Calendar"]), "→ key steps the menu to Business");
+  check(await view() === "household", "…still without changing the page");
   await page.click("#headerViewBand .view-band-name");
   await page.waitForTimeout(300);
   check(await page.evaluate(() => document.querySelector("#pageTitleMenu").hidden), "tapping the name closes the menu, like the title");
   check(await page.evaluate(() => !!document.querySelector("#pageTitle").offsetParent), "the page title is back");
+  check(await view() === "household", "closing without picking a page keeps Household");
+  await page.click("#pageTitleBtn");
+  await page.waitForTimeout(300);
+  check(await bandName("#headerViewBand") === "Household", "reopening the menu starts from the current view");
 
-  console.log("A page the new view doesn't hold");
-  await page.click("#pageTitleBtn");
+  console.log("Picking a page in another view");
+  await page.click('#headerViewBand [data-view-step="1"]'); // Household → Personal (menu only)
   await page.waitForTimeout(300);
-  await page.click('#headerViewBand [data-view-step="1"]'); // Business → Household
-  await page.waitForTimeout(200);
-  await page.click('#headerViewBand [data-view-step="1"]'); // Household → Personal
-  await page.waitForTimeout(300);
-  check(await view() === "personal", "back in Personal");
   await page.evaluate(() => document.querySelector("#titleNewsBtn").click());
-  await page.waitForTimeout(600);
-  check(await area() === "news", "News opens from Personal");
+  await page.waitForTimeout(700);
+  check(await view() === "personal" && await area() === "news", "picking News switches to Personal, on News", `${await view()} / ${await area()}`);
+  check(await page.evaluate(() => document.querySelector("#pageTitleMenu").hidden), "the menu closes");
   await page.click("#pageTitleBtn");
   await page.waitForTimeout(300);
-  await page.click('#headerViewBand [data-view-step="-1"]'); // → Household
+  await page.click('#headerViewBand [data-view-step="-1"]'); // → Household (menu only)
+  await page.waitForTimeout(300);
+  check(await view() === "personal" && await area() === "news", "News stays put while the menu shows Household");
+  await page.evaluate(() => document.querySelector("#titlePlanBtn").click());
+  await page.waitForTimeout(700);
+  check(await view() === "household" && await area() === "plan" && (await page.evaluate(() => window.__liveQA.scopes())).plan === "household", "picking Calendar switches to Household's Calendar", `${await view()} / ${await area()}`);
+  check(await palette() === "household", "…in Household's look");
+  await page.click("#pageTitleBtn");
+  await page.waitForTimeout(300);
+  await page.click('#headerViewBand [data-view-step="1"]'); // → Personal (menu only)
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.querySelector("#titleOverviewBtn").click());
+  await page.waitForTimeout(500);
+  check(await view() === "personal" && await page.evaluate(() => document.getElementById("overviewDialog").open), "Overview from the menu switches to Personal and opens over the page");
+  await page.click("#closeOverviewBtn");
+  await page.waitForTimeout(200);
+  await goHome();
+  await page.keyboard.press("ArrowLeft"); // Personal → Household for the next part
   await page.waitForTimeout(400);
-  check(await view() === "household" && await area() === "home", "switching to Household from News lands on its landing page", `${await view()} / ${await area()}`);
+  check(await view() === "household", "back to Household");
 
   console.log("Opening a page outside the view (dock, link)");
   await page.evaluate(() => document.querySelector("#homeShopBtn").click());
@@ -203,7 +238,7 @@ try {
 
   console.log("Each view reads its own rows");
   const scopes = () => page.evaluate(() => window.__liveQA.scopes());
-  const go = async (dir) => { await page.click(`#homeViewBand [data-view-step="${dir}"]`); await page.waitForTimeout(500); };
+  const go = async (dir) => { await page.keyboard.press(dir > 0 ? "ArrowRight" : "ArrowLeft"); await page.waitForTimeout(500); };
   await goHome();
   await page.evaluate(() => window.__liveQA.businessSpaceForQa({ id: "biz-qa", name: "Business", role: "owner" }));
   while (await view() !== "personal") await go(1);
@@ -301,8 +336,6 @@ try {
   const card = await page.evaluate(() => { const d = document.getElementById("gameCardDialog"); return d?.open ? d.textContent.replace(/\s+/g, " ") : ""; });
   check(/Minnesota Vikings/.test(card) && /21/.test(card) && /3rd 5:32/.test(card), "in Household a ticker tap opens the game card", card.slice(0, 90));
   check(await view() === "household" && await area() !== "scores", "…and stays in Household");
-  const glance = await page.evaluate(() => document.getElementById("homeBriefing")?.textContent.replace(/\s+/g, " ") || "");
-  check(!/Shift|Dentist/.test(glance), "Home's calendar glance shows Household's events, not Business or Personal", glance.slice(0, 120));
   check(await fits(), "the card fits 390px");
   await shot("game-card");
   await page.click("[data-game-card-close]");
@@ -317,6 +350,7 @@ try {
   check(await view() === "household", "Household only");
   check(await bandName("#homeViewBand") === "Household", "the band reads Household");
   check((await visibleIn("#homeViewBand .view-band-step")).length === 0, "no chevrons");
+  check(!(await page.evaluate(() => document.getElementById("homeOverviewBtn").offsetParent)), "no Overview for her");
   await swipe("#homeViewBand", 90);
   await page.keyboard.press("ArrowRight");
   await page.waitForTimeout(300);
