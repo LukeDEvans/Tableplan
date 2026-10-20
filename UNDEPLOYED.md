@@ -10,6 +10,10 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Themes: Household and Urban Greens** · #138 · **TestFlight build** (client-only; the laptop needs a Netlify deploy). Two new themes in Settings › Display, each with light and dark: Household (navy, dusty blue, blush, sage) and Urban Greens (the logo's green and gray, with black and white). Classic stays the default. No migration, no new env vars.
+  Post-deploy:
+  1. Settings › Display: pick Household, then Urban Greens, in Light and Dark — Calendar, Meal Plan, Shop, Finance and News read clearly.
+  2. Open an email in Dark mode with each theme — the white reading surface keeps readable buttons and links.
 - **Page menus: groups slide open and closed** · #137 · **TestFlight build** (client-only; the laptop needs a Netlify deploy). Tapping a group heading slides the old group shut while the new one slides open (~0.2s), with the pages fading in. Off when the phone's Reduce Motion is on. No migration, no new env vars.
   Post-deploy:
   1. Landing page: tap Plan, then Inform — Plan slides closed while Inform slides open. Same in the page menu.
