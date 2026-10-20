@@ -166,7 +166,7 @@ export function displayPrefsForView(view, { base, viewPrefs, available } = {}) {
 // SECTION_SCOPE "toggle"); the Calendar can also live in the business row.
 // Everything else has one fixed home (Meal Plan, Finance… household; Exercise,
 // Leisure… personal) and no view changes that.
-export const VIEW_TOGGLE_SECTIONS = Object.freeze(["grocery", "do", "watch", "media", "plan", "travel"]);
+export const VIEW_TOGGLE_SECTIONS = Object.freeze(["grocery", "do", "watch", "media", "plan", "travel", "finance"]);
 
 // The row a view reads for a toggleable section:
 //   Household → the household row, for everything.
@@ -176,7 +176,11 @@ export const VIEW_TOGGLE_SECTIONS = Object.freeze(["grocery", "do", "watch", "me
 //               (Business has no other pages yet).
 // `hasBusiness` is false until the business space has loaded (or for someone
 // with none); the Calendar then stays personal rather than pointing nowhere.
-export function scopeForView(view, section, { hasBusiness = false } = {}) {
+export function scopeForView(view, section, { hasBusiness = false, hasPersonalFinance = false } = {}) {
+  // Finance (FINANCE_SPLIT_DESIGN.md): Personal shows the person's own accounts —
+  // but only once they have any (accounts marked Personal). Until then Personal
+  // keeps showing the household's Finance, exactly as before.
+  if (section === "finance") return view !== "household" && hasPersonalFinance ? "personal" : "household";
   // Explore isn't a Household page, so its trips stay on the person's own row.
   // (Swapping it would also wake the trip safety net in applyStoredState, which
   // restores a device's trip backup into an empty incoming row — copying

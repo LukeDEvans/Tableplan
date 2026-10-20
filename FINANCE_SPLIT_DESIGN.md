@@ -1,6 +1,6 @@
 # Finance: personal accounts — design & plan
 
-Status: **APPROVED (Luke, 2026-10-20; recommendations accepted, §3). Step 1 built (§6); its migration applied to prod 2026-10-20.** Follows VIEWS_DESIGN.md decision 5 and Luke's choice of "Option 2" (2026-10-20): personal accounts are **truly private**, not just hidden, using **one SimpleFIN connection** that the server splits.
+Status: **APPROVED (Luke, 2026-10-20; recommendations accepted, §3). Step 1 built (§6); its migration applied to prod 2026-10-20. Step 2 built (§7).** Follows VIEWS_DESIGN.md decision 5 and Luke's choice of "Option 2" (2026-10-20): personal accounts are **truly private**, not just hidden, using **one SimpleFIN connection** that the server splits.
 
 Goal: Luke marks some accounts **Personal**. Their balances, transactions, labels and history then live only in Luke's own data. His wife's app never receives them, not even in the background. Household accounts work exactly as today.
 
@@ -66,7 +66,7 @@ create table live_finance_account_views (
 - **Personal** (Luke): his personal accounts, with their own budget, labels and alerts, plus a read-only **Household summary** card (net worth, this month's spending) with "Open in Household". A fuller household layer can come later.
 - **Business**: no Finance page yet.
 
-The finance section becomes switchable per view like Calendar and Listen (`SECTION_SCOPE.finance = "toggle"`; Household reads `<groupId>:finance`, Personal reads `u-<uid>:finance`), through the same `setSectionScope` swap. **This bumps `STATE_SCHEMA_VERSION`** (8). Older builds then can't save finance until updated, so the TestFlight build ships first.
+The finance section becomes switchable per view like Calendar and Listen (`SECTION_SCOPE.finance = "toggle"`; Household reads `<groupId>:finance`, Personal reads `u-<uid>:finance`), through the same `setSectionScope` swap. **`STATE_SCHEMA_VERSION` 8** comes with step 3 (moved from step 2, see §7): older builds then can't save finance until updated, so the TestFlight build ships first.
 
 ### 2.4 Moving what's already there (one time, after a dry run)
 
@@ -101,8 +101,8 @@ Nothing new reads on a timer. The split adds one tiny read per bank pull (the as
 ## 4. Build order
 
 1. **Assignment table + server split** (migration, gated). The server sorts by assignment, but no account is personal yet, so nothing changes. Tests: ingest, cache and history split with mocked bridge data; RLS check as Marijane.
-2. **Client: finance per view** (`STATE_SCHEMA_VERSION` 8): the finance section swaps with the view; Personal's Finance page; the Household summary card; the account picker (admin only, disabled until step 3). Every total and alert respects the view. TestFlight build before any account is marked.
-3. **The move:** dry-run report, backup, move, verify as Marijane. Luke confirms in the app.
+2. **Client: finance per view**: the finance section swaps with the view; Personal's Finance page; the Household summary card. Every total and alert respects the view. TestFlight build before any account is marked.
+3. **The move** (`STATE_SCHEMA_VERSION` 8): the account picker, dry-run report, backup, move, verify as Marijane. Luke confirms in the app.
 4. **Clean-up:** after 30 days, drop the move backup; ISSUES entries closed.
 
 Each step is its own PR with QA. Steps 1 and 3 touch production data and wait for Luke's OK.
@@ -130,3 +130,14 @@ Nothing is marked Personal yet, so step 1 changes nothing anyone sees. Its tests
 - **Tests:** `test/finance-split.test.js` (14). The pure split; `accounts` with no, one and stale assignments as Luke and as Marijane; fail-closed; history; remap refusal; the daily snapshot's caches, store rows, history, backup and fail-closed.
 - **Deploy order:** either. Before the migration the server reads "no personal accounts", which is today's behaviour.
 - **Known gap (until step 3):** after a SimpleFIN relink, a personal account's new id isn't assigned yet, so it lands in the household paths until it's merged. Step 3's move marks the new id and moves its rows. Logged in ISSUES.md.
+
+## 7. As built: step 2 (branch `claude/finance-split-step2`, 2026-10-20)
+
+Nobody owns a personal account yet, so step 2 also changes nothing anyone sees.
+
+- **Finance follows the view, gated.** `views.js` `scopeForView`: Household → household finance; Personal (and Business) → the person's own `u-<uid>:finance` **only when they own at least one personal account** (`hasPersonalFinance`). Otherwise Personal keeps showing household finance, as today. `SECTION_SCOPE.finance = "toggle"`, defaulting to household.
+- **Where `hasPersonalFinance` comes from:** the person's own rows in `live_finance_account_views` (one tiny read with the business-space load, `limit=1`; RLS lets each person read only their own). Cached on the device as a yes/no (`live-personal-finance-v1`, cleared on account reset). No finance data is ever stored on the device: the off-screen finance copy is stripped before the shadow store is saved.
+- **`finance-ui.js`:** every pulled account is kept in `financeLiveAll`; each view shows `accountsForScope` (`scope: "personal"` in Personal, the rest in Household), and the balance history picks `personalDays` vs `days` the same way. `onFinanceScopeChanged()` (called by `alignScopesToView` after a swap) re-picks, recomputes actuals and recurring, and re-renders. The transaction store reads by the scope's id (`getFinanceStoreGroupId`).
+- **Household card:** Personal Finance shows a read-only card with the household's net worth and this month's spending, and **Open in Household** (switches view, stays on Finance).
+- **No schema bump yet — moved to step 3.** Step 2 writes finance only to the household row (no one is personal), so older builds behave exactly as before. Step 3 is the first change that writes `u-<uid>:finance` with real data; the bump goes with it, after the TestFlight build is on both phones. Step 3 must also check that `tp_protect_finance_merge` and `guardBootEmptyFinance` cover `u-` finance rows.
+- **Checks:** `test/views.test.js` (finance scope rules); `qa:views` 91/91, including flag on → Personal reads its own finance with the Household card, "Open in Household", the shadow never on the device, flag off → back to household; boot check; `qa:page-groups`; full suite 2577.

@@ -236,7 +236,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -586,7 +586,16 @@ function financeSumByAccountIds(ids, liveById) {
 }
 
 let financeLinkStatus = null; // null = unknown yet
-let financeLive = null;       // { accounts, errors, at }
+let financeLive = null;       // { accounts, errors, at } — the bank accounts of the Finance scope on screen
+// What the server last returned, before picking the scope on screen
+// (FINANCE_SPLIT_DESIGN.md): household accounts, plus — for their owner — personal
+// ones marked scope "personal". Re-picked when the view switches.
+let financeLiveAll = null;
+function financeScopeNow() { return getFinanceScope?.() === "personal" ? "personal" : "household"; }
+function accountsForScope(list) {
+  const personal = financeScopeNow() === "personal";
+  return (Array.isArray(list) ? list : []).filter((a) => (a?.scope === "personal") === personal);
+}
 let financeLiveLoading = false;
 
 // ── Durable transaction store (FINANCE_TRANSACTIONS_DESIGN.md §5) ───────────
@@ -825,10 +834,31 @@ function navigateFinanceMonth(delta) {
   renderFinancePage();
 }
 let financeLinkBusy = false;
-let financeHistory = null;    // { "YYYY-MM-DD": { netWorth, balances } } from daily snapshots
+let financeHistory = null;    // { "YYYY-MM-DD": { netWorth, balances } } from daily snapshots — the scope on screen
+let financeHistoryAll = null; // { days, personalDays } as the server sent them
+function pickFinanceHistory() {
+  if (!financeHistoryAll) { financeHistory = null; return; }
+  const days = financeScopeNow() === "personal" ? financeHistoryAll.personalDays : financeHistoryAll.days;
+  financeHistory = (days && typeof days === "object") ? days : {};
+}
 async function loadFinanceHistory() {
   const data = await callNetlifyFunction("simplefin", { action: "history" });
-  financeHistory = (data?.days && typeof data.days === "object") ? data.days : {};
+  financeHistoryAll = { days: data?.days || {}, personalDays: data?.personalDays || {} };
+  pickFinanceHistory();
+  if (getActiveAppArea() === "finance") renderFinancePage();
+}
+
+// The view switched which Finance is on screen (household ⇄ this member's
+// personal accounts): re-pick the bank accounts and history, point the
+// transaction store at that scope, and recompute (FINANCE_SPLIT_DESIGN.md §2.3).
+function onFinanceScopeChanged() {
+  if (financeLiveAll) financeLive = { ...financeLiveAll, accounts: accountsForScope(financeLiveAll.accounts) };
+  pickFinanceHistory();
+  invalidateFinanceLabeled();
+  updateFinanceMonthActuals();
+  updateFinanceRecurring();
+  setPageNotifCount("finance", financeBellCount());
+  if (financeStoreEnabled()) syncFinanceTxnStore(); // ensureFinanceTxnStore switches to the scope's store
   if (getActiveAppArea() === "finance") renderFinancePage();
 }
 
@@ -940,10 +970,11 @@ async function refreshFinanceLive(force = false) {
   // A failed pull keeps the last good accounts/transactions on screen (and their
   // original timestamp) and just records the error — a manual Refresh that hits
   // a bridge hiccup must not blank the page.
-  const prevAccounts = financeLive?.accounts || [];
-  financeLive = data?.accounts
+  const prevAccounts = financeLiveAll?.accounts || [];
+  financeLiveAll = data?.accounts
     ? { accounts: data.accounts, errors: data.errors || [], at }
-    : { accounts: prevAccounts, errors: [data?.error || "Could not reach the bank bridge."], at: prevAccounts.length ? (financeLive?.at || Date.now()) : Date.now() };
+    : { accounts: prevAccounts, errors: [data?.error || "Could not reach the bank bridge."], at: prevAccounts.length ? (financeLiveAll?.at || Date.now()) : Date.now() };
+  financeLive = { ...financeLiveAll, accounts: accountsForScope(financeLiveAll.accounts) };
   invalidateFinanceLabeled(); // fresh accounts payload — the cache (now decoupled from financeLive) needs a nudge
   updateFinanceMonthActuals();
   updateFinanceRecurring();
@@ -2641,6 +2672,7 @@ async function unlinkFinanceBanks() {
   if (data?.ok) {
     financeLinkStatus = { connected: false };
     financeLive = null;
+    financeLiveAll = null;
     invalidateFinanceLabeled(); // manual transactions still need to reflect the disconnect
     financeDetailTxnId = null;
     financeRenamingTxnId = null;
@@ -4216,8 +4248,25 @@ function renderFinancePage() {
     : financeTab === "insights" ? `${showOnboard ? connectPrompt : ""}${insightsView}`
     : (txnsCard || connectPrompt);
 
+  // Personal Finance (FINANCE_SPLIT_DESIGN.md §2.3): this member's own accounts,
+  // with a small read-only summary of the household's and a way over there.
+  const householdSummary = financeScopeNow() === "personal" ? (() => {
+    const days = financeHistoryAll?.days || {};
+    const last = Object.keys(days).sort().at(-1);
+    const nw = last ? Number(days[last]?.netWorth) : NaN;
+    return `
+      <div class="fin-card fin-household-summary">
+        <div class="fin-household-summary-text">
+          <span class="fin-household-summary-label">Household</span>
+          <span class="fin-household-summary-value">${Number.isFinite(nw) ? `Net worth ${escapeHtml(formatFinMoney(nw))}` : "Shared accounts and budget"}</span>
+        </div>
+        <button type="button" class="secondary-btn" data-fin-action="open-household">Open in Household</button>
+      </div>`;
+  })() : "";
+
   grid.innerHTML = `
     <section class="fin-panel">
+      ${householdSummary}
       ${financeTabNav}
       <div class="fin-tab-body" id="fin-tabpanel" role="tabpanel" aria-labelledby="fin-tab-${financeTab}" tabindex="0" data-fin-tab-body="${financeTab}">${tabBody}</div>
     </section>`;
@@ -4384,6 +4433,7 @@ function onFinanceGridClick(e) {
   const action = btn.dataset.finAction;
   // Bank-link actions are async and don't touch budget state
   if (action === "link-banks") { linkFinanceBanks(); return; }
+  if (action === "open-household") { openHouseholdFinance?.(); return; }
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "remap-account") { remapFinanceAccount(btn.dataset.old); return; }
@@ -4997,5 +5047,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }
