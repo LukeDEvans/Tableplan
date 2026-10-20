@@ -23325,6 +23325,15 @@ let activeRecreateHobby = null; // null = activity-card landing
 // curriculum. All of it lives in language-ui.js; Leisure shows its row and hosts
 // its full view. Progress goes in this person's `recreate` section.
 let languageQaGameOptions = null; // local-dev QA only (window.__liveQA.languageGameForQa)
+// A random id for this device, so its practice counts sum with other devices'
+// (language-progress.js). Device-level, not account data: kept across sign-outs.
+function languageDeviceId() {
+  try {
+    let id = localStorage.getItem("live-device-id-v1");
+    if (!id) { id = `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; localStorage.setItem("live-device-id-v1", id); }
+    return id;
+  } catch { return "device"; }
+}
 const languageModule = createLanguageModule({
   gameOptions: () => (localDevMode ? languageQaGameOptions : null),
   getState: () => state,
@@ -23332,6 +23341,7 @@ const languageModule = createLanguageModule({
   escapeHtml: (...a) => escapeHtml(...a),
   icon: (...a) => ldeIcon(...a),
   accountKey: () => authSession?.user?.id || (localDevMode ? "local" : ""),
+  deviceId: () => languageDeviceId(),
   isShowing: () => activeAppArea === "recreate" && activeRecreateHobby === "dutch" && !elements.recreateMainPage?.hidden,
   onChange: () => {},
 });
@@ -23558,7 +23568,10 @@ function renderRecreatePage() {
 
   // Detail: the activity's full view with a back button. A running Dutch game
   // is never rebuilt under the player (other code re-renders this page).
-  if (activeRecreateHobby === "dutch" && elements.recreatePlannerGrid.querySelector("#languagePracticeRoot")) return;
+  if (activeRecreateHobby === "dutch" && elements.recreatePlannerGrid.querySelector("#languagePracticeRoot")) {
+    if (!languageModule.isPlaying()) languageModule.refresh();
+    return;
+  }
   const hobby = RECREATE_HOBBIES.find((h) => h.key === activeRecreateHobby);
   let bodyHtml = "";
   if (activeRecreateHobby === "sailing") bodyHtml = renderSailingLogPanel();

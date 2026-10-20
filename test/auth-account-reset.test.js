@@ -27,6 +27,7 @@ function makeStorage(initial = {}) {
 // must be either account-scoped (cleared) or explicitly listed here.
 const DEVICE_NEUTRAL_KEYS = new Set([
   "cadence-view-mode", "cadence-zoom", "live-dev-sw", "live_local_dev",
+  "live-device-id-v1", // names this device's Dutch-practice counter slot (language-progress.js); holds no account data
   "live_push_subscribed", "live-playback-speed-v1", "live_signed_out_explicitly",
   "live_migrated_personal", "live-dock-slide-v2",
 ]);

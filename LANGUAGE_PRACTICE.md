@@ -26,7 +26,7 @@ Goal: a fast, low-pressure Dutch vocabulary game. Match Dutch words or phrases t
 - **Wrong pair:** both cards flash with an ✕ mark (not color alone), stay in play, nothing else changes. No penalty; the clock keeps running.
 - The board never shows the same pair, Dutch form or English form twice, so each Dutch card has exactly one answer showing. The pair just matched doesn't come back immediately when spares exist; least-shown words are picked first, so every word gets its turn.
 - **Accuracy** = right ÷ completed attempts. A lone selection isn't an attempt. With no attempts, accuracy is "—" and nothing is saved.
-- Hiding the app pauses the clock (a Resume button shows on return). Leaving the Dutch view mid-game ends it as "left"; it's saved once if any pair was tried, and coming back opens the lessons, never a stale clock.
+- Hiding the app pauses the clock (a Resume button shows on return). Leaving the Dutch view mid-game, or closing the app or tab (`pagehide`), ends it as "left"; it's saved once if any pair was tried, and coming back opens the lessons, never a stale clock.
 
 Correctness lives entirely in `language-match.js`: every call takes `now` and the rng is injected, so tests run on a fake clock with seeded randomness. The UI only calls `select()` on taps and `tick()` when `nextDueAt()` says something is due; every timer checks it still belongs to the current game.
 
@@ -60,19 +60,19 @@ So the app ships a **provisional starter set**:
 
 Two keys in this person's **`recreate`** section (always personal, row `u-<uid>:recreate`; the spouse's app never loads it):
 
-- `languageWords` `{ <entryId>: { seen, c, w, last, scope } }`: times shown, right matches, wrong attempts (counted against the Dutch card being matched), last practiced, where.
+- `languageWords` `{ <entryId>: { n: { <deviceId>: [seen, c, w] }, last, scope } }`: per device, times shown, right matches and wrong attempts (counted against the Dutch card being matched); plus last practiced and where. A word's total is the sum across devices.
 - `languageSessions`: the newest **50** session summaries (scope, label, times, correct, attempts, goal, reached, end reason). Per-word detail isn't kept per session.
 
-Written **once per finished session** with the normal `persist()`; nothing per tap or tick. No new tables, functions, buckets, polling or device storage keys. Upper bound ≈ 20 KB for words + ~10 KB for sessions.
+Written **once per finished session** with the normal `persist()`; nothing per tap or tick. No new tables, functions, buckets or polling. One device key, `live-device-id-v1` (a random id naming this device's counter slot; device-level, so it survives sign-out like other device settings). Upper bound ≈ 10 KB per device for words + ~10 KB for sessions.
 
-**Merging** (`mergeStates`): counters only grow, so each field keeps the **larger** value. A stale copy can't lower progress, and merging is order-independent and idempotent. Sessions union by id, newest 50 kept. Tradeoff: two devices practicing the same word offline at the same time keep the larger count, not the sum (accepted; logged in ISSUES.md).
+**Merging** (`mergeStates`): each device only adds to its own counters, so copies merge by keeping each device's **larger** numbers, and totals sum the devices. A stale copy can't lower progress, practice done on a device holding an out-of-date copy still counts in full, and merging is order-independent and idempotent. Sessions union by id, newest 50 kept.
 
 **Accounts:** a game saves only if the signed-in account is the one it started under; sign-out reloads the page anyway.
 
 ## 6. Verification
 
 - Unit: `test/language-match.test.js`, `test/language-curriculum.test.js`, `test/language-progress.test.js` (seeded rng, explicit clock).
-- Browser: `npm run qa:language` (`scripts/qa-language.mjs`, 49 checks through the real app at 390 and 360 px, including dark mode, reduced motion, keyboard, pause, leave mid-game, review, saved progress). Delete `data/tableplan-state.json` first.
+- Browser: `npm run qa:language` (`scripts/qa-language.mjs`, 50 checks through the real app at 390 and 360 px, including dark mode, reduced motion, keyboard, pause, leave mid-game, review, saved progress). Delete `data/tableplan-state.json` first.
 - Not verified: the iPhone app (WKWebView touch), VoiceOver.
 
 ## 7. Not built (on purpose)

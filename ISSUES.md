@@ -22,9 +22,7 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 - [ ] **[P2] Dutch practice runs on a provisional word list** (language · language-nl-starter.js · 2026-10-20)
       Luke's Rosetta Stone "November 2026" Dutch list wasn't available (not in repo/Drive/Gmail; RS's public course-contents PDFs are the 2011 edition, titles only). The game ships with an original starter set, every entry `provisional`. → When the list arrives, add it as a verified level (LANGUAGE_PRACTICE.md §4). Verdict: OPEN (needs input).
 - [ ] **[P3] An older app build re-saving `recreate` drops the Dutch progress keys from the row** (language · app.js STATE_SECTIONS · 2026-10-20)
-      Same class as viewDisplayPrefs: an old TestFlight build lists the section's keys itself. A device that already holds the progress keeps it (the merge takes the larger counters), so only a fresh device after such a save would start empty. → Ship the TestFlight build with this change. Verdict: CONFIRMED (mitigated).
-- [ ] **[P3] Practicing the same word offline on two devices at once keeps the larger count, not the sum** (language · language-progress.js mergeWordStats · 2026-10-20)
-      Chosen so stale copies can never lower progress. Verdict: ACCEPTED.
+      Same class as viewDisplayPrefs: an old build (or the laptop web app before a deploy) lists the section's keys itself and its save replaces the row without them. A device that already holds the progress keeps it (the merge keeps its counters) and writes it back on its next Dutch save; a fresh device in between starts empty. → Ship the TestFlight build and a web deploy. Verdict: CONFIRMED (mitigated).
 - [ ] **[P1] Finance accounts per view: step 1 built, steps 2–4 to go** (views · finance · 2026-10-20)
       Server split built (FINANCE_SPLIT_DESIGN.md §6); the client per-view Finance (step 2, `STATE_SCHEMA_VERSION` 8) and the move (step 3) remain. Verdict: OPEN (build).
 - [ ] **[P2] A relinked personal account lands in household paths until merged** (finance · netlify/functions/simplefin.js remapAccount · 2026-10-20)

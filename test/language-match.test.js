@@ -201,6 +201,22 @@ describe("language-match: replacements", () => {
     assertBoardSound(g);
   });
 
+  it("a pool with clashes keeps a sound board, as full as the clashes allow", () => {
+    // man/husband share "de man"; woman/wife share "de vrouw": at most 2 fit at once.
+    const p = [
+      { id: "m", text: "de man", en: "man" }, { id: "h", text: "de man", en: "husband" },
+      { id: "v", text: "de vrouw", en: "woman" }, { id: "w", text: "de vrouw", en: "wife" },
+      { id: "k", text: "het kind", en: "child" },
+    ];
+    const g = createMatchGame(p, { rng: seededRng(4), target: 100 });
+    startGame(g, 0);
+    expect(activeLeft(g)).toHaveLength(3); // m|h, v|w, k
+    matchOne(g, 100);
+    tick(g, 2000);
+    assertBoardSound(g);
+    expect(activeLeft(g)).toHaveLength(3); // still one of each clash pair, plus het kind
+  });
+
   it("pending replacements are dropped when the game ends", () => {
     const g = newGame(20, { durationMs: 1000 });
     matchOne(g, 900);

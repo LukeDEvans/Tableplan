@@ -22,7 +22,7 @@ import {
   nextDueAt, remainingMs, gameSummary, pairText, MATCH_DEFAULTS,
 } from "./language-match.js";
 import {
-  applySessionToWordStats, addSession, normalizeWordStats, normalizeSessions, lastSession,
+  applySessionToWordStats, addSession, wordTotals, normalizeSessions, lastSession,
 } from "./language-progress.js";
 
 const MISS_FLASH_MS = 450;
@@ -40,6 +40,7 @@ export function createLanguageModule(deps) {
   const {
     getState, persist, escapeHtml, icon,
     accountKey = () => "",
+    deviceId = () => "device", // this device's counter slot (language-progress.js)
     isShowing = () => true,
     now = () => Date.now(),
     setTimer = (fn, ms) => setTimeout(fn, ms),
@@ -63,7 +64,7 @@ export function createLanguageModule(deps) {
   const missTimers = new Map();
 
   const ico = (name, size = 18) => (icon ? icon(name, { size }) : "");
-  const words = () => normalizeWordStats(getState()?.languageWords);
+  const words = () => wordTotals(getState()?.languageWords);
   const sessions = () => normalizeSessions(getState()?.languageSessions);
 
   // ── Data for the Leisure row (rendered by app.js) ──────────────────────────
@@ -155,7 +156,7 @@ export function createLanguageModule(deps) {
     if (!st) return;
     const at = new Date(game.endedAt ?? now()).toISOString();
     const key = scopeKey(view.scope);
-    st.languageWords = applySessionToWordStats(st.languageWords, sum.words, { at, scope: key });
+    st.languageWords = applySessionToWordStats(st.languageWords, sum.words, { at, scope: key, device: deviceId() });
     st.languageSessions = addSession(st.languageSessions, {
       id: `lang-${game.startedAt.toString(36)}-${Math.floor((rng || Math.random)() * 1e9).toString(36)}`,
       lang: course.lang,
@@ -209,6 +210,8 @@ export function createLanguageModule(deps) {
     }
   }
   if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
+  // Closing the app or tab mid-game: record what was played, as "left".
+  if (typeof window !== "undefined") window.addEventListener("pagehide", () => { if (game && game.status === "playing") leave(); });
 
   function resume() {
     if (!game) return;
@@ -498,6 +501,8 @@ export function createLanguageModule(deps) {
   return {
     mount,
     leave,
+    isPlaying: () => !!game && game.status === "playing" && view.screen === "play",
+    refresh: () => { if (root && root.isConnected && view.screen !== "play") render(); },
     openStart,
     openReview: () => openStart(scopeForReview()),
     rowSummary,

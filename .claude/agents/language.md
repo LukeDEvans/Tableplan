@@ -40,9 +40,10 @@ single-page, vanilla-ESM web app. Dutch practice is self-contained in the
   word verified by guesswork. Don't copy Rosetta Stone course content wholesale.
 - **Entry ids are permanent** (progress is keyed by them): never renumber or reuse.
 - **Progress** (`languageWords`, `languageSessions`, personal `recreate` section): written once
-  per finished session, never per tap. Counters merge by taking the larger value per field, so a
-  stale copy can't lower progress; sessions union by id, newest 50 kept. No new tables, functions,
-  polling or device storage keys.
+  per finished session, never per tap. Counters are per device (`n: { <deviceId>: [seen, c, w] }`,
+  device id in `live-device-id-v1`); merging keeps each device's larger numbers and totals sum the
+  devices, so stale copies can't lower progress or swallow a session. Sessions union by id, newest
+  50 kept. No new tables, functions or polling.
 - Leaving the Dutch view mid-game ends it as "left" (saved once if any pair was tried); hiding the
   app pauses it. A game only saves to the account it started in.
 - Review draws only from lessons the person has already practiced.

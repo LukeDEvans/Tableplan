@@ -232,6 +232,16 @@ export function tick(g, now) {
     place(g, pair, li, rights[k]);
     slots.push({ left: li, right: rights[k] });
   });
+  // Slots left empty earlier (a clash kept them blank) get a pair if one fits now.
+  const emptyL = g.left.map((x, i) => (x.state === "empty" ? i : -1)).filter((i) => i >= 0);
+  const emptyR = shuffle(g.right.map((x, i) => (x.state === "empty" ? i : -1)).filter((i) => i >= 0), g.rng);
+  for (let k = 0; k < Math.min(emptyL.length, emptyR.length); k += 1) {
+    const pair = pickPair(g, placed);
+    if (!pair) break;
+    placed.push(pair.id);
+    place(g, pair, emptyL[k], emptyR[k]);
+    slots.push({ left: emptyL[k], right: emptyR[k] });
+  }
   g.lastEvent = { type: "refill", slots };
   return [g.lastEvent];
 }

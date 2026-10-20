@@ -115,7 +115,7 @@ const UNITS = [
     ]],
     [2, "Time words", [
       ["de dag", "day"], ["de week", "week"], ["de maand", "month"], ["het jaar", "year"],
-      ["de ochtend", "morning"], ["de avond", "evening"], ["de nacht", "night"], ["nu", "now"],
+      ["de middag", "afternoon"], ["de avond", "evening"], ["de nacht", "night"], ["nu", "now"],
       ["altijd", "always"], ["nooit", "never"],
     ]],
   ]],
