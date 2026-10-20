@@ -130,6 +130,7 @@
                 <button type="button" class="view-band-step" data-view-step="1" aria-label="Next view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg></button>
               </div>
               <div class="page-title-menu page-groups" id="pageTitleMenu" hidden>
+                <button type="button" class="page-overview-btn" id="titleOverviewBtn" hidden>Overview</button>
                 <div class="page-group" data-page-group="plan">
                   <button type="button" class="page-group-head" aria-expanded="false" aria-controls="titleGroupPlan"><span>Plan</span></button>
                   <div class="page-group-pages" id="titleGroupPlan" hidden>
@@ -280,11 +281,10 @@
             <div class="home-hero">
               <img class="home-logo" src="./home-logo.png" alt="Live" width="1023" height="836" />
               <div class="view-band" id="homeViewBand" role="group" aria-roledescription="view switcher" aria-label="View" hidden>
-                <button type="button" class="view-band-step" data-view-step="-1" aria-label="Previous view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button>
                 <span class="view-band-name" aria-live="polite"></span>
-                <button type="button" class="view-band-step" data-view-step="1" aria-label="Next view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg></button>
               </div>
               <nav class="home-links page-groups" id="homePageGroups" aria-label="App pages">
+                <button type="button" class="page-overview-btn" id="homeOverviewBtn" hidden>Overview</button>
                 <div class="page-group" data-page-group="plan">
                   <button type="button" class="page-group-head" aria-expanded="false" aria-controls="homeGroupPlan"><span>Plan</span></button>
                   <div class="page-group-pages" id="homeGroupPlan" hidden>
@@ -330,16 +330,6 @@
                   </div>
                 </div>
               </nav>
-            </div>
-            <div class="home-briefing" id="homeBriefing" hidden>
-              <div class="home-briefing-top">
-                <span class="home-briefing-date" id="homeBriefingDate"></span>
-                <button class="home-briefing-refresh" id="homeBriefingRefresh" type="button" aria-label="Refresh briefing">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                </button>
-              </div>
-              <div class="home-briefing-ai" id="homeBriefingAi"></div>
-              <div class="home-briefing-panels" id="homeBriefingPanels"></div>
             </div>
           </div>
         </section>
@@ -1193,6 +1183,27 @@
             <button class="secondary-btn" type="button" id="watchLogSkipBtn">Skip</button>
             <button class="primary-btn" type="button" id="watchLogSaveBtn">Save &amp; Archive</button>
           </div>
+        </div>
+      </dialog>
+
+      <dialog class="recipe-dialog auth-dialog overview-dialog" id="overviewDialog" aria-labelledby="overviewDialogTitle">
+        <div class="recipe-form home-briefing" id="homeBriefing">
+          <div class="dialog-head">
+            <div>
+              <p class="muted-label" id="homeBriefingDate"></p>
+              <h2 id="overviewDialogTitle">Overview</h2>
+            </div>
+            <div class="dialog-head-actions">
+              <button class="icon-btn" id="homeBriefingRefresh" type="button" aria-label="Refresh overview">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </button>
+              <button class="icon-btn" id="closeOverviewBtn" type="button" aria-label="Close">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+          </div>
+          <div class="home-briefing-ai" id="homeBriefingAi"></div>
+          <div class="home-briefing-panels" id="homeBriefingPanels"></div>
         </div>
       </dialog>
 

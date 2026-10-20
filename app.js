@@ -2462,13 +2462,24 @@ function bindEvents() {
   // Views (views.js): the band, its chevrons, and the arrow keys.
   applyView(currentViewKey(), { quiet: true });
   document.addEventListener("keydown", handleViewArrowKey);
+  wireLandingSwipe();
   for (const row of pageNavButtons()) {
     elements[row.home]?.addEventListener("click", row.open);
     elements[row.title]?.addEventListener("click", (event) => {
+      // A view picked in the open menu takes effect only now, with the page.
+      if (commitMenuView()) { row.open(event); return; }
       if (row.areas.includes(activeAppArea)) { event.stopPropagation(); closePageTitleMenu(); return; }
       row.open(event);
     });
   }
+  document.getElementById("homeOverviewBtn")?.addEventListener("click", openOverview);
+  document.getElementById("titleOverviewBtn")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    commitMenuView();
+    openOverview();
+  });
+  document.getElementById("closeOverviewBtn")?.addEventListener("click", closeOverview);
+  document.getElementById("overviewDialog")?.addEventListener("click", closeDialogOnBackdropClick);
   document.getElementById("homeBriefingRefresh")?.addEventListener("click", () => {
     const todayKey = dateKeyFromDate(new Date());
     try { localStorage.removeItem(`briefing_ai_${todayKey}`); } catch { /* ok */ }
@@ -8694,7 +8705,6 @@ function showHomeApp(event) {
   setPageHash("");
   closePageTitleMenu();
   closeAppMenu();
-  renderHomeBriefing();
 }
 
 // keepView: coming back from the reader (MEDIA_SPLIT_DESIGN.md) — show Media
@@ -16612,7 +16622,7 @@ function alignScopesToView() {
     planRangeCache.clear();
     if (sectionScope("finance") !== financeBefore) onFinanceScopeChanged(); // bank feed, store and history follow
     if (activeAppArea === "plan") renderPlanPage();
-    if (activeAppArea === "home") renderHomeBriefing(); // the Calendar / Tasks glance reads the view's rows
+    if (document.getElementById("overviewDialog")?.open) renderHomeBriefingPanels(); // the glance reads the view's rows
   };
   alignScopesToView.chain = (alignScopesToView.chain || Promise.resolve()).then(run, run);
   return alignScopesToView.chain;
@@ -16759,10 +16769,7 @@ function applyView(view, { direction = 0, quiet = false, keepPage = false } = {}
   renderViewBands(direction);
   updatePageVisibility();
   syncPageGroups(elements.homePageGroups);
-  if (!elements.pageTitleMenu.hidden) {
-    updatePageTitleMenu();
-    if (!flat) openPageGroup(elements.pageTitleMenu, groupForArea(activeAppArea));
-  }
+  if (!elements.pageTitleMenu.hidden) syncPageMenuToView();
   if (keepPage || quiet) return;
   // A page this view doesn't hold → its landing page; otherwise stay put.
   const page = pageKeyForArea(activeAppArea);
@@ -16775,19 +16782,97 @@ function applyView(view, { direction = 0, quiet = false, keepPage = false } = {}
 
 function stepCurrentView(direction) {
   if (!viewIsSwitchable()) return;
+  // On a page, with its menu open: switch only the menu (Luke, 2026-10-20). The
+  // page, its data and its look stay until a page in the new view is picked.
+  if (pageMenuOpenOnPage()) { stepMenuView(direction); return; }
   currentViewKey.chosen = true;
   applyView(stepView(currentViewKey(), direction, currentViewList()), { direction });
 }
 
-// Both bands show the current view's name; chevrons only for someone who can
-// switch. The name slides out the way the finger went and the next slides in.
+// The view the open page menu shows: the current view, or one the person has
+// swiped to in the menu but not yet chosen (null = the current view).
+function menuViewKey() {
+  return menuViewKey.view || currentViewKey();
+}
+
+function pageMenuOpenOnPage() {
+  return activeAppArea !== "home" && !elements.pageTitleMenu.hidden && elements.pageTitleMenu.classList.contains("is-open");
+}
+
+function stepMenuView(direction) {
+  const next = stepView(menuViewKey(), direction, currentViewList());
+  menuViewKey.view = next === currentViewKey() ? null : next;
+  renderViewBands(direction);
+  syncPageMenuToView();
+}
+
+// The page menu lists the pages of the view it shows, grouped (Personal) or flat.
+function syncPageMenuToView() {
+  const view = menuViewKey();
+  const flat = isFlatView(view);
+  setFlatPageGroups(elements.pageTitleMenu, flat);
+  updatePageTitleMenu();
+  if (!flat) {
+    const page = pageKeyForArea(activeAppArea);
+    openPageGroup(elements.pageTitleMenu, page && viewHasPage(view, page) ? groupForArea(activeAppArea) : null);
+  }
+}
+
+// A page (or the Overview) picked from the menu while it shows another view:
+// switch to that view now. True when it did.
+function commitMenuView() {
+  const view = menuViewKey.view;
+  menuViewKey.view = null;
+  if (!view || view === currentViewKey()) return false;
+  currentViewKey.chosen = true;
+  applyView(view, { keepPage: true });
+  return true;
+}
+
+// Swipe left or right anywhere on the landing page to switch views (Luke,
+// 2026-10-20) — not from a text box or something that scrolls sideways itself.
+function wireLandingSwipe() {
+  const page = elements.homeMainPage;
+  if (!page || page.dataset.swipeWired) return;
+  page.dataset.swipeWired = "1";
+  let start = null;
+  page.addEventListener("touchstart", (event) => {
+    start = null;
+    const t = event.touches[0];
+    if (!t || event.touches.length !== 1 || !viewIsSwitchable()) return;
+    if (event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+    if (scrollsSideways(event.target, page)) return;
+    start = { x: t.clientX, y: t.clientY };
+  }, { passive: true });
+  page.addEventListener("touchend", (event) => {
+    const t = event.changedTouches[0];
+    if (!start || !t) return;
+    const step = swipeStep(t.clientX - start.x, t.clientY - start.y);
+    start = null;
+    if (step && activeAppArea === "home" && !document.querySelector("dialog[open]")) stepCurrentView(step);
+  });
+  page.addEventListener("touchcancel", () => { start = null; }, { passive: true });
+}
+
+function scrollsSideways(el, stop) {
+  for (let node = el; node && node !== stop; node = node.parentElement) {
+    if (node.scrollWidth <= node.clientWidth + 1) continue;
+    const overflowX = getComputedStyle(node).overflowX;
+    if (overflowX === "auto" || overflowX === "scroll") return true;
+  }
+  return false;
+}
+
+// Both bands show the view's name — the landing band the current view, the
+// header band the view the open menu shows; chevrons (header only) for someone
+// who can switch. The name slides out the way the finger went and the next slides in.
 function renderViewBands(direction = 0) {
-  const name = VIEW_LABELS[currentViewKey()] || "";
   const switchable = viewIsSwitchable();
   for (const band of [elements.homeViewBand, elements.headerViewBand]) {
     if (!band) continue;
+    const name = VIEW_LABELS[band === elements.headerViewBand ? menuViewKey() : currentViewKey()] || "";
     band.classList.toggle("is-switchable", switchable);
-    band.setAttribute("aria-label", switchable ? `View: ${name}. Swipe or use the arrows to switch.` : `View: ${name}`);
+    band.setAttribute("aria-label", switchable ? `View: ${name}. ${band === elements.homeViewBand ? "Swipe the page" : "Swipe or use the arrows"} to switch.` : `View: ${name}`);
     const label = band.querySelector(".view-band-name");
     if (!label) continue;
     if (!band.dataset.wired) wireViewBand(band);
@@ -16810,8 +16895,9 @@ function renderViewBands(direction = 0) {
   }
 }
 
-// Swipes count on the band only (decision 9), so card rows, the iOS edge
-// swipe and the menus keep their own gestures.
+// In the page menu, swipes count on the band only (decision 9), so the menu
+// keeps its own gestures. On the landing page the whole page takes swipes
+// (wireLandingSwipe), so the landing band listens only for a mouse drag.
 function wireViewBand(band) {
   band.dataset.wired = "1";
   let start = null;
@@ -16822,18 +16908,20 @@ function wireViewBand(band) {
     // The header band stands in for the page title: tapping the name closes the menu.
     if (band === elements.headerViewBand && event.target.closest(".view-band-name")) closePageTitleMenu();
   });
-  band.addEventListener("touchstart", (event) => {
-    const t = event.touches[0];
-    start = t && event.touches.length === 1 ? { x: t.clientX, y: t.clientY } : null;
-  }, { passive: true });
-  band.addEventListener("touchend", (event) => {
-    const t = event.changedTouches[0];
-    if (!start || !t) return;
-    const step = swipeStep(t.clientX - start.x, t.clientY - start.y);
-    start = null;
-    if (step) stepCurrentView(step);
-  });
-  band.addEventListener("touchcancel", () => { start = null; }, { passive: true });
+  if (band !== elements.homeViewBand) {
+    band.addEventListener("touchstart", (event) => {
+      const t = event.touches[0];
+      start = t && event.touches.length === 1 ? { x: t.clientX, y: t.clientY } : null;
+    }, { passive: true });
+    band.addEventListener("touchend", (event) => {
+      const t = event.changedTouches[0];
+      if (!start || !t) return;
+      const step = swipeStep(t.clientX - start.x, t.clientY - start.y);
+      start = null;
+      if (step) stepCurrentView(step);
+    });
+    band.addEventListener("touchcancel", () => { start = null; }, { passive: true });
+  }
   // Mouse / pen drag on a laptop counts too.
   band.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "touch") return;
@@ -16917,18 +17005,21 @@ function pageNavButtons() {
   ];
 }
 
-function pageNavShown(row) {
-  return viewHasPage(currentViewKey(), row.page)
+function pageNavShown(row, view = currentViewKey()) {
+  return viewHasPage(view, row.page)
     && isPagePersonallyEnabled(row.page) && (row.also || []).every((p) => isPagePersonallyEnabled(p));
 }
 
 // The page menu lists every page, with the one you're on marked rather than
 // removed (a group can hold a single page — Message — and shouldn't vanish).
 function updatePageTitleMenu() {
+  const view = menuViewKey();
+  const overview = document.getElementById("titleOverviewBtn");
+  if (overview) overview.hidden = view !== "personal";
   for (const row of pageNavButtons()) {
     const btn = elements[row.title];
     if (!btn) continue;
-    btn.hidden = !pageNavShown(row);
+    btn.hidden = !pageNavShown(row, view);
     const current = row.areas.includes(activeAppArea);
     btn.classList.toggle("is-current", current);
     if (current) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
@@ -16937,6 +17028,8 @@ function updatePageTitleMenu() {
 }
 
 function updatePageVisibility() {
+  const overview = document.getElementById("homeOverviewBtn");
+  if (overview) overview.hidden = currentViewKey() !== "personal";
   for (const row of pageNavButtons()) {
     if (elements[row.home]) elements[row.home].hidden = !pageNavShown(row);
   }
@@ -18417,9 +18510,9 @@ function togglePageTitleMenu(event) {
 }
 
 function openPageTitleMenu() {
-  // Opens on the group of the page you're on; the others stay closed.
-  updatePageTitleMenu();
-  openPageGroup(elements.pageTitleMenu, groupForArea(activeAppArea));
+  // Opens on the current view, on the group of the page you're on; the others stay closed.
+  menuViewKey.view = null;
+  syncPageMenuToView();
   showHeaderViewBand(true);
   elements.pageTitleMenu.hidden = false;
   elements.pageTitleBtn.setAttribute("aria-expanded", "true");
@@ -18427,6 +18520,8 @@ function openPageTitleMenu() {
 }
 
 function closePageTitleMenu() {
+  // A view swiped to in the menu but not chosen is dropped.
+  menuViewKey.view = null;
   if (elements.pageTitleMenu.hidden) return;
   showHeaderViewBand(false);
   elements.pageTitleMenu.classList.remove("is-open");
@@ -46238,10 +46333,25 @@ function buildChatTravelContext() {
 
 // ── Home-screen briefing panel ────────────────────────────────────────────────
 
+// The Overview (Luke, 2026-10-20): a window over the current page, opened from
+// "Overview" at the top of the landing links and the page menu, in the Personal
+// view only. It used to sit under the landing links; there it widened the page.
+function openOverview() {
+  const dialog = document.getElementById("overviewDialog");
+  if (!dialog || currentViewKey() !== "personal") return;
+  closePageTitleMenu();
+  if (!dialog.open) dialog.showModal();
+  renderHomeBriefing();
+}
+
+function closeOverview() {
+  const dialog = document.getElementById("overviewDialog");
+  if (dialog?.open) dialog.close();
+}
+
 async function renderHomeBriefing() {
   const panel = document.getElementById("homeBriefing");
   if (!panel) return;
-  panel.hidden = false;
 
   const dateEl = document.getElementById("homeBriefingDate");
   if (dateEl) {
@@ -46339,9 +46449,9 @@ function renderHomeBriefingPanels() {
     </button>` : ""}
   `;
 
-  document.getElementById("hbCalPanel")?.addEventListener("click", showPlanApp);
-  document.getElementById("hbDoPanel")?.addEventListener("click", showDoApp);
-  document.getElementById("hbEatPanel")?.addEventListener("click", showEatApp);
+  document.getElementById("hbCalPanel")?.addEventListener("click", () => { closeOverview(); showPlanApp(); });
+  document.getElementById("hbDoPanel")?.addEventListener("click", () => { closeOverview(); showDoApp(); });
+  document.getElementById("hbEatPanel")?.addEventListener("click", () => { closeOverview(); showEatApp(); });
 }
 
 async function fetchAndStreamBriefing(targetEl, cacheKey) {
