@@ -19,7 +19,7 @@ import { DIET_OPTIONS, ALLERGEN_OPTIONS, normalizeMemberDiets, normalizeDietEntr
 import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, loadAvatar, resizeImageToAvatar, uploadAvatar, removeAvatar } from './profile.js';
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule, isNewsletterBriefing } from './news-ui.js';
-import { createScoresModule } from './scores-ui.js';
+import { createScoresModule, gameCardHtml } from './scores-ui.js';
 import { createNewsTickerModule } from './news-ticker.js';
 import { normalizeSportsPrefs } from './sports-model.js';
 import { THEMES, THEME_CHOICES, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonEnds } from './theme.js';
@@ -35,7 +35,7 @@ import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKe
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
-import { VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView } from './views.js';
+import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView } from './views.js';
 import * as ExploreScope from './explore-scope.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
@@ -340,7 +340,7 @@ const STATE_SECTIONS = {
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "sportsPrefs", "displayPrefs", "viewDisplayPrefs", "recreateSettingStamps"],
+  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "sportsPrefs", "displayPrefs", "viewDisplayPrefs", "viewLayers", "recreateSettingStamps"],
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
@@ -387,66 +387,120 @@ const SECTION_SCOPE = {
   contacts: "household",  // one shared address book (feeds the birthday calendar)
 };
 const SCOPE_PREFS_KEY = "live-section-scopes-v1";
-const SHADOW_KEY = "live-shadow-sections-v1";
+const SHADOW_KEY = "live-shadow-sections-v1";    // the old single-copy shape, read once to upgrade
+const SHADOW_KEY_V2 = "live-shadow-sections-v2"; // { section: { scope: data } }
+const BUSINESS_SPACE_KEY = "live-business-space-v1";
 
 // Active scope per toggleable section — sticky, defaults to personal.
 let sectionScopes = (() => {
   try { return JSON.parse(localStorage.getItem(SCOPE_PREFS_KEY)) || {}; } catch { return {}; }
 })();
 
-// The INACTIVE scope's data for each toggleable section: { section: {key: value} }
+// The admin's business space (views.js; live_spaces), or null. Kept on the device
+// (account-scoped) so a cold start that left off in Business knows the Calendar's
+// row before the network answers — otherwise business events in the local mirror
+// could be saved to the personal row. Refreshed by loadBusinessSpace().
+let businessSpace = (() => {
+  try { const b = JSON.parse(localStorage.getItem(BUSINESS_SPACE_KEY) || "null"); return b?.id ? b : null; } catch { return null; }
+})();
+
+// The scopes of each toggleable section that are NOT on screen, keyed by scope:
+// { section: { scope: {key: value} } }. Two scopes for most (personal /
+// household); the Calendar has a third, business. Older devices kept one copy
+// per section (always "the other" of personal / household): upgraded once.
 let shadowSections = (() => {
-  try { return JSON.parse(localStorage.getItem(SHADOW_KEY)) || {}; } catch { return {}; }
+  try {
+    const v2 = JSON.parse(localStorage.getItem(SHADOW_KEY_V2) || "null");
+    if (v2 && typeof v2 === "object") return v2;
+    const v1 = JSON.parse(localStorage.getItem(SHADOW_KEY) || "null");
+    return v1 ? upgradeShadowStore(v1, sectionScope) : {};
+  } catch { return {}; }
 })();
 
 function sectionScope(section) {
   const kind = SECTION_SCOPE[section] || "household";
   if (kind !== "toggle") return kind;
+  if (sectionScopes[section] === "business") return section === "plan" && businessSpace?.id ? "business" : "personal";
   if (sectionScopes[section]) return sectionScopes[section] === "household" ? "household" : "personal";
   // Defaults: Shop opens on the household list (the meal plan populates it);
   // every other toggleable page opens on the personal view.
   return section === "grocery" ? "household" : "personal";
 }
 
-function sectionRowId(stateId, section) {
-  if (sectionScope(section) === "personal" && authSession?.user?.id) {
-    return `u-${authSession.user.id}:${section}`;
-  }
-  return `${stateId}:${section}`;
+function scopeRowIds(stateId) {
+  return { stateId, userId: authSession?.user?.id || "", businessId: businessSpace?.id || "" };
 }
 
-// Row id for the scope a toggleable section is NOT currently showing.
-function inactiveSectionRowId(stateId, section) {
-  if (SECTION_SCOPE[section] !== "toggle") return null;
-  return sectionScope(section) === "personal"
-    ? `${stateId}:${section}`
-    : (authSession?.user?.id ? `u-${authSession.user.id}:${section}` : null);
+function sectionRowId(stateId, section) {
+  return rowIdForScope(scopeRowIds(stateId), section, sectionScope(section)) || `${stateId}:${section}`;
+}
+
+// The rows of a toggleable section's scopes that are NOT on screen: [{ scope, id }].
+function inactiveSectionRows(stateId, section) {
+  if (SECTION_SCOPE[section] !== "toggle") return [];
+  const active = sectionScope(section);
+  const ids = scopeRowIds(stateId);
+  return scopesForSection(section, { hasBusiness: Boolean(businessSpace?.id) })
+    .filter((scope) => scope !== active)
+    .map((scope) => ({ scope, id: rowIdForScope(ids, section, scope) }))
+    .filter((r) => r.id);
+}
+
+// Every inactive row, with its section: [{ section, scope, id }].
+function allInactiveSectionRows(stateId) {
+  return Object.keys(STATE_SECTIONS).flatMap((section) => inactiveSectionRows(stateId, section).map((r) => ({ ...r, section })));
+}
+
+function shadowData(section, scope) {
+  const d = shadowSections[section]?.[scope];
+  return d && typeof d === "object" ? d : null;
+}
+function setShadowData(section, scope, data) {
+  if (!shadowSections[section] || typeof shadowSections[section] !== "object") shadowSections[section] = {};
+  shadowSections[section][scope] = data;
+}
+// A section's data in a scope: `state` when that scope is on screen, else its
+// shadow copy (null when this device has none).
+function scopeData(section, scope) {
+  return sectionScope(section) === scope ? state : shadowData(section, scope);
 }
 
 function persistShadowSections() {
-  try { localStorage.setItem(SHADOW_KEY, JSON.stringify(shadowSections)); } catch { /* full */ }
+  try {
+    localStorage.setItem(SHADOW_KEY_V2, JSON.stringify(shadowSections));
+    localStorage.removeItem(SHADOW_KEY);
+  } catch { /* full */ }
 }
 
 // Flip a toggleable section between household and personal view. The active
 // data is flushed to its row first, then swapped with the shadow copy, so
 // nothing is ever lost and both scopes keep their own sync history.
-async function setSectionScope(section, scope) {
+// `quick` (a view switch, views.js): flush only if the section has unsaved
+// changes, and re-download the incoming row only if a stamp check says another
+// device changed it — so swiping between views costs a few tiny requests, not
+// a full download of every section (Listen's row alone is ~100 KB+).
+async function setSectionScope(section, scope, { quick = false } = {}) {
   if (SECTION_SCOPE[section] !== "toggle" || sectionScope(section) === scope) return;
+  if (scope === "business" && !(section === "plan" && businessSpace?.id)) return;
   const keys = STATE_SECTIONS[section] || [];
   const stateId = supabaseConfig().stateId;
+  const from = sectionScope(section);
 
   // 1. Flush the outgoing view's data to its own row (best effort — the
   //    data also survives in the shadow if the network is down).
   try {
-    if (sharedStorageReady && activeSharedStorageProvider) {
-      await writeSectionWithMerge(stateId, section, keys);
+    const dirty = !lastWrittenSections || lastWrittenSections[section] !== JSON.stringify(extractSectionData(keys));
+    if (!localDevMode && sharedStorageReady && activeSharedStorageProvider && (!quick || dirty)) {
+      const sent = await writeSectionWithMerge(stateId, section, keys);
+      if (quick && lastWrittenSections && typeof sent === "string") lastWrittenSections[section] = sent;
     }
   } catch (e) { console.warn(`[scope] flush of ${section} before toggle failed:`, e.message); }
 
   // 2. Swap active <-> shadow
   const outgoing = extractSectionData(keys);
-  const incoming = shadowSections[section] || {};
-  shadowSections[section] = outgoing;
+  const incoming = shadowData(section, scope) || {};
+  setShadowData(section, from, outgoing);
+  if (shadowSections[section]) delete shadowSections[section][scope]; // now on screen
   persistShadowSections();
   const draft = { ...state };
   for (const key of keys) delete draft[key];
@@ -466,65 +520,32 @@ async function setSectionScope(section, scope) {
   //    data silently being treated as already up to date. Only a confirmed
   //    successful merge (inside refreshActiveSectionFromServer) may update
   //    lastWrittenSections.
-  refreshActiveSectionFromServer(stateId, section, keys).catch((e) => {
+  if (!localDevMode) refreshActiveSectionFromServer(stateId, section, keys, { ifChanged: quick }).catch((e) => {
     console.warn(`[scope] background refresh of ${section} failed — will retry on next save:`, e.message);
   });
   render();
   updateScopeToggleUi();
 }
 
-// Which state section backs each toggleable page's view control
-const PAGE_SCOPE_SECTION = {
-  shop: "grocery",
-  do: "do",
-  watch: "watch",
-  media: "media",
-  plan: "plan",
-  explore: "travel",
-};
+// The old household / personal switch (setAllScopes, the per-page toggle) is
+// retired (VIEWS_DESIGN.md decision 18): the view on screen decides which row
+// each page reads (alignScopesToView, views.js scopeForView). Callers of this
+// stub stay valid; the header control it managed is gone.
+function updateScopeToggleUi() {}
 
-let scopeToggleWired = false;
-
-// The per-page header toggle was replaced by one app-wide switch (setAllScopes).
-// That switch has no control right now: Luke is redesigning how household and
-// personal overlap (SETTINGS_AUDIT.md §7). Keep this stub so callers stay valid.
-function updateScopeToggleUi() {
-  const wrap = document.getElementById("scopeToggle");
-  if (wrap) wrap.hidden = true;
-  updateGlobalScopeUi();
-}
-
-// Distinct toggleable sections behind the pages (grocery, do, watch, media,
-// plan, travel).
-const TOGGLEABLE_SECTIONS = [...new Set(Object.values(PAGE_SCOPE_SECTION))]
-  .filter((s) => SECTION_SCOPE[s] === "toggle");
-
-// The single scope shared by every toggleable section, or null if they differ.
-function currentGlobalScope() {
-  const scopes = TOGGLEABLE_SECTIONS.map((s) => sectionScope(s));
-  return scopes.every((x) => x === scopes[0]) ? (scopes[0] || "personal") : null;
-}
-
-// Switch the whole app's household/personal view. Reuses the existing, tested
-// per-section swap so the household/personal data separation is unchanged —
-// each section that isn't already on `scope` flips one at a time.
-async function setAllScopes(scope) {
-  for (const section of TOGGLEABLE_SECTIONS) {
-    try { await setSectionScope(section, scope); }
-    catch (e) { console.warn(`[scope] global switch of ${section} failed:`, e.message); }
-  }
-  updateGlobalScopeUi();
-}
-
-function updateGlobalScopeUi() {
-  const active = currentGlobalScope();
-  document.querySelectorAll('input[name="globalScope"]').forEach((input) => {
-    input.checked = input.value === active;
-  });
-}
-
-async function refreshActiveSectionFromServer(stateId, section, keys) {
+async function refreshActiveSectionFromServer(stateId, section, keys, { ifChanged = false } = {}) {
   const rowId = sectionRowId(stateId, section);
+  if (ifChanged && lastSeenSectionStamp[rowId]) {
+    // A ~100-byte stamp check first; the row itself only if it moved on.
+    const head = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=updated_at`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (head.ok) {
+      const stamp = (await head.json())[0]?.updated_at;
+      if (stamp && stamp === lastSeenSectionStamp[rowId]) { render(); return; }
+    }
+  }
   const res = await fetch(
     `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
     { headers: supabaseHeaders(), cache: "no-store" }
@@ -615,10 +636,10 @@ async function refreshChangedSectionsOnResume() {
         activeChanged = true;
         continue;
       }
-      const shadowSection = Object.keys(STATE_SECTIONS).find((s) => inactiveSectionRowId(stateId, s) === row.id);
-      if (shadowSection) {
+      const shadowRef = allInactiveSectionRows(stateId).find((r) => r.id === row.id);
+      if (shadowRef) {
         const { stateUpdatedAt, schemaVersion, ...data } = row.state || {};
-        shadowSections[shadowSection] = data;
+        setShadowData(shadowRef.section, shadowRef.scope, data);
         lastSeenSectionStamp[row.id] = row.updated_at;
         shadowChanged = true;
       }
@@ -1774,7 +1795,12 @@ const _newsTicker = createNewsTickerModule({
   getLeads: (...a) => newsTickerLeads(...a),
   getBoard: (...a) => getScoresBoard(...a),
   openStory: (id) => { if (!openNewsStory(id)) showNewsApp(); },
-  openGame: (dateKey, id) => { showScoresGame(dateKey, id); showScoresApp(); },
+  // Scores is a Personal page; in Household and Business a tap shows a small game
+  // card and stays put (VIEWS_DESIGN.md decision 15).
+  openGame: (dateKey, id) => {
+    if (currentViewKey() !== "personal") { openTickerGameCard(dateKey, id); return; }
+    showScoresGame(dateKey, id); showScoresApp();
+  },
 });
 const { init: initNewsTicker, refresh: refreshNewsTicker } = _newsTicker;
 
@@ -3081,12 +3107,14 @@ async function initializeApp() {
     if (authSession?.access_token) {
       await loadAdminConfig();
       await loadOrCreateUserGroup();
+      await loadBusinessSpace();
       await migratePersonalStateIfNeeded();
     }
     maybeShowHydrationOverlay();
     await hydrateStateFromSharedStorage();
   }
   refreshAvailableViews(); // the group role is known now (views.js)
+  await alignScopesToView(); // each page's data row follows the view, now that state has loaded
   await hydrateRecipeRowsFromSupabase();
   resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
@@ -3243,6 +3271,7 @@ async function initializeSupabaseAuth() {
       activeSharedStorageProvider = null;
       await loadAdminConfig();
       await loadOrCreateUserGroup();
+      await loadBusinessSpace();
       maybeShowHydrationOverlay();
       await hydrateStateFromSharedStorage();
       await hydrateRecipeRowsFromSupabase();
@@ -3844,6 +3873,14 @@ function setupDiagnostics() {
     // Views (scripts/qa-views.mjs): the view on screen, and acting as a household
     // member (Household only) or the admin. Local dev only.
     view: () => (localDevMode ? currentViewKey() : null),
+    viewsReady: () => (localDevMode ? Boolean(currentViewList.known) : null),
+    planScope: () => (localDevMode ? sectionScope("plan") : null),
+    scopes: () => (localDevMode ? Object.fromEntries(VIEW_TOGGLE_SECTIONS.map((s) => [s, sectionScope(s)])) : null),
+    businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
+    planSeedForQa: (events) => { if (!localDevMode) return null; state.planEvents = events; planRangeCache.clear(); persist(); return true; },
+    planEventsInRangeForQa: (a, b) => (localDevMode ? getPlanEventsForRange(a, b).map((e) => ({ id: e.id, title: e.title, source: e.source, layerView: e.layerView || null })) : null),
+    setLayerForQa: (view, on) => { if (!localDevMode) return null; setPlanLayer(view, on); return true; },
+    tickerGameForQa: (dateKey, id) => { if (!localDevMode) return null; openTickerGameCard(dateKey, id); return true; },
     viewsAsRole: (role) => {
       if (!localDevMode) return null;
       currentViewList.known = availableViews({ isAdmin: role === "admin" });
@@ -4931,8 +4968,10 @@ function planFeedCacheFor(cal) {
 // holds (the one on screen is in `state`, the other in the shadow copy), then
 // what other household members shared from their personal calendars.
 function mealPlanCalendarEvents() {
-  const live = [mealPlanEventsFromScope(state, planFeedCacheFor)];
-  if (shadowSections.plan) live.push(mealPlanEventsFromScope(shadowSections.plan, planFeedCacheFor));
+  // Personal and household calendars only — the business calendar never feeds
+  // the family meal plan.
+  const live = ["personal", "household"].map((scope) => scopeData("plan", scope)).filter(Boolean)
+    .map((data) => mealPlanEventsFromScope(data, planFeedCacheFor));
   return mealPlanDisplayEvents(live, state.mealPlanSharedEvents, authSession?.user?.id || "");
 }
 
@@ -4941,7 +4980,7 @@ function mealPlanCalendarEvents() {
 function ownMealPlanShare() {
   const userId = authSession?.user?.id;
   if (!userId) return null;
-  const personal = sectionScope("plan") === "personal" ? state : shadowSections.plan;
+  const personal = scopeData("plan", "personal");
   if (!personal) return null;
   return { userId, snapshot: buildSharedSnapshot(personal, { cacheFor: planFeedCacheFor, previous: state.mealPlanSharedEvents?.[userId] }) };
 }
@@ -5192,6 +5231,9 @@ function defaultState() {
     // The admin's Household and Business looks (views.js; Personal uses
     // displayPrefs above). { household: { mode, theme }, business: { … } }
     viewDisplayPrefs: {},
+    // Which other views' calendars the Personal calendar shows (views.js layers):
+    // { household: bool, business: bool }. Off until the person turns one on.
+    viewLayers: {},
     pianoSongs: [],
     // Cadence canonical metadata (bytes live in the cadence-blobs bucket).
     cadenceWorks: [],
@@ -5375,6 +5417,7 @@ function normalizeState(parsed) {
     sportsPrefs: normalizeSportsPrefs(parsed?.sportsPrefs),
     displayPrefs: cleanDisplayPrefs(parsed?.displayPrefs),
     viewDisplayPrefs: cleanViewDisplayPrefs(parsed?.viewDisplayPrefs, { modes: ["light", "dark", "auto"], themes: THEME_CHOICES }),
+    viewLayers: { household: parsed?.viewLayers?.household === true, business: parsed?.viewLayers?.business === true },
     pianoSongs: normalizePianoSongs(parsed?.pianoSongs),
     // Cadence records are re-normalized by the music/* domain factories when the
     // subsystem loads; here we only guard the container shape (keep it dumb/sync).
@@ -6952,6 +6995,7 @@ function mergeStates(newer, older) {
   merged.sportsPrefs = { ...(older.sportsPrefs || {}), ...(newer.sportsPrefs || {}) }; // each field then goes by its own stamp
   merged.displayPrefs = { ...(older.displayPrefs || {}), ...(newer.displayPrefs || {}) }; // each field then goes by its own stamp
   merged.viewDisplayPrefs = { ...(older.viewDisplayPrefs || {}), ...(newer.viewDisplayPrefs || {}) }; // each view then goes by its own stamp
+  merged.viewLayers = { ...(older.viewLayers || {}), ...(newer.viewLayers || {}) }; // each layer switch then goes by its own stamp
   merged.articleSync = { ...(older.articleSync || {}), ...(newer.articleSync || {}) };
   merged.groceryPricingSettings = { ...(older.groceryPricingSettings || {}), ...(newer.groceryPricingSettings || {}) };
   merged.collapsedSections = { ...(older.collapsedSections || {}), ...(newer.collapsedSections || {}) };
@@ -7765,7 +7809,7 @@ const lastSeenSectionStamp = {};
 // Object.keys(STATE_SECTIONS)) plus the inactive-scope shadow rows.
 function sectionRowIdsFor(stateId) {
   const activeIds = Object.keys(STATE_SECTIONS).map(s => sectionRowId(stateId, s));
-  const inactiveIds = Object.keys(STATE_SECTIONS).map(s => inactiveSectionRowId(stateId, s)).filter(Boolean);
+  const inactiveIds = allInactiveSectionRows(stateId).map((r) => r.id);
   return { activeIds, allIds: [...new Set([...activeIds, ...inactiveIds])] };
 }
 
@@ -7789,15 +7833,13 @@ async function loadStateFromSupabase() {
   const byId = new Map(rows.map((r) => [r.id, r]));
 
   // Refresh the inactive-scope shadows for toggleable sections
-  for (const section of Object.keys(STATE_SECTIONS)) {
-    const shadowId = inactiveSectionRowId(stateId, section);
-    if (!shadowId) continue;
-    const row = byId.get(shadowId);
+  for (const { section, scope, id } of allInactiveSectionRows(stateId)) {
+    const row = byId.get(id);
     if (row) {
       const { stateUpdatedAt, schemaVersion, ...data } = row.state || {};
-      shadowSections[section] = data;
-    } else if (!(section in shadowSections)) {
-      shadowSections[section] = {};
+      setShadowData(section, scope, data);
+    } else if (!shadowData(section, scope)) {
+      setShadowData(section, scope, {});
     }
   }
   persistShadowSections();
@@ -16526,6 +16568,113 @@ function refreshAvailableViews() {
   applyView(start, { quiet: true });
 }
 
+// ── Each view reads its own rows (build step 4) ──────────────────────────────
+// Household reads the household rows, Personal the person's own (Shop and Meal
+// Plan stay the household's), Business the business row for its Calendar. This
+// drives the existing household/personal swap (setSectionScope), which flushes
+// and swaps without ever copying data between rows. Runs only once state has
+// loaded: swapping before hydration could merge one scope's local copy into
+// another scope's row. Serialized, so fast swipes queue rather than overlap.
+function alignScopesToView() {
+  const run = async () => {
+    if (!(sharedStorageReady || localDevMode)) return;
+    const view = currentViewKey();
+    const hasBusiness = Boolean(businessSpace?.id);
+    for (const section of VIEW_TOGGLE_SECTIONS) {
+      if (SECTION_SCOPE[section] !== "toggle") continue;
+      const want = scopeForView(view, section, { hasBusiness });
+      if (sectionScope(section) === want) continue;
+      try { await setSectionScope(section, want, { quick: true }); }
+      catch (e) { console.warn(`[views] ${section} → ${want} failed:`, e.message); }
+    }
+    planRangeCache.clear();
+    if (activeAppArea === "plan") renderPlanPage();
+    if (activeAppArea === "home") renderHomeBriefing(); // the Calendar / Tasks glance reads the view's rows
+  };
+  alignScopesToView.chain = (alignScopesToView.chain || Promise.resolve()).then(run, run);
+  return alignScopesToView.chain;
+}
+
+// The admin's business space (live_spaces / live_space_members), or none. One
+// small read at sign-in, kept on the device for the next cold start.
+async function loadBusinessSpace() {
+  if (localDevMode || !authSession?.access_token || !authSession?.user?.id) return;
+  if (userGroup?.role !== "admin") { saveBusinessSpace(null); return; }
+  try {
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/live_space_members?user_id=eq.${encodeURIComponent(authSession.user.id)}&select=space_id,role,live_spaces(id,name,kind)&order=joined_at.asc&limit=5`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!res.ok) return; // keep what this device knew
+    const rows = await res.json();
+    const row = rows.find((r) => r.live_spaces?.kind === "business");
+    saveBusinessSpace(row ? { id: row.live_spaces.id, name: row.live_spaces.name, role: row.role } : null);
+  } catch { /* offline: keep the device's copy */ }
+}
+function saveBusinessSpace(space) {
+  businessSpace = space?.id ? space : null;
+  try {
+    if (businessSpace) localStorage.setItem(BUSINESS_SPACE_KEY, JSON.stringify(businessSpace));
+    else localStorage.removeItem(BUSINESS_SPACE_KEY);
+  } catch { /* storage blocked */ }
+}
+
+// The ticker's game card (Household / Business): the game from the Scores board
+// (the same CDN-cached function the ticker reads — never the database).
+async function openTickerGameCard(dateKey, gameId) {
+  let dialog = document.getElementById("gameCardDialog");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "gameCardDialog";
+    dialog.className = "game-card-dialog";
+    dialog.innerHTML = `<div class="game-card-body" aria-live="polite"></div><div class="game-card-actions"><button type="button" class="secondary-btn" data-game-card-close>Close</button></div>`;
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog || e.target.closest("[data-game-card-close]")) dialog.close();
+    });
+    document.body.appendChild(dialog);
+  }
+  const body = dialog.querySelector(".game-card-body");
+  body.innerHTML = `<p class="game-card-empty">Loading…</p>`;
+  if (!dialog.open) dialog.showModal();
+  let games = null;
+  try { games = await getScoresBoard(dateKey); } catch { games = null; }
+  const game = (games || []).find((g) => g.id === gameId) || null;
+  body.innerHTML = gameCardHtml(game, escapeHtml);
+}
+
+// The other views whose calendars show on this calendar as layers right now.
+function planLayerViews() {
+  if (sectionScope("plan") !== "personal" || currentViewKey() !== "personal") return [];
+  return layerViewsFor("personal", state.viewLayers, { hasBusiness: Boolean(businessSpace?.id) });
+}
+
+function setPlanLayer(view, on) {
+  state.viewLayers = { ...(state.viewLayers || {}), [view]: Boolean(on) };
+  planRangeCache.clear();
+  persist();
+  if (activeAppArea === "plan") renderPlanPage();
+}
+
+// Open an event that lives in another view: switch there (decision 17), wait for
+// the Calendar to read that view's row, then open it.
+// A Household / Business task shown as a layer opens Tasks in its own view.
+function openTasksInView(view) {
+  if (!view || !currentViewList().includes(view)) return;
+  currentViewKey.chosen = true;
+  applyView(view, { keepPage: true });
+  alignScopesToView().then(() => showDoApp());
+}
+
+function openEventInItsView(view, eventId, dateKey) {
+  if (!currentViewList().includes(view)) { showMailToast(`That event is in the ${VIEW_LABELS[view] || view} view.`); return; }
+  currentViewKey.chosen = true;
+  applyView(view, { keepPage: true });
+  alignScopesToView().then(() => {
+    if (activeAppArea !== "plan") showPlanApp();
+    openPlanEventDetail(eventId, dateKey || null);
+  });
+}
+
 // Each page's key in pageNavButtons() for an app area (null for Home). Areas
 // with no menu entry of their own belong to the page that holds them.
 function pageKeyForArea(area) {
@@ -16560,6 +16709,7 @@ function applyView(view, { direction = 0, quiet = false, keepPage = false } = {}
   setFlatPageGroups(elements.homePageGroups, flat);
   setFlatPageGroups(elements.pageTitleMenu, flat);
   if (!changed && quiet) { renderViewBands(0); return; }
+  alignScopesToView(); // each page reads its rows for this view (async, serialized)
   applyThemeMode();
   renderViewBands(direction);
   updatePageVisibility();
@@ -18633,7 +18783,7 @@ async function exportMyData() {
     const scopes = Object.fromEntries(Object.keys(STATE_SECTIONS).map((section) => [section, sectionScope(section)]));
     const exportedAt = new Date().toISOString();
     const { files, manifest } = buildExportFiles({
-      state, shadowSections, scopes, stateSections: STATE_SECTIONS, prepDays,
+      state, shadowByScope: shadowSections, scopes, stateSections: STATE_SECTIONS, prepDays,
       finance, history, contactsVcf: (state.contacts || []).length ? buildContactsVcf(state.contacts) : "",
       exportedAt, schemaVersion: STATE_SCHEMA_VERSION, notes,
     });
@@ -20104,8 +20254,9 @@ function maybeRefreshGoogleEvents() {
 function gcalMaybeUpdateMealPlanShare() {
   const own = ownMealPlanShare();
   if (!own) return;
-  const flags = { ...normalizeMealPlanCalendarFlags(state.planMealPlanCalendars), ...normalizeMealPlanCalendarFlags(shadowSections.plan?.planMealPlanCalendars) };
-  const anyGoogleOnMealPlan = [...(state.calendars || []), ...(shadowSections.plan?.calendars || [])].some((c) => c?.googleCalendarId && flags[c.id]);
+  const scopes = ["personal", "household"].map((scope) => scopeData("plan", scope)).filter(Boolean);
+  const flags = Object.assign({}, ...scopes.map((d) => normalizeMealPlanCalendarFlags(d.planMealPlanCalendars)));
+  const anyGoogleOnMealPlan = scopes.flatMap((d) => d.calendars || []).some((c) => c?.googleCalendarId && flags[c.id]);
   if (!anyGoogleOnMealPlan) return;
   const stored = state.mealPlanSharedEvents?.[own.userId];
   if (!stored && !own.snapshot.events.length) return;
@@ -25467,9 +25618,11 @@ function reminderOwnsLegacy() {
   return localDevMode || !userGroup || userGroup.role === "admin";
 }
 
-// Both scopes: reminders fire whichever view (household / personal) is showing.
+// Every scope this device holds: reminders fire whichever view is showing
+// (Personal, Household or Business — VIEWS_DESIGN.md).
 function reminderPlanEvents() {
-  return [...(state.planEvents || []), ...(shadowSections.plan?.planEvents || [])];
+  const others = Object.values(shadowSections.plan || {}).flatMap((d) => d?.planEvents || []);
+  return [...(state.planEvents || []), ...others];
 }
 
 function reminderEffectivePrefs() {
@@ -25822,7 +25975,7 @@ function openPlanSyntheticEvent(source) {
 }
 
 function getPlanEventsForRange(startKey, endKey) {
-  const cacheKey = `${startKey}|${endKey}|${sectionScope("plan")}`;
+  const cacheKey = `${startKey}|${endKey}|${sectionScope("plan")}|${planLayerViews().join(",")}`;
   const hit = planRangeCache.get(cacheKey);
   if (hit) { planRangeCache.delete(cacheKey); planRangeCache.set(cacheKey, hit); return hit; } // touch = most-recent
   const events = [];
@@ -25843,17 +25996,32 @@ function getPlanEventsForRange(startKey, endKey) {
       events.push({ ...e, ...inst, source: "personal", color });
     });
   });
-  // Household view overlays the member's own events (marked) so nothing is
-  // missed while planning family things. Personal view stays personal-only.
-  if (sectionScope("plan") === "household") {
-    const mine = shadowSections.plan?.planEvents || [];
+  // Layers (VIEWS_DESIGN.md §2.3): the Personal calendar shows the Household and
+  // Business calendars the person switched on, as live reads of those rows —
+  // never copies. Household and Business never show Personal items.
+  {
     const seen = new Set(events.map((e) => e.id));
-    mine.forEach((e) => {
-      if (seen.has(e.id)) return;
-      if (e.calendarId && disabledCalIds.has(e.calendarId)) return; // calendar hidden
-      const push = (occDate) => events.push({ ...e, date: occDate, occurrenceOf: e.recurrence ? e.id : undefined, source: "personal-overlay", color: e.color || PLAN_COLORS[0], title: `◦ ${e.title}` });
-      if (e.recurrence) expandRecurringOccurrences(e, startKey, endKey).forEach(push);
-      else if (e.date >= startKey && e.date <= endKey) push(e.date);
+    planLayerViews().forEach((layer) => {
+      const data = shadowData("plan", layer);
+      (data?.planEvents || []).forEach((e) => {
+        if (seen.has(e.id)) return;
+        const color = e.color || ((data.calendarSources || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
+        eventInstancesInRange(e, startKey, endKey).forEach((inst) => {
+          events.push({ ...e, ...inst, source: "layer", layerView: layer, color, calendarName: VIEW_LABELS[layer] });
+        });
+      });
+      // That view's Tasks come with its calendar (decision 20), as task chips.
+      const tasksData = shadowData("do", layer);
+      if (tasksData && !state.planHiddenSources?.do) {
+        const tasks = [...(tasksData.doPlans ? Object.values(tasksData.doPlans).flatMap((d) => Object.values(d || {}).flat()) : []), ...(tasksData.doTasks || [])];
+        tasks.forEach((task) => {
+          const key = task?.date || task?.dueDate;
+          const title = task?.title || task?.text || task?.name;
+          if (!(key && title) || key < startKey || key > endKey) return;
+          const scheduled = taskIsScheduled(task);
+          events.push({ id: `layer-do-${layer}-${task.id || title}`, title, date: key, color: PLAN_APP_COLORS.do, source: "layer-task", layerView: layer, calendarName: `${VIEW_LABELS[layer]} tasks`, isTask: true, done: Boolean(task?.done), allDay: !scheduled, startTime: scheduled ? task.time : null, endTime: null, taskState: scheduled ? "scheduled" : "due" });
+        });
+      }
     });
   }
   // Phase 2: the ICS-subscription set = non-linked enabled sources (ics + local).
@@ -26017,7 +26185,7 @@ function planTaskGlyph(event) {
 }
 
 function planEventPillTemplate(event) {
-  const commonAttrs = `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" data-tip="${escapeHtml(event.title)}" tabindex="0" role="button" aria-label="${escapeHtml(event.title)}"`;
+  const commonAttrs = `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" data-plan-event-layer="${escapeHtml(event.layerView || "")}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" data-tip="${escapeHtml(event.title)}" tabindex="0" role="button" aria-label="${escapeHtml(event.title)}"`;
   // Multi-day continuation days render as a title-less bar segment that connects
   // to the neighbouring days (the title shows only on the start day).
   if (event.spanPos && event.spanPos !== "start") {
@@ -26053,7 +26221,7 @@ function planMonthChipTemplate(event) {
   const recur = (event.recurrence || event.occurrenceOf) ? '<span class="plan-month-chip-recur" aria-hidden="true">↻</span>' : "";
   const cls = `plan-month-chip${event.allDay ? " is-allday" : ""}${movable || occMovable ? " is-movable" : ""}`;
   return `<span class="${cls}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" ` +
-    `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" ` +
+    `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" data-plan-event-layer="${escapeHtml(event.layerView || "")}" ` +
     `data-tip="${escapeHtml(tip)}" tabindex="0" role="button" aria-label="${escapeHtml(tip)}"${dragAttrs}>` +
     `<span class="plan-month-chip-dot" aria-hidden="true"></span>` +
     (timeLabel ? `<span class="plan-month-chip-time">${escapeHtml(timeLabel)}</span>` : "") +
@@ -26331,7 +26499,7 @@ function planTimedEventBlock(seg, layout, conflicts) {
   const conflictMark = isConflict ? '<span class="plan-conflict-mark" aria-hidden="true">⚠</span>' : "";
   const isTask = planIsTaskEvent(event);
   const taskLabel = isTask ? `${event.done ? "☑" : "☐"} ${label}` : label;
-  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}${resizable ? " is-movable" : ""}${isConflict ? " is-conflict" : ""}${isTask ? " is-task" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
+  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}${resizable ? " is-movable" : ""}${isConflict ? " is-conflict" : ""}${isTask ? " is-task" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" data-plan-event-layer="${escapeHtml(event.layerView || "")}"
                tabindex="0" role="button" aria-label="${escapeHtml(taskLabel)}${isConflict ? " (overlaps another event)" : ""}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%;${colStyle}"
                data-tip="${escapeHtml(taskLabel)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}${isConflict ? " · overlaps another event" : ""}">
@@ -26521,7 +26689,7 @@ function renderPlanEventDetail(ev) {
   else if (ev.location && typeof ev.location === "object") locText = ev.location.name || ev.location.address || ev.location.label || "";
   // Reminders are per person (IOS_NOTIFICATIONS_DESIGN.md §4): a personal event shows
   // the viewer's own reminder; a Google event gets a "Remind me" picker.
-  const ownPref = (!ev.source || ev.source === "personal" || ev.source === "personal-overlay") && !ev.allDay
+  const ownPref = (!ev.source || ev.source === "personal" || ev.source === "layer") && !ev.allDay
     ? normalizeReminderValue(reminderEffectivePrefs()[ev.occurrenceOf || ev.id]) : null;
   const remText = ownPref && !ownPref.off ? reminderDescription(ownPref.min) : "";
   const googleRem = googleReminderContext(ev);
@@ -26535,8 +26703,8 @@ function renderPlanEventDetail(ev) {
     const src = (state.calendarSources || []).find((c) => c.id === ev.sourceId || c.id === ev.calendarId);
     const synced = src?.lastFetched ? ` · synced ${new Date(src.lastFetched).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";
     sourceText = `Read-only — from “${calName}”${synced}`;
-  } else if (ev.source === "personal-overlay") {
-    sourceText = "A household member's event";
+  } else if (ev.source === "layer") {
+    sourceText = `From your ${VIEW_LABELS[ev.layerView] || ""} calendar`;
   } else {
     sourceText = "Personal event";
   }
@@ -26555,13 +26723,16 @@ function renderPlanEventDetail(ev) {
   ].join("");
 
   const personal = !ev.source || ev.source === "personal";
-  actionsEl.innerHTML = personal
+  const layerAction = ev.source === "layer" && viewIsSwitchable()
+    ? `<button type="button" class="primary-btn" data-plan-detail-layer="${escapeHtml(ev.layerView)}">Open in ${escapeHtml(VIEW_LABELS[ev.layerView] || "")}</button>`
+    : "";
+  actionsEl.innerHTML = layerAction || (personal
     ? `<button type="button" class="secondary-btn" data-plan-detail-delete>Delete</button><button type="button" class="primary-btn" data-plan-detail-edit>Edit</button>`
     : isExternal
       // Read-only external events can't be edited at the source, only locally:
       // rename (§15, survives re-sync) or hide (§16). Both persist across syncs.
       ? `<button type="button" class="secondary-btn" data-plan-detail-rename>Rename</button>${ev._overridden ? `<button type="button" class="secondary-btn" data-plan-detail-reset>Reset</button>` : ""}<button type="button" class="secondary-btn" data-plan-detail-hide>Hide</button>`
-      : "";
+      : "");
 }
 
 function openPlanEventDetail(id, dateKey) {
@@ -26590,6 +26761,13 @@ function initPlanEventDetail() {
   if (!panel) return;
   panel.addEventListener("click", (e) => {
     if (e.target.closest("[data-plan-detail-close]")) { closePlanEventDetail(); return; }
+    const layerBtn = e.target.closest("[data-plan-detail-layer]");
+    if (layerBtn && planDetailContext) {
+      const ctx = planDetailContext;
+      closePlanEventDetail();
+      openEventInItsView(layerBtn.dataset.planDetailLayer, ctx.id, ctx.date);
+      return;
+    }
     if (e.target.closest("[data-plan-detail-edit]") && planDetailContext) {
       const ctx = planDetailContext;
       closePlanEventDetail();
@@ -26639,11 +26817,11 @@ function openPlanEventDialog(date, eventId, prefill) {
   editingPlanEventId = eventId || null;
   editingPlanEventOccurrenceDate = date || null;
   const existing = eventId ? (state.planEvents || []).find((e) => e.id === eventId) : null;
-  // A personal event overlaid on the household view lives in the other scope —
-  // point the user at their own view rather than editing across scopes.
-  if (eventId && !existing && (shadowSections.plan?.planEvents || []).some((e) => e.id === eventId)) {
-    showMailToast("That's one of your personal events — switch to the personal view to edit it.");
-    return;
+  // An event from another view (a layer on the Personal calendar) is edited in
+  // its own view (decision 17): switch there, then open it.
+  if (eventId && !existing) {
+    const home = Object.entries(shadowSections.plan || {}).find(([, d]) => (d?.planEvents || []).some((e) => e.id === eventId))?.[0];
+    if (home) { openEventInItsView(home, eventId, date); return; }
   }
   const selectedCalId = existing?.calendarId || null;
   if (existing) {
@@ -27526,6 +27704,7 @@ function initPlanCalListDelegation() {
       // editable calendar entries — jump to their source page instead.
       const src = pill.dataset.planEventSource;
       if (src === "play" || src === "eat" || src === "do") { openPlanSyntheticEvent(src); return; }
+      if (src === "layer-task") { openTasksInView(pill.dataset.planEventLayer); return; }
       // Personal + read-only external (iCal) events open the detail panel first;
       // the panel's Edit opens the full editor (§21).
       openPlanEventDetail(pill.dataset.planEventId, pill.dataset.planEventDate || null);
@@ -27603,6 +27782,14 @@ function initPlanCalListDelegation() {
       flipDot(calDot, now);
       persist();
       if (activeAppArea === "plan") renderPlanPage();
+      return;
+    }
+    const layerDot = e.target.closest("[data-layer-toggle]");
+    if (layerDot) {
+      const key = layerDot.dataset.layerToggle;
+      const now = !(state.viewLayers || {})[key];
+      flipDot(layerDot, now);
+      setPlanLayer(key, now);
       return;
     }
     const overlayDot = e.target.closest("[data-overlay-toggle]");
@@ -27859,8 +28046,30 @@ function renderPlanCalList() {
     <div class="plan-cal-divider"></div>
     ${sorted.map((c) => planCalRowHtml(c)).join("")}
     ${!sorted.length ? `<p class="plan-cal-empty">No calendars yet.</p>` : ""}
+    ${planLayerRowsHtml()}
     ${planHiddenEventsSectionHtml()}
   `;
+}
+
+// Personal calendar only (VIEWS_DESIGN.md §2.3): switch the Household and Business
+// calendars on as layers. Each person opts in for themselves.
+function planLayerRowsHtml() {
+  if (!viewIsSwitchable() || currentViewKey() !== "personal") return "";
+  const rows = [["household", "Household", "#24395e"]];
+  if (businessSpace?.id) rows.push(["business", "Business", "#3d7517"]);
+  const on = state.viewLayers || {};
+  return `
+    <div class="plan-cal-divider"></div>
+    <div class="plan-cal-list-title">Show in my Personal calendar</div>
+    <div class="plan-cal-overlays plan-cal-layers">
+      ${rows.map(([key, label, color]) => `
+        <div class="plan-cal-row plan-cal-overlay-row">
+          <div class="plan-cal-front">
+            <button type="button" class="plan-cal-dot ${on[key] ? "is-on" : "is-off"}" style="--dot-color:${color}" data-layer-toggle="${key}" role="switch" aria-checked="${on[key] ? "true" : "false"}" aria-label="Show the ${label} calendar here"></button>
+            <span class="plan-cal-name">${label}</span>
+          </div>
+        </div>`).join("")}
+    </div>`;
 }
 
 // Hidden read-only external events (§16), with an un-hide control. Only shows
@@ -29533,13 +29742,14 @@ function showEpisodePlaylistMenu(episodeId, btn) {
 
 // Writes the INACTIVE scope's shadow copy of a section to its own row, with
 // the same conditional-PATCH + merge-retry protection as active writes.
-async function writeInactiveSection(section, attempt = 0) {
+async function writeInactiveSection(section, scope, attempt = 0) {
   const stateId = supabaseConfig().stateId;
-  const rowId = inactiveSectionRowId(stateId, section);
+  if (sectionScope(section) === scope) return;
+  const rowId = rowIdForScope(scopeRowIds(stateId), section, scope);
   if (!rowId || !authSession?.access_token) return;
   const keys = STATE_SECTIONS[section] || [];
   const now = new Date().toISOString();
-  const data = shadowSections[section] || {};
+  const data = shadowData(section, scope) || {};
 
   const res = await fetch(
     `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
@@ -29564,7 +29774,7 @@ async function writeInactiveSection(section, attempt = 0) {
   const merged = mergeStates(localFrag, remoteFrag);
   const mergedFrag = {};
   for (const key of keys) { if (merged[key] !== undefined) mergedFrag[key] = merged[key]; }
-  shadowSections[section] = mergedFrag;
+  setShadowData(section, scope, mergedFrag);
   persistShadowSections();
 
   const upd = await fetch(
@@ -29579,7 +29789,7 @@ async function writeInactiveSection(section, attempt = 0) {
   const updRows = await upd.json();
   if (!updRows.length) {
     if (attempt >= 2) throw new Error(`Shadow section "${section}" kept conflicting`);
-    return writeInactiveSection(section, attempt + 1);
+    return writeInactiveSection(section, scope, attempt + 1);
   }
   lastSeenSectionStamp[rowId] = updRows[0].updated_at || now;
 }
@@ -29589,8 +29799,9 @@ async function writeInactiveSection(section, attempt = 0) {
 async function copyMediaItemToOtherScope(kind, id) {
   const scope = sectionScope("media");
   const targetName = scope === "personal" ? "the household library" : "your personal library";
-  if (!shadowSections.media || typeof shadowSections.media !== "object") shadowSections.media = {};
-  const shadow = shadowSections.media;
+  const other = scope === "personal" ? "household" : "personal";
+  if (!shadowData("media", other)) setShadowData("media", other, {});
+  const shadow = shadowData("media", other);
 
   if (kind === "article") {
     const article = (state.savedArticles || []).find((a) => a.id === id);
@@ -29610,7 +29821,7 @@ async function copyMediaItemToOtherScope(kind, id) {
 
   persistShadowSections();
   try {
-    await writeInactiveSection("media");
+    await writeInactiveSection("media", other);
     showMailToast(`Copied to ${targetName}.`);
   } catch (e) {
     // The copy is safe in the local shadow; it syncs on the next toggle/write

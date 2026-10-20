@@ -67,6 +67,7 @@ export const TRACKED_SETTINGS = Object.freeze({
     sportsPrefs: "fields", // teams · leagues · leagueOrder · collegeScope (sports-model.js)
     displayPrefs: "fields", // mode · theme · icon (theme.js) — per person
     viewDisplayPrefs: "fields", // household · business — each view's { mode, theme } (views.js)
+    viewLayers: "fields", // household · business — layers on the Personal calendar (views.js)
   }),
   plan: Object.freeze({
     planMealPlanCalendars: "fields", // { calendarId: on } — "Show on Meal Plan" per calendar

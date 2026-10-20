@@ -1,6 +1,6 @@
 # Views: Personal, Household, Business — design & plan
 
-Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) merged to `main` in #140 (§13); not deployed. Step 1's migration (`migrations/2026-10-20-views-spaces.sql`, §2.1) applied to prod 2026-10-20. Steps 3–9 not started.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
+Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) merged to `main` in #140 (§13); not deployed. Step 1's migration (`migrations/2026-10-20-views-spaces.sql`, §2.1) applied to prod 2026-10-20. Steps 3–6 and 8 built on `claude/views-data` (§14). Step 7 partly (Google calendars need nothing extra; Finance accounts wait on a decision, §11). Step 9 (TestFlight) is Luke's.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
 
 Goal: the app splits into three views, each with its own pages, data and look:
 - **Personal** is the user's own space.
@@ -265,6 +265,7 @@ The migration must be **safe with older clients**. Older TestFlight builds don't
 ## 11. Open
 
 - **Business permissions** (decision 24): what a manager vs an employee can do. Decide before anyone else is invited.
+- **Finance accounts per view** (decision 5): all finance data is in the household row, which every member reads, so a UI-only "Personal" account wouldn't be private. Either accept that (UI-only), or move personal accounts to a personal row, which is a finance restructure with a `STATE_SCHEMA_VERSION` bump. Held for Luke (ISSUES.md).
 - **Wife's Personal view:** she has none for now. If she gets one later, her current per-user items (reminders, display) carry over without migration.
 
 ## 12. Tests
@@ -310,3 +311,29 @@ Every view still shows the same data. Nothing here touches Supabase tables, `mer
 - **QA:** `npm run qa:views` (62 checks at 390 px and 360 px, including the household-member case); `qa:page-groups` still 47/47; boot check passes; full `npm test`.
 - **Not verified:** the iPhone app (touch on WebKit, the band beside the header's buttons on a real phone); the Great Vibes font in the screenshots (the sandbox can't reach Google Fonts, so a serif stood in).
 - **Known gap:** an older app build re-saving the `recreate` section drops `viewDisplayPrefs` (it lists that section's keys itself), which resets the Household and Business looks to their defaults. Logged in ISSUES.md.
+
+## 14. As built: data per view, Business calendar, layers, game card (steps 3–8, branch `claude/views-data`, 2026-10-20)
+
+Read from the live database first (read-only): Luke's own Calendar (4 events), Listen (16 podcasts), Watch and Tasks are already in his personal rows; the household rows hold the shared Meal Plan, Shop list, Finance, an older podcast list and an empty calendar; his wife's personal rows are essentially empty. So **no data moves**: each view picks which row a page reads, using the existing household / personal swap.
+
+- **Which row each page reads** (`views.js` `scopeForView`):
+
+  | Page | Personal | Household | Business |
+  |---|---|---|---|
+  | Calendar | own | household | business space |
+  | Tasks, Watch, Listen | own | household | own |
+  | Shop | household | household | household |
+  | Explore (trips) | own | own | own |
+  | Meal Plan, Finance, Recipes… | household (fixed, as before) | | |
+
+  Explore stays personal because it isn't a Household page, and because swapping it would wake the trip safety net in `applyStoredState`, which restores a device's trip backup into an empty incoming row (copying personal trips into the household's).
+- **How:** `alignScopesToView()` runs after state has loaded and on every view switch, calling the existing `setSectionScope` per section. The swap now has three scopes for the Calendar. Shadows are keyed by scope: `shadowSections[section][scope]`, stored as `live-shadow-sections-v2`, with a one-time upgrade from the old single-copy shape. The rows are the same ones RLS already protects (personal `u-<uid>`, household `<groupId>`, business `<spaceId>` since the step 1 migration).
+- **Egress on a switch:** a section is written only if it has unsaved changes, and the incoming row is re-downloaded only when a ~100-byte stamp check says another device changed it. Before this, the old toggle wrote and re-read every section each time.
+- **Business calendar:** `loadBusinessSpace()` reads the admin's space once at sign-in (`live_space_members` → `live_spaces`) and keeps it on the device (`live-business-space-v1`), so a cold start that left off in Business knows the Calendar's row before the network answers.
+- **Layers:** Personal's Calendar sidebar has "Show in my Personal calendar" with Household and Business switches (`state.viewLayers`, per person, stamped). Layer events are read-only and marked; their detail offers "Open in Household/Business", which switches views and opens the event there as an ordinary, editable event. Household tasks come with the Household layer as task chips. Household and Business never show Personal items (the old "personal-overlay" is gone). Reminders cover every view's events; business events never feed the meal plan.
+- **Display per view (step 3):** done in step 2 (§13); nothing more needed.
+- **Google calendars (step 7):** a linked Google calendar is listed in the Calendar row of the view it was added in, so it already belongs to that view. No picker needed.
+- **Ticker game card (step 8):** in Household and Business, tapping a game opens a small card (score, status, venue, broadcasts) from the same CDN-cached scores function, and stays in the view. `scores-ui.js` `gameCardHtml`.
+- **Retired:** the household/personal switch (`setAllScopes`, the header toggle markup and CSS).
+- **Verified:** `npm test` (2558; the views tests now actually run, since vitest's include list was missing them); `npm run qa:views` 83/83 (rows per view, Business calendar, layers on/off, open-in-view, game card, Home glance, household member); `qa:page-groups` 47/47; `qa-gcal` 20/20; `qa-settings`; boot check.
+- **Not verified:** against the real database with two devices; the iPhone app; Listen playback across a switch (ISSUES.md).

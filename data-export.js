@@ -424,7 +424,11 @@ export function planEventsToIcs(events, { calendarName = "Live", stamp = new Dat
 export function buildExportFiles(input) {
   const exportedAt = input.exportedAt || new Date().toISOString();
   const { value: cleanState, removed: removedState } = redactSecrets(input.state || {});
-  const { value: cleanShadow, removed: removedShadow } = redactSecrets(input.shadowSections || {});
+  // shadowByScope (views): { section: { scope: data } }. shadowSections is the
+  // older shape, { section: data } — always the other of household / personal.
+  const scopes = input.scopes || {};
+  const shadowInput = input.shadowByScope || Object.fromEntries(Object.entries(input.shadowSections || {}).map(([section, data]) => [section, { [scopes[section] === "household" ? "personal" : "household"]: data }]));
+  const { value: cleanShadow, removed: removedShadow } = redactSecrets(shadowInput);
   const ctx = { state: cleanState, prepDays: input.prepDays || [], finance: input.finance || {}, history: input.history || [] };
   const files = [];
   const tables = [];
@@ -445,11 +449,11 @@ export function buildExportFiles(input) {
 
   // The other scope of each toggleable section (e.g. household tasks while viewing
   // personal) — same tables, filed under csv/<scope>/.
-  const scopes = input.scopes || {};
-  for (const [section, data] of Object.entries(obj(cleanShadow))) {
-    if (!data || !Object.keys(data).length) continue;
-    const other = scopes[section] === "household" ? "personal" : "household";
-    addTables({ ...ctx, state: { ...cleanState, ...data }, finance: {}, history: [] }, `csv/${other}/`, (s) => s === section);
+  for (const [section, byScope] of Object.entries(obj(cleanShadow))) {
+    for (const [other, data] of Object.entries(obj(byScope))) {
+      if (!data || !Object.keys(data).length) continue;
+      addTables({ ...ctx, state: { ...cleanState, ...data }, finance: {}, history: [] }, `csv/${other}/`, (s) => s === section);
+    }
   }
 
   const attachments = collectAttachmentLinks(cleanState);

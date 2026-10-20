@@ -63,6 +63,7 @@ changes to the Calendar (and its sibling Tasks) domain only.
   the `do` section.
 
 ## Luke's decisions (keep them)
+- **Views (VIEWS_DESIGN.md, 2026-10-20):** the Calendar reads the row of the view on screen — Personal: the person's own (`u-<uid>:plan`), Household: the household's, Business: the business space's (`<spaceId>:plan`, live_spaces). Shadows are keyed by scope (`shadowData(section, scope)`); the old two-scope `shadowSections.plan` shape is gone. The Personal calendar shows Household / Business events and Household tasks as **layers** (`source: "layer"` / `"layer-task"`, opt-in per person in `state.viewLayers`), read-only; opening one switches to its view. Household and Business never show Personal events (the old "personal-overlay" is removed). Business events never feed the meal plan.
 - **Month view title spells the month out** (2026-10-15): "October 2026", at every
   width (`planViewLabel`), never "Oct, 2026".
 
