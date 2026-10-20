@@ -29,6 +29,7 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "live-queue-held-v1",      // QUEUE_HELD_KEY — id of the episode/article last loaded in this device's player
   "live-dock-ticker-v1",     // TICKER_CACHE_KEY (news-ticker.js) — last headlines/scores shown in the dock
   "live-display-v1",         // DISPLAY_CACHE_KEY — this person's last theme, applied before first paint
+  "live-view-v1",            // the last view used and this person's view list (views.js)
 ];
 
 // Some account-scoped keys are DYNAMIC (a stable prefix + a variable suffix), so

@@ -124,6 +124,11 @@
                   <span id="pageTitleText">Live</span>
                 </button>
               </h1>
+              <div class="view-band view-band-header" id="headerViewBand" role="group" aria-roledescription="view switcher" aria-label="View" hidden>
+                <button type="button" class="view-band-step" data-view-step="-1" aria-label="Previous view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button>
+                <span class="view-band-name" aria-live="polite"></span>
+                <button type="button" class="view-band-step" data-view-step="1" aria-label="Next view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg></button>
+              </div>
               <div class="scope-toggle" id="scopeToggle" hidden role="group" aria-label="Household or personal view">
                 <button type="button" id="scopeHouseholdBtn" title="Household view" aria-label="Household view">
                   <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11 12 4l9 7"/><path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/><path d="M10 20v-6h4v6"/></svg>
@@ -282,6 +287,11 @@
           <div class="home-center">
             <div class="home-hero">
               <img class="home-logo" src="./home-logo.png" alt="Live" width="1023" height="836" />
+              <div class="view-band" id="homeViewBand" role="group" aria-roledescription="view switcher" aria-label="View" hidden>
+                <button type="button" class="view-band-step" data-view-step="-1" aria-label="Previous view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button>
+                <span class="view-band-name" aria-live="polite"></span>
+                <button type="button" class="view-band-step" data-view-step="1" aria-label="Next view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg></button>
+              </div>
               <nav class="home-links page-groups" id="homePageGroups" aria-label="App pages">
                 <div class="page-group" data-page-group="plan">
                   <button type="button" class="page-group-head" aria-expanded="false" aria-controls="homeGroupPlan"><span>Plan</span></button>

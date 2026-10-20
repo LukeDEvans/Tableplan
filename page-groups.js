@@ -42,7 +42,26 @@ const groupsIn = (root) => [...(root?.querySelectorAll(".page-group[data-page-gr
 const SLIDE_MS = 200;
 const reducedMotion = () => !!globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
+// Household and Business list their pages flat, with no group headings
+// (VIEWS_DESIGN.md §1): the headings hide and every panel stays shown. Turning
+// flat off closes every group again.
+export function setFlatPageGroups(root, flat) {
+  if (!root) return;
+  const was = root.classList.contains("is-flat");
+  root.classList.toggle("is-flat", !!flat);
+  if (flat) {
+    for (const group of groupsIn(root)) {
+      group.classList.remove("is-open");
+      const panel = group.querySelector(".page-group-pages");
+      if (panel) settlePanel(panel, true);
+    }
+  } else if (was) {
+    openPageGroup(root, null);
+  }
+}
+
 export function openPageGroup(root, key, { animate = false } = {}) {
+  if (root?.classList.contains("is-flat")) return;
   const slide = animate && !reducedMotion();
   for (const group of groupsIn(root)) {
     const open = !!key && group.dataset.pageGroup === key;

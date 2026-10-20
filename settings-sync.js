@@ -66,6 +66,7 @@ export const TRACKED_SETTINGS = Object.freeze({
     recreateHobbies: "fields",
     sportsPrefs: "fields", // teams · leagues · leagueOrder · collegeScope (sports-model.js)
     displayPrefs: "fields", // mode · theme · icon (theme.js) — per person
+    viewDisplayPrefs: "fields", // household · business — each view's { mode, theme } (views.js)
   }),
   plan: Object.freeze({
     planMealPlanCalendars: "fields", // { calendarId: on } — "Show on Meal Plan" per calendar

@@ -1,0 +1,234 @@
+#!/usr/bin/env node
+// Headless QA for the view shell (VIEWS_DESIGN.md, build step 2): the view band
+// under the landing logo and in the header while the page menu is open; swipes
+// on the band (only there), its ‹ › chevrons and the arrow keys; the cyclical
+// order Household | Personal | Business; each view's pages (Household and
+// Business flat) and look; routes with a view prefix; the last view surviving a
+// reload; and a household member seeing Household only.
+//
+//   node scripts/qa-views.mjs [url]   (default http://localhost:4174/; needs `npm run dev:local`)
+//   QA_VIEWS_SHOT=/path/prefix → also saves screenshots
+import { chromium } from "playwright";
+import { existsSync } from "node:fs";
+
+const URL = process.argv[2] || "http://localhost:4174/";
+const SHOT = process.env.QA_VIEWS_SHOT || "";
+const LAUNCH = { headless: true, args: ["--no-proxy-server", "--proxy-bypass-list=*"] };
+const results = [];
+const check = (cond, name, detail) => {
+  results.push([cond ? "PASS" : "FAIL", name]);
+  console.log(cond ? `  ✓ ${name}` : `  ✗ ${name}${detail ? ` — ${detail}` : ""}`);
+};
+
+async function launch() {
+  try { return await chromium.launch({ ...LAUNCH, channel: "chrome" }); } catch { /* none */ }
+  try { return await chromium.launch(LAUNCH); } catch { /* none */ }
+  const p = `${process.env.PLAYWRIGHT_BROWSERS_PATH || "/opt/pw-browsers"}/chromium`;
+  if (existsSync(p)) return chromium.launch({ ...LAUNCH, executablePath: p });
+  throw new Error("No Chromium available");
+}
+
+const browser = await launch();
+try {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, timezoneId: "America/Chicago" });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+
+  const boot = async (path = "") => {
+    await page.goto("about:blank"); // a hash-only change wouldn't reload the app
+    await page.goto(URL + path, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => document.body.classList.contains("app-authed") || (document.getElementById("lockDevSignInBtn") && !document.getElementById("lockDevSignInBtn").hidden), { timeout: 20000 });
+    if (!(await page.evaluate(() => document.body.classList.contains("app-authed")))) await page.click("#lockDevSignInBtn");
+    await page.waitForFunction(() => !!window.__liveQA?.view, { timeout: 20000 });
+    await page.waitForTimeout(700);
+  };
+  const view = () => page.evaluate(() => window.__liveQA.view());
+  const area = () => page.evaluate(() => window.__liveQA.activeArea());
+  const goHome = async () => { await page.evaluate(() => window.__liveQA.goHome()); await page.waitForTimeout(200); };
+  const bandName = (sel) => page.evaluate((s) => document.querySelector(`${s} .view-band-name`)?.textContent.trim(), sel);
+  const visibleIn = (sel) => page.evaluate((s) => [...document.querySelectorAll(s)].filter((b) => b.offsetParent).map((b) => b.textContent.trim()), sel);
+  const palette = () => page.evaluate(() => document.body.dataset.palette || "classic");
+  const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+  const shot = async (name) => { if (!SHOT) return; await page.waitForTimeout(300); await page.screenshot({ path: `${SHOT}-${name}.png` }); };
+  // A one-finger horizontal swipe of dx px, starting at the middle of `sel`.
+  const swipe = async (sel, dx, dy = 0) => {
+    await page.evaluate(({ sel, dx, dy }) => {
+      const el = document.querySelector(sel);
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      const touch = (cx, cy) => new Touch({ identifier: 1, target: el, clientX: cx, clientY: cy });
+      el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [touch(x, y)], changedTouches: [touch(x, y)] }));
+      el.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [touch(x + dx, y + dy)] }));
+    }, { sel, dx, dy });
+    await page.waitForTimeout(350);
+  };
+  const flatPages = (root) => visibleIn(`${root} .page-group-pages > button`);
+
+  await page.goto(URL, { waitUntil: "domcontentloaded" });
+  await page.evaluate(() => { try { localStorage.removeItem("live-view-v1"); } catch {} });
+  await boot();
+  await goHome();
+
+  console.log("Landing page (admin)");
+  check(await view() === "personal", "first launch opens in Personal", await view());
+  check(await bandName("#homeViewBand") === "Personal", "the band under the logo reads Personal");
+  const order = await page.evaluate(() => {
+    const logo = document.querySelector(".home-logo").getBoundingClientRect();
+    const band = document.querySelector("#homeViewBand").getBoundingClientRect();
+    const links = document.querySelector("#homePageGroups").getBoundingClientRect();
+    return band.top >= logo.bottom - 12 && band.bottom <= links.top + 12;
+  });
+  check(order, "the band sits between the logo and the links");
+  const font = await page.evaluate(() => getComputedStyle(document.querySelector("#homeViewBand .view-band-name")).fontFamily);
+  check(/Great Vibes/.test(font), "the band uses the script face", font);
+  check((await visibleIn("#homeViewBand .view-band-step")).length === 2, "chevrons on either side");
+  check(JSON.stringify(await visibleIn("#homePageGroups .page-group-head")) === JSON.stringify(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]), "Personal keeps the six groups");
+  await shot("personal");
+
+  console.log("Swiping on the band");
+  await swipe("#homeViewBand", 90);
+  check(await view() === "household", "finger right → Household");
+  await page.waitForTimeout(100);
+  check(await bandName("#homeViewBand") === "Household", "the band reads Household");
+  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar", "Meal Plan", "Finance", "Shop", "Watch", "Listen"]), "Household: six pages, flat", (await flatPages("#homePageGroups")).join(", "));
+  check((await visibleIn("#homePageGroups .page-group-head")).length === 0, "no group headings in Household");
+  check(await palette() === "household", "Household wears the Household theme", await palette());
+  check(await fits(), "Household landing fits 390px");
+  await shot("household");
+  await swipe("#homeViewBand", 90);
+  check(await view() === "business", "finger right again → Business (wraps)");
+  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar"]), "Business: Calendar only");
+  check(await palette() === "urbangreens", "Business wears Urban Greens", await palette());
+  await shot("business");
+  await swipe("#homeViewBand", 90);
+  check(await view() === "personal", "and again → Personal");
+  await swipe("#homeViewBand", -90);
+  check(await view() === "business", "finger left from Personal → Business");
+  await swipe("#homeViewBand", -90);
+  check(await view() === "household", "finger left from Business → Household (wraps)");
+  await swipe("#homeViewBand", 20);
+  check(await view() === "household", "a short drag doesn't switch");
+  await swipe("#homeViewBand", 60, 80);
+  check(await view() === "household", "a mostly vertical drag doesn't switch");
+  await swipe(".home-logo", 120);
+  check(await view() === "household", "a swipe off the band doesn't switch");
+
+  console.log("Chevrons and arrow keys");
+  await page.click('#homeViewBand [data-view-step="1"]');
+  await page.waitForTimeout(300);
+  check(await view() === "personal", "› steps right");
+  await page.click('#homeViewBand [data-view-step="-1"]');
+  await page.waitForTimeout(300);
+  check(await view() === "household", "‹ steps left");
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(300);
+  check(await view() === "personal", "→ key steps right on the landing page");
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForTimeout(300);
+  check(await view() === "household", "← key steps left");
+
+  console.log("From a page, with the page menu open");
+  await page.click("#homePlanBtn");
+  await page.waitForTimeout(500);
+  check(await area() === "plan", "Calendar opens from Household");
+  check(await page.evaluate(() => location.hash.startsWith("#household/")), "the route carries the view", await page.evaluate(() => location.hash));
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(300);
+  check(await view() === "household", "arrow keys do nothing on a page with the menu closed");
+  check(await page.evaluate(() => document.querySelector("#headerViewBand").hidden), "header band hidden while the menu is closed");
+  await page.click("#pageTitleBtn");
+  await page.waitForTimeout(350);
+  check(!(await page.evaluate(() => document.querySelector("#headerViewBand").hidden)), "opening the menu shows the band in the header");
+  check(await page.evaluate(() => !document.querySelector("#pageTitle").offsetParent), "…in place of the page title");
+  check(await bandName("#headerViewBand") === "Household", "header band reads Household");
+  check(JSON.stringify(await flatPages("#pageTitleMenu")) === JSON.stringify(["Calendar", "Meal Plan", "Finance", "Shop", "Watch", "Listen"]), "menu lists Household's pages flat");
+  check(await fits(), "header band + menu fit 390px");
+  await shot("menu-household");
+  await swipe("#headerViewBand", -90);
+  check(await view() === "personal", "swiping the header band switches views");
+  check(await area() === "plan", "Calendar stays open (Personal has it)");
+  check(!(await page.evaluate(() => document.querySelector("#pageTitleMenu").hidden)), "the menu stays open");
+  check(JSON.stringify(await visibleIn("#pageTitleMenu .page-group-head")) === JSON.stringify(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]), "menu shows Personal's groups");
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(300);
+  check(await view() === "business", "→ key works while the menu is open");
+  check(await area() === "plan", "Calendar stays open (Business has it)");
+  await page.click("#headerViewBand .view-band-name");
+  await page.waitForTimeout(300);
+  check(await page.evaluate(() => document.querySelector("#pageTitleMenu").hidden), "tapping the name closes the menu, like the title");
+  check(await page.evaluate(() => !!document.querySelector("#pageTitle").offsetParent), "the page title is back");
+
+  console.log("A page the new view doesn't hold");
+  await page.click("#pageTitleBtn");
+  await page.waitForTimeout(300);
+  await page.click('#headerViewBand [data-view-step="1"]'); // Business → Household
+  await page.waitForTimeout(200);
+  await page.click('#headerViewBand [data-view-step="1"]'); // Household → Personal
+  await page.waitForTimeout(300);
+  check(await view() === "personal", "back in Personal");
+  await page.evaluate(() => document.querySelector("#titleNewsBtn").click());
+  await page.waitForTimeout(600);
+  check(await area() === "news", "News opens from Personal");
+  await page.click("#pageTitleBtn");
+  await page.waitForTimeout(300);
+  await page.click('#headerViewBand [data-view-step="-1"]'); // → Household
+  await page.waitForTimeout(400);
+  check(await view() === "household" && await area() === "home", "switching to Household from News lands on its landing page", `${await view()} / ${await area()}`);
+
+  console.log("Opening a page outside the view (dock, link)");
+  await page.evaluate(() => document.querySelector("#homeShopBtn").click());
+  await page.waitForTimeout(400);
+  await page.evaluate(() => window.__liveQA.goHome());
+  await page.evaluate(() => document.querySelector("#homeWeatherBtn").click()); // hidden in Household; the dock reaches it the same way
+  await page.waitForTimeout(600);
+  check(await area() === "weather" && await view() === "personal", "Weather opened from Household moves to Personal", `${await area()} / ${await view()}`);
+
+  console.log("Routes and reload");
+  await boot("#household/shop");
+  check(await view() === "household", "#household/shop opens Household");
+  check(await area() === "shop", "…on Shop");
+  await boot("#business");
+  check(await view() === "business", "#business opens Business");
+  await boot();
+  check(await view() === "business", "a reload reopens the last view used");
+  await boot("#calendar");
+  check(await view() === "business", "an old route without a view keeps the current view when it has the page");
+
+  console.log("Display per view");
+  await goHome();
+  check(await palette() === "urbangreens", "Business keeps its own look after reload");
+
+  console.log("A household member");
+  await page.evaluate(() => window.__liveQA.viewsAsRole("member"));
+  await goHome();
+  await page.waitForTimeout(300);
+  check(await view() === "household", "Household only");
+  check(await bandName("#homeViewBand") === "Household", "the band reads Household");
+  check((await visibleIn("#homeViewBand .view-band-step")).length === 0, "no chevrons");
+  await swipe("#homeViewBand", 90);
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(300);
+  check(await view() === "household", "swipes and arrow keys don't switch");
+  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar", "Meal Plan", "Finance", "Shop", "Watch", "Listen"]), "her six pages, flat");
+  check(await palette() === "classic", "her own Display choice (Classic by default), not the admin's Household look", await palette());
+  await page.evaluate(() => document.querySelector("#homePlanBtn").click());
+  await page.waitForTimeout(400);
+  check(await page.evaluate(() => location.hash === "#plan" || !location.hash.includes("/")), "her routes carry no view prefix", await page.evaluate(() => location.hash));
+  await page.click("#pageTitleBtn");
+  await page.waitForTimeout(300);
+  check(await bandName("#headerViewBand") === "Household", "her header band reads Household while the menu is open");
+  await shot("member-menu");
+
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.evaluate(() => window.__liveQA.viewsAsRole("admin"));
+  await goHome();
+  check(await fits(), "landing with the band fits 360px");
+  check(errors.length === 0, "no page errors", errors.join(" | "));
+} finally {
+  await browser.close();
+}
+
+const failed = results.filter(([r]) => r === "FAIL").length;
+console.log(`\n${results.length - failed}/${results.length} checks passed`);
+process.exit(failed ? 1 : 0);
