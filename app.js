@@ -16816,6 +16816,8 @@ function displaySettingsTemplate() {
   const themeDesc = {
     classic: "The everyday look.",
     halloween: "Orange, black and purple.",
+    household: "Navy, dusty blue, blush and sage.",
+    urbangreens: "Urban Greens green and gray, with black and white.",
     seasonal: seasonNow === "classic"
       ? "Halloween every October, Classic the rest of the year."
       : `${THEMES[seasonNow].label} now, Classic from ${escapeHtml(endsLabel)}.`,
