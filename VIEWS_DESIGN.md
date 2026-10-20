@@ -1,6 +1,6 @@
 # Views: Personal, Household, Business — design & plan
 
-Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) built on `claude/views-shell` (§13); not merged or deployed. Steps 1 and 3–9 not started.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
+Status: **DIRECTION AGREED (Luke, 2026-10-20). Build step 2 (the view shell) merged to `main` in #140 (§13); not deployed. Steps 1 and 3–9 not started.** Written from the design docs and the decisions in §10; items marked *check in code* still need confirming on `main` before their step is built.
 
 Goal: the app splits into three views, each with its own pages, data and look:
 - **Personal** is the user's own space.
