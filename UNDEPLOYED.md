@@ -10,6 +10,11 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Finance: personal accounts split on the server (step 1)** · #146 · **Netlify deploy** (server functions only; no app change). The `live_finance_account_views` table is **already applied** (2026-10-20) and empty, so nothing changes until accounts are marked Personal (step 3). No new env vars.
+  Post-deploy:
+  1. Finance opens as before for Luke and Marijane: same accounts, balances, transactions.
+  2. The next morning, the daily snapshot ran (Netlify function logs: `[fin-snapshot] recorded N balances`, no "account views unreadable").
+  3. Supabase API logs: one small read of `live_finance_account_views` per Finance load / bank pull, nothing on a timer.
 - **Views: each view reads its own data; Business calendar; layers; game card** · #143 · **Netlify deploy + TestFlight build** (client-only; the database change, #142, is already applied). Household reads the household rows (Calendar, Tasks, Watch, Listen, Shop), Personal your own (Shop stays the household list), Business its own Calendar. Personal's Calendar can show Household and Business as layers (Calendar sidebar › Show in my Personal calendar). A ticker tap in Household/Business opens a small game card. **Luke's wife's Calendar/Tasks/Watch/Listen switch to the household rows** (hers are empty today). No migration, no new env vars.
   Post-deploy:
   1. Personal: your 4 calendar events, 16 podcasts and Watch list look as before.
