@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const css = readFileSync(fileURLToPath(new URL("../styles.css", import.meta.url)), "utf8");
-const CHECKED = ["halloween"];
+const CHECKED = ["halloween", "household", "urbangreens"];
 
 function block(name, mode) {
   const m = css.match(new RegExp(`/\\* theme:${name}:${mode} \\*/\\s*[^{]+\\{([^}]*)\\}`));
@@ -78,7 +78,8 @@ describe("mail reading surface in dark mode", () => {
   };
   const base = panel(".mail-thread-panel");
   const dark = { ...base, ...panel('body[data-theme="dark"] .mail-thread-panel') };
-  const sets = { classic: dark, halloween: { ...dark, ...panel('body[data-palette="halloween"][data-theme="dark"] .mail-thread-panel') } };
+  const sets = { classic: dark };
+  for (const t of CHECKED) sets[t] = { ...dark, ...panel(`body[data-palette="${t}"][data-theme="dark"] .mail-thread-panel`) };
   for (const [name, t] of Object.entries(sets)) {
     it(`${name}: text and accents read on the white surface`, () => {
       const pairs = [["ink", "window-bg"], ["muted", "window-bg"], ["accent", "window-bg"], ["accent-dark", "window-bg"], ["tomato", "window-bg"], ["window-border", "window-bg"], ["on-accent", "accent"], ["ink", "accent-soft"], ["ink", "paper"]];

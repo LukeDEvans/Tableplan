@@ -3,7 +3,7 @@
 Decisions (Luke, 2026-10-14):
 
 - **Two separate choices: Mode and Theme.** Mode is Light / Dark / Auto. Theme is Classic,
-  Halloween, or Seasonal. Every theme has both a light and a dark version, so Auto works
+  Household, Urban Greens, Halloween, or Seasonal. Every theme has both a light and a dark version, so Auto works
   inside any theme.
 - **Per person.** Stored in `state.displayPrefs` (`{ mode, theme, icon }`) in the personal
   `recreate` section, stamped field by field (`TRACKED_SETTINGS`, `"fields"`). One
@@ -22,6 +22,16 @@ Decisions (Luke, 2026-10-14):
 - **Halloween is orange, black and purple** (Luke, 2026-10-14). Orange stays the accent
   (fills, links, highlights, today). Purple (`--purple`, also `--window-border`) outlines
   windows and buttons and tints the dock: `#6a35a0` in light, `#a77bff` in dark.
+- **Household and Urban Greens** (Luke, 2026-10-20). Both are pickable; **Classic stays
+  the default.** Their names may change in a follow-up.
+  - **Household:** navy accent (`#24395e`; dusty blue `#9fbad6` in dark), dusty blue
+    window outlines, blush page backdrop and dark-mode outlines, sage soft highlights
+    (`--accent-soft`, `--sun`, `--purple`). Dock: navy with a blush edge.
+  - **Urban Greens** (`urbangreens`): from the Urban Greens logo — green `#78bb34`, gray
+    `#7e7e7e` — plus black and white. Light mode uses a deeper green (`#3d7517`) for text
+    and fills so it reaches 4.5:1 on white; dark mode uses the logo green itself. Window
+    outlines are black (light) / gray (dark). Dock: black with a logo-green edge.
+  - No alternate iPhone icon or favicon for either yet.
 
 ## How it works
 

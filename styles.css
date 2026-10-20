@@ -146,6 +146,144 @@ body[data-palette="halloween"][data-theme="dark"] .bottom-dock {
   --dock-bg2: #0e0c0b;
 }
 
+/* theme:household:light */
+body[data-palette="household"] {
+  --bg: #f9f4f2;
+  --surface: #fffbfa;
+  --surface-strong: #ffffff;
+  --ink: #1b2538;
+  --muted: #535d72;
+  --line: #ddd3d6;
+  --accent: #24395e;
+  --accent-dark: #1a2a47;
+  --accent-soft: #e2ebdf;
+  --on-accent: #ffffff;
+  --tomato: #b0243a;
+  --tomato-soft: #f8dde1;
+  --on-tomato: #ffffff;
+  --sun: #9fbf9b;
+  --sun-soft: #f5e1e3;
+  --sun-pale: #fbeff0;
+  --blue: #46637f;
+  --window-bg: #ffffff;
+  --window-border: #46637f;
+  --purple: #4a6650;
+  --paper: #ffffff;
+  --card: #fffaf9;
+  --text-muted: #535d72;
+}
+
+/* theme:household:dark */
+body[data-palette="household"][data-theme="dark"] {
+  --bg: #121826;
+  --surface: #1a2233;
+  --surface-strong: #222b3e;
+  --ink: #f2eeeb;
+  --muted: #b4bccb;
+  --line: #36415a;
+  --accent: #9fbad6;
+  --accent-dark: #c6d7e8;
+  --accent-soft: #263529;
+  --on-accent: #121826;
+  --tomato: #f28b98;
+  --tomato-soft: #4a2029;
+  --on-tomato: #121826;
+  --sun: #a9c4a6;
+  --sun-soft: #3a2a33;
+  --sun-pale: #161d2c;
+  --blue: #9fbad6;
+  --window-bg: #1a2233;
+  --window-border: #e8b4b8;
+  --purple: #a9c4a6;
+  --paper: #1a2233;
+  --card: #222b3e;
+  --text-muted: #b4bccb;
+}
+body[data-palette="household"][data-theme="dark"] { background: #0f1420; }
+
+/* Household: navy is the accent, dusty blue outlines windows, blush is the
+   page backdrop, and sage is the soft highlight (--accent-soft, --sun,
+   --purple). The dock goes navy with a blush edge; dock text stays white. */
+body[data-palette="household"] .bottom-dock {
+  --dock-bg1: #34507a;
+  --dock-bg2: #1b2a45;
+  --dock-ink: #ffffff;
+  border-top-color: #e3a9b0;
+}
+body[data-palette="household"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #24395e;
+  --dock-bg2: #0f1420;
+}
+
+/* theme:urbangreens:light */
+body[data-palette="urbangreens"] {
+  --bg: #f6f7f4;
+  --surface: #fcfdfb;
+  --surface-strong: #ffffff;
+  --ink: #141414;
+  --muted: #575757;
+  --line: #d9ddd3;
+  --accent: #3d7517;
+  --accent-dark: #2f5c11;
+  --accent-soft: #e4f2d6;
+  --on-accent: #ffffff;
+  --tomato: #b8321f;
+  --tomato-soft: #f8dfda;
+  --on-tomato: #ffffff;
+  --sun: #78bb34;
+  --sun-soft: #ecf4e2;
+  --sun-pale: #f5faef;
+  --blue: #3d7517;
+  --window-bg: #ffffff;
+  --window-border: #1f1f1f;
+  --purple: #595959;
+  --paper: #ffffff;
+  --card: #fbfcf9;
+  --text-muted: #575757;
+}
+
+/* theme:urbangreens:dark */
+body[data-palette="urbangreens"][data-theme="dark"] {
+  --bg: #0f0f0f;
+  --surface: #1a1a1a;
+  --surface-strong: #232323;
+  --ink: #f4f4f2;
+  --muted: #b3b3b3;
+  --line: #3a3a3a;
+  --accent: #78bb34;
+  --accent-dark: #a6d977;
+  --accent-soft: #1f2f12;
+  --on-accent: #0f0f0f;
+  --tomato: #ff7a6b;
+  --tomato-soft: #45201b;
+  --on-tomato: #0f0f0f;
+  --sun: #78bb34;
+  --sun-soft: #1f2f12;
+  --sun-pale: #121610;
+  --blue: #78bb34;
+  --window-bg: #1a1a1a;
+  --window-border: #a3a3a3;
+  --purple: #a3a3a3;
+  --paper: #1a1a1a;
+  --card: #232323;
+  --text-muted: #b3b3b3;
+}
+body[data-palette="urbangreens"][data-theme="dark"] { background: #0a0a0a; }
+
+/* Urban Greens extras: the dock goes black with a logo-green edge in both
+   modes; gray (--purple) is the secondary outline, as in the logo's wordmark. */
+body[data-palette="urbangreens"] .bottom-dock {
+  --dock-bg1: #2a2a2a;
+  --dock-bg2: #111111;
+  --dock-ink: #ffffff;
+  --dock-live: #ff8a75;
+  border-top-color: #78bb34;
+}
+body[data-palette="urbangreens"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #1f1f1f;
+  --dock-bg2: #0a0a0a;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -14666,6 +14804,26 @@ body[data-palette="halloween"][data-theme="dark"] .mail-thread-panel {
   --window-border: #6a35a0;
   --line: #e2cdb3;
 }
+body[data-palette="household"][data-theme="dark"] .mail-thread-panel {
+  --accent: #24395e;
+  --accent-dark: #1a2a47;
+  --accent-soft: #e2ebdf;
+  --on-accent: #ffffff;
+  --tomato: #b0243a;
+  --tomato-soft: #f8dde1;
+  --window-border: #46637f;
+  --line: #ddd3d6;
+}
+body[data-palette="urbangreens"][data-theme="dark"] .mail-thread-panel {
+  --accent: #3d7517;
+  --accent-dark: #2f5c11;
+  --accent-soft: #e4f2d6;
+  --on-accent: #ffffff;
+  --tomato: #b8321f;
+  --tomato-soft: #f8dfda;
+  --window-border: #1f1f1f;
+  --line: #d9ddd3;
+}
 /* While a mail menu (move / snooze / more) is open, taps on an email go to the
    page instead of into its frame, so they close the menu (app.js
    wireMailMenuDismiss). */
@@ -23532,7 +23690,8 @@ button.scores-idle:hover { background: color-mix(in srgb, var(--ink) 5%, transpa
 .display-theme-card:has(input:focus-visible) { outline: 3px solid var(--accent-dark); outline-offset: 2px; }
 .display-swatch {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr; /* one stripe per color (3 or 4) */
   flex: 0 0 auto;
   width: 48px;
   height: 36px;

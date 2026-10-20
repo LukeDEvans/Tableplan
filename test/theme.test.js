@@ -57,4 +57,14 @@ describe("resolveTheme", () => {
       expect(t.themeColor.dark).toMatch(/^#[0-9a-f]{6}$/i);
     }
   });
+  it("Household and Urban Greens are pickable; Classic stays the default (Luke, 2026-10-20)", () => {
+    for (const t of ["household", "urbangreens"]) {
+      expect(cleanDisplayPrefs({ theme: t })).toEqual({ theme: t });
+      expect(resolveTheme({ theme: t }, { now: oct }).palette).toBe(t);
+      expect(resolveTheme({ theme: t, mode: "dark" }, { now: oct }).scheme).toBe("dark");
+      expect(resolveTheme({ theme: t }, { now: oct }).icon).toBe("");
+    }
+    expect(normalizeDisplayPrefs({}).theme).toBe("classic");
+    expect(resolveTheme({}, { now: nov1 }).palette).toBe("classic");
+  });
 });

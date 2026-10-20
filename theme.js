@@ -29,10 +29,25 @@ export const THEMES = Object.freeze({
     themeColor: Object.freeze({ light: "#1a1714", dark: "#0e0c0b" }),
     swatch: Object.freeze(["#0e0c0b", "#ff8a1f", "#a77bff"]),
   }),
+  // Luke, 2026-10-20: navy, dusty blue, blush pink, sage green.
+  household: Object.freeze({
+    label: "Household",
+    icon: "",
+    themeColor: Object.freeze({ light: "#24395e", dark: "#121826" }),
+    swatch: Object.freeze(["#24395e", "#8aa6c1", "#e8b4b8", "#a9c4a6"]),
+  }),
+  // Luke, 2026-10-20: from the Urban Greens logo (green #78bb34, gray #7e7e7e)
+  // plus black and white.
+  urbangreens: Object.freeze({
+    label: "Urban Greens",
+    icon: "",
+    themeColor: Object.freeze({ light: "#111111", dark: "#0a0a0a" }),
+    swatch: Object.freeze(["#111111", "#78bb34", "#7e7e7e", "#ffffff"]),
+  }),
 });
 
 // Selectable choices, in display order. "seasonal" is not a palette itself.
-export const THEME_CHOICES = Object.freeze(["classic", "halloween", "seasonal"]);
+export const THEME_CHOICES = Object.freeze(["classic", "household", "urbangreens", "halloween", "seasonal"]);
 
 // month is 1–12, inclusive ranges. First match wins.
 export const SEASONS = Object.freeze([
