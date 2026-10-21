@@ -2,7 +2,8 @@
 // newspapers' emails (collected server-side by the mail sweep, _news-links.js),
 // sorted into newspaper sections, in the same shell as Mail and Media: a top bar,
 // a sidebar directory (Front page · Saved · sections · papers) and
-// the stories. Each story's ⋯ menu: Save, Open, Listen, Share, Hide. Saved is the
+// the stories. Each story's ⋯ menu: Save, Open, Listen, Share, Hide. Only Save
+// adds a story to Saved; Open / Listen read it without saving. Saved is the
 // one list of saved articles (stories saved here, newsletters, extension, URL,
 // scans, PDFs) — app.js owns it (MEDIA_SPLIT_DESIGN.md).
 //
@@ -275,6 +276,9 @@ const ICONS = {
 export function createNewsModule(deps) {
   const {
     callGmailApi, escapeHtml: esc, showToast, isSignedIn, getState, onSentToMedia,
+    // Open / Listen without saving (Luke, 2026-10-21): hands the reader a copy of
+    // the story for this session only. Only ⋯ → Save puts a story in Saved.
+    onOpenUnsaved,
     openInMedia, listenInMedia, openSignInSettings, getActiveAppArea, setDotCount,
     // iPhone app only (app.js): returns { check(): Promise<{ nyt?, economist?,
     // startribune? }>, needsCheck(signIns): boolean } — the phone's own in-app
@@ -509,14 +513,24 @@ export function createNewsModule(deps) {
     try { await navigator.clipboard.writeText(a.url); showToast?.("Link copied."); }
     catch { showToast?.(a.url); }
   }
+  // Opening or listening to a story does NOT save it (Luke, 2026-10-21): the
+  // reader gets a session-only copy and the story is only marked read. Saved holds
+  // just what ⋯ → Save put there.
+  function readerRecord(id) {
+    const a = cardFor(id);
+    if (!a) return null;
+    const record = sentArticleRecord(a);
+    onOpenUnsaved?.(record);
+    return record;
+  }
   function open(id) {
-    const record = sendToMedia(id, { quiet: true });
+    const record = readerRecord(id);
     markRead(id);
     flush();
     if (record) openInMedia?.(record.id);
   }
   function listen(id) {
-    const record = sendToMedia(id, { quiet: true });
+    const record = readerRecord(id);
     markRead(id);
     flush();
     if (record) listenInMedia?.(record.id);

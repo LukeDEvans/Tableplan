@@ -1673,14 +1673,37 @@ const PAGE_NOTIF_BUTTONS = {
   media: ["homeListenBtn", "titleListenBtn", "miniPlayerInfoBtn"],
 };
 
-// A News article sent to Media (news-ui.js ⋯ → Send to Media / Open / Listen) is
-// added to the saved articles (News → Saved articles) right away; the server saves
-// the same record by id (savedArticles unions by id).
+// A News story saved with ⋯ → Save (news-ui.js) is added to the saved articles
+// (News → Saved) right away; the server saves the same record by id
+// (savedArticles unions by id). If it was already open this session, its
+// fetched body comes along.
 function addAcceptedNewsArticle(article) {
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
-  if (!state.savedArticles.some((a) => a.id === article.id)) state.savedArticles.unshift(article);
+  if (!state.savedArticles.some((a) => a.id === article.id)) {
+    const opened = newsSessionArticles.get(article.id);
+    state.savedArticles.unshift(opened ? { ...opened, savedAt: article.savedAt || opened.savedAt } : article);
+  }
+  newsSessionArticles.delete(article.id);
   persist();
   showSavedArticlesView();
+}
+
+// News stories opened or listened to WITHOUT being saved (Luke, 2026-10-21: only
+// ⋯ → Save puts a story in Saved). The reader and Listen work from this
+// in-memory copy; it is never persisted or synced and is gone on reload.
+const newsSessionArticles = new Map();
+function addNewsSessionArticle(record) {
+  if (!record?.id) return;
+  if ((state.savedArticles || []).some((a) => a.id === record.id)) return; // already saved: use that copy
+  if (!newsSessionArticles.has(record.id)) newsSessionArticles.set(record.id, { ...record, sessionOnly: true });
+}
+function isSavedArticle(article) {
+  return !!article && (state.savedArticles || []).some((a) => a.id === article.id);
+}
+// The article the reader / Listen should use: the saved one, else this session's copy.
+function readerArticle(id) {
+  if (!id) return null;
+  return (state.savedArticles || []).find((a) => a.id === id) || newsSessionArticles.get(id) || null;
 }
 
 const pageNotifCounts = {};
@@ -1754,7 +1777,8 @@ const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed
 // app.js. Cross-domain (all deferred): a sent article is added to the saved
 // articles right away (addAcceptedNewsArticle — the server saves the same record
 // by id); Open / Listen open the article reader, which lives in News, with its
-// TTS (MEDIA_SPLIT_DESIGN.md). The saved-articles list is News's "Saved" view.
+// TTS (MEDIA_SPLIT_DESIGN.md), from a session-only copy (newsSessionArticles) —
+// they don't save the story. The saved-articles list is News's "Saved" view.
 const _news = createNewsModule({
   escapeHtml: (...a) => escapeHtml(...a),
   callGmailApi: (...a) => callGmailApi(...a),
@@ -1763,6 +1787,7 @@ const _news = createNewsModule({
   getState: () => state,
   getActiveAppArea: () => activeAppArea,
   onSentToMedia: (...a) => addAcceptedNewsArticle(...a),
+  onOpenUnsaved: (...a) => addNewsSessionArticle(...a),
   openInMedia: (id) => openArticleFrom(id),
   listenInMedia: (id) => listenToArticle(id),
   // Saved articles + the reader (the former Media → Publications; MEDIA_SPLIT_DESIGN.md).
@@ -36810,7 +36835,7 @@ function snapshotReaderOrigin() {
 // where you were. `savedPub` also points the saved-articles list (under the
 // reader) at that publication — a scan or a pasted URL lands there.
 function openArticleFrom(id, { savedPub = null } = {}) {
-  if (!(state.savedArticles || []).some((a) => a.id === id)) return false;
+  if (!readerArticle(id)) return false;
   const origin = snapshotReaderOrigin();
   if (activeAppArea !== READER_HOST_AREA) showNewsApp();
   wireSavedArticles();
@@ -36863,7 +36888,7 @@ function returnToReaderOrigin(origin) {
 // Render an article into the reader (where it is: News). Also used to refresh
 // the open article in place — after its text loads, or the listen queue moves on.
 function showArticleInReader(id, fromListId) {
-  const article = (state.savedArticles || []).find((a) => a.id === id);
+  const article = readerArticle(id);
   if (!article) return;
   warmKokoroVoiceIfKokoro(); // opening an article → a Listen may be seconds away
   openArticleId = id;
@@ -37008,6 +37033,7 @@ async function getScanContent() {
 // small cross-device ref on the synced metadata. Never throws to the caller.
 function stashArticleBody(article) {
   if (!article?.id || !article.text) return;
+  if (!isSavedArticle(article)) return; // an unsaved News story: nothing to store
   (async () => {
     try {
       const ac = await getArticleContent();
@@ -37109,7 +37135,7 @@ function scheduleArticleBodyBackfill() {
 // Fetches an article's body text into state (returns the outcome). Shared by
 // the reader (auto-fetch on open) and the listen flow (fetch-then-play).
 async function ensureArticleText(id) {
-  const article = (state.savedArticles || []).find((a) => a.id === id);
+  const article = readerArticle(id);
   if (!article) return { ok: false, error: "Article not found." };
   if (article.text) return { ok: true };
   // BUG FIXED 2026-09-21: this used to skip straight to re-scraping the live URL
@@ -37182,7 +37208,7 @@ function fetchArticleBodyLive(article) {
 // signed in to the paper in the iPhone app. Replaces the stored body only when
 // the new one is longer.
 async function refetchArticleWithLogin(id) {
-  const article = (state.savedArticles || []).find((a) => a.id === id);
+  const article = readerArticle(id);
   if (!article) return;
   const textEl = document.getElementById("articleReaderText");
   if (textEl && openArticleId === id) textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
@@ -37303,7 +37329,7 @@ function bindArticlePaperLoginActions(root, article) {
 }
 
 async function fetchArticleText(id) {
-  const article = (state.savedArticles || []).find((a) => a.id === id);
+  const article = readerArticle(id);
   if (!article) return;
   const textEl = document.getElementById("articleReaderText");
   if (textEl) textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
@@ -37855,7 +37881,7 @@ function listenSkip(seconds) {
 
 async function listenToArticle(id) {
   unlockListenAudio(); // still inside the tap — bless audio before any await
-  const article = (state.savedArticles || []).find((a) => a.id === id);
+  const article = readerArticle(id);
   if (!article) return;
   stopListen();
   openArticleFrom(id);
@@ -38687,7 +38713,7 @@ function onNativeTtsItemStart(session, e) {
     ({ episode, show } = findPodcastEpisode(e.id));
     if (!episode) return;
   } else {
-    article = (state.savedArticles || []).find((a) => a.id === e.id);
+    article = readerArticle(e.id);
     if (!article) return;
   }
   session.currentId = e.id;
@@ -39053,7 +39079,7 @@ function listenSessionArticleId() {
 function toggleReaderListen() {
   const openId = openArticleId;
   if (openId && !listenLoading && listenSessionArticleId() !== openId) {
-    const article = (state.savedArticles || []).find((a) => a.id === openId);
+    const article = readerArticle(openId);
     if (article) { unlockListenAudio(); startListenTTS(article); return; }
   }
   toggleListenPlayPause();
@@ -39078,7 +39104,7 @@ function toggleListenPlayPause() {
   }
   if (!listenAudio && !listenLoading) {
     // Resume the article we were reading, or start the one that's open.
-    const article = listenArticle || (openArticleId ? (state.savedArticles || []).find((a) => a.id === openArticleId) : null);
+    const article = listenArticle || (openArticleId ? readerArticle(openArticleId) : null);
     if (article) startListenTTS(article);
     return;
   }
