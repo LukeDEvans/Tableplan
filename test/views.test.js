@@ -60,8 +60,12 @@ describe("views: cyclical swipe", () => {
 
 describe("views: pages", () => {
   const menuPages = ["plan", "eat", "do", "news", "weather", "finance", "shop", "watch", "read", "mail", "explore", "play", "recreate", "scores"];
-  it("Personal holds every page", () => {
-    for (const p of menuPages) expect(viewHasPage("personal", p)).toBe(true);
+  it("Personal: no Meal Plan or Shop (Household's), no Tasks / Weather / Scores entries (Luke, 2026-10-20)", () => {
+    expect(menuPages.filter((p) => viewHasPage("personal", p))).toEqual(["plan", "news", "finance", "watch", "read", "mail", "explore", "play", "recreate"]);
+  });
+  it("a page in no view's list stays where it is when opened (Weather from the dock)", () => {
+    expect(viewForPage("weather", "household", ALL)).toBe(null);
+    expect(viewForPage("eat", "personal", ALL)).toBe("household");
   });
   it("Household holds Calendar, Meal Plan, Finance, Shop, Watch, Listen", () => {
     expect(menuPages.filter((p) => viewHasPage("household", p))).toEqual(["plan", "eat", "finance", "shop", "watch", "read"]);
@@ -69,14 +73,14 @@ describe("views: pages", () => {
   it("Business holds the Calendar only", () => {
     expect(menuPages.filter((p) => viewHasPage("business", p))).toEqual(["plan"]);
   });
-  it("Household and Business are flat; Personal keeps the groups", () => {
-    expect(isFlatView("personal")).toBe(false);
+  it("every view lists its pages flat (no group headings)", () => {
+    expect(isFlatView("personal")).toBe(true);
     expect(isFlatView("household")).toBe(true);
     expect(isFlatView("business")).toBe(true);
   });
   it("every page a view lists exists in the page groups (or is a page key app.js uses)", () => {
     // PAGE_GROUPS uses menu names; map the two that differ from page keys.
-    const known = new Set(["plan", "eat", "read", ...PAGE_GROUPS.flatMap((g) => g.pages)]);
+    const known = new Set(["plan", "eat", "read", "play", "recreate", ...PAGE_GROUPS.flatMap((g) => g.pages)]);
     for (const pages of Object.values(VIEW_PAGES)) for (const p of pages || []) expect(known.has(p), p).toBe(true);
   });
   it("viewForPage: stays if the view has it, else Personal, else none", () => {

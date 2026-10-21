@@ -47,9 +47,8 @@ Weather domain only.
   the shared `ensureLeaflet` loader. Touch these only when the module's public
   interface changes, and keep them thin.
 - **Data:** `state.weatherLocations`, `state.weatherActiveLocationId` (JSONB config).
-- **Where it lives:** **Weather** in the **Inform** menu group (with News; 2026-10-17),
-  and from the **bottom
-  dock's weather ticker** (`renderWeatherTicker`, one of `DOCK_SLIDES` in app.js; route
+- **Where it lives:** **only from the bottom
+  dock's weather ticker** — no menu entry in any view (Luke, 2026-10-20) (`renderWeatherTicker`, one of `DOCK_SLIDES` in app.js; route
   `#weather` still works). The dock itself (colors `--dock-bg1/2`, `--dock-ink`, slides) is
   shared infra — flag changes to it. Travel Mode reads `getCurrentConditions()`.
 ## Module contract & shared touchpoints (preserve)

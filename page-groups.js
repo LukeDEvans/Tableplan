@@ -11,12 +11,12 @@
 // buttons are hidden (page switches) and then calls syncPageGroups().
 
 export const PAGE_GROUPS = [
-  { key: "plan",     label: "Plan",     pages: ["calendar", "meal-plan", "tasks"] },
-  { key: "inform",   label: "Inform",   pages: ["news", "weather"] },
+  { key: "plan",     label: "Plan",     pages: ["calendar", "meal-plan"] },
+  { key: "inform",   label: "Inform",   pages: ["news"] },
   { key: "resource", label: "Resource", pages: ["finance", "shop"] },
   { key: "media",    label: "Media",    pages: ["watch", "listen"] },
   { key: "message",  label: "Message",  pages: ["mail"] },
-  { key: "recreate", label: "Recreate", pages: ["explore", "exercise", "leisure", "scores"] },
+  { key: "recreate", label: "Recreate", pages: ["explore", "exercise", "leisure"] },
 ];
 
 // Which group holds the page an `activeAppArea` shows (null for Home or an

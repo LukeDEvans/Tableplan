@@ -79,68 +79,45 @@ try {
   const visibleIn = (sel) => page.evaluate((s) => [...document.querySelectorAll(s)].filter((b) => b.offsetParent).map((b) => b.textContent.trim()), sel);
   const shot = async (name) => { if (!SHOT) return; await page.waitForTimeout(350); await page.screenshot({ path: `${SHOT}-${name}.png` }); };
 
+  // Every view lists its pages flat (Luke, 2026-10-20): no group headings.
+  // Personal: Overview, then Calendar, News, Finance, Watch, Listen, Mail,
+  // Explore, Exercise, Leisure — no Tasks, Weather, Scores, Meal Plan or Shop.
+  const PERSONAL = ["Overview", "Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Explore", "Exercise", "Leisure"];
+  const listed = (root) => visibleIn(`${root} .page-overview-btn, ${root} .page-group-pages > button`);
   console.log("Landing page");
-  const heads = await visibleIn("#homePageGroups .page-group-head");
-  check(JSON.stringify(heads) === JSON.stringify(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]), "six group headings, in order", heads.join(", "));
-  check((await visibleIn("#homePageGroups .page-group-pages > button")).length === 0, "all groups start closed");
-  await shot("home-closed");
-  await tapHead('#homePageGroups [data-page-group="plan"] .page-group-head');
-  check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["Calendar", "Meal Plan", "Tasks"]), "Plan opens Calendar, Meal Plan, Tasks");
-  await tapHead('#homePageGroups [data-page-group="inform"] .page-group-head');
-  check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["News", "Weather"]), "opening Inform closes Plan");
-  // The switch slides: partway through, Plan is still closing and Inform still opening.
-  const mid = await page.evaluate(async () => {
-    const q = (k) => document.querySelector(`#homePageGroups [data-page-group="${k}"] .page-group-pages`);
-    document.querySelector('#homePageGroups [data-page-group="plan"] .page-group-head').click();
-    await new Promise((r) => setTimeout(r, 90));
-    const plan = q("plan"), inform = q("inform");
-    const h = (el) => el.getBoundingClientRect().height;
-    const res = { planH: h(plan), planFull: plan.scrollHeight, informH: h(inform), informHidden: inform.hidden };
-    document.querySelector('#homePageGroups [data-page-group="inform"] .page-group-head').click(); // back to Inform
-    return res;
-  });
-  await page.waitForTimeout(320);
-  check(mid.planH > 0 && mid.planH < mid.planFull && mid.informH > 0 && !mid.informHidden, "switching groups slides (old closing, new opening at once)", JSON.stringify(mid));
-  check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["News", "Weather"]), "a quick second tap ends in the right state");
-  check(await page.getAttribute('#homePageGroups [data-page-group="inform"] .page-group-head', "aria-expanded") === "true", "the open heading says it's expanded");
-  await tapHead('#homePageGroups [data-page-group="inform"] .page-group-head');
-  check((await visibleIn("#homePageGroups .page-group-pages > button")).length === 0, "tapping the open heading closes it");
-  await tapHead('#homePageGroups [data-page-group="media"] .page-group-head');
-  check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["Watch", "Listen"]), "Media holds Watch and Listen");
-  await tapHead('#homePageGroups [data-page-group="recreate"] .page-group-head');
-  check(JSON.stringify(await visibleIn("#homePageGroups .page-group-pages > button")) === JSON.stringify(["Explore", "Exercise", "Leisure", "Scores"]), "Recreate holds Explore, Exercise, Leisure, Scores");
+  check((await visibleIn("#homePageGroups .page-group-head")).length === 0, "no group headings");
+  check(JSON.stringify(await listed("#homePageGroups")) === JSON.stringify(PERSONAL), "Personal lists its pages flat", (await listed("#homePageGroups")).join(", "));
   check(await fits(), "landing fits the phone width");
-  await shot("home-recreate");
-
+  const box = await page.evaluate(() => { const r = document.getElementById("homePageGroups").getBoundingClientRect(); const widest = Math.max(...[...document.querySelectorAll("#homePageGroups button")].filter((b) => b.offsetParent).map((b) => b.getBoundingClientRect().width)); return { w: r.width, widest }; });
+  check(box.w <= box.widest + 2 * 36 + 4 + 2, "the box is only as wide as its links (no minimum width)", JSON.stringify(box));
+  await shot("home");
   await page.evaluate(() => window.__liveQA.recreateSeed({ notif: { mail: 2 } }));
-  check(await page.evaluate(() => document.querySelector('#homePageGroups [data-page-group="message"] .page-group-head').classList.contains("has-group-notif")), "a page's notification marks its closed group");
+  check(await page.evaluate(() => document.getElementById("homeMailBtn").classList.contains("has-notif-dot") || document.getElementById("homeMailBtn").className.includes("notif")), "a page's notification marks its link");
   await page.evaluate(() => window.__liveQA.recreateSeed({ notif: { mail: 0 } }));
 
   console.log("Page-title menu");
-  await tapHead('#homePageGroups [data-page-group="media"] .page-group-head');
   await page.click("#homeListenBtn");
   await page.waitForTimeout(300);
   check(await area() === "media", "Listen opens from the landing page");
   await page.click("#pageTitleBtn");
   await page.waitForTimeout(300);
-  check(JSON.stringify(await visibleIn("#pageTitleMenu .page-group-pages > button")) === JSON.stringify(["Watch", "Listen"]), "the menu opens on the current page's group");
+  check(JSON.stringify(await listed("#pageTitleMenu")) === JSON.stringify(PERSONAL), "the menu lists the same pages, flat", (await listed("#pageTitleMenu")).join(", "));
   check(await page.evaluate(() => document.getElementById("titleListenBtn").classList.contains("is-current")), "the current page is marked, not removed");
-  await shot("menu-media");
-  await tapHead('#pageTitleMenu [data-page-group="recreate"] .page-group-head');
-  check(JSON.stringify(await visibleIn("#pageTitleMenu .page-group-pages > button")) === JSON.stringify(["Explore", "Exercise", "Leisure", "Scores"]), "opening Recreate in the menu closes Media");
   check(await fits(), "menu fits the phone width");
-  await shot("menu-recreate");
+  await shot("menu");
 
-  console.log("Scores");
-  await page.click("#titleScoresBtn");
-  await page.waitForTimeout(600);
-  check(await area() === "scores", "Scores is its own page");
-  check(await page.evaluate(() => (document.getElementById("scoresPageMount")?.innerHTML || "").length > 50), "the Scores view mounts there");
-  check(await fits(), "Scores fits the phone width");
-  await shot("scores");
+  console.log("Scores is back in News");
   await page.evaluate(() => document.getElementById("titleNewsBtn").click());
   await page.waitForTimeout(500);
-  check(await area() === "news" && !(await page.evaluate(() => !!document.querySelector("[data-news-sports-tab], #newsScoresMount"))), "News has no Scores tab");
+  await page.evaluate(() => window.__liveQA.showScoresForQa?.());
+  await page.waitForTimeout(600);
+  check(await area() === "news" && await page.evaluate(() => !!document.querySelector("[data-news-sports-tab]")), "News → Sports has Scores and Stories tabs");
+  check(await page.evaluate(() => (document.getElementById("newsScoresMount")?.innerHTML || "").length > 50), "the Scores view mounts in News");
+  check(await fits(), "News → Scores fits the phone width");
+  await shot("news-scores");
+  await page.evaluate(() => { location.hash = "#scores"; });
+  await page.waitForTimeout(600);
+  check(await area() === "news", "the old #scores route opens News → Scores");
 
   console.log("Exercise");
   await page.evaluate(() => document.getElementById("titleExerciseBtn").click());
@@ -232,7 +209,6 @@ try {
   await goHome();
   await page.waitForTimeout(300);
   await page.setViewportSize({ width: 360, height: 740 });
-  await tapHead('#homePageGroups [data-page-group="recreate"] .page-group-head').catch(() => {});
   check(await fits(), "landing fits 360px");
 
   check(errors.length === 0, "no page errors", errors.join(" | "));

@@ -124,10 +124,10 @@ async function run(browser, { width, height, dark }) {
   await page.click('#dockTickerStage [data-dtk-key="g:t-live"]');
   await page.waitForTimeout(600);
   const opened = await page.evaluate(() => ({
-    scores: !document.getElementById("scoresMainPage").hidden, // Scores is its own page (2026-10-17)
+    news: !document.getElementById("newsMainPage").hidden, // Scores is in News → Sports (back there 2026-10-20)
     expanded: document.querySelector('[data-scores-game="mine|t-live"]')?.getAttribute("aria-expanded"),
   }));
-  check(opened.scores && opened.expanded === "true", "tapping a game opens the Scores page with that game expanded");
+  check(opened.news && opened.expanded === "true", "tapping a game opens News → Sports → Scores with that game expanded");
   if (OUT) await page.screenshot({ path: `${OUT}/ticker-${width}${dark ? "-dark" : ""}-scores.png` });
 
   // Back home, step to a headline and tap it.

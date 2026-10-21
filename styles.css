@@ -23713,7 +23713,7 @@ input[type="search"]::-webkit-search-cancel-button {
 .page-group:not(.is-open) > .page-group-pages.is-sliding { opacity: 0; }
 
 /* Landing page */
-.home-links.page-groups { gap: 8px; min-width: min(240px, 80vw); }
+.home-links.page-groups { gap: 8px; }
 .home-links .page-group-pages > button {
   color: var(--ink);
   font-size: 0.98rem;
@@ -23749,10 +23749,6 @@ input[type="search"]::-webkit-search-cancel-button {
 }
 
 /* ── Scores page (its own page under Recreate since 2026-10-17) ── */
-.scores-page { display: flex; flex-direction: column; min-height: 0; }
-.scores-page[hidden] { display: none; }
-.scores-page-inner { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-.scores-page .news-scroll { flex: 1; }
 
 /* ── Explore sections (explore-scope.js) ── */
 #exploreMainPage > .explore-landing[hidden],
@@ -23845,8 +23841,8 @@ input[type="search"]::-webkit-search-cancel-button {
   .view-band-header .view-band-name { min-width: 4.6em; }
 }
 
-/* Household and Business list their pages flat, without group headings
-   (page-groups.js setFlatPageGroups): the pages take the headings' look. */
+/* Every view lists its pages flat, without group headings (Luke, 2026-10-20;
+   page-groups.js setFlatPageGroups): the pages take the headings' look. */
 .page-groups.is-flat .page-group-head { display: none; }
 .page-groups.is-flat .page-group-pages > button:first-child { margin-top: 0; }
 .page-groups.is-flat .page-group-pages > button:last-child { margin-bottom: 0; }

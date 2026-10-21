@@ -84,6 +84,7 @@ complete). Make focused changes to Meal-plan only.
   that reads state) uses the module-scope `_appState` set by the factory — leave that alone.
 
 ## Events & notes (Luke's rules — keep them)
+- **Meal Plan is a Household page only** (Luke, 2026-10-20): it isn't in the Personal view's menu; opening it from Personal (a link, the Overview's Tonight panel) moves to Household (`views.js` `VIEW_PAGES`).
 - A calendar event shows **only on the meals its time of day covers** (an 8a–4p
   shift shows on lunch; breakfast and dinner are assumed at home). All-day events
   show on every meal. The logic is `meal-plan-time.js`; don't re-derive it in the UI.

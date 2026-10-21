@@ -38,7 +38,11 @@ function menuGroups(containerId) {
 describe("page groups", () => {
   it("has the six groups Luke set, in order", () => {
     expect(PAGE_GROUPS.map((g) => g.label)).toEqual(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]);
-    expect(PAGE_GROUPS.find((g) => g.key === "recreate").pages).toEqual(["explore", "exercise", "leisure", "scores"]);
+    // Tasks (inside the Calendar), Weather (the dock) and Scores (News → Sports)
+    // have no menu entry since 2026-10-20.
+    expect(PAGE_GROUPS.find((g) => g.key === "recreate").pages).toEqual(["explore", "exercise", "leisure"]);
+    expect(PAGE_GROUPS.flatMap((g) => g.pages)).not.toContain("tasks");
+    expect(PAGE_GROUPS.flatMap((g) => g.pages)).not.toContain("weather");
     expect(PAGE_GROUPS.find((g) => g.key === "media").pages).toEqual(["watch", "listen"]);
   });
 
@@ -55,7 +59,7 @@ describe("page groups", () => {
 
   it("app.js wires every menu button (pageNavButtons)", () => {
     const ids = [...menuGroups("homePageGroups"), ...menuGroups("pageTitleMenu")].flatMap((g) => g.pages.map((p) => p.id));
-    expect(ids.length).toBe(28);
+    expect(ids.length).toBe(22);
     for (const id of ids) expect(app).toContain(`"${id}"`);
   });
 
