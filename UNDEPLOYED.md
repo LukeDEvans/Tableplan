@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **News: opening a story no longer saves it** · #159 · **Netlify deploy + TestFlight build** (client-only). Only ⋯ → Save puts a story in News → Saved. Tapping a story, Open, Listen and ticker headlines just mark it read and open the reader from a copy kept for that session only (saving it afterwards keeps the loaded text). No migration, no new env vars. Not checked in a browser yet (no Chromium in the cloud sandbox): run `npm run check:boot` before deploying.
+  Post-deploy:
+  1. News: tap a story, read it, close. It's marked read and Saved's count doesn't change.
+  2. Listen to an unsaved story from ⋯ → Listen: it plays; still not in Saved.
+  3. ⋯ → Save on a story: it appears in Saved, and opens with its text.
+
 - **Music search: Apple Music only** · #158 · **TestFlight build** (client-only; Luke: iPhone only, no Netlify deploy needed for this). Internet Archive and Musopen are no longer searched, so results come straight from Apple Music. Music already saved from them still plays. No migration, no new env vars.
   Post-deploy:
   1. iPhone, Listen › Music, search anything: Apple Music results in a second or two, no "Free & open sources" section.
