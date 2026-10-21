@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Dutch practice on Leisure** · #153 · **TestFlight build sent 2026-10-20 from the branch; Netlify deploy still needed for the laptop web app** (client-only). A Dutch row on Leisure: lessons, unit and review practice, a 2:00 timed matching game (5 pairs a side, goal 30), progress in the personal `recreate` row (`languageWords` per-device counters, `languageSessions` newest 50). Vocabulary is a **provisional** starter set until Luke's Rosetta Stone list arrives (LANGUAGE_PRACTICE.md §4). No migration, no new env vars; one device-level storage key (`live-device-id-v1`). Until the web deploy, the laptop web app's saves of `recreate` drop the Dutch keys from the row; the phone keeps and restores them (ISSUES.md).
+  Post-deploy:
+  1. iPhone and laptop: Leisure shows the Dutch row; a lesson plays; wrong pairs cost nothing; the summary shows matched / goal / accuracy / time.
+  2. Play a lesson on the phone, then open Leisure on the laptop: the lesson shows as practiced and Review is on.
+  3. Dark mode: the board reads clearly.
+
 - **News: opening a story no longer saves it** · #159 · **Netlify deploy + TestFlight build** (client-only). Only ⋯ → Save puts a story in News → Saved. Tapping a story, Open, Listen and ticker headlines just mark it read and open the reader from a copy kept for that session only (saving it afterwards keeps the loaded text). No migration, no new env vars. Not checked in a browser yet (no Chromium in the cloud sandbox): run `npm run check:boot` before deploying.
   Post-deploy:
   1. News: tap a story, read it, close. It's marked read and Saved's count doesn't change.
