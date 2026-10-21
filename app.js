@@ -34021,7 +34021,14 @@ async function getMusicProviders() {
     const deps = nativeAm ? { getInstance: (await import("./music-applemusic-native.js")).nativeMusicKitLoader(nativeAm) } : {};
     providers.push(am.createAppleMusicProvider({ storefront: amCfg.storefront || null }, deps));
   }
-  providers.push(ia.createInternetArchiveProvider(), ia.createMusopenProvider());
+  // Internet Archive and Musopen are no longer searched (Luke, 2026-10-21): with
+  // Apple Music connected they only slowed results (on the iPhone a search waited
+  // the full time limit on them). They stay registered so music already saved
+  // from them still opens and plays.
+  for (const p of [ia.createInternetArchiveProvider(), ia.createMusopenProvider()]) {
+    p.capabilities.delete(stream.CAP.SEARCH);
+    providers.push(p);
+  }
   musicProviderRegistry = stream.createMusicProviderRegistry(providers);
   return musicProviderRegistry;
 }
