@@ -262,11 +262,12 @@ export function createMusicProviderRegistry(providers = []) {
       const q = str(query).trim();
       const targets = list.filter((p) => has(p, CAP.SEARCH) && (opts.providerId ? p.id === opts.providerId : true));
       if (!q || !targets.length) return { query: q, items: [], providerStatuses: targets.map((p) => ({ provider: p.id, ok: true, count: 0 })) };
-      const settled = await Promise.allSettled(targets.map(async (p) => {
+      const timeoutMs = opts.timeoutMs == null ? SEARCH_TIMEOUT_MS : opts.timeoutMs;
+      const settled = await Promise.allSettled(targets.map((p) => withTimeout(async (signal) => {
         if (p.isAvailable && !(await safe(() => p.isAvailable(), false))) throw new Error("provider unavailable");
-        const items = await p.search(q, { limit: opts.limit || 25, page: opts.page || 1, signal: opts.signal });
+        const items = await p.search(q, { limit: opts.limit || 25, page: opts.page || 1, signal });
         return { provider: p.id, items: arr(items) };
-      }));
+      }, timeoutMs, opts.signal)));
       const items = [];
       const providerStatuses = settled.map((r, i) => {
         const pid = targets[i].id;
@@ -279,3 +280,24 @@ export function createMusicProviderRegistry(providers = []) {
 }
 
 async function safe(fn, fallback) { try { return await fn(); } catch { return fallback; } }
+
+// A provider that never answers (a stalled request, a native call that never
+// returns) must not leave the whole search on "Searching…": each provider gets
+// SEARCH_TIMEOUT_MS, then counts as failed and the others' results show. Its
+// request is aborted through the signal it was given; an outer signal (a newer
+// search) aborts it too.
+export const SEARCH_TIMEOUT_MS = 12000;
+function withTimeout(run, ms, outerSignal) {
+  const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+  const abort = () => { try { ctrl && ctrl.abort(); } catch { /* ignore */ } };
+  if (outerSignal) { if (outerSignal.aborted) abort(); else outerSignal.addEventListener?.("abort", abort, { once: true }); }
+  let timer = null;
+  const timeout = !(ms > 0) ? null : new Promise((_, reject) => {
+    timer = setTimeout(() => { abort(); reject(new Error("timed out")); }, ms);
+  });
+  const work = Promise.resolve().then(() => run(ctrl ? ctrl.signal : outerSignal));
+  return (timeout ? Promise.race([work, timeout]) : work).finally(() => {
+    clearTimeout(timer);
+    outerSignal?.removeEventListener?.("abort", abort);
+  });
+}
