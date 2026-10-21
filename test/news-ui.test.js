@@ -126,3 +126,30 @@ describe("mergeArticles", () => {
     expect(out.map((a) => a.id)).toEqual(["a", "b", "c"]);
   });
 });
+
+// Luke, 2026-10-21: opening or listening to a story must not save it; only Save does.
+describe("open / listen don't save", () => {
+  async function setup() {
+    // load() repaints at the end; no DOM in node, so give it nothing to paint into.
+    globalThis.document ??= { getElementById: () => null, addEventListener: () => {}, querySelector: () => null };
+    globalThis.window ??= { innerWidth: 1024 };
+    const { createNewsModule } = await import("../news-ui.js");
+    const calls = { saved: [], unsaved: [], opened: [], listened: [] };
+    const news = createNewsModule({
+      callGmailApi: async () => ({ ok: true }), escapeHtml: (s) => String(s ?? ""), showToast: () => {},
+      isSignedIn: () => false, getState: () => ({}), getActiveAppArea: () => "home", setDotCount: () => {},
+      onSentToMedia: (r) => calls.saved.push(r.id), onOpenUnsaved: (r) => calls.unsaved.push(r.id),
+      openInMedia: (id) => calls.opened.push(id), listenInMedia: (id) => calls.listened.push(id),
+    });
+    news.seed([card("a", { publishedAt: new Date().toISOString() })], {});
+    await new Promise((r) => setTimeout(r, 0));
+    return { news, calls };
+  }
+  it("opening a story hands the reader a session copy and never saves it", async () => {
+    const { news, calls } = await setup();
+    expect(news.openStory("a")).toBe(true);
+    expect(calls.saved).toEqual([]);
+    expect(calls.unsaved).toEqual(["nl-a"]);
+    expect(calls.opened).toEqual(["nl-a"]);
+  });
+});

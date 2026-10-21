@@ -208,7 +208,8 @@ describe("adding while the queue plays, and the reader's Play button", () => {
       const unlockListenAudio = () => {};
       const startListenTTS = (a) => { started.push(a.id); };
       const toggleListenPlayPause = () => { toggled++; };
-      ${["addQueueAddedEntry", "mediaAllRunOrder", "syncMediaAllQueueRest", "refreshRunningQueueOrder", "listenSessionArticleId", "toggleReaderListen"].map(extract).join("\n")}
+      const newsSessionArticles = new Map();
+      ${["addQueueAddedEntry", "readerArticle", "mediaAllRunOrder", "syncMediaAllQueueRest", "refreshRunningQueueOrder", "listenSessionArticleId", "toggleReaderListen"].map(extract).join("\n")}
       return { addQueueAddedEntry, refreshRunningQueueOrder, listenSessionArticleId, toggleReaderListen, get: () => ({ mediaAllQueueRest, prefetched, nativeQueued, started, toggled }) };`;
     env.listed = listed.map((id) => ({ id }));
     return new Function("env", body)(env); // eslint-disable-line no-new-func

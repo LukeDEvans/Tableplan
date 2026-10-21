@@ -84,6 +84,11 @@ Scores. Scores has no menu entry of its own.
   single **Saved** view holding stories saved from News, newsletters, the extension,
   URLs, scans and PDFs (no separate Sent view — an old link to it opens Saved). Mail's
   action is **Save to News**. Saved articles still join Listen's queue for read-aloud.
+- **Opening or listening to a story doesn't save it (Luke, 2026-10-21).** Only ⋯ →
+  Save adds a story to Saved. Open / Listen (and a tap on the story or a ticker
+  headline) mark it read and hand the reader a session-only copy (`newsSessionArticles`
+  / `readerArticle()` in app.js): never persisted, synced or body-stashed; saving it
+  later carries the fetched body over.
 - **Closing the reader returns to wherever it was opened from** (page, tab, scroll) —
   a general rule, not a per-button patch.
 - Article intake (extension, Add by URL, Scan, PDF) lands in News. News search covers
