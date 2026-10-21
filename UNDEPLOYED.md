@@ -10,6 +10,11 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Music search no longer sticks on "Searching…"** · #156 · **Netlify deploy + TestFlight build** (client-only). Each source in Listen › Music search gets 12 s; one that doesn't answer is named in the note ("… unavailable — showing the rest") and the others' results show. No migration, no new env vars.
+  Post-deploy:
+  1. iPhone, Listen › Music, search "beethoven": results appear within about 12 s.
+  2. Note which source the line above the results names (if any) and add it to the ISSUES.md entry so that source gets fixed.
+
 - **Flat menus; shorter Personal list; Scores back in News** · #155 · **Netlify deploy + TestFlight build** (client-only). No group headings in any view; the landing box back to its old width. Personal lists Overview, Calendar, News, Finance, Watch, Listen, Mail, Explore, Exercise, Leisure. Meal Plan and Shop only in Household; Tasks only inside the Calendar; Weather only from the dock; Scores back in News → Sports. No migration, no new env vars.
   Post-deploy:
   1. Landing (Personal): a plain list, no Plan / Inform / … headings; the white box hugs the links; no sideways scroll.
