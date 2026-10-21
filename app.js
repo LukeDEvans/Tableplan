@@ -20,6 +20,8 @@ import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, 
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule, isNewsletterBriefing } from './news-ui.js';
 import { createScoresModule, gameCardHtml } from './scores-ui.js';
+import { createLanguageModule } from './language-ui.js';
+import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions } from './language-progress.js';
 import { createNewsTickerModule } from './news-ticker.js';
 import { normalizeSportsPrefs } from './sports-model.js';
 import { THEMES, THEME_CHOICES, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonEnds } from './theme.js';
@@ -340,7 +342,7 @@ const STATE_SECTIONS = {
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies", "sportsPrefs", "displayPrefs", "viewDisplayPrefs", "viewLayers", "recreateSettingStamps"],
+  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "languageWords", "languageSessions", "recreateHobbies", "sportsPrefs", "displayPrefs", "viewDisplayPrefs", "viewLayers", "recreateSettingStamps"],
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
@@ -3920,6 +3922,10 @@ function setupDiagnostics() {
       render();
       return true;
     },
+    // Dutch practice (scripts/qa-language.mjs): stored progress, and a shorter game
+    // so a browser run doesn't take two minutes. Local dev only.
+    languageForQa: () => (localDevMode ? { words: state.languageWords, sessions: state.languageSessions } : null),
+    languageGameForQa: (opts) => { if (!localDevMode) return null; languageQaGameOptions = opts || null; return true; },
     // Views (scripts/qa-views.mjs): the view on screen, and acting as a household
     // member (Household only) or the admin. Local dev only.
     view: () => (localDevMode ? currentViewKey() : null),
@@ -5275,6 +5281,9 @@ function defaultState() {
     sailingLog: [],
     sailingBoats: [],
     pianoLog: [],
+    // Dutch practice (LANGUAGE_PRACTICE.md): per-word counters + recent sessions.
+    languageWords: {},
+    languageSessions: [],
     recreateHobbies: { sailing: true, piano: true },
     // Scores (News → Sports): this person's favorite teams and league choices.
     // In `recreate` because that section is always per user (SPORTS_SCORES_DESIGN.md §5).
@@ -5468,6 +5477,8 @@ function normalizeState(parsed) {
     sailingLog: normalizeSailingLog(parsed?.sailingLog),
     sailingBoats: normalizeSailingBoats(parsed?.sailingBoats),
     pianoLog: normalizePianoLog(parsed?.pianoLog),
+    languageWords: normalizeWordStats(parsed?.languageWords),
+    languageSessions: normalizeSessions(parsed?.languageSessions),
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
     sportsPrefs: normalizeSportsPrefs(parsed?.sportsPrefs),
     displayPrefs: cleanDisplayPrefs(parsed?.displayPrefs),
@@ -7050,6 +7061,10 @@ function mergeStates(newer, older) {
   merged.displayPrefs = { ...(older.displayPrefs || {}), ...(newer.displayPrefs || {}) }; // each field then goes by its own stamp
   merged.viewDisplayPrefs = { ...(older.viewDisplayPrefs || {}), ...(newer.viewDisplayPrefs || {}) }; // each view then goes by its own stamp
   merged.viewLayers = { ...(older.viewLayers || {}), ...(newer.viewLayers || {}) }; // each layer switch then goes by its own stamp
+  // Dutch practice: counters only grow, so each field keeps the larger value (a
+  // stale copy can never lower progress); sessions union by id, newest 50 kept.
+  merged.languageWords = mergeWordStats(newer.languageWords, older.languageWords);
+  merged.languageSessions = mergeSessions(newer.languageSessions, older.languageSessions);
   merged.articleSync = { ...(older.articleSync || {}), ...(newer.articleSync || {}) };
   merged.groceryPricingSettings = { ...(older.groceryPricingSettings || {}), ...(newer.groceryPricingSettings || {}) };
   merged.collapsedSections = { ...(older.collapsedSections || {}), ...(newer.collapsedSections || {}) };
@@ -23300,10 +23315,36 @@ async function loadWatchSeasonEpisodes(itemId, seasonNum) {
 const RECREATE_HOBBIES = [
   { key: "sailing", label: "Sailing" },
   { key: "piano", label: "Piano" },
+  { key: "dutch", label: "Dutch" },
 ];
 
 let sailLogPendingId = null;
 let activeRecreateHobby = null; // null = activity-card landing
+
+// Dutch practice (LANGUAGE_PRACTICE.md): a timed matching game over a lesson
+// curriculum. All of it lives in language-ui.js; Leisure shows its row and hosts
+// its full view. Progress goes in this person's `recreate` section.
+let languageQaGameOptions = null; // local-dev QA only (window.__liveQA.languageGameForQa)
+// A random id for this device, so its practice counts sum with other devices'
+// (language-progress.js). Device-level, not account data: kept across sign-outs.
+function languageDeviceId() {
+  try {
+    let id = localStorage.getItem("live-device-id-v1");
+    if (!id) { id = `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; localStorage.setItem("live-device-id-v1", id); }
+    return id;
+  } catch { return "device"; }
+}
+const languageModule = createLanguageModule({
+  gameOptions: () => (localDevMode ? languageQaGameOptions : null),
+  getState: () => state,
+  persist: (...a) => persist(...a),
+  escapeHtml: (...a) => escapeHtml(...a),
+  icon: (...a) => ldeIcon(...a),
+  accountKey: () => authSession?.user?.id || (localDevMode ? "local" : ""),
+  deviceId: () => languageDeviceId(),
+  isShowing: () => activeAppArea === "recreate" && activeRecreateHobby === "dutch" && !elements.recreateMainPage?.hidden,
+  onChange: () => {},
+});
 
 // ── Screen Wake Lock ─────────────────────────────────────────────────────────
 // Keeps the screen awake while the metronome runs or a recipe is open for
@@ -23384,6 +23425,7 @@ function recreateHobbySummary(key) {
     const when = latest?.date ? new Date(latest.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
     return `${entries.length} ${entries.length === 1 ? "entry" : "entries"}${when ? ` · last ${when}` : ""}`;
   }
+  if (key === "dutch") return languageModule.rowSummary();
   if (key === "piano") {
     const entries = pianoLogList();
     if (!entries.length) return "No practice logged yet";
@@ -23398,6 +23440,7 @@ function recreateHobbySummary(key) {
 const RECREATE_HOBBY_ICONS = {
   sailing: `<img class="workout-pool-img" src="./activity-sailing.png" alt="Sailing" width="52" height="52" draggable="false" />`,
   piano: `<img class="workout-pool-img" src="./activity-piano.png" alt="Piano" width="52" height="52" draggable="false" />`,
+  dutch: `<span class="lang-hobby-icon">${ldeIcon("translate", { size: 40 })}</span>`,
 };
 const RECREATE_TRAVEL_ICON = `<img class="workout-pool-img" src="./activity-travel.png" alt="Travel" width="52" height="52" draggable="false" />`;
 
@@ -23463,6 +23506,12 @@ function renderLeisureRows() {
       cards += works.slice(0, RECREATE_ROW_MAX).map((w) => recreateCardTemplate(
         `data-leisure-score="${escapeHtml(w.id)}"`, cadenceScoreIconSvg(), w.title || "Untitled", w.composer || "")).join("");
       cards += recreateAddCardTemplate("data-leisure-import-score", "Import score", cadenceImporting ? "Importing…" : "MusicXML file");
+    } else if (h.key === "dutch") {
+      // Lessons in course order, then Review (words from practiced lessons only).
+      cards += languageModule.rowLessons().slice(0, RECREATE_ROW_MAX).map((l) => recreateCardTemplate(
+        `data-leisure-lesson="${escapeHtml(l.id)}"`, `<span class="lang-hobby-icon is-small">${ldeIcon("book", { size: 28 })}</span>`, l.title, l.sub)).join("");
+      cards += recreateCardTemplate("data-leisure-review", `<span class="lang-hobby-icon is-small">${ldeIcon("replay", { size: 28 })}</span>`, "Review",
+        languageModule.reviewAvailable() ? "Practiced lessons" : "Practice a lesson first");
     }
     rows.push(recreateSectionTemplate(h.key, h.label, cards));
   }
@@ -23482,6 +23531,7 @@ function renderRecreatePage() {
     const grid = elements.recreatePlannerGrid;
     grid.querySelectorAll("[data-open-hobby]").forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (btn.dataset.openHobby === "dutch") languageModule.leave(); // open on the lessons
         activeRecreateHobby = btn.dataset.openHobby;
         renderRecreatePage();
       });
@@ -23490,6 +23540,18 @@ function renderRecreatePage() {
       btn.addEventListener("click", () => openSailLogDialog(btn.dataset.leisureSail));
     });
     grid.querySelector("[data-leisure-new-sail]")?.addEventListener("click", () => openSailLogDialog(null));
+    grid.querySelectorAll("[data-leisure-lesson]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        languageModule.openStart({ kind: "lesson", id: btn.dataset.leisureLesson });
+        activeRecreateHobby = "dutch";
+        renderRecreatePage();
+      });
+    });
+    grid.querySelector("[data-leisure-review]")?.addEventListener("click", () => {
+      languageModule.openReview();
+      activeRecreateHobby = "dutch";
+      renderRecreatePage();
+    });
     grid.querySelectorAll("[data-leisure-score]").forEach((btn) => {
       btn.addEventListener("click", () => { activeRecreateHobby = "piano"; openCadenceWork(btn.dataset.leisureScore); });
     });
@@ -23504,11 +23566,17 @@ function renderRecreatePage() {
     return;
   }
 
-  // Detail: the activity's full view with a back button
+  // Detail: the activity's full view with a back button. A running Dutch game
+  // is never rebuilt under the player (other code re-renders this page).
+  if (activeRecreateHobby === "dutch" && elements.recreatePlannerGrid.querySelector("#languagePracticeRoot")) {
+    if (!languageModule.isPlaying()) languageModule.refresh();
+    return;
+  }
   const hobby = RECREATE_HOBBIES.find((h) => h.key === activeRecreateHobby);
   let bodyHtml = "";
   if (activeRecreateHobby === "sailing") bodyHtml = renderSailingLogPanel();
   else if (activeRecreateHobby === "piano") bodyHtml = renderPianoPanel();
+  else if (activeRecreateHobby === "dutch") bodyHtml = `<div id="languagePracticeRoot" class="lang-root"></div>`;
   elements.recreatePlannerGrid.innerHTML = `
     <div class="recreate-page">
       <div class="recreate-detail-head">
@@ -23523,9 +23591,12 @@ function renderRecreatePage() {
   elements.recreatePlannerGrid.querySelector("[data-recreate-back]")?.addEventListener("click", () => {
     stopMetronome();
     resetCadenceViewer();
+    languageModule.leave();
     activeRecreateHobby = null;
     renderRecreatePage();
   });
+  const langRoot = elements.recreatePlannerGrid.querySelector("#languagePracticeRoot");
+  if (langRoot) languageModule.mount(langRoot);
   bindRecreateControls();
 }
 

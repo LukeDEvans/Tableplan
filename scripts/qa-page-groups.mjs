@@ -146,7 +146,7 @@ try {
     title: s.querySelector(".recreate-section-title").textContent,
     cards: [...s.querySelectorAll(".workout-pool-card")].map((c) => c.querySelector(".workout-pool-title").textContent),
   })));
-  check(JSON.stringify(lRows.map((r) => r.title)) === JSON.stringify(["Sailing", "Piano"]), "one row per hobby");
+  check(JSON.stringify(lRows.map((r) => r.title)) === JSON.stringify(["Sailing", "Piano", "Dutch"]), "one row per hobby");
   check(lRows[0]?.cards.length === 4 && lRows[0].cards[0] === "Sailing" && lRows[0].cards[3] === "New entry", "Sailing: the hobby, its entries, then +", JSON.stringify(lRows[0]));
   check(lRows[1]?.cards[0] === "Piano" && lRows[1].cards.at(-1) === "Import score", "Piano: the hobby, its scores, then +", JSON.stringify(lRows[1]));
   await page.click('[data-leisure-sail="s1"]');
