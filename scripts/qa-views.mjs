@@ -258,11 +258,16 @@ try {
   check(sc.plan === "business", "Business: the Calendar reads the business row", JSON.stringify(sc));
   evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
   check(!evs.some((e) => e.id === "ev-home" || e.id === "ev-mine"), "Business starts with its own empty calendar", JSON.stringify(evs));
+  await page.evaluate(() => window.__liveQA.billsSeedForQa([{ id: "bill-qa", name: "Electric", expectedDay: 21, lastAmount: 90 }]));
+  evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
+  check(!evs.some((e) => e.source === "finance" || e.source === "eat" || e.source === "do" || e.source === "play" || e.source === "birthday"), "Business shows no Bills, Meal Plan, Tasks, Exercise or Birthdays", JSON.stringify(evs));
   await page.evaluate(() => window.__liveQA.planSeedForQa([{ id: "ev-work", title: "Shift", date: "2026-10-21", allDay: true }]));
   await go(-1);
   check(await view() === "personal", "→ Personal again");
   evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
   check(evs.some((e) => e.id === "ev-mine") && !evs.some((e) => e.id === "ev-home" || e.id === "ev-work"), "Personal: its own event back; no layers until switched on", JSON.stringify(evs));
+  await page.evaluate(() => window.__liveQA.billsSeedForQa([{ id: "bill-qa", name: "Electric", expectedDay: 21, lastAmount: 90 }]));
+  check((await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"))).some((e) => e.source === "finance"), "Personal still shows Bills");
   await page.evaluate(() => { window.__liveQA.setLayerForQa("household", true); window.__liveQA.setLayerForQa("business", true); });
   evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
   const home = evs.find((e) => e.id === "ev-home"), work = evs.find((e) => e.id === "ev-work");
@@ -302,6 +307,22 @@ try {
   check(!evs.some((e) => e.source === "layer"), "no layers in Household", JSON.stringify(evs));
   while (await view() !== "personal") await go(1);
   await page.evaluate(() => { window.__liveQA.setLayerForQa("household", false); window.__liveQA.setLayerForQa("business", false); });
+
+  console.log("Watch redraws with the view");
+  while (await view() !== "personal") await go(1);
+  await page.evaluate(() => window.__liveQA.watchSeedForQa([{ id: "w-qa", title: "Dune QA", type: "movie" }]));
+  await page.evaluate(() => document.getElementById("homeWatchBtn").click());
+  await page.waitForTimeout(600);
+  const watchShows = () => page.evaluate(() => document.getElementById("watchPlannerGrid").textContent.includes("Dune QA"));
+  check(await watchShows(), "Personal's Watch list shows its item");
+  await page.click("#pageTitleBtn");
+  await page.waitForTimeout(300);
+  await page.click('#headerViewBand [data-view-step="-1"]'); // → Household (menu only)
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.getElementById("titleWatchBtn").click());
+  await page.waitForTimeout(1000);
+  check(await view() === "household" && !(await watchShows()), "picking Watch in Household shows Household's list, not Personal's");
+  await goHome();
 
   console.log("Finance follows the view once there are personal accounts");
   while (await view() !== "personal") await go(1);

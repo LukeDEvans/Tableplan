@@ -267,6 +267,7 @@ Later the same day (Luke, 2026-10-20, after the first deploy):
 24. Landing page: **no chevrons**; on the phone a **swipe anywhere on the landing page** switches views (replaces decision 9 there; the page menu keeps band-only swipes and its chevrons).
 25. From an open page, switching views in the menu **doesn't change the screen** until a page in the new view is picked.
 26. The **Overview** (the day's write-up with Calendar / Tasks / Tonight) moves off the bottom of the landing page, where it widened the page and let it scroll sideways. It's **"Overview" at the top** of the landing links and the page menu and opens **a window over the current page**. **Personal view only.**
+27. The **Business calendar holds only its own events**: no Bills, Meal Plan, Exercise, Tasks or Birthdays from other pages (`planShowsAppData()` in app.js).
 24. Business roles: **decided later**. Keep owner/manager/employee in the data now; define permissions with a security review before the first invite.
 
 ## 11. Open
