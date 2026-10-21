@@ -10,7 +10,7 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-- **Music search: Apple Music only** · #PR · **TestFlight build** (client-only; Luke: iPhone only, no Netlify deploy needed for this). Internet Archive and Musopen are no longer searched, so results come straight from Apple Music. Music already saved from them still plays. No migration, no new env vars.
+- **Music search: Apple Music only** · #158 · **TestFlight build** (client-only; Luke: iPhone only, no Netlify deploy needed for this). Internet Archive and Musopen are no longer searched, so results come straight from Apple Music. Music already saved from them still plays. No migration, no new env vars.
   Post-deploy:
   1. iPhone, Listen › Music, search anything: Apple Music results in a second or two, no "Free & open sources" section.
 
