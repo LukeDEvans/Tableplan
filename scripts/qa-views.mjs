@@ -308,6 +308,22 @@ try {
   while (await view() !== "personal") await go(1);
   await page.evaluate(() => { window.__liveQA.setLayerForQa("household", false); window.__liveQA.setLayerForQa("business", false); });
 
+  console.log("Watch redraws with the view");
+  while (await view() !== "personal") await go(1);
+  await page.evaluate(() => window.__liveQA.watchSeedForQa([{ id: "w-qa", title: "Dune QA", type: "movie" }]));
+  await page.evaluate(() => document.getElementById("homeWatchBtn").click());
+  await page.waitForTimeout(600);
+  const watchShows = () => page.evaluate(() => document.getElementById("watchPlannerGrid").textContent.includes("Dune QA"));
+  check(await watchShows(), "Personal's Watch list shows its item");
+  await page.click("#pageTitleBtn");
+  await page.waitForTimeout(300);
+  await page.click('#headerViewBand [data-view-step="-1"]'); // → Household (menu only)
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.getElementById("titleWatchBtn").click());
+  await page.waitForTimeout(1000);
+  check(await view() === "household" && !(await watchShows()), "picking Watch in Household shows Household's list, not Personal's");
+  await goHome();
+
   console.log("Finance follows the view once there are personal accounts");
   while (await view() !== "personal") await go(1);
   check((await scopes()).finance === "household", "no personal accounts: Personal shows the household's Finance (as before)");

@@ -3907,6 +3907,7 @@ function setupDiagnostics() {
     planScope: () => (localDevMode ? sectionScope("plan") : null),
     scopes: () => (localDevMode ? Object.fromEntries(VIEW_TOGGLE_SECTIONS.map((s) => [s, sectionScope(s)])) : null),
     businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
+    watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); persist(); return true; },
     billsSeedForQa: (bills) => { if (!localDevMode) return null; state.financeRecurring = bills; planAppDataIndex = null; planRangeCache.clear(); return true; },
     planSeedForQa: (events) => { if (!localDevMode) return null; state.planEvents = events; planRangeCache.clear(); persist(); return true; },
     planEventsInRangeForQa: (a, b) => (localDevMode ? getPlanEventsForRange(a, b).map((e) => ({ id: e.id, title: e.title, source: e.source, layerView: e.layerView || null })) : null),
@@ -8324,6 +8325,9 @@ function render() {
   renderPlayPlanner();
   renderCollapsedSections();
   if (activeAppArea === "media") renderActiveMediaView();
+  // Watch reads the view's row: redraw its list when that row swaps in (a view
+  // switch) or merges (another device) — it used to keep the old view's list.
+  if (activeAppArea === "watch" && !document.getElementById("discoverSearchInput")?.value.trim()) renderWatchPlanner();
   if (activeAppArea === "news") refreshSavedArticlesIfShown(); // News → Saved articles
   if (activeAppArea === "explore") renderExploreSidebar(exploreOpenTripId);
   if (activeAppArea === "finance") renderFinancePage();
