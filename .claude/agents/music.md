@@ -54,6 +54,12 @@ There are **two unrelated "music" things** in this repo:
 - **Data:** `state.musicLibrary` (favorites/playlists), `state.appleMusic` (Apple
   Music config), media state.
 
+- **Every music search provider gets a time limit** (2026-10-21): the registry's
+  `search` gives each provider `SEARCH_TIMEOUT_MS` (12 s), then reports it as failed
+  ("… unavailable — showing the rest") and aborts its request. Before this, one
+  provider that never answered left Discover on "Searching…" forever (seen on the
+  iPhone). Don't remove it; a new provider should honour the `signal` it's given.
+
 ## Domain landmines (do NOT change without flagging)
 - **Playback engine & media hub are SHARED infra**, not yours: `playback-engine.js`,
   `playback-coordinator.js`, and the `media-*.js` hub are used by watch/podcast/radio

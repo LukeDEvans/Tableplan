@@ -68,6 +68,24 @@ describe("provider registry — aggregated search isolation", () => {
     expect(res.providerStatuses[0].ok).toBe(false);
   });
 
+  it("times out a provider that never answers — the others still return, and its request is aborted", async () => {
+    let gotSignal = null;
+    const stuck = { id: "stuck", capabilities: new Set([CAP.SEARCH]), async isAvailable() { return true; }, search(q, o) { gotSignal = o.signal; return new Promise(() => {}); } };
+    const reg = createMusicProviderRegistry([stuck, okProvider("good", [makeCanonicalAlbum({ title: "G", provider: "good" })])]);
+    const res = await reg.search("x", { timeoutMs: 30 });
+    expect(res.items.map((i) => i.title)).toEqual(["G"]);
+    expect(res.providerStatuses.find((s) => s.provider === "stuck")).toMatchObject({ ok: false, error: "timed out" });
+    expect(gotSignal && gotSignal.aborted).toBe(true);
+  });
+
+  it("times out a provider whose availability check never answers", async () => {
+    const hang = { id: "hang", capabilities: new Set([CAP.SEARCH]), isAvailable: () => new Promise(() => {}), async search() { return []; } };
+    const reg = createMusicProviderRegistry([hang, okProvider("good", [makeCanonicalAlbum({ title: "G", provider: "good" })])]);
+    const res = await reg.search("x", { timeoutMs: 30 });
+    expect(res.items.map((i) => i.title)).toEqual(["G"]);
+    expect(res.providerStatuses[0]).toMatchObject({ provider: "hang", ok: false });
+  });
+
   it("returns empty (not an error) for a blank query", async () => {
     const reg = createMusicProviderRegistry([okProvider("a", [])]);
     const res = await reg.search("   ");
