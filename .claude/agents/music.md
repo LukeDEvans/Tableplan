@@ -59,6 +59,11 @@ There are **two unrelated "music" things** in this repo:
   ("… unavailable — showing the rest") and aborts its request. Before this, one
   provider that never answered left Discover on "Searching…" forever (seen on the
   iPhone). Don't remove it; a new provider should honour the `signal` it's given.
+- **Search is Apple Music only** (Luke, 2026-10-21): Internet Archive and Musopen
+  are no longer searched (`getMusicProviders` removes their SEARCH capability) —
+  with Apple Music connected they only slowed results. They stay registered so music
+  already saved from them still opens and plays. He may revisit leaving Apple Music
+  in about a year; until then don't add free sources back to search.
 
 ## Domain landmines (do NOT change without flagging)
 - **Playback engine & media hub are SHARED infra**, not yours: `playback-engine.js`,
