@@ -3907,6 +3907,7 @@ function setupDiagnostics() {
     planScope: () => (localDevMode ? sectionScope("plan") : null),
     scopes: () => (localDevMode ? Object.fromEntries(VIEW_TOGGLE_SECTIONS.map((s) => [s, sectionScope(s)])) : null),
     businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
+    billsSeedForQa: (bills) => { if (!localDevMode) return null; state.financeRecurring = bills; planAppDataIndex = null; planRangeCache.clear(); return true; },
     planSeedForQa: (events) => { if (!localDevMode) return null; state.planEvents = events; planRangeCache.clear(); persist(); return true; },
     planEventsInRangeForQa: (a, b) => (localDevMode ? getPlanEventsForRange(a, b).map((e) => ({ id: e.id, title: e.title, source: e.source, layerView: e.layerView || null })) : null),
     setLayerForQa: (view, on) => { if (!localDevMode) return null; setPlanLayer(view, on); return true; },
@@ -26216,7 +26217,7 @@ function getPlanEventsForRange(startKey, endKey) {
       gCur.setDate(gCur.getDate() + 1);
     }
   }
-  getAppDataEvents(startKey, endKey).forEach((e) => events.push(e));
+  if (planShowsAppData()) getAppDataEvents(startKey, endKey).forEach((e) => events.push(e));
   sortEventsForDisplay(events);
   planRangeCache.set(cacheKey, events);
   if (planRangeCache.size > PLAN_RANGE_CACHE_MAX) planRangeCache.delete(planRangeCache.keys().next().value);
@@ -26283,6 +26284,13 @@ function buildPlanAppDataIndex() {
     }
   }
   return byDate;
+}
+
+// The Business calendar holds only its own events (Luke, 2026-10-20): none of the
+// entries other pages add — Bills, Meal Plan, Exercise, Tasks, Birthdays — which
+// all come from the person's or the household's own data.
+function planShowsAppData() {
+  return sectionScope("plan") !== "business";
 }
 
 function getAppDataEvents(startKey, endKey) {
@@ -28176,14 +28184,14 @@ function renderPlanCalList() {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
-    <div class="plan-cal-overlays">
+    ${planShowsAppData() ? `<div class="plan-cal-overlays">
       ${planOverlayRowHtml("eat", "Meal Plan", PLAN_APP_COLORS.eat)}
       ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
       ${planOverlayRowHtml("do", "Tasks", PLAN_APP_COLORS.do)}
       ${planOverlayRowHtml("birthday", "Birthdays", PLAN_APP_COLORS.birthday)}
       ${planOverlayRowHtml("finance", "Bills", PLAN_APP_COLORS.finance)}
     </div>
-    <div class="plan-cal-divider"></div>
+    <div class="plan-cal-divider"></div>` : ""}
     ${sorted.map((c) => planCalRowHtml(c)).join("")}
     ${!sorted.length ? `<p class="plan-cal-empty">No calendars yet.</p>` : ""}
     ${planLayerRowsHtml()}

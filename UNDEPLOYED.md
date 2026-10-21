@@ -10,4 +10,7 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Nothing waiting: everything merged has been deployed (2026-10-20)._
+- **Business calendar: only its own events** · #153 · **Netlify deploy + TestFlight build** (client-only). The Business calendar no longer shows Bills, Meal Plan, Exercise, Tasks or Birthdays (entries the Calendar adds from other pages), and its sidebar drops their switches. Personal and Household unchanged. No migration, no new env vars.
+  Post-deploy:
+  1. Business calendar: empty (nothing added there yet); sidebar has no Meal Plan / Exercise / Tasks / Birthdays / Bills rows.
+  2. Personal calendar: Bills and the rest still show as before.
