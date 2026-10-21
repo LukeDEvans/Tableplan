@@ -10,6 +10,11 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Dutch practice on Leisure** · #153 · **TestFlight build** (client-only; Luke prefers TestFlight for this; the laptop web app picks it up at the next deploy). Timed Dutch↔English matching game as a Dutch row on Leisure (Personal view), with lessons, unit and review rounds; progress saved in the personal `recreate` section. It was built 2026-10-20 but never merged, so builds from `main` since then dropped it; rebased onto `main` 2026-10-21. Word list still provisional until the Rosetta Stone list arrives. No migration, no new env vars.
+  Post-deploy:
+  1. Leisure: a Dutch row with lessons; start one, match a few pairs, finish or leave. The summary shows and the lesson's progress is kept after reopening the app.
+  2. Earlier practice from the 2026-10-20 TestFlight build is still counted.
+
 - **News: opening a story no longer saves it** · #159 · **Netlify deploy + TestFlight build** (client-only). Only ⋯ → Save puts a story in News → Saved. Tapping a story, Open, Listen and ticker headlines just mark it read and open the reader from a copy kept for that session only (saving it afterwards keeps the loaded text). No migration, no new env vars. Not checked in a browser yet (no Chromium in the cloud sandbox): run `npm run check:boot` before deploying.
   Post-deploy:
   1. News: tap a story, read it, close. It's marked read and Saved's count doesn't change.
