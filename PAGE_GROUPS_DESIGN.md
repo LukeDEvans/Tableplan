@@ -1,6 +1,6 @@
 # Page groups & the Recreate pages — design & as built
 
-Status: **Built on `claude/page-groups`, PR #134 (2026-10-17). Not deployed.** Requested and decided by Luke, 2026-10-17.
+Status: **Headings retired 2026-10-20 (Luke: "try going back to not having the tabs"): every view's menu is a flat list (`views.js` `isFlatView` → true); the group markup and `page-groups.js` stay so headings could return in one place. Tasks, Weather and Scores no longer have menu entries; the landing box lost its 240px minimum width. See VIEWS_DESIGN.md decision 28.** Built in PR #134 (2026-10-17). Requested and decided by Luke, 2026-10-17.
 
 ## 1. What Luke asked for
 

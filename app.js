@@ -691,8 +691,8 @@ const PAGE_ACCESS_GROUPS = [
   { key: "read",     label: "Listen",    keys: ["read"] },
   { key: "mail",     label: "Mail",      keys: ["mail", "contacts"],            note: "Includes Contacts" },
   { key: "eat",      label: "Meal Plan", keys: ["eat"] },
-  { key: "news",     label: "News",      keys: ["news"] },
-  { key: "recreate", label: "Recreate",  keys: ["recreate", "play", "explore"], note: "Explore, Exercise, Leisure and Scores" },
+  { key: "news",     label: "News",      keys: ["news"],                         note: "Includes Scores" },
+  { key: "recreate", label: "Recreate",  keys: ["recreate", "play", "explore"], note: "Explore, Exercise and Leisure" },
   { key: "shop",     label: "Shop",      keys: ["shop"] },
   { key: "watch",    label: "Watch",     keys: ["watch"] },
 ];
@@ -1080,7 +1080,6 @@ const elements = {
   pageTitleBtn: document.querySelector("#pageTitleBtn"),
   pageTitleMenu: document.querySelector("#pageTitleMenu"),
   titleMealPlanBtn: document.querySelector("#titleMealPlanBtn"),
-  titleToDoListBtn: document.querySelector("#titleToDoListBtn"),
   titleWatchBtn: document.querySelector("#titleWatchBtn"),
   generalSettingsMenuBtn: document.querySelector("#generalSettingsMenuBtn"),
   menuAutoRulesBtn: document.querySelector("#menuAutoRulesBtn"),
@@ -1120,7 +1119,6 @@ const elements = {
   doneContextSettingsBtn: document.querySelector("#doneContextSettingsBtn"),
   homeMainPage: document.querySelector("#homeMainPage"),
   homeEatBtn: document.querySelector("#homeEatBtn"),
-  homeDoBtn: document.querySelector("#homeDoBtn"),
   homeWatchBtn: document.querySelector("#homeWatchBtn"),
   appMenuBtn: document.querySelector("#appMenuBtn"),
   appMenu: document.querySelector("#appMenu"),
@@ -1199,14 +1197,9 @@ const elements = {
   titleExerciseBtn: document.querySelector("#titleExerciseBtn"),
   homeLeisureBtn: document.querySelector("#homeLeisureBtn"),
   titleLeisureBtn: document.querySelector("#titleLeisureBtn"),
-  homeScoresBtn: document.querySelector("#homeScoresBtn"),
-  titleScoresBtn: document.querySelector("#titleScoresBtn"),
-  homeWeatherBtn: document.querySelector("#homeWeatherBtn"),
-  titleWeatherBtn: document.querySelector("#titleWeatherBtn"),
   homeListenBtn: document.querySelector("#homeListenBtn"),
   titleListenBtn: document.querySelector("#titleListenBtn"),
   homePageGroups: document.querySelector("#homePageGroups"),
-  scoresMainPage: document.querySelector("#scoresMainPage"),
   financeMainPage: document.querySelector("#financeMainPage"),
   financePlannerGrid: document.querySelector("#financePlannerGrid"),
   homeFinanceBtn: document.querySelector("#homeFinanceBtn"),
@@ -1742,9 +1735,9 @@ const _weather = createWeatherModule({
 const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent, searchWeatherLocations } = _weather;
 
 // ── Scores (scores-ui.js, SPORTS_SCORES_DESIGN.md) ─────────────────────
-// The Scores page (under Recreate since 2026-10-17; it was News → Sports → Scores).
-// Reads only the app's own scores function; favorites and league choices are this
-// user's state.sportsPrefs. showScoresApp mounts it.
+// The Scores view, back in News → Sports since 2026-10-20 (its own page under
+// Recreate 10-17…10-20). Reads only the app's own scores function; favorites and
+// league choices are this user's state.sportsPrefs. News mounts it.
 const _scores = createScoresModule({
   escapeHtml: (...a) => escapeHtml(...a),
   showToast: (...a) => showMailToast(...a),
@@ -1783,6 +1776,8 @@ const _news = createNewsModule({
   openSignInSettings: () => openContextSettingsDialog("read-sync"),
   // The phone's own newspaper sign-ins (news-device-signin.js), or null in a
   // browser. Deferred: the plugin is looked up when News needs it, not at load.
+  // News → Sports → Scores (scores-ui.js): scores, schedules and tables.
+  scores: { mount: (...a) => mountScores(...a), unmount: (...a) => unmountScores(...a), refresh: (...a) => refreshScores(...a) },
   getDeviceSignIn: () => {
     const reader = nativeArticleReader();
     if (!reader || typeof reader.cookieNames !== "function") return null;
@@ -1792,12 +1787,12 @@ const _news = createNewsModule({
     };
   },
 });
-const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus, signInStatus: newsSignInStatus, setDeviceTrail: setNewsDeviceTrail, tickerLeads: newsTickerLeads, openStory: openNewsStory } = _news;
+const { enter: enterNewsPage, leave: leaveNewsPage, verifySignIns: verifyNewsSignIns, seed: seedNewsFeed, deviceStatus: newsDeviceStatus, signInStatus: newsSignInStatus, setDeviceTrail: setNewsDeviceTrail, showScores: showNewsScores, tickerLeads: newsTickerLeads, openStory: openNewsStory } = _news;
 
 // ── Dock ticker (news-ticker.js) ────────────────────────────────────────
 // The headlines-and-scores strip along the top of the bottom dock: News's lead
 // stories, then the followed teams' games. Data only through News and Scores
-// above; a tap opens the story, or the game on the Scores page.
+// above; a tap opens the story, or the game in News → Sports → Scores.
 const _newsTicker = createNewsTickerModule({
   escapeHtml: (...a) => escapeHtml(...a),
   getState: () => state,
@@ -1810,8 +1805,8 @@ const _newsTicker = createNewsTickerModule({
   getLeads: (...a) => newsTickerLeads(...a),
   getBoard: (...a) => getScoresBoard(...a),
   openStory: (id) => { if (!openNewsStory(id)) showNewsApp(); },
-  // Scores is a Personal page; in Household and Business a tap shows a small game
-  // card and stays put (VIEWS_DESIGN.md decision 15).
+  // Scores is in News (a Personal page); in Household and Business a tap shows a
+  // small game card and stays put (VIEWS_DESIGN.md decision 15).
   openGame: (dateKey, id) => {
     if (currentViewKey() !== "personal") { openTickerGameCard(dateKey, id); return; }
     showScoresGame(dateKey, id); showScoresApp();
@@ -3908,6 +3903,7 @@ function setupDiagnostics() {
     scopes: () => (localDevMode ? Object.fromEntries(VIEW_TOGGLE_SECTIONS.map((s) => [s, sectionScope(s)])) : null),
     businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
     watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); persist(); return true; },
+    showScoresForQa: () => { if (!localDevMode) return null; showScoresApp(); return true; },
     billsSeedForQa: (bills) => { if (!localDevMode) return null; state.financeRecurring = bills; planAppDataIndex = null; planRangeCache.clear(); return true; },
     planSeedForQa: (events) => { if (!localDevMode) return null; state.planEvents = events; planRangeCache.clear(); persist(); return true; },
     planEventsInRangeForQa: (a, b) => (localDevMode ? getPlanEventsForRange(a, b).map((e) => ({ id: e.id, title: e.title, source: e.source, layerView: e.layerView || null })) : null),
@@ -6339,11 +6335,10 @@ function normalizePageVisibility(visibility) {
 // Inventory is a space of the Shop page (Luke, 2026-10-06): whoever can open Shop
 // can open Inventory. An "inventory" entry left in a saved disabled-pages list
 // from before is ignored.
-// Inventory is a space of Shop; Scores sits with Recreate's pages and shares
-// its switch (Settings › Pages › Recreate).
+// Inventory is a space of Shop; Scores is part of News and shares its switch.
 function accessPageKey(page) {
   if (page === "inventory") return "shop";
-  if (page === "scores") return "recreate";
+  if (page === "scores") return "news";
   return page;
 }
 
@@ -8457,11 +8452,6 @@ function hideAllPages() {
   }
   elements.mailMainPage.hidden = true;
   document.getElementById("exploreMainPage").hidden = true;
-  if (elements.scoresMainPage && !elements.scoresMainPage.hidden) {
-    elements.scoresMainPage.hidden = true;
-    unmountScores(); // stop its refresh timer
-    refreshNewsTicker(); // followed teams may have changed (re-reads cached boards)
-  }
 }
 
 function activateEatShell() {
@@ -8544,20 +8534,11 @@ function showRecreateApp(event) {
 }
 
 // Scores (scores-ui.js, SPORTS_SCORES_DESIGN.md): scores, schedules and tables,
-// its own page under Recreate since 2026-10-17. Sports stories stay in News.
+// back in News → Sports since 2026-10-20. The #scores route, the ticker and any
+// old link land there.
 function showScoresApp(event) {
-  event?.stopPropagation?.();
-  if (!isPageEnabled("scores") || !elements.scoresMainPage) { showHomeApp(); return; }
-  activeAppArea = "scores";
-  hideAllPages();
-  elements.scoresMainPage.hidden = false;
-  elements.weekLabel.closest(".week-tools").hidden = true;
-  elements.activeCookingSection.hidden = true;
-  setPageTitle("Scores");
-  setPageHash("scores");
-  closePageTitleMenu();
-  closeAppMenu();
-  mountScores(document.getElementById("scoresPageMount"));
+  showNewsApp(event);
+  showNewsScores();
 }
 
 function showFinanceApp(event) {
@@ -16995,9 +16976,7 @@ function pageNavButtons() {
     { home: "homePlanBtn",     title: "titlePlanBtn",      page: "plan",     areas: ["plan"],               open: showPlanApp },
     { home: "homeEatBtn",      title: "titleMealPlanBtn",  page: "eat",      areas: ["eat"],                open: showEatApp },
     // Tasks opens its window over the Calendar (showDoApp), so it's never "current".
-    { home: "homeDoBtn",       title: "titleToDoListBtn",  page: "do",       areas: [],                     open: showDoApp, also: ["plan"] },
     { home: "homeNewsBtn",     title: "titleNewsBtn",      page: "news",     areas: ["news"],               open: showNewsApp },
-    { home: "homeWeatherBtn",  title: "titleWeatherBtn",   page: "weather",  areas: ["weather"],            open: showWeatherApp },
     { home: "homeFinanceBtn",  title: "titleFinanceBtn",   page: "finance",  areas: ["finance"],            open: showFinanceApp },
     { home: "homeShopBtn",     title: "titleShopBtn",      page: "shop",     areas: ["shop", "inventory"],  open: showShopApp },
     { home: "homeWatchBtn",    title: "titleWatchBtn",     page: "watch",    areas: ["watch"],              open: showWatchApp },
@@ -17006,7 +16985,6 @@ function pageNavButtons() {
     { home: "homeExploreBtn",  title: "titleExploreBtn",   page: "explore",  areas: ["explore"],            open: showExploreApp },
     { home: "homeExerciseBtn", title: "titleExerciseBtn",  page: "play",     areas: ["play"],               open: showPlayApp },
     { home: "homeLeisureBtn",  title: "titleLeisureBtn",   page: "recreate", areas: ["recreate"],           open: showRecreateApp },
-    { home: "homeScoresBtn",   title: "titleScoresBtn",    page: "scores",   areas: ["scores"],             open: showScoresApp },
   ];
 }
 

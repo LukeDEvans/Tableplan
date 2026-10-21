@@ -78,6 +78,7 @@ almost all your work is there. Make focused changes to the Groceries domain only
   the returned-interface functions without updating callers.
 
 ## Luke's Shop decisions (keep them)
+- **Shop is a Household page only** (Luke, 2026-10-20): it isn't in the Personal view's menu; opening it from Personal moves to Household (`views.js` `VIEW_PAGES`).
 - **List rows (2026-10-15):** a row is just checkbox · name · quantity · (i). Where the
   item came from (Manual / Meal Plan / Checklist), the recipes that call for it, prep
   ("chopped") and price estimate live behind the (i) panel (`groceryRowInfoLines`), never as

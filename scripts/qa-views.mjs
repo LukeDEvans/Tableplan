@@ -85,7 +85,7 @@ try {
   const font = await page.evaluate(() => getComputedStyle(document.querySelector("#homeViewBand .view-band-name")).fontFamily);
   check(/Great Vibes/.test(font), "the band uses the script face", font);
   check((await visibleIn("#homeViewBand .view-band-step")).length === 0, "no chevrons on the landing band (swipe the page instead)");
-  check(await page.evaluate(() => { const o = document.getElementById("homeOverviewBtn"); const head = document.querySelector("#homePageGroups .page-group-head"); return !!o?.offsetParent && o.getBoundingClientRect().bottom <= head.getBoundingClientRect().top; }), "Overview sits at the top of the landing links");
+  check(await page.evaluate(() => { const o = document.getElementById("homeOverviewBtn"); const first = document.getElementById("homePlanBtn"); return !!o?.offsetParent && o.getBoundingClientRect().bottom <= first.getBoundingClientRect().top; }), "Overview sits at the top of the landing links");
   check(!(await page.evaluate(() => document.getElementById("homeBriefing")?.offsetParent)), "no overview under the landing links");
 
   console.log("The Overview window (Personal only)");
@@ -104,7 +104,7 @@ try {
   await page.waitForTimeout(500);
   check(await area() === "plan" && !(await page.evaluate(() => document.getElementById("overviewDialog").open)), "its Calendar panel closes it and opens the Calendar");
   await goHome();
-  check(JSON.stringify(await visibleIn("#homePageGroups .page-group-head")) === JSON.stringify(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]), "Personal keeps the six groups");
+  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Explore", "Exercise", "Leisure"]) && (await visibleIn("#homePageGroups .page-group-head")).length === 0, "Personal: its pages flat, no Tasks / Weather / Scores / Meal Plan / Shop", (await flatPages("#homePageGroups")).join(", "));
   await shot("personal");
 
   console.log("Swiping on the landing page");
@@ -165,7 +165,7 @@ try {
   await shot("menu-household");
   await swipe("#headerViewBand", -90);
   check(await bandName("#headerViewBand") === "Personal", "swiping the header band shows Personal in the band");
-  check(JSON.stringify(await visibleIn("#pageTitleMenu .page-group-head")) === JSON.stringify(["Plan", "Inform", "Resource", "Media", "Message", "Recreate"]), "…and Personal's pages in the menu");
+  check(JSON.stringify(await flatPages("#pageTitleMenu")) === JSON.stringify(["Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Explore", "Exercise", "Leisure"]), "…and Personal's pages in the menu", (await flatPages("#pageTitleMenu")).join(", "));
   check(await view() === "household" && await area() === "plan" && (await page.evaluate(() => window.__liveQA.scopes())).plan === "household", "the page doesn't change yet: still Household's Calendar");
   check(await palette() === "household", "…in Household's look");
   check(!(await page.evaluate(() => document.querySelector("#pageTitleMenu").hidden)), "the menu stays open");
@@ -217,9 +217,13 @@ try {
   await page.evaluate(() => document.querySelector("#homeShopBtn").click());
   await page.waitForTimeout(400);
   await page.evaluate(() => window.__liveQA.goHome());
-  await page.evaluate(() => document.querySelector("#homeWeatherBtn").click()); // hidden in Household; the dock reaches it the same way
+  await page.evaluate(() => document.getElementById("weatherTicker").click()); // Weather: only from the dock, in any view
   await page.waitForTimeout(600);
-  check(await area() === "weather" && await view() === "personal", "Weather opened from Household moves to Personal", `${await area()} / ${await view()}`);
+  check(await area() === "weather" && await view() === "household", "Weather from the dock opens in the view you're in", `${await area()} / ${await view()}`);
+  await page.evaluate(() => window.__liveQA.goHome());
+  await page.evaluate(() => document.querySelector("#homeNewsBtn").click()); // hidden in Household; a link reaches it the same way
+  await page.waitForTimeout(600);
+  check(await area() === "news" && await view() === "personal", "News opened from Household moves to Personal", `${await area()} / ${await view()}`);
 
   console.log("Routes and reload");
   await boot("#household/shop");

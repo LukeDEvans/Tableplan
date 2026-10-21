@@ -268,6 +268,7 @@ Later the same day (Luke, 2026-10-20, after the first deploy):
 25. From an open page, switching views in the menu **doesn't change the screen** until a page in the new view is picked.
 26. The **Overview** (the day's write-up with Calendar / Tasks / Tonight) moves off the bottom of the landing page, where it widened the page and let it scroll sideways. It's **"Overview" at the top** of the landing links and the page menu and opens **a window over the current page**. **Personal view only.**
 27. The **Business calendar holds only its own events**: no Bills, Meal Plan, Exercise, Tasks or Birthdays from other pages (`planShowsAppData()` in app.js).
+28. **No group headings in any view** ("going back to not having the tabs"), and Personal's list drops Tasks (inside the Calendar), Meal Plan and Shop (Household only), Weather (the dock only) and Scores (back in News → Sports). The landing box loses the 240px minimum width the headings brought.
 24. Business roles: **decided later**. Keep owner/manager/employee in the data now; define permissions with a security review before the first invite.
 
 ## 11. Open
@@ -352,3 +353,11 @@ Read from the live database first (read-only): Luke's own Calendar (4 events), L
 - **Landing swipes:** `wireLandingSwipe()` on `#homeMainPage` (same 36 px, clearly-sideways rule); skipped from inputs, from anything that scrolls sideways, and while a dialog is open. The landing band has no chevrons and no touch handler of its own (mouse drag and the arrow keys still work on a laptop).
 - **Menu-only switching:** `menuViewKey()` is the view the open page menu shows (`menuViewKey.view`, null = the current view). `stepCurrentView` routes to `stepMenuView` while the menu is open on a page; `syncPageMenuToView()` lists that view's pages (flat or grouped) and the Overview entry. `commitMenuView()` runs when a page (or Overview) is picked: `applyView(view, { keepPage: true })`, then the page opens. Opening or closing the menu drops an unpicked view.
 - **Checks:** `qa:views` 105/105 (no landing chevrons, Overview placement / window / panel, swipes on the logo and the list, the menu showing Personal and Business while Household's Calendar stays, closing keeps the view, picking News / Calendar / Overview switches), `qa:page-groups`, boot check, full suite.
+
+## 16. As built: flat menus, a shorter Personal list, Scores back in News (decision 28, 2026-10-20)
+
+- `views.js`: `VIEW_PAGES.personal` is now a list (Calendar, News, Finance, Watch, Listen, Mail, Explore, Exercise, Leisure); `isFlatView` is always true. Opening Meal Plan or Shop from Personal (a link, the Overview's Tonight panel) moves to Household (decision 17); Weather from the dock opens in whatever view you're in.
+- Menus: the Tasks, Weather and Scores buttons are gone from both menus and `pageNavButtons()`; `PAGE_GROUPS` drops them. The group markup stays (flat), so headings could return in one place.
+- Scores: News → Sports has Scores / Stories tabs again (the #134 change to `news-ui.js` reverted); `showScoresApp` and `#scores` open News → Sports → Scores; the Scores page markup is removed. The ticker opens a game there in Personal (a game card in Household / Business). Settings › Pages: Scores follows News's switch.
+- `.home-links.page-groups` no longer has `min-width: min(240px, 80vw)`.
+- Checks: `qa:page-groups` rewritten for flat menus (39), `qa:views` 110, `qa-ticker`, boot check, unit tests.

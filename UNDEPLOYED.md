@@ -10,6 +10,13 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Flat menus; shorter Personal list; Scores back in News** · #155 · **Netlify deploy + TestFlight build** (client-only). No group headings in any view; the landing box back to its old width. Personal lists Overview, Calendar, News, Finance, Watch, Listen, Mail, Explore, Exercise, Leisure. Meal Plan and Shop only in Household; Tasks only inside the Calendar; Weather only from the dock; Scores back in News → Sports. No migration, no new env vars.
+  Post-deploy:
+  1. Landing (Personal): a plain list, no Plan / Inform / … headings; the white box hugs the links; no sideways scroll.
+  2. News → Sports: Scores and Stories tabs; tables and team schedules open from Scores. A ticker game opens there.
+  3. Weather from the dock still opens; Tasks from the Calendar still opens.
+  4. Household: Calendar, Meal Plan, Finance, Shop, Watch, Listen as before.
+
 - **Business calendar: only its own events** · #154 · **Netlify deploy + TestFlight build** (client-only). The Business calendar no longer shows Bills, Meal Plan, Exercise, Tasks or Birthdays (entries the Calendar adds from other pages), and its sidebar drops their switches. Personal and Household unchanged. No migration, no new env vars.
   Post-deploy:
   1. Business calendar: empty (nothing added there yet); sidebar has no Meal Plan / Exercise / Tasks / Birthdays / Bills rows.

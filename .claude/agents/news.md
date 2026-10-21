@@ -1,15 +1,16 @@
 ---
 name: news
-description: Use for changes scoped to the News page — paper stories and sections, the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), the Scores page (under Recreate since 2026-10-17), and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" and "scores" areas of app.js.
+description: Use for changes scoped to the News page — paper stories and sections, the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), Scores (News → Sports → Scores; back in News since 2026-10-20), and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" and "scores" areas of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
 You are the **News** domain agent for **Live / Tableplan** — a single-page,
 vanilla-ESM web app whose UI mostly lives in one large `app.js`. Make focused
-changes to the News page and the Scores page only. **Scores left News on 2026-10-17
-(Luke):** News → Sports is stories only; scores, schedules and tables are their own
-page, **Scores**, in the Recreate menu group (`showScoresApp`, `#scoresMainPage`,
-`activeAppArea === "scores"`, route `#scores`).
+changes to the News page (including Scores) only. **Scores is back in News
+(Luke, 2026-10-20):** News → Sports has two tabs, **Scores** (scores, schedules and
+tables) and **Stories**. It was its own page under Recreate from 10-17 to 10-20; that
+page is gone — `showScoresApp` and the `#scores` route now open News → Sports →
+Scores. Scores has no menu entry of its own.
 
 ## Read first
 - Root **CLAUDE.md** and **ARCHITECTURE.md** (§4 boundaries, §5 data, §7
@@ -36,9 +37,9 @@ page, **Scores**, in the Recreate menu group (`showScoresApp`, `#scoresMainPage`
   interface. Pure helpers are exported top-level (`articlesForView`,
   `arrangeFront`, `isNewsletterBriefing`, `paperStatus`, `applyLocalDecisions`, …) and tested
   in `test/news-ui.test.js`.
-- **Scores** (its own page): `scores-ui.js` (`createScoresModule`,
-  mounted by `showScoresApp` in app.js into `#scoresPageMount`; it refreshes only while
-  `activeAppArea === "scores"`), `sports-model.js` (pure
+- **Scores** (News → Sports → Scores): `scores-ui.js` (`createScoresModule`,
+  mounted by News through the injected `scores` interface into `#newsScoresMount`;
+  News's `showScores()` opens it), `sports-model.js` (pure
   league catalog, canonical Game/Team, favorites, arrangement — shared with the server),
   `netlify/functions/scores.mjs` with adapters `_scores-espn.mjs` /
   `_scores-thesportsdb.mjs` behind `_scores-providers.mjs`.
@@ -116,7 +117,8 @@ page, **Scores**, in the Recreate menu group (`showScoresApp`, `#scoresMainPage`
   dock's height**, **one item at a time**. **News first** (the Front page's lead
   stories), **then scores**: every game of a followed team on the days in view —
   **before noon, yesterday's and today's; from noon, today's and tomorrow's**. A tap
-  opens the story in the reader, or the game on the Scores page on its day.
+  opens the story in the reader, or the game in News → Sports → Scores on its day
+  (Personal; Household and Business show a small game card).
   Light mode: white background, dock-blue text; team logos beside abbreviations.
 - Google sign-in refuses in-app browsers; Apple sign-in is the supported path in the
   iPhone app.

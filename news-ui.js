@@ -13,8 +13,8 @@
 // `updateNews` call. Newsletter briefings (savedArticles "news-*") are not shown
 // in News at all — they live only in Listen (Luke, 2026-10-16).
 //
-// Sports is stories only. Scores, schedules and tables are their own page under
-// Recreate (scores-ui.js, Luke 2026-10-17).
+// Sports has two tabs: Scores (scores-ui.js, mounted here through the injected
+// `scores` interface) and Stories (the section's articles, as everywhere else).
 
 const REFRESH_MS = 60_000;
 const FLUSH_MS = 1500;
@@ -23,6 +23,7 @@ const KEEP_DAYS = 3;          // matches the server's FRESH_DAYS
 const LEAD_WINDOW_MS = 36 * 3_600_000;
 const SIGNIN_RECHECK_MS = DAY_MS;
 const DEVICE_AUTO_CHECK_MS = 6 * 3_600_000;
+const SPORTS_TAB_KEY = "live-news-sports-tab-v1"; // per device: "scores" | "stories"
 
 export const NEWS_SECTIONS = [
   { key: "world", label: "World" },
@@ -279,6 +280,9 @@ export function createNewsModule(deps) {
     // startribune? }>, needsCheck(signIns): boolean } — the phone's own in-app
     // newspaper sign-ins (news-device-signin.js) — or null in a browser.
     getDeviceSignIn,
+    // The Scores view (scores-ui.js, SPORTS_SCORES_DESIGN.md), shown as a tab of the
+    // Sports section: { mount(el), unmount(), refresh() }. Optional.
+    scores,
     // Saved articles (app.js — the former Media → Publications list, with its
     // reader; MEDIA_SPLIT_DESIGN.md): { mount(el), unmount(), refresh(),
     // search(q), count() }; mount(el, { query }) applies the News search box. Optional.
@@ -302,6 +306,10 @@ export function createNewsModule(deps) {
   let openMenuId = null;
   let wired = false;
   let verifying = false;
+  // Sports opens on Scores; the choice between Scores and Stories is remembered.
+  let sportsTab = "scores";
+  try { if (localStorage.getItem(SPORTS_TAB_KEY) === "stories") sportsTab = "stories"; } catch { /* private mode */ }
+  const onScores = () => !!scores && view.kind === "section" && view.key === "sports" && sportsTab === "scores";
   const onSaved = () => !!saved && view.kind === "saved";
 
   const $ = (id) => document.getElementById(id);
@@ -534,7 +542,10 @@ export function createNewsModule(deps) {
     if (saved) h += sideTab("saved", null, `${ICONS.saved}<span>Saved</span>`, saved.count?.() || 0);
     h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Sections</div>`;
     for (const s of NEWS_SECTIONS) {
-      if (!present.has(s.key) && !(view.kind === "section" && view.key === s.key)) continue;
+      // Sports always shows when the Scores view is mounted: scores don't depend on
+      // sports articles arriving, so hiding it until one does made Scores unreachable.
+      const alwaysShown = s.key === "sports" && !!scores;
+      if (!alwaysShown && !present.has(s.key) && !(view.kind === "section" && view.key === s.key)) continue;
       h += sideTab("section", s.key, `<i class="news-side-dot article-sidebar-icon" style="${hue(s.key)}" aria-hidden="true"></i><span>${esc(s.label)}</span>`, c.section[s.key]);
     }
     if (!present.size) h += `<div class="news-side-empty">Sections appear as articles arrive.</div>`;
@@ -605,9 +616,27 @@ export function createNewsModule(deps) {
     return `<div class="news-banner">News collects articles only from papers you're signed in to. ${how} <button class="news-banner-btn" type="button" data-news-signin>Open Sync Settings</button></div>`;
   }
 
+  function sportsTabsHtml() {
+    if (!scores) return "";
+    const unread = counts?.section?.sports || 0;
+    const tab = (key, label, extra = "") => `<button type="button" role="tab" class="news-tab${sportsTab === key ? " is-active" : ""}" data-news-sports-tab="${key}" aria-selected="${sportsTab === key}">${label}${extra}</button>`;
+    return `<div class="news-tabs" role="tablist" aria-label="Sports">${tab("scores", "Scores")}${tab("stories", "Stories", unread ? `<span class="news-tab-count">${unread}</span>` : "")}</div>`;
+  }
+
   function renderContent() {
     const el = $("newsContent");
     if (!el) return;
+    // Sports → Scores is its own view: it doesn't wait on (or need) the stories.
+    if (onScores()) {
+      el.innerHTML = `<div class="news-scroll">
+        <div class="news-head"><h2 class="news-title">Sports</h2></div>
+        ${sportsTabsHtml()}
+        <div class="news-scores" id="newsScoresMount"></div>
+      </div>`;
+      scores.mount($("newsScoresMount"));
+      return;
+    }
+    scores?.unmount();
     // Saved articles: app.js owns the list (and keeps its scroll); News gives it a
     // place. Built once per visit to the view so re-renders don't reset it.
     if (onSaved()) {
@@ -654,6 +683,7 @@ export function createNewsModule(deps) {
     el.innerHTML = `<div class="news-scroll">
       ${view.kind === "front" ? signInBanner() : ""}
       <div class="news-head"><h2 class="news-title">${esc(title)}</h2></div>
+      ${view.kind === "section" && view.key === "sports" ? sportsTabsHtml() : ""}
       ${body}
     </div>`;
   }
@@ -678,6 +708,7 @@ export function createNewsModule(deps) {
 
   // Refresh everything News shows (was the refresh button by the search box).
   function refreshAll() {
+    if (onScores()) scores.refresh();
     if (onSaved()) saved.refresh();
     flush();
     for (const p of pages.values()) p.loadedAt = 0; // every view re-reads when next shown
@@ -709,6 +740,14 @@ export function createNewsModule(deps) {
       if (tab) setView({ kind: tab.dataset.newsView, key: tab.dataset.newsKey });
     });
     $("newsContent")?.addEventListener("click", (e) => {
+      const sportsTabBtn = e.target.closest("[data-news-sports-tab]");
+      if (sportsTabBtn) {
+        sportsTab = sportsTabBtn.dataset.newsSportsTab === "stories" ? "stories" : "scores";
+        try { localStorage.setItem(SPORTS_TAB_KEY, sportsTab); } catch { /* private mode */ }
+        renderContent();
+        return;
+      }
+      if (e.target.closest("#newsScoresMount")) return; // the Scores view handles its own taps
       if (e.target.closest("[data-news-signin]")) { openSignInSettings?.(); return; }
       if (e.target.closest("[data-news-more]")) { load(false, { more: true }); renderContent(); return; }
       const item = e.target.closest("[data-news-id]");
@@ -765,9 +804,10 @@ export function createNewsModule(deps) {
     return seeded.length;
   }
 
-  // Leaving the page: send queued decisions.
+  // Leaving the page: send queued decisions and stop the Scores view's refresh.
   function leave() {
     flush();
+    scores?.unmount();
   }
 
   // The iPhone app's sign-in sheet steps for `paper` (diagnostics), sent with the
@@ -781,6 +821,17 @@ export function createNewsModule(deps) {
   function showView(kind, key) {
     if (kind === "saved" && !saved) return;
     if (view.kind !== kind || view.key !== key) setView({ kind, key });
+  }
+
+  // Sports → Scores (the dock ticker opens a game there). Call after enter().
+  function showScores() {
+    if (!scores) return;
+    if (sportsTab !== "scores") {
+      sportsTab = "scores";
+      try { localStorage.setItem(SPORTS_TAB_KEY, sportsTab); } catch { /* private mode */ }
+    }
+    if (view.kind !== "section" || view.key !== "sports") setView({ kind: "section", key: "sports" });
+    else renderContent();
   }
 
   // ── The dock ticker's headlines (news-ticker.js) ──
@@ -818,7 +869,7 @@ export function createNewsModule(deps) {
   }
 
   return {
-    enter, leave, load, verifySignIns, render, seed, setDeviceTrail, showView, tickerLeads, openStory,
+    enter, leave, load, verifySignIns, render, seed, setDeviceTrail, showView, showScores, tickerLeads, openStory,
     deviceStatus: () => lastDeviceStatus,
     signInStatus: () => (signInsLoaded ? signIns : null)
   };

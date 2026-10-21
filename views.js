@@ -23,10 +23,13 @@ export const VIEW_LABELS = Object.freeze({
 });
 
 // Which pages each view holds, by the page keys app.js uses in pageNavButtons()
-// (plan = Calendar, eat = Meal Plan, read = Listen). null = every page.
-// Household and Business list their pages flat, with no group headings.
+// (plan = Calendar, eat = Meal Plan, read = Listen, play = Exercise, recreate =
+// Leisure). Every view lists its pages flat, with no group headings (Luke,
+// 2026-10-20). Meal Plan and Shop are Household's only; Tasks lives inside the
+// Calendar, Weather opens from the dock, and Scores is News → Sports — none of
+// those three has a menu entry.
 export const VIEW_PAGES = Object.freeze({
-  personal: null,
+  personal: Object.freeze(["plan", "news", "finance", "watch", "read", "mail", "explore", "play", "recreate"]),
   household: Object.freeze(["plan", "eat", "finance", "shop", "watch", "read"]),
   business: Object.freeze(["plan"]),
 });
@@ -93,8 +96,10 @@ export function viewForPage(page, current, available) {
   return list.find((v) => viewHasPage(v, page)) || null;
 }
 
-export function isFlatView(view) {
-  return view !== "personal";
+// Every view's menu is a flat list (Luke, 2026-10-20: "going back to not having
+// the tabs"). The group markup stays, so headings could come back in one place.
+export function isFlatView() {
+  return true;
 }
 
 // Routes carry their view: "household/calendar". Old routes without one
