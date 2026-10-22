@@ -1,6 +1,6 @@
 ---
 name: travel
-description: Use for changes scoped to the Travel domain — trips, itineraries, bookings/ingest, geo & transitions, route optimization, and Travel Mode. Explore is in the Recreate menu group and opens on Local / State / Country / World rows of trips (explore-scope.js). Owns travel-*.js and the "explore" area of app.js.
+description: Use for changes scoped to the Travel domain — trips, itineraries, bookings/ingest, geo & transitions, route optimization, and Travel Mode. Explore is in the Recreate menu group and opens on Local / Regional / National / Global rows of trips (explore-scope.js); those rows are the only way between trips. Owns travel-*.js and the "explore" area of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -34,7 +34,9 @@ changes to the Travel domain only. (In the UI this domain is surfaced as
   `page-groups.js`). Its notifications underline its menu buttons (and the closed group's
   heading).
 - **Explore sections (Luke, 2026-10-17):** the page opens on four rows of trip cards —
-  **Local, State, Country, World** (`#exploreLanding`, `renderExploreLanding`) — each
+  **Local, Regional, National, Global** (renamed from Local / State / Country / World,
+  Luke 2026-10-22; keys stay `local` / `state` / `country` / `world` so saved
+  `trip.scope` values keep working) (`#exploreLanding`, `renderExploreLanding`) — each
   ending in a **+** that starts a trip in that row. Trips are sorted **automatically** by
   comparing the destination with the Profile's home (`explore-scope.js`, pure: Local =
   within 100 km, then same state, same country, else World); a trip with no destination
@@ -42,8 +44,16 @@ changes to the Travel domain only. (In the UI this domain is surfaced as
   the choice is saved as `trip.scope` and wins over the sorting ("Sort by distance"
   clears it). Destinations and home are looked up with Nominatim, one a second, cached
   **on the device only** (`live-explore-places-v1`, account-scoped) — never synced state.
-  A card opens the trips view (`#exploreTripsShell`: sidebar + trip), whose back arrow
-  returns to the rows; any `openExploreTrip` call switches to it.
+  Each row's trip cards show that row's picture (`explore-<name>.png`, listed as `icon`
+  in `EXPLORE_SCOPES` and copied to `dist` by `vite.config.mjs`); Not sorted yet keeps
+  the plain travel icon.
+- **No trips list (Luke, 2026-10-22):** the **rows are the only way between trips**. The
+  "All trips" button, the trips sidebar, its search and the empty state are gone. A card
+  opens that one trip (`#exploreTripsShell`, back arrow + bell only); back returns to the
+  rows. **Edit trip** and **Delete trip** live on the card's hold / right-click menu
+  (`openExploreScopeMenu`, `deleteExploreTrip`). After a change on Explore call
+  `refreshExploreTrips()` (redraws the rows, or the open trip) — it never jumps from the
+  rows into a trip; `showExploreTrips(id)` opens one. Don't bring a trips list back.
 ## Domain landmines (do NOT change without flagging)
 - **Cross-domain flows go through documented interfaces, not internals.**
   "Send-to-Explore" from other domains (e.g. media/watch → a trip idea) and the

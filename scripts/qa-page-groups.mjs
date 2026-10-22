@@ -169,7 +169,14 @@ try {
     s.dataset.recreateSection, [...s.querySelectorAll("[data-explore-card]")].map((c) => c.dataset.exploreCard),
   ])));
   let rows = await rowsOf();
-  check(JSON.stringify(Object.keys(rows)) === JSON.stringify(["local", "state", "country", "world", "unsorted"]), "Local, State, Country, World (+ Not sorted yet)", Object.keys(rows).join(","));
+  check(JSON.stringify(Object.keys(rows)) === JSON.stringify(["local", "state", "country", "world", "unsorted"]), "four rows (+ Not sorted yet)", Object.keys(rows).join(","));
+  check(JSON.stringify(await page.evaluate(() => [...document.querySelectorAll("#exploreLanding .recreate-section-title")].map((h) => h.textContent.trim()))) === JSON.stringify(["Local", "Regional", "National", "Global", "Not sorted yet"]), "rows are Local, Regional, National, Global");
+  check(await page.evaluate(() => ["local", "regional", "national", "global"].every((n, i) => {
+    const key = ["local", "state", "country", "world"][i];
+    const imgs = [...document.querySelectorAll(`[data-recreate-section="${key}"] [data-explore-card] img`)];
+    return imgs.length > 0 && imgs.every((im) => im.getAttribute("src") === `./explore-${n}.png` && im.complete && im.naturalWidth > 0);
+  })), "each row's cards show that row's picture");
+  check(await page.evaluate(() => !document.querySelector("[data-explore-all]") && ![...document.querySelectorAll("#exploreLanding button")].some((b) => /all trips/i.test(b.textContent))), "no All trips button");
   check(rows.local?.join() === "t-still" && rows.state?.join() === "t-dul" && rows.country?.join() === "t-chi" && rows.world?.join() === "t-ams" && rows.unsorted?.join() === "t-mys", "trips sorted by distance from home", JSON.stringify(rows));
   check(await page.evaluate(() => ["local", "state", "country", "world"].every((k) => document.querySelector(`[data-recreate-section="${k}"] .recreate-row > :last-child [data-explore-add="${k}"]`))), "each of the four rows ends with +");
   check(await fits(), "Explore fits the phone width");
@@ -177,6 +184,8 @@ try {
   await page.click('[data-explore-card="t-chi"]');
   await page.waitForTimeout(400);
   check(await page.isVisible("#exploreTripsShell") && !(await page.isVisible("#exploreLanding")) && (await page.textContent("#exploreDetailName")).trim() === "Chicago", "a card opens its trip");
+  check(await page.evaluate(() => !document.querySelector("#exploreMainPage .article-sidebar, #exploreTripList, #exploreSidebarToggle, #exploreSearchInput")), "the trip has no trips list or search beside it");
+  check(await fits(), "an open trip fits the phone width");
   await shot("explore-trip");
   await page.click("#exploreBackBtn");
   await page.waitForTimeout(200);
@@ -204,6 +213,13 @@ try {
   await page.click("#exploreBackBtn");
   await page.waitForTimeout(200);
   check(await page.evaluate(() => [...document.querySelectorAll('[data-recreate-section="state"] [data-explore-card]')].some((c) => c.textContent.includes("Lutsen"))), "the new trip lands in the row it was added from");
+
+  // Delete from the card's menu (the only place now that the trips list is gone).
+  await page.locator('[data-recreate-section="state"] [data-explore-card]').filter({ hasText: "Lutsen" }).click({ button: "right" });
+  page.once("dialog", (d) => d.accept());
+  await page.click("[data-explore-delete]");
+  await page.waitForTimeout(300);
+  check(await page.isVisible("#exploreLanding") && !(await page.evaluate(() => [...document.querySelectorAll("[data-explore-card]")].some((c) => c.textContent.includes("Lutsen")))), "Delete trip on a card's menu removes it");
 
   console.log("Home again");
   await goHome();

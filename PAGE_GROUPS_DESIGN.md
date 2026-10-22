@@ -39,7 +39,7 @@ Status: **Headings retired 2026-10-20 (Luke: "try going back to not having the t
 **Leisure** (the old Recreate page; area `recreate`, routes `#leisure` / `#recreate`): one row per hobby. First card opens the hobby's full view, then sailing entries (tap to edit) or piano scores (tap to open), then a +. The score list comes from synced state, so the score engine loads only when a score is opened.
 
 **Explore** (`explore-scope.js`, pure; landing in `app.js`)
-- Opens on the rows; a card opens the trips view (sidebar + trip), whose back arrow returns. "All trips" opens the trips view with nothing selected.
+- Opens on the rows; a card opens that trip, whose back arrow returns. **2026-10-22 (Luke):** the rows are renamed **Local, Regional, National, Global** (keys unchanged), each row's cards show that row's picture, and "All trips" with its trips sidebar is retired: the rows are the only way between trips. Edit and Delete are on a card's hold / right-click menu.
 - Sorting: within **100 km** of home is Local; else same state is State; same country is Country; otherwise World. No destination or no match → **Not sorted yet** (shown only when non-empty).
 - A move is saved as `trip.scope` (synced with the trip); "Sort by distance" clears it. A row's + creates the trip with that row's scope.
 - Destinations and home are looked up with OpenStreetMap Nominatim, one request a second, cached **on the device only** (`live-explore-places-v1`, cleared on account change). Nothing about sorting is written to Supabase, apart from a user's own move.

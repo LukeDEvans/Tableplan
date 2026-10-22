@@ -2594,8 +2594,6 @@ function bindEvents() {
       sidebar.classList.toggle("is-collapsed");
     }
   });
-  // Explore's trips sidebar is toggled by the topbar hamburger (#exploreSidebarToggle),
-  // wired in wireExploreTabs — matching the Media/Mail sidebars.
   // Travel page buttons
   document.getElementById("travelNewTripBtn")?.addEventListener("click", showTravelNewTripDialog);
   document.getElementById("travelEmptyTripBtn")?.addEventListener("click", showTravelNewTripDialog);
@@ -8364,7 +8362,7 @@ function render() {
   // switch) or merges (another device) — it used to keep the old view's list.
   if (activeAppArea === "watch" && !document.getElementById("discoverSearchInput")?.value.trim()) renderWatchPlanner();
   if (activeAppArea === "news") refreshSavedArticlesIfShown(); // News → Saved articles
-  if (activeAppArea === "explore") renderExploreSidebar(exploreOpenTripId);
+  if (activeAppArea === "explore") refreshExploreTrips();
   if (activeAppArea === "finance") renderFinancePage();
 }
 
@@ -11220,7 +11218,7 @@ function createTripFromEntity(entity, source) {
   if (!Array.isArray(state.trips)) state.trips = [];
   state.trips.push(trip);
   commitEntityToTrip(entity, trip, source);
-  if (activeAppArea === "explore") renderExploreSidebar(trip.id);
+  if (activeAppArea === "explore") showExploreTrips(trip.id);
   return trip;
 }
 
@@ -41623,11 +41621,13 @@ function showExploreApp(event) {
 }
 
 // ── Explore sections (explore-scope.js, Luke 2026-10-17) ─────────────────────
-// The page opens on four rows of trip cards — Local, State, Country, World —
-// sorted by how far each destination is from home, each ending in a "+" that
-// starts a trip in that row. A trip opens in the trips view (sidebar + trip),
-// whose back arrow returns here. Hold or right-click a card to move it to another
-// row; the choice is saved on the trip (`trip.scope`) and wins over the sorting.
+// The page opens on four rows of trip cards — Local, Regional, National, Global
+// (renamed 2026-10-22) — sorted by how far each destination is from home, each
+// ending in a "+" that starts a trip in that row. Each row's cards carry its
+// picture. A card opens that trip, whose back arrow returns here; the rows are
+// the only way between trips (the "All trips" list was retired 2026-10-22).
+// Hold or right-click a card to move it to another row, edit or delete it; a
+// move is saved on the trip (`trip.scope`) and wins over the sorting.
 //
 // Places are looked up with OpenStreetMap Nominatim (the same service the trip
 // map uses), at most one request a second, and cached on this device only — the
@@ -41708,25 +41708,30 @@ function showExploreLanding() {
   if (!landing || !shell) return;
   shell.hidden = true;
   landing.hidden = false;
+  exploreOpenTripId = null;
   renderExploreLanding();
 }
 
-// The trips view (sidebar + trip). With a trip id, opens that trip.
+// Opens a trip in the trips view; with no (or an unknown) trip, the rows.
 function showExploreTrips(tripId) {
-  const landing = document.getElementById("exploreLanding");
-  const shell = document.getElementById("exploreTripsShell");
-  if (landing) landing.hidden = true;
-  if (shell) shell.hidden = false;
-  renderExploreSidebar(tripId || null);
+  if (tripId && travelTrips().some((t) => t.id === tripId)) openExploreTrip(tripId);
+  else showExploreLanding();
 }
 
-function exploreTripCardTemplate(trip) {
+// A trip card carries its row's picture (Luke, 2026-10-22); trips not sorted yet
+// keep the plain travel icon.
+function exploreScopeIcon(scopeKey) {
+  const sc = ExploreScope.EXPLORE_SCOPES.find((s) => s.key === scopeKey);
+  return sc ? `<img class="workout-pool-img explore-scope-img" src="${sc.icon}" alt="" width="52" height="52" draggable="false" />` : RECREATE_TRAVEL_ICON;
+}
+
+function exploreTripCardTemplate(trip, scopeKey) {
   let status = "";
   try { status = TravelModel.deriveStatus(trip); } catch { status = ""; }
   const statusLabel = { idea: "Idea", planning: "Planning", booked: "Booked", traveling: "Traveling", completed: "Done" }[status] || "";
   const when = trip.startDate ? new Date(trip.startDate + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
   const sub = [trip.destination && trip.destination !== trip.name ? trip.destination : "", when || statusLabel].filter(Boolean).join(" · ");
-  return recreateCardTemplate(`data-explore-card="${escapeHtml(trip.id)}"`, RECREATE_TRAVEL_ICON, trip.name || trip.destination || "Trip", sub);
+  return recreateCardTemplate(`data-explore-card="${escapeHtml(trip.id)}"`, exploreScopeIcon(scopeKey), trip.name || trip.destination || "Trip", sub);
 }
 
 function renderExploreLanding() {
@@ -41746,17 +41751,16 @@ function renderExploreLanding() {
   const groups = ExploreScope.groupTrips(trips, { home, placeOf: explorePlaceOf });
   const count = pageNotifCounts.explore || 0;
   const rows = ExploreScope.EXPLORE_SCOPES.map((sc) => recreateSectionTemplate(sc.key, sc.label, `
-    ${groups[sc.key].map(exploreTripCardTemplate).join("")}
+    ${groups[sc.key].map((t) => exploreTripCardTemplate(t, sc.key)).join("")}
     ${recreateAddCardTemplate(`data-explore-add="${sc.key}"`, "New trip", groups[sc.key].length ? "" : "No trips yet")}`));
   if (groups.unsorted.length) {
-    rows.push(recreateSectionTemplate("unsorted", "Not sorted yet", groups.unsorted.map(exploreTripCardTemplate).join("")));
+    rows.push(recreateSectionTemplate("unsorted", "Not sorted yet", groups.unsorted.map((t) => exploreTripCardTemplate(t, null)).join("")));
   }
-  landing.innerHTML = `
-    <div class="explore-landing-bar">
+  const bar = `
       ${home ? "" : `<span class="explore-landing-hint">Add your home in your profile to sort trips by distance.</span>`}
-      <button class="secondary-btn" type="button" data-explore-all>All trips</button>
-      ${count ? `<button class="icon-btn mail-notifications-btn" type="button" data-explore-inbox title="Notifications" aria-label="Notifications"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="mail-notif-badge">${count}</span></button>` : ""}
-    </div>
+      ${count ? `<button class="icon-btn mail-notifications-btn" type="button" data-explore-inbox title="Notifications" aria-label="Notifications"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="mail-notif-badge">${count}</span></button>` : ""}`;
+  landing.innerHTML = `
+    ${bar.trim() ? `<div class="explore-landing-bar">${bar}</div>` : ""}
     ${rows.join("")}`;
   landing.querySelectorAll("[data-explore-card]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -41772,7 +41776,6 @@ function renderExploreLanding() {
   landing.querySelectorAll("[data-explore-add]").forEach((btn) => {
     btn.addEventListener("click", () => showTravelNewTripDialog({ scope: btn.dataset.exploreAdd }));
   });
-  landing.querySelector("[data-explore-all]")?.addEventListener("click", () => showExploreTrips(null));
   landing.querySelector("[data-explore-inbox]")?.addEventListener("click", openExploreProposalsPanel);
 }
 
@@ -41810,7 +41813,8 @@ function openExploreScopeMenu(event, tripId) {
   menu.innerHTML = `
     ${ExploreScope.EXPLORE_SCOPES.map((sc) => `<button type="button" role="menuitem" data-explore-move="${sc.key}"${current === sc.key ? ' aria-checked="true"' : ""}>Move to ${escapeHtml(sc.label)}</button>`).join("")}
     ${current ? `<button type="button" role="menuitem" data-explore-move="">Sort by distance</button>` : ""}
-    <button type="button" role="menuitem" data-explore-edit>Edit trip</button>`;
+    <button type="button" role="menuitem" data-explore-edit>Edit trip</button>
+    <button type="button" role="menuitem" class="danger" data-explore-delete>Delete trip</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
   const y = Math.min(event.clientY || 10, usableViewportBottom() - menu.offsetHeight - 10);
@@ -41826,6 +41830,11 @@ function openExploreScopeMenu(event, tripId) {
     closeFolderMenu();
     showTravelEditTripDialog(tripId);
   });
+  menu.querySelector("[data-explore-delete]")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeFolderMenu();
+    deleteExploreTrip(tripId);
+  });
 }
 
 // "" clears the user's choice, so the trip is sorted by distance again.
@@ -41839,140 +41848,29 @@ function setTripScope(tripId, scope) {
   if (exploreLandingShown()) renderExploreLanding();
 }
 
-let exploreTripQuery = "";
+// The rows are the only way between trips (Luke, 2026-10-22): the "All trips" list
+// and its sidebar are retired. The trips view now shows one trip; its back arrow
+// returns to the rows.
 
-// Sidebar categories, each a "folder" with an icon that stays visible in the
-// collapsed rail (like Mail's label icons). A trip's derived lifecycle status
-// picks its category: Upcoming (planning/booked/traveling), Wishlist (ideas),
-// Past (completed).
-const EXPLORE_CATEGORIES = [
-  { key: "upcoming", label: "Upcoming",
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`,
-    match: s => s !== "idea" && s !== "completed" },
-  { key: "wishlist", label: "Wishlist",
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
-    match: s => s === "idea" },
-  { key: "past", label: "Past", noHeader: true,
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
-    match: s => s === "completed" },
-];
-
-// Pull a leading/embedded emoji out of a trip name (flags like 🇹🇷 are two
-// regional-indicator code points; others may carry variation selectors or ZWJ
-// sequences). The emoji becomes the trip's icon; the cleaned name is displayed.
-function extractTripEmoji(rawName) {
-  const name = String(rawName || "");
-  // ️ = variation selector-16, ‍ = zero-width joiner (emoji sequences).
-  const src = "\\p{Regional_Indicator}\\p{Regional_Indicator}|\\p{Extended_Pictographic}(?:\\uFE0F|\\u200D\\p{Extended_Pictographic})*";
-  const m = name.match(new RegExp(src, "u"));
-  if (!m) return { emoji: "", name: name.trim() };
-  const stripped = name.replace(new RegExp(src, "gu"), "").replace(/\s{2,}/g, " ").trim();
-  return { emoji: m[0], name: stripped };
+// After a change while on Explore: redraw the rows if they're showing, else
+// redraw the open trip (or go back to the rows if it's gone). Never jumps from
+// the rows into a trip.
+function refreshExploreTrips(tripId = exploreOpenTripId) {
+  if (activeAppArea !== "explore") return;
+  if (!document.getElementById("exploreLanding")?.hidden) { renderExploreLanding(); return; }
+  if (tripId && travelTrips().some((t) => t.id === tripId)) openExploreTrip(tripId);
+  else showExploreLanding();
 }
 
-// Compact numeric date for the sidebar: day/month/'yy (no leading zeros).
-// "2026-07-24" → "24/7/'26". Start and end are shown in full, separated:
-//   "24/7/'26 - 26/7/'26".
-function tripDateParts(dateKey) {
-  const [yr, mo, da] = String(dateKey || "").split("-");
-  return { y: (yr || "").slice(2), m: parseInt(mo, 10), d: parseInt(da, 10) };
-}
-function formatTripDateShort(dateKey) {
-  const p = tripDateParts(dateKey);
-  return Number.isFinite(p.d) && Number.isFinite(p.m) ? `${p.d}/${p.m}/'${p.y}` : "";
-}
-function formatTripDateRange(start, end) {
-  const s = formatTripDateShort(start);
-  if (!s) return "";
-  if (!end || end === start) return s;
-  const e = formatTripDateShort(end);
-  return e ? `${s} - ${e}` : s;
-}
-
-function exploreTripTabHtml(trip) {
-  const status = TravelModel.deriveStatus(trip);
-  const meta = TravelModel.TRIP_STATUS_META[status] || {};
-  const dates = trip.startDate
-    ? formatTripDateRange(trip.startDate, trip.endDate)
-    : (status === "idea" ? "Idea" : "No dates");
-  // A name emoji (e.g. "🇹🇷 Türkiye") becomes the trip's icon; otherwise fall
-  // back to the lifecycle-status glyph.
-  const { emoji, name: cleanName } = extractTripEmoji(trip.name || "Untitled");
-  const icon = emoji || meta.icon || "✈";
-  return `
-    <button class="article-sidebar-tab explore-trip-tab explore-trip-tab--${meta.tone || status}" type="button" data-explore-trip-id="${trip.id}">
-      <span class="explore-trip-status" title="${escapeHtml(meta.label || status)}" aria-hidden="true">${icon}</span>
-      <span class="explore-trip-tab-body">
-        <span class="explore-trip-name">${escapeHtml(cleanName || "Untitled")}</span>
-        <span class="explore-trip-dates">${escapeHtml(dates)}</span>
-      </span>
-    </button>`;
-}
-
-// listOnly re-renders just the trips list (used by live search) without opening
-// or closing the trip view — so filtering never disturbs the open trip.
-function renderExploreSidebar(preserveSelectedId, { listOnly = false } = {}) {
-  const list = document.getElementById("exploreTripList");
-  if (!list) return;
-  if (!listOnly && !preserveSelectedId && exploreLandingShown()) renderExploreLanding();
-  const trips = travelTrips();
-  if (!trips.length) {
-    list.innerHTML = `<p class="explore-sidebar-empty">No trips yet</p>`;
-    if (!listOnly) showExploreTripEmpty();
-    return;
-  }
-  const q = exploreTripQuery.trim().toLowerCase();
-  const visible = trips.filter(t => !q || `${t.name || ""} ${t.destination || ""}`.toLowerCase().includes(q));
-  if (!visible.length) {
-    list.innerHTML = `<p class="explore-sidebar-empty">No trips match “${escapeHtml(exploreTripQuery.trim())}”</p>`;
-    if (!listOnly) showExploreTripEmpty();
-    return;
-  }
-  // Group into categories; each non-empty category renders a folder header
-  // (icon + label + count, the icon staying visible in the collapsed rail),
-  // followed by its trips.
-  list.innerHTML = EXPLORE_CATEGORIES.map(cat => {
-    const items = visible.filter(t => cat.match(TravelModel.deriveStatus(t)))
-      .sort((a, b) => TravelModel.compareForHome(a, b));
-    if (!items.length) return "";
-    const head = cat.noHeader ? "" :
-      `<div class="explore-cat-head" title="${escapeHtml(cat.label)}">` +
-        `<span class="explore-cat-icon">${cat.icon}</span>` +
-        `<span class="explore-cat-label">${escapeHtml(cat.label)}</span>` +
-      `</div>`;
-    return `<div class="explore-cat-group" data-cat="${cat.key}">` +
-      head +
-      `<div class="explore-cat-trips">${items.map(exploreTripTabHtml).join("")}</div>` +
-    `</div>`;
-  }).join("");
-  list.querySelectorAll("[data-explore-trip-id]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      list.querySelectorAll(".article-sidebar-tab").forEach(b => b.classList.remove("is-active"));
-      btn.classList.add("is-active");
-      openExploreTrip(btn.dataset.exploreTripId);
-    });
-    btn.addEventListener("contextmenu", e => openExploreTripMenu(e, btn.dataset.exploreTripId));
-  });
-  // Keep the open trip highlighted in the list (search re-renders don't reopen it).
-  const openId = preserveSelectedId || (listOnly ? exploreOpenTripId : null);
-  if (openId) list.querySelector(`[data-explore-trip-id="${openId}"]`)?.classList.add("is-active");
-  if (listOnly) return;
-  if (preserveSelectedId) {
-    const active = list.querySelector(`[data-explore-trip-id="${preserveSelectedId}"]`);
-    if (active) { openExploreTrip(preserveSelectedId); return; }
-  }
-  showExploreTripEmpty();
-}
-
-function showExploreTripEmpty() {
-  exploreOpenTripId = null;
-  document.getElementById("exploreTripEmpty").hidden = false;
-  document.getElementById("exploreTripView").hidden = true;
-  // With nothing selected, show the trips list (desktop docked, mobile drawer).
-  // The topbar hamburger toggles it thereafter.
-  const sidebar = document.getElementById("exMediaSidebar");
-  sidebar?.classList.remove("is-collapsed");
-  if (window.innerWidth <= 680) sidebar?.classList.add("is-expanded");
+function deleteExploreTrip(tripId) {
+  if (!confirm("Delete this trip?")) return;
+  // Tombstone first: without it the next sync's unionById resurrects the trip
+  // from the other device / older snapshot (TRV-10).
+  recordDeletion("trips", tripId);
+  state.trips = (state.trips || []).filter(t => t.id !== tripId);
+  if (exploreOpenTripId === tripId) exploreOpenTripId = null;
+  persist();
+  if (activeAppArea === "explore") showExploreLanding();
 }
 
 function openExploreTrip(tripId) {
@@ -41984,11 +41882,6 @@ function openExploreTrip(tripId) {
   if (exploreOpenTripId !== tripId) exploreActiveDayKey = ""; // new trip starts on Day 1
   exploreOpenTripId = tripId;
   localStorage.setItem("live-explore-last-trip", tripId); // reopen this trip on next visit
-  // Like Media/Mail: the docked sidebar stays visible on desktop (the topbar
-  // hamburger controls it); on mobile, picking a trip closes the slide-over.
-  const tripSidebar = document.getElementById("exMediaSidebar");
-  if (window.innerWidth <= 680) tripSidebar?.classList.remove("is-expanded");
-  document.getElementById("exploreTripEmpty").hidden = true;
   document.getElementById("exploreTripView").hidden = false;
 
   // Title
@@ -41998,7 +41891,6 @@ function openExploreTrip(tripId) {
     trip.name = nameEl.textContent.trim();
     trip.updatedAt = new Date().toISOString();
     persist();
-    renderExploreSidebar(trip.id);
   };
 
   // Status
@@ -42011,7 +41903,7 @@ function openExploreTrip(tripId) {
   };
 
   // Delete
-  // Delete lives on the trip's right-click menu in the sidebar (openExploreTripMenu);
+  // Delete lives on the trip card's menu on the rows (hold or right-click);
   // print is retired. Both header buttons were removed.
 
   // Meta row
@@ -42056,44 +41948,6 @@ function openExploreTrip(tripId) {
   setActiveExploreTab("itinerary");
   document.getElementById("exploreMoreMenu")?.setAttribute("hidden", "");
   renderExploreTripPanel("itinerary", trip);
-}
-
-function openExploreTripMenu(event, tripId) {
-  event.preventDefault();
-  event.stopPropagation();
-  closeFolderMenu();
-
-  const menu = document.createElement("div");
-  menu.className = "folder-context-menu";
-  menu.setAttribute("role", "menu");
-  menu.innerHTML = `
-    <button type="button" role="menuitem" data-edit-explore-trip="${escapeHtml(tripId)}">Edit trip</button>
-    <button type="button" role="menuitem" class="danger" data-delete-explore-trip="${escapeHtml(tripId)}">Delete trip</button>
-  `;
-  document.body.append(menu);
-
-  const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
-  menu.style.left = `${Math.max(10, x)}px`;
-  menu.style.top = `${Math.max(10, y)}px`;
-
-  menu.querySelector("[data-edit-explore-trip]").addEventListener("click", e => {
-    e.stopPropagation();
-    closeFolderMenu();
-    showTravelEditTripDialog(tripId);
-  });
-  menu.querySelector("[data-delete-explore-trip]").addEventListener("click", e => {
-    e.stopPropagation();
-    closeFolderMenu();
-    if (!confirm("Delete this trip?")) return;
-    // Tombstone first: without it the next sync's unionById resurrects the trip
-    // from the other device / older snapshot (TRV-10).
-    recordDeletion("trips", tripId);
-    state.trips = (state.trips || []).filter(t => t.id !== tripId);
-    persist();
-    renderExploreSidebar();
-    showExploreTripEmpty();
-  });
 }
 
 function showTravelEditTripDialog(tripId) {
@@ -42145,7 +41999,7 @@ function showTravelEditTripDialog(tripId) {
     trip.party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(b => b.dataset.party);
     persist();
     d.remove();
-    renderExploreSidebar(trip.id);
+    refreshExploreTrips(trip.id);
   });
 }
 
@@ -42154,42 +42008,10 @@ function wireExploreTabs() {
   if (!content || content._wired) return;
   content._wired = true;
 
-  // Topbar hamburger toggles the trips sidebar (matches Media/Mail): a docked
-  // collapse on desktop, a slide-over drawer on mobile.
-  document.getElementById("exploreSidebarToggle")?.addEventListener("click", () => {
-    const sidebar = document.getElementById("exMediaSidebar");
-    if (!sidebar) return;
-    if (window.innerWidth <= 680) { sidebar.classList.remove("is-collapsed"); sidebar.classList.toggle("is-expanded"); }
-    else { sidebar.classList.remove("is-expanded"); sidebar.classList.toggle("is-collapsed"); }
-  });
-
-  // Topbar search filters the trips list live.
-  const searchInput = document.getElementById("exploreSearchInput");
-  searchInput?.addEventListener("input", () => {
-    exploreTripQuery = searchInput.value;
-    renderExploreSidebar(exploreOpenTripId, { listOnly: true });
-  });
-
   // Notifications button opens the Explore review inbox (proposed changes).
   document.getElementById("exploreNotificationsBtn")?.addEventListener("click", openExploreProposalsPanel);
 
   document.getElementById("exploreBackBtn")?.addEventListener("click", showExploreLanding);
-
-  document.getElementById("exploreAddTripBtn")?.addEventListener("click", () => {
-    showTravelNewTripDialog();
-    document.addEventListener("close", () => {
-      if (activeAppArea === "explore") renderExploreSidebar();
-    }, { capture: true, once: true });
-  });
-
-  document.getElementById("exploreEmptyTripBtn")?.addEventListener("click", () => {
-    showTravelNewTripDialog();
-    document.addEventListener("close", () => {
-      if (activeAppArea === "explore") renderExploreSidebar();
-    }, { capture: true, once: true });
-  });
-
-  document.getElementById("exploreEmptyIdeaBtn")?.addEventListener("click", showTravelNewIdeaDialog);
 
   content.addEventListener("click", e => {
     // The "More ▾" button toggles its dropdown rather than switching panels.
@@ -45761,7 +45583,7 @@ function showTravelNewIdeaDialog() {
     state.trips.push(trip);
     persist();
     d.remove();
-    if (activeAppArea === "explore") { renderExploreSidebar(trip.id); }
+    if (activeAppArea === "explore") showExploreTrips(trip.id);
   });
 }
 

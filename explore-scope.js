@@ -1,5 +1,7 @@
-// Explore sections (Luke, 2026-10-17): the Explore page groups trips into Local,
-// State, Country and World by how far the destination is from home. The app sorts
+// Explore sections (Luke, 2026-10-17; renamed 2026-10-22): the Explore page groups
+// trips into Local, Regional, National and Global by how far the destination is
+// from home. The keys stay local / state / country / world, so trips the user
+// already moved (`trip.scope`) keep their row. The app sorts
 // each trip itself — comparing the destination's place to home's — and a trip the
 // user moves (or adds from a section's "+") keeps that choice in `trip.scope`.
 //
@@ -7,10 +9,10 @@
 // lookup and its device cache live in app.js. Nothing here touches the network.
 
 export const EXPLORE_SCOPES = [
-  { key: "local",   label: "Local" },
-  { key: "state",   label: "State" },
-  { key: "country", label: "Country" },
-  { key: "world",   label: "World" },
+  { key: "local",   label: "Local",    icon: "./explore-local.png" },
+  { key: "state",   label: "Regional", icon: "./explore-regional.png" },
+  { key: "country", label: "National", icon: "./explore-national.png" },
+  { key: "world",   label: "Global",   icon: "./explore-global.png" },
 ];
 const SCOPE_KEYS = new Set(EXPLORE_SCOPES.map((s) => s.key));
 export const isExploreScope = (key) => SCOPE_KEYS.has(key);
