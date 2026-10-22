@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Explore: Local / Regional / National / Global, with pictures; All trips retired** · #161 · **TestFlight build** (client-only; the laptop web app picks it up at the next deploy). Rows renamed (saved moves keep their row); each row's trip cards show its picture; the All trips button and trips list are gone, so the rows are the only way between trips. Edit / Delete trip are on a card's hold / right-click menu. No migration, no new env vars.
+  Post-deploy:
+  1. iPhone, Personal › Explore: rows read Local, Regional, National, Global; each trip card shows its row's picture (also in dark mode).
+  2. No All trips button; tap a card → that trip, with only back and the bell above it; back returns to the rows.
+  3. Hold a card → Move / Edit / Delete trip all work.
+
 - **Dutch practice on Leisure** · #153 · **TestFlight build** (client-only; Luke prefers TestFlight for this; the laptop web app picks it up at the next deploy). Timed Dutch↔English matching game as a Dutch row on Leisure (Personal view), with lessons, unit and review rounds; progress saved in the personal `recreate` section. It was built 2026-10-20 but never merged, so builds from `main` since then dropped it; rebased onto `main` 2026-10-21. Word list still provisional until the Rosetta Stone list arrives. No migration, no new env vars.
   Post-deploy:
   1. Leisure: a Dutch row with lessons; start one, match a few pairs, finish or leave. The summary shows and the lesson's progress is kept after reopening the app.
