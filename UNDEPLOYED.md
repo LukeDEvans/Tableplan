@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Explore moves to Household, with shared trips** · #163 · **Netlify deploy + TestFlight build** (client-only; your wife uses only the web app, so she gets Explore at the next deploy). Explore is listed only in Household, and its trips are the household's shared list in every view. The shared trips were already set to your Türkiye 2026 and Grand Rapids (done 2026-10-22 by SQL); everyone's own trips are unchanged. No migration, no new env vars.
+  Post-deploy:
+  1. Personal: no Explore in the list. Household: Explore is last; it shows Türkiye 2026 and Grand Rapids, each once.
+  2. Your wife (web): Household lists Explore with the same two trips. Without a home in her profile she sees "Add your home…" and the trips sit under Not sorted yet.
+  3. Add or move a trip on one login; it shows on the other after a refresh.
+
 - **Explore: Local / Regional / National / Global, with pictures; All trips retired** · #161 · **TestFlight build** (client-only; the laptop web app picks it up at the next deploy). Rows renamed (saved moves keep their row); each row's trip cards show its picture; the All trips button and trips list are gone, so the rows are the only way between trips. Edit / Delete trip are on a card's hold / right-click menu. No migration, no new env vars.
   Post-deploy:
   1. iPhone, Personal › Explore: rows read Local, Regional, National, Global; each trip card shows its row's picture (also in dark mode).
