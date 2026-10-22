@@ -1,6 +1,6 @@
 ---
 name: travel
-description: Use for changes scoped to the Travel domain — trips, itineraries, bookings/ingest, geo & transitions, route optimization, and Travel Mode. Explore is in the Recreate menu group and opens on Local / Regional / National / Global rows of trips (explore-scope.js); those rows are the only way between trips. Owns travel-*.js and the "explore" area of app.js.
+description: Use for changes scoped to the Travel domain — trips, itineraries, bookings/ingest, geo & transitions, route optimization, and Travel Mode. Explore is a Household page (shared trips) and opens on Local / Regional / National / Global rows of trips (explore-scope.js); those rows are the only way between trips. Owns travel-*.js and the "explore" area of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -30,9 +30,14 @@ changes to the Travel domain only. (In the UI this domain is surfaced as
 - **`app.js`:** the Travel/Explore sections — `activeAppArea === "explore"`. Search:
   `travel`, `itinerary`, `explore`.
 - **Data:** `state.travel*`; the canonical travel shapes live in `travel-model.js`.
-- **Where it lives:** **Explore** in the **Recreate** menu group (landing page + page menu;
-  `page-groups.js`). Its notifications underline its menu buttons (and the closed group's
-  heading).
+- **Where it lives:** **Explore** is listed only in the **Household** view (Luke,
+  2026-10-22; `views.js` `VIEW_PAGES`), so everyone in the household has it. Its markup
+  still sits in the Recreate group (`page-groups.js`). Its notifications underline its
+  menu buttons.
+- **Shared trips (Luke, 2026-10-22):** the trips are the **household's** — `scopeForView`
+  returns `household` for the `travel` section in every view, so booking emails, the
+  Calendar's trip bars and Explore all use one list. People's own travel rows are left
+  as they were (the household row was set to Luke's newest copies once, by SQL).
 - **Explore sections (Luke, 2026-10-17):** the page opens on four rows of trip cards —
   **Local, Regional, National, Global** (renamed from Local / State / Country / World,
   Luke 2026-10-22; keys stay `local` / `state` / `country` / `world` so saved

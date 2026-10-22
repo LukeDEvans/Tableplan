@@ -25,12 +25,13 @@ export const VIEW_LABELS = Object.freeze({
 // Which pages each view holds, by the page keys app.js uses in pageNavButtons()
 // (plan = Calendar, eat = Meal Plan, read = Listen, play = Exercise, recreate =
 // Leisure). Every view lists its pages flat, with no group headings (Luke,
-// 2026-10-20). Meal Plan and Shop are Household's only; Tasks lives inside the
+// 2026-10-20). Meal Plan, Shop and Explore are Household's only (Explore moved
+// from Personal, Luke 2026-10-22); Tasks lives inside the
 // Calendar, Weather opens from the dock, and Scores is News → Sports — none of
 // those three has a menu entry.
 export const VIEW_PAGES = Object.freeze({
-  personal: Object.freeze(["plan", "news", "finance", "watch", "read", "mail", "explore", "play", "recreate"]),
-  household: Object.freeze(["plan", "eat", "finance", "shop", "watch", "read"]),
+  personal: Object.freeze(["plan", "news", "finance", "watch", "read", "mail", "play", "recreate"]),
+  household: Object.freeze(["plan", "eat", "finance", "shop", "watch", "read", "explore"]),
   business: Object.freeze(["plan"]),
 });
 
@@ -186,11 +187,12 @@ export function scopeForView(view, section, { hasBusiness = false, hasPersonalFi
   // but only once they have any (accounts marked Personal). Until then Personal
   // keeps showing the household's Finance, exactly as before.
   if (section === "finance") return view !== "household" && hasPersonalFinance ? "personal" : "household";
-  // Explore isn't a Household page, so its trips stay on the person's own row.
-  // (Swapping it would also wake the trip safety net in applyStoredState, which
-  // restores a device's trip backup into an empty incoming row — copying
-  // personal trips into the household's.)
-  if (section === "travel") return "personal";
+  // Explore is a Household page (Luke, 2026-10-22): its trips are the
+  // household's, shared by everyone in it, in every view — so booking emails
+  // and the calendar's trip bars always reach the same list Explore shows.
+  // (The person's own travel rows were copied into the household row once, on
+  // 2026-10-22, and stay as they were.)
+  if (section === "travel") return "household";
   if (view === "household") return "household";
   if (section === "grocery") return "household";
   if (view === "business" && section === "plan" && hasBusiness) return "business";

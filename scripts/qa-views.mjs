@@ -104,7 +104,7 @@ try {
   await page.waitForTimeout(500);
   check(await area() === "plan" && !(await page.evaluate(() => document.getElementById("overviewDialog").open)), "its Calendar panel closes it and opens the Calendar");
   await goHome();
-  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Explore", "Exercise", "Leisure"]) && (await visibleIn("#homePageGroups .page-group-head")).length === 0, "Personal: its pages flat, no Tasks / Weather / Scores / Meal Plan / Shop", (await flatPages("#homePageGroups")).join(", "));
+  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Exercise", "Leisure"]) && (await visibleIn("#homePageGroups .page-group-head")).length === 0, "Personal: its pages flat, no Tasks / Weather / Scores / Meal Plan / Shop / Explore", (await flatPages("#homePageGroups")).join(", "));
   await shot("personal");
 
   console.log("Swiping on the landing page");
@@ -112,7 +112,7 @@ try {
   check(await view() === "household", "finger right → Household");
   await page.waitForTimeout(100);
   check(await bandName("#homeViewBand") === "Household", "the band reads Household");
-  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar", "Meal Plan", "Finance", "Shop", "Watch", "Listen"]), "Household: six pages, flat", (await flatPages("#homePageGroups")).join(", "));
+  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar", "Meal Plan", "Finance", "Shop", "Watch", "Listen", "Explore"]), "Household: seven pages, flat, Explore last", (await flatPages("#homePageGroups")).join(", "));
   check((await visibleIn("#homePageGroups .page-group-head")).length === 0, "no group headings in Household");
   check(await palette() === "household", "Household wears the Household theme", await palette());
   check(await fits(), "Household landing fits 390px");
@@ -160,12 +160,12 @@ try {
   check(!(await page.evaluate(() => document.querySelector("#headerViewBand").hidden)), "opening the menu shows the band in the header");
   check(await page.evaluate(() => !document.querySelector("#pageTitle").offsetParent), "…in place of the page title");
   check(await bandName("#headerViewBand") === "Household", "header band reads Household");
-  check(JSON.stringify(await flatPages("#pageTitleMenu")) === JSON.stringify(["Calendar", "Meal Plan", "Finance", "Shop", "Watch", "Listen"]), "menu lists Household's pages flat");
+  check(JSON.stringify(await flatPages("#pageTitleMenu")) === JSON.stringify(["Calendar", "Meal Plan", "Finance", "Shop", "Watch", "Listen", "Explore"]), "menu lists Household's pages flat");
   check(await fits(), "header band + menu fit 390px");
   await shot("menu-household");
   await swipe("#headerViewBand", -90);
   check(await bandName("#headerViewBand") === "Personal", "swiping the header band shows Personal in the band");
-  check(JSON.stringify(await flatPages("#pageTitleMenu")) === JSON.stringify(["Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Explore", "Exercise", "Leisure"]), "…and Personal's pages in the menu", (await flatPages("#pageTitleMenu")).join(", "));
+  check(JSON.stringify(await flatPages("#pageTitleMenu")) === JSON.stringify(["Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Exercise", "Leisure"]), "…and Personal's pages in the menu", (await flatPages("#pageTitleMenu")).join(", "));
   check(await view() === "household" && await area() === "plan" && (await page.evaluate(() => window.__liveQA.scopes())).plan === "household", "the page doesn't change yet: still Household's Calendar");
   check(await palette() === "household", "…in Household's look");
   check(!(await page.evaluate(() => document.querySelector("#pageTitleMenu").hidden)), "the menu stays open");
@@ -247,12 +247,12 @@ try {
   await page.evaluate(() => window.__liveQA.businessSpaceForQa({ id: "biz-qa", name: "Business", role: "owner" }));
   while (await view() !== "personal") await go(1);
   let sc = await scopes();
-  check(sc.plan === "personal" && sc.media === "personal" && sc.watch === "personal" && sc.do === "personal" && sc.travel === "personal" && sc.grocery === "household", "Personal: own rows, Shop is the household list", JSON.stringify(sc));
+  check(sc.plan === "personal" && sc.media === "personal" && sc.watch === "personal" && sc.do === "personal" && sc.travel === "household" && sc.grocery === "household", "Personal: own rows; Shop and Explore's trips are the household's", JSON.stringify(sc));
   await page.evaluate(() => window.__liveQA.planSeedForQa([{ id: "ev-mine", title: "Dentist", date: "2026-10-21", allDay: true }]));
   await go(-1);
   check(await view() === "household", "→ Household");
   sc = await scopes();
-  check(sc.plan === "household" && sc.media === "household" && sc.watch === "household" && sc.do === "household" && sc.grocery === "household" && sc.travel === "personal", "Household: its pages read the household row; Explore's trips stay personal", JSON.stringify(sc));
+  check(sc.plan === "household" && sc.media === "household" && sc.watch === "household" && sc.do === "household" && sc.grocery === "household" && sc.travel === "household", "Household: its pages, Explore included, read the household row", JSON.stringify(sc));
   let evs = await page.evaluate(() => window.__liveQA.planEventsInRangeForQa("2026-10-21", "2026-10-21"));
   check(!evs.some((e) => e.id === "ev-mine"), "Household doesn't show Personal events", JSON.stringify(evs));
   await page.evaluate(() => window.__liveQA.planSeedForQa([{ id: "ev-home", title: "Family dinner", date: "2026-10-21", allDay: true }]));
@@ -380,7 +380,7 @@ try {
   await page.keyboard.press("ArrowRight");
   await page.waitForTimeout(300);
   check(await view() === "household", "swipes and arrow keys don't switch");
-  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar", "Meal Plan", "Finance", "Shop", "Watch", "Listen"]), "her six pages, flat");
+  check(JSON.stringify(await flatPages("#homePageGroups")) === JSON.stringify(["Calendar", "Meal Plan", "Finance", "Shop", "Watch", "Listen", "Explore"]), "her seven pages, flat (Explore included)");
   check(await palette() === "classic", "her own Display choice (Classic by default), not the admin's Household look", await palette());
   await page.evaluate(() => document.querySelector("#homePlanBtn").click());
   await page.waitForTimeout(400);

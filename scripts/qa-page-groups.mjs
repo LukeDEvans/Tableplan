@@ -81,8 +81,9 @@ try {
 
   // Every view lists its pages flat (Luke, 2026-10-20): no group headings.
   // Personal: Overview, then Calendar, News, Finance, Watch, Listen, Mail,
-  // Explore, Exercise, Leisure — no Tasks, Weather, Scores, Meal Plan or Shop.
-  const PERSONAL = ["Overview", "Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Explore", "Exercise", "Leisure"];
+  // Exercise, Leisure — no Tasks, Weather, Scores, Meal Plan, Shop or Explore
+  // (Explore is Household's since 2026-10-22).
+  const PERSONAL = ["Overview", "Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Exercise", "Leisure"];
   const listed = (root) => visibleIn(`${root} .page-overview-btn, ${root} .page-group-pages > button`);
   console.log("Landing page");
   check((await visibleIn("#homePageGroups .page-group-head")).length === 0, "no group headings");
@@ -165,6 +166,7 @@ try {
   await page.evaluate(() => document.getElementById("titleExploreBtn").click());
   await page.waitForTimeout(500);
   check(await area() === "explore" && await page.isVisible("#exploreLanding") && !(await page.isVisible("#exploreTripsShell")), "Explore opens on its rows");
+  check(await page.evaluate(() => window.__liveQA.view()) === "household", "opening Explore moves to Household (its only view)", await page.evaluate(() => window.__liveQA.view()));
   const rowsOf = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#exploreLanding .recreate-section")].map((s) => [
     s.dataset.recreateSection, [...s.querySelectorAll("[data-explore-card]")].map((c) => c.dataset.exploreCard),
   ])));
