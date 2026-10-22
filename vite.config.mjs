@@ -26,6 +26,10 @@ function copyRootFilesPlugin() {
       copyFileSync('./activity-sailing.png', './dist/activity-sailing.png');
       copyFileSync('./activity-piano.png', './dist/activity-piano.png');
       copyFileSync('./activity-travel.png', './dist/activity-travel.png');
+      copyFileSync('./explore-local.png', './dist/explore-local.png');
+      copyFileSync('./explore-regional.png', './dist/explore-regional.png');
+      copyFileSync('./explore-national.png', './dist/explore-national.png');
+      copyFileSync('./explore-global.png', './dist/explore-global.png');
     },
   };
 }

@@ -1,4 +1,4 @@
-// Explore's Local / State / Country / World rows (explore-scope.js).
+// Explore's Local / Regional / National / Global rows (explore-scope.js).
 import { describe, it, expect } from "vitest";
 import {
   EXPLORE_SCOPES, LOCAL_KM, distanceKm, classifyPlace, tripScope, groupTrips, placeFromNominatim, isExploreScope,
@@ -16,9 +16,20 @@ const placeOf = (q) => places[String(q).trim().toLowerCase()] || null;
 
 describe("explore scopes", () => {
   it("lists the four rows in order", () => {
-    expect(EXPLORE_SCOPES.map((s) => s.label)).toEqual(["Local", "State", "Country", "World"]);
+    expect(EXPLORE_SCOPES.map((s) => s.label)).toEqual(["Local", "Regional", "National", "Global"]);
     expect(isExploreScope("world")).toBe(true);
     expect(isExploreScope("unsorted")).toBe(false);
+  });
+
+  it("gives each row its own card image, shipped with the build", async () => {
+    const fs = await import("node:fs");
+    const vite = fs.readFileSync(new URL("../vite.config.mjs", import.meta.url), "utf8");
+    for (const sc of EXPLORE_SCOPES) {
+      expect(sc.icon).toMatch(/^\.\/explore-[a-z]+\.png$/);
+      const file = sc.icon.slice(2);
+      expect(fs.existsSync(new URL(`../${file}`, import.meta.url))).toBe(true);
+      expect(vite).toContain(`'./${file}'`);
+    }
   });
 
   it("measures great-circle distance", () => {

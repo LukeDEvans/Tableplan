@@ -529,13 +529,6 @@
               <button class="icon-btn explore-back-btn" type="button" id="exploreBackBtn" title="Back to Explore" aria-label="Back to Explore">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
               </button>
-              <button class="icon-btn mail-sidebar-toggle" type="button" id="exploreSidebarToggle" title="Toggle trips" aria-label="Toggle trips list">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-              </button>
-              <div class="mail-search-wrap">
-                <svg class="mail-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-                <input class="mail-search-input" id="exploreSearchInput" type="search" placeholder="Search trips" aria-label="Search trips" />
-              </div>
               <div class="mail-topbar-right">
                 <button class="icon-btn mail-notifications-btn" type="button" id="exploreNotificationsBtn" title="Notifications" aria-label="Notifications">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -544,25 +537,9 @@
               </div>
             </div>
           <div class="article-layout">
-              <div class="article-sidebar" id="exMediaSidebar">
-                <button class="explore-new-trip-btn" type="button" id="exploreAddTripBtn" title="New trip" aria-label="New trip">
-                  <svg class="explore-new-trip-plus" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  <span class="explore-new-trip-label">New</span>
-                </button>
-                <div id="exploreTripList"></div>
-              </div>
               <div class="article-content" id="exMediaContent">
-                <!-- Empty state -->
-                <div class="travel-empty" id="exploreTripEmpty">
-                  <div class="travel-empty-icon">✈</div>
-                  <p>Where to next? Save ideas or plan a full trip.</p>
-                  <div class="travel-empty-actions">
-                    <button class="primary-btn" type="button" id="exploreEmptyTripBtn">+ Plan a trip</button>
-                    <button class="secondary-btn" type="button" id="exploreEmptyIdeaBtn">+ Save an idea</button>
-                  </div>
-                </div>
                 <!-- Trip view (shown when a trip is selected) -->
-                <div class="explore-trip-view" id="exploreTripView" hidden>
+                <div class="explore-trip-view" id="exploreTripView">
                   <div class="travel-detail-header" id="exploreTripHeader">
                     <div class="travel-detail-title-row">
                       <h2 class="travel-detail-name" id="exploreDetailName" contenteditable="true" spellcheck="true"></h2>

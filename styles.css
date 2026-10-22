@@ -23764,6 +23764,12 @@ input[type="search"]::-webkit-search-cancel-button {
 }
 .explore-landing-hint { flex: 1 1 200px; color: var(--muted); font-size: 0.88rem; }
 .explore-back-btn { flex: none; }
+/* The trips view shows one trip, with no trips list beside it (2026-10-22), so
+   no rail space is kept for a sidebar at any width. */
+#exploreMainPage .article-layout { padding-left: 0; }
+/* Row pictures (Local / Regional / National / Global) are wide, so they get the
+   card's width rather than the square 52px icon box. */
+.workout-pool-img.explore-scope-img { width: 104px; height: 60px; }
 
 /* ── Views: the view band (views.js, VIEWS_DESIGN.md §4) ──
    The current view's name in the page menus' script face, with ‹ › on either
