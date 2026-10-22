@@ -61,14 +61,14 @@ describe("views: cyclical swipe", () => {
 describe("views: pages", () => {
   const menuPages = ["plan", "eat", "do", "news", "weather", "finance", "shop", "watch", "read", "mail", "explore", "play", "recreate", "scores"];
   it("Personal: no Meal Plan or Shop (Household's), no Tasks / Weather / Scores entries (Luke, 2026-10-20)", () => {
-    expect(menuPages.filter((p) => viewHasPage("personal", p))).toEqual(["plan", "news", "finance", "watch", "read", "mail", "explore", "play", "recreate"]);
+    expect(menuPages.filter((p) => viewHasPage("personal", p))).toEqual(["plan", "news", "finance", "watch", "read", "mail", "play", "recreate"]);
   });
   it("a page in no view's list stays where it is when opened (Weather from the dock)", () => {
     expect(viewForPage("weather", "household", ALL)).toBe(null);
     expect(viewForPage("eat", "personal", ALL)).toBe("household");
   });
   it("Household holds Calendar, Meal Plan, Finance, Shop, Watch, Listen", () => {
-    expect(menuPages.filter((p) => viewHasPage("household", p))).toEqual(["plan", "eat", "finance", "shop", "watch", "read"]);
+    expect(menuPages.filter((p) => viewHasPage("household", p))).toEqual(["plan", "eat", "finance", "shop", "watch", "read", "explore"]);
   });
   it("Business holds the Calendar only", () => {
     expect(menuPages.filter((p) => viewHasPage("business", p))).toEqual(["plan"]);
@@ -144,8 +144,8 @@ describe("views: which row each view reads", () => {
   it("Household reads the household row for every Household page", () => {
     for (const s of VIEW_TOGGLE_SECTIONS.filter((x) => x !== "travel")) expect(scopeForView("household", s, { hasBusiness: true })).toBe("household");
   });
-  it("Explore's trips always stay on the person's own row (not a Household page)", () => {
-    for (const v of ["household", "personal", "business"]) expect(scopeForView(v, "travel", { hasBusiness: true })).toBe("personal");
+  it("Explore's trips are always the household's (a Household page, shared)", () => {
+    for (const v of ["household", "personal", "business"]) expect(scopeForView(v, "travel", { hasBusiness: true })).toBe("household");
   });
   it("Personal reads personal rows, but Shop stays the household list", () => {
     expect(scopeForView("personal", "plan")).toBe("personal");

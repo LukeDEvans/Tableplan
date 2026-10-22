@@ -62,7 +62,7 @@ create table live_space_members (
 Rule: **every stored item belongs to exactly one space.** No item is ever stored in two places, which means there's no copying, no drift and no merge between views.
 
 - **Household:** today's shared state, unchanged in place (decision 1).
-- **Personal:** what is only the user's today. That's Mail, News, Recreate (Explore, Exercise, Leisure), Scores favourites, Weather locations, the user's own calendars and private Finance accounts. *Check in code* which `tableplan_states` sections and tables are already per-user and which are per-group; the migration (§8) is mostly re-labelling.
+- **Personal:** what is only the user's today. That's Mail, News, Recreate (Exercise, Leisure; Explore moved to Household 2026-10-22), Scores favourites, Weather locations, the user's own calendars and private Finance accounts. *Check in code* which `tableplan_states` sections and tables are already per-user and which are per-group; the migration (§8) is mostly re-labelling.
 - **Business:** new and empty. Business calendar events are stored under the business space.
 
 Egress rules carry over from IOS_NOTIFICATIONS_DESIGN §2 and the egress lessons:
@@ -332,10 +332,10 @@ Read from the live database first (read-only): Luke's own Calendar (4 events), L
   | Calendar | own | household | business space |
   | Tasks, Watch, Listen | own | household | own |
   | Shop | household | household | household |
-  | Explore (trips) | own | own | own |
+  | Explore (trips) | household | household | household |
   | Meal Plan, Finance, Recipes… | household (fixed, as before) | | |
 
-  Explore stays personal because it isn't a Household page, and because swapping it would wake the trip safety net in `applyStoredState`, which restores a device's trip backup into an empty incoming row (copying personal trips into the household's).
+  **Explore moved to Household (Luke, 2026-10-22):** it's listed only in Household (so his wife has it too), and its trips are the household's, shared, in every view, so booking emails and the Calendar's trip bars reach the list Explore shows. Before the switch the household travel row held only an older copy of Türkiye 2026; it was set to Luke's own trips (Türkiye 2026, Grand Rapids — his copies were the newest) with one SQL update. Everyone's own travel rows were left as they were (his wife's holds the same older Türkiye copy). The first switch on a device can also run `applyStoredState`'s trip safety net, which restores that device's trip backup into an empty incoming row; with the household row already holding the same trips (same ids), that only merges what's there.
 - **How:** `alignScopesToView()` runs after state has loaded and on every view switch, calling the existing `setSectionScope` per section. The swap now has three scopes for the Calendar. Shadows are keyed by scope: `shadowSections[section][scope]`, stored as `live-shadow-sections-v2`, with a one-time upgrade from the old single-copy shape. The rows are the same ones RLS already protects (personal `u-<uid>`, household `<groupId>`, business `<spaceId>` since the step 1 migration).
 - **Egress on a switch:** a section is written only if it has unsaved changes, and the incoming row is re-downloaded only when a ~100-byte stamp check says another device changed it. Before this, the old toggle wrote and re-read every section each time.
 - **Business calendar:** `loadBusinessSpace()` reads the admin's space once at sign-in (`live_space_members` → `live_spaces`) and keeps it on the device (`live-business-space-v1`), so a cold start that left off in Business knows the Calendar's row before the network answers.
