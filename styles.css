@@ -2662,25 +2662,19 @@ input.live-toggle:checked::before,
   min-width: 0;
 }
 
-/* Header is a full-width toggle: title on the left, a quiet summary, a chevron.
-   The card starts open; tapping the header closes it (body hidden) or reopens it. */
-.meal-context-toggle {
+/* Header: the title on the left, a "+" on the right (the size the open/close
+   chevron had) that adds an event or a note to the meal. Always open. */
+.meal-context-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
+  min-width: 0;
 }
 
 /* Scoped so the smaller title size wins over .slot-label (declared later).
    line-height stays generous + overflow visible so the cursive ascenders aren't
    clipped at the top. */
-.meal-context-toggle .meal-context-label {
+.meal-context-head .meal-context-label {
   flex: 0 0 auto;
   max-width: none;
   font-size: 0.95rem;
@@ -2688,42 +2682,35 @@ input.live-toggle:checked::before,
   overflow: visible;
 }
 
-.meal-context-summary {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 600;
+.meal-context-add {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  margin-left: auto;
+  /* A comfortable tap target around a glyph the chevron's size. */
+  margin-block: -6px;
+  margin-right: -6px;
+  padding: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--window-border);
+  cursor: pointer;
 }
 
-.meal-context-chevron {
-  flex: 0 0 auto;
+.meal-context-add svg {
   width: 14px;
   height: 14px;
-  margin-left: auto;
-  color: var(--window-border);
-  transition: transform 0.15s ease;
 }
 
-.meal-context-card.is-expanded .meal-context-chevron {
-  transform: rotate(90deg);
+.meal-context-add:hover,
+.meal-context-add:focus-visible {
+  background: color-mix(in srgb, var(--window-border) 12%, transparent);
+  outline: none;
 }
 
-.meal-context-card.is-expanded .meal-context-summary {
+.meal-context-note[hidden] {
   display: none;
-}
-
-.meal-context-body {
-  display: none;
-}
-
-.meal-context-card.is-expanded .meal-context-body {
-  display: grid;
-  gap: 6px;
-  margin-top: 6px;
 }
 
 .meal-context-events {

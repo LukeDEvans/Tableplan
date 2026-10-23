@@ -27147,7 +27147,8 @@ function openPlanEventDialog(date, eventId, prefill) {
 
   // Meal-plan placement: show this event on the meal plan by time of day.
   const addMealPlan = document.getElementById("planEventAddMealPlan");
-  if (addMealPlan) addMealPlan.checked = Boolean(existing?.showInMealPlan);
+  // A new event added from a meal's "+" (Meal Plan) arrives ticked.
+  if (addMealPlan) addMealPlan.checked = Boolean(existing ? existing.showInMealPlan : prefill?.showInMealPlan);
 
   elements.planEventLocationSuggestions.hidden = true;
   renderPlanEventAttachment();
