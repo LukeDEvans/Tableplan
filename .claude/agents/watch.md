@@ -57,6 +57,14 @@ changes to the Watch page only.
   **Watch list** at the top and **Archive** pinned to the bottom. There is no Archive
   button beside the tabs. The category tabs stay on the page because items are filed by
   dragging them onto a tab.
+- **List and search (Luke, 2026-10-22):** the Watch list is **four posters a row on a
+  phone** (`.watch-grid`, `repeat(4, …)` under 640px; auto-fill above). The page's
+  search has **no bookmark buttons**: tapping a result adds it to the Watch list (once —
+  an existing show just gets "Already in your Watch list."), empties the search box and
+  returns to the list (`renderDiscoverResults({ pick: true })` → `wireWatchSearchPicks`
+  / `clearWatchSearch`). Play/Open service buttons on a result still do their own job;
+  a result with no TMDB id (YouTube) plays when tapped. Listen's search keeps its Save
+  buttons.
 
 ## Domain landmines (do NOT change without flagging)
 - **Merges:** `watchItems` is an id-keyed union with tombstones (delete through
@@ -72,7 +80,7 @@ changes to the Watch page only.
 ## Verify
 `npx vitest run` (`media-provider-tmdb`, `-youtube`, `-jellyfin`, `media-deeplink`,
 `media-watch-adapter`, `media-watch-merge` (Watch item → Discover availability path),
-`media-search-scope`), `npm run check:boot`,
+`media-search-scope`), `npm run check:boot`, `npm run qa:watch-search`,
 and headless Chromium at phone width against `npm run dev:local` (mock the tmdb/youtube
 functions with `page.route`).
 

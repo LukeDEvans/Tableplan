@@ -29194,7 +29194,7 @@ async function runDiscoverSearch(query, { resultsId = "discoverResults", types =
     if (token !== discoverSearchToken) return; // out-of-order guard
     const enriched = await hub.search.enrichWithAvailability(items, hub.tmdb); // "where can I watch this"
     if (token !== discoverSearchToken) return;
-    renderDiscoverResults(enriched, providerStatuses, hub, { results, servicesOnly: isWatch && getWatchSearchScope().servicesOnly });
+    renderDiscoverResults(enriched, providerStatuses, hub, { results, servicesOnly: isWatch && getWatchSearchScope().servicesOnly, pick: isWatch });
   } catch (e) {
     if (token !== discoverSearchToken) return;
     results.innerHTML = `<p class="discover-hint">Couldn't search right now. ${escapeHtml(e?.message || "")}</p>`;
@@ -29321,6 +29321,47 @@ function wireDiscoverButtons(container, hub) {
   container.querySelectorAll(".discover-svc").forEach((btn) => btn.addEventListener("click", () => discoverSvcActivate(btn, hub)));
 }
 
+// Watch-page search: tapping a result (anywhere but its Play/Open buttons) adds
+// it to the Watch list and goes back to the list. A video without a TMDB id (a
+// YouTube result) isn't a Watch-list item, so tapping it plays it instead.
+function wireWatchSearchPicks(container, hub) {
+  container.querySelectorAll("[data-pick-key]").forEach((card) => {
+    const pick = (e) => {
+      if (e.target.closest(".discover-svc")) return; // the service buttons keep their own job
+      const item = discoverItemsByKey.get(card.dataset.pickKey);
+      if (!item) return;
+      if (!(item.kind === "video" && item.meta && item.meta.tmdbId)) {
+        const svc = card.querySelector(".discover-svc:not([disabled])");
+        if (svc) discoverSvcActivate(svc, hub);
+        return;
+      }
+      if (videoInWatchlist(item.meta.tmdbId)) {
+        try { showVoiceToast("Already in your Watch list."); } catch { /* noop */ }
+      } else {
+        addWatchItemFromTmdb(discoverVideoToTmdbResult(item)); // adds want-item + loads providers
+      }
+      clearWatchSearch();
+    };
+    card.addEventListener("click", pick);
+    card.addEventListener("keydown", (e) => {
+      if (e.target !== card || (e.key !== "Enter" && e.key !== " ")) return;
+      e.preventDefault();
+      pick(e);
+    });
+  });
+}
+// Empty the Watch search box and show the list. The input event cancels a search
+// still waiting on its debounce (and hides the box's clear button).
+function clearWatchSearch() {
+  const input = document.getElementById("discoverSearchInput");
+  if (input) {
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.blur();
+  }
+  runDiscoverSearch(""); // bumps the search token, then shows the list
+}
+
 // Activate a Play/Open service button — the single handler shared by Discover
 // cards AND (via the Watch⇄Media UI merge) the Watch section's cards, so both
 // surfaces play/hand-off through the same Coordinator-resolved targets.
@@ -29340,7 +29381,9 @@ function discoverSvcActivate(btn, hub) {
   else window.open(uri, "_blank", "noopener");
 }
 
-function renderDiscoverResults(items, providerStatuses, hub, { results = document.getElementById("discoverResults"), servicesOnly = getWatchSearchScope().servicesOnly } = {}) {
+// `pick` (the Watch page): no Save buttons — tapping a result adds it to the
+// Watch list, clears the search and returns to the list (Luke, 2026-10-22).
+function renderDiscoverResults(items, providerStatuses, hub, { results = document.getElementById("discoverResults"), servicesOnly = getWatchSearchScope().servicesOnly, pick = false } = {}) {
   if (!results) return;
   if (!items.length) { results.innerHTML = `<p class="discover-hint">No results.</p>`; return; }
   discoverItemsByKey = new Map();
@@ -29352,8 +29395,9 @@ function renderDiscoverResults(items, providerStatuses, hub, { results = documen
     views = views.filter((v) => audioKinds.has(v.kind) || (v.yours && v.yours.length));
     if (!views.length) { results.innerHTML = `<p class="discover-hint">Nothing on your services matched. Turn off “Only my services” in the filter to see more.</p>`; return; }
   }
-  results.innerHTML = views.map(discoverCardHtml).join("");
+  results.innerHTML = views.map((v) => discoverCardHtml(v, { pick })).join("");
   wireDiscoverButtons(results, hub);
+  if (pick) wireWatchSearchPicks(results, hub);
   const failed = (providerStatuses || []).filter((s) => !s.ok).map((s) => s.provider);
   if (failed.length) {
     const note = document.createElement("p");
@@ -29408,15 +29452,16 @@ function discoverServiceBtn(entry, title, key) {
   return `<button class="${cls}" type="button" data-open-uri="${escapeHtml(entry.uri || "")}" data-mode="${escapeHtml(entry.mode || "")}" data-provider="${escapeHtml(entry.providerId || "")}" data-key="${escapeHtml(key || "")}" data-title="${escapeHtml(title || "")}" ${entry.action === "none" ? "disabled" : ""}>${label}</button>`;
 }
 
-function discoverCardHtml(v) {
+function discoverCardHtml(v, { pick = false } = {}) {
   const art = v.artworkUrl
     ? `<img class="discover-art" src="${escapeHtml(v.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
     : `<div class="discover-art discover-art--ph"></div>`;
   const yours = v.yours.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Your services</span>${v.yours.map((e) => discoverServiceBtn(e, v.title, v.key)).join("")}</div>` : "";
   const others = v.others.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Other services</span>${v.others.map((e) => discoverServiceBtn(e, v.title, v.key)).join("")}</div>` : "";
   const none = !v.hasTargets ? `<div class="discover-svc-none">No known way to watch yet.</div>` : "";
-  const save = `<button class="discover-save${v.saved ? " is-saved" : ""}" type="button" data-save-key="${escapeHtml(v.key)}" aria-pressed="${v.saved ? "true" : "false"}" title="Save for later" aria-label="Save for later"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
-  return `<div class="discover-card">${art}<div class="discover-meta">` +
+  const save = pick ? "" : `<button class="discover-save${v.saved ? " is-saved" : ""}" type="button" data-save-key="${escapeHtml(v.key)}" aria-pressed="${v.saved ? "true" : "false"}" title="Save for later" aria-label="Save for later"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
+  const pickAttrs = pick ? ` discover-card--pick" data-pick-key="${escapeHtml(v.key)}" role="button" tabindex="0" aria-label="Add ${escapeHtml(v.title)} to the Watch list` : "";
+  return `<div class="discover-card${pickAttrs}">${art}<div class="discover-meta">` +
     `<div class="discover-title">${escapeHtml(v.title)}${v.year ? ` <span class="discover-year">${escapeHtml(v.year)}</span>` : ""}</div>` +
     `<div class="discover-sub">${escapeHtml(v.subtitle || "")}</div>${yours}${others}${none}</div>${save}</div>`;
 }
