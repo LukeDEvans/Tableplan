@@ -88,7 +88,10 @@ complete). Make focused changes to Meal-plan only.
 - A calendar event shows **only on the meals its time of day covers** (an 8a–4p
   shift shows on lunch; breakfast and dinner are assumed at home). All-day events
   show on every meal. The logic is `meal-plan-time.js`; don't re-derive it in the UI.
-- Events & notes cards are **open by default**.
+- Events & notes cards are **always open** (Luke, 2026-10-23): no open/close toggle. Where
+  the chevron was, a same-size **"+"** offers **Event** (the event editor for that day,
+  timed across the meal's mealtime and ticked "Meal Plan", so it lands on that meal) or
+  **Note** (reveals the meal's note box; an empty note box stays hidden).
 - Which events reach the meal plan is Calendar's call: a calendar's **Show on Meal
   Plan** switch (ICS feeds and Google calendars too), plus each member's personal
   flagged events shared through `state.mealPlanSharedEvents`

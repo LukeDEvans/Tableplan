@@ -44,8 +44,6 @@ export const daySpecificDefaultMealEntries = [
   { dayId: "wednesday", meal: "MJ Dinner", index: 0, value: "leftovers" },
   { dayId: "wednesday", meal: "Luke Dinner", index: 0, value: "leftovers" }
 ];
-// Events & Notes cards are open unless the user closed them (this session).
-const collapsedMealContext = new Set();
 
 // ── Pure normalizers (top-level exports; boot-safe) ───────────────────────
 export function defaultMealPlanConfig() {
@@ -1419,15 +1417,19 @@ function renderPlanner() {
     input.addEventListener("blur", () => updateSpecialMealNote(input));
   });
 
-  elements.plannerGrid.querySelectorAll("[data-meal-context-toggle]").forEach((button) => {
-    button.addEventListener("click", () => toggleMealContext(button.dataset.day, button.dataset.meal));
+  elements.plannerGrid.querySelectorAll("[data-meal-context-add]").forEach((button) => {
+    button.addEventListener("click", (event) => { event.stopPropagation(); openMealContextAddMenu(button); });
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-note]").forEach((textarea) => {
     autosizeMealNote(textarea);
     textarea.addEventListener("input", () => autosizeMealNote(textarea));
     textarea.addEventListener("change", () => setMealNote(textarea.dataset.day, textarea.dataset.meal, textarea.value));
-    textarea.addEventListener("blur", () => setMealNote(textarea.dataset.day, textarea.dataset.meal, textarea.value));
+    textarea.addEventListener("blur", () => {
+      setMealNote(textarea.dataset.day, textarea.dataset.meal, textarea.value);
+      // An emptied note box tucks away again; "+" → Note brings it back.
+      if (!textarea.value.trim()) textarea.hidden = true;
+    });
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-event-id]").forEach((button) => {
@@ -1712,12 +1714,21 @@ function autosizeMealNote(textarea) {
   textarea.style.height = `${textarea.scrollHeight}px`;
 }
 
+// The default event the "+" → Event offers for a meal: timed across the meal's
+// mealtime (so it lands on this meal only) and ticked for the meal plan.
+function mealEventPrefill(dateKey, meal) {
+  const mealtime = mealtimeForLabel(mealColumnConfigs.map((column) => column.label), meal);
+  const clock = (minutes) => `${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  const prefill = { date: dateKey, showInMealPlan: true };
+  if (mealtime) Object.assign(prefill, { allDay: false, startTime: clock(mealtime[0]), endTime: clock(mealtime[1]) });
+  return prefill;
+}
+
 function mealContextCardTemplate(day, column) {
   // Keyed by the column (Breakfast/Lunch/Dinner) so a single card serves the
-  // whole meal, independent of any per-person split.
+  // whole meal, independent of any per-person split. Always open (Luke,
+  // 2026-10-23): events and the note are always shown; the "+" adds either.
   const key = column.label;
-  const ctxKey = `${day.id}|${key}`;
-  const expanded = !collapsedMealContext.has(ctxKey);
   const dateKey = dateKeyFromDate(addDays(getCurrentWeek(), day.offset));
   const note = mealNoteValue(day.id, key);
   const events = mealContextEvents(dateKey, key);
@@ -1735,39 +1746,50 @@ function mealContextCardTemplate(day, column) {
         ${time ? `<span class="meal-context-event-time">${escapeHtml(time)}</span>` : ""}
       </button>`;
   }).join("");
-  // A quiet summary on the collapsed header hints at what's inside.
-  const summaryParts = [];
-  if (events.length) summaryParts.push(`${events.length} event${events.length > 1 ? "s" : ""}`);
-  if (note.trim()) summaryParts.push("note");
-  const summary = summaryParts.join(" · ");
+  // The note box shows once there's a note; "+" → Note reveals an empty one.
   return `
-    <div class="meal-context-card${expanded ? " is-expanded" : ""}" data-meal-context data-day="${day.id}" data-meal="${escapeHtml(key)}">
-      <button type="button" class="meal-context-toggle" data-meal-context-toggle data-day="${day.id}" data-meal="${escapeHtml(key)}" aria-expanded="${expanded}">
+    <div class="meal-context-card" data-meal-context data-day="${day.id}" data-meal="${escapeHtml(key)}">
+      <div class="meal-context-head">
         <span class="slot-label meal-context-label">Events &amp; Notes</span>
-        ${summary ? `<span class="meal-context-summary">${escapeHtml(summary)}</span>` : ""}
-        <svg class="meal-context-chevron" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-      <div class="meal-context-body">
-        ${events.length ? `<div class="meal-context-events">${chips}</div>` : ""}
-        <textarea class="meal-context-note" data-meal-note data-day="${day.id}" data-meal="${escapeHtml(key)}" rows="1" placeholder="Add notes…" aria-label="Notes for ${escapeHtml(key)}">${escapeHtml(note)}</textarea>
+        <button type="button" class="meal-context-add" data-meal-context-add data-day="${day.id}" data-meal="${escapeHtml(key)}" data-date="${escapeHtml(dateKey)}" aria-label="Add an event or note to ${escapeHtml(key)}" aria-haspopup="menu" title="Add event or note">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+        </button>
       </div>
+      ${events.length ? `<div class="meal-context-events">${chips}</div>` : ""}
+      <textarea class="meal-context-note" data-meal-note data-day="${day.id}" data-meal="${escapeHtml(key)}" rows="1" placeholder="Add a note…" aria-label="Notes for ${escapeHtml(key)}"${note.trim() ? "" : " hidden"}>${escapeHtml(note)}</textarea>
     </div>
   `;
 }
 
-function toggleMealContext(dayId, key) {
-  const ctxKey = `${dayId}|${key}`;
-  const card = elements.plannerGrid.querySelector(`.meal-context-card[data-day="${CSS.escape(dayId)}"][data-meal="${CSS.escape(key)}"]`);
-  const expand = collapsedMealContext.has(ctxKey);
-  if (expand) collapsedMealContext.delete(ctxKey);
-  else collapsedMealContext.add(ctxKey);
-  if (!card) return;
-  card.classList.toggle("is-expanded", expand);
-  card.querySelector("[data-meal-context-toggle]")?.setAttribute("aria-expanded", String(expand));
-  if (expand) {
-    const textarea = card.querySelector("[data-meal-note]");
-    if (textarea) autosizeMealNote(textarea);
-  }
+function openMealContextAddMenu(button) {
+  closeFolderMenu();
+  const { day, meal, date } = button.dataset;
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu meal-context-add-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" class="safe-item" data-meal-add-event>Event</button>
+    <button type="button" role="menuitem" class="safe-item" data-meal-add-note>Note</button>`;
+  document.body.append(menu);
+  const rect = button.getBoundingClientRect();
+  menu.style.left = `${Math.max(10, Math.min(rect.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 10))}px`;
+  menu.style.top = `${Math.max(10, Math.min(rect.bottom + 4, usableViewportBottom() - menu.offsetHeight - 10))}px`;
+  menu.querySelector("[data-meal-add-event]").addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeFolderMenu();
+    openPlanEventDialog(date, null, mealEventPrefill(date, meal));
+  });
+  menu.querySelector("[data-meal-add-note]").addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeFolderMenu();
+    const card = button.closest("[data-meal-context]");
+    const textarea = card?.querySelector("[data-meal-note]");
+    if (!textarea) return;
+    textarea.hidden = false;
+    autosizeMealNote(textarea);
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  });
 }
 
 function renderAutoRules() {
