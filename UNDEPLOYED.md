@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Meal Plan: Events & Notes always open; a + adds an event or note** · #166 · **TestFlight build** (client-only; the laptop web app picks it up at the next deploy). No open/close toggle; where its chevron was, a same-size + offers Event (the editor on that day, timed across the meal's mealtime and ticked Meal Plan) or Note (reveals the note box; an empty one stays hidden). No migration, no new env vars.
+  Post-deploy:
+  1. iPhone, Household › Meal Plan: every meal's Events & Notes shows its events and note with no toggle; the + sits at the right of the header.
+  2. + → Note: the note box appears and the keyboard opens; type, tap away, the note stays. Empty it: the box tucks away.
+  3. + → Event: the editor opens on that day with the meal's times and Meal Plan ticked; save it and it shows on that meal.
+
 - **Watch: four posters a row; tap a search result to add it** · #165 · **TestFlight build** (client-only; the laptop web app picks it up at the next deploy). The Watch list fits four posters a row on a phone. The Watch search has no bookmark buttons: tapping a result adds it to the list, clears the search and returns to the list. No migration, no new env vars.
   Post-deploy:
   1. iPhone, Watch: four posters a row, titles and the TV/M and streaming chips readable.
