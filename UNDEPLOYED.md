@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Watch: four posters a row; tap a search result to add it** · #165 · **TestFlight build** (client-only; the laptop web app picks it up at the next deploy). The Watch list fits four posters a row on a phone. The Watch search has no bookmark buttons: tapping a result adds it to the list, clears the search and returns to the list. No migration, no new env vars.
+  Post-deploy:
+  1. iPhone, Watch: four posters a row, titles and the TV/M and streaming chips readable.
+  2. Search a show, tap it: the box empties and the list shows it. Search it again and tap: still one copy ("Already in your Watch list.").
+  3. A result's Play/Open buttons still open the service instead of adding.
+
 - **Explore moves to Household, with shared trips** · #163 · **Netlify deploy + TestFlight build** (client-only; your wife uses only the web app, so she gets Explore at the next deploy). Explore is listed only in Household, and its trips are the household's shared list in every view. The shared trips were already set to your Türkiye 2026 and Grand Rapids (done 2026-10-22 by SQL); everyone's own trips are unchanged. No migration, no new env vars.
   Post-deploy:
   1. Personal: no Explore in the list. Household: Explore is last; it shows Türkiye 2026 and Grand Rapids, each once.
