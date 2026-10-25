@@ -24,7 +24,7 @@ import { createLanguageModule } from './language-ui.js';
 import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions } from './language-progress.js';
 import { createNewsTickerModule } from './news-ticker.js';
 import { normalizeSportsPrefs } from './sports-model.js';
-import { THEMES, THEME_CHOICES, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonEnds } from './theme.js';
+import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonEnds } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
@@ -17405,6 +17405,13 @@ function displaySettingsTemplate() {
     halloween: "Orange, black and purple.",
     household: "Navy, dusty blue, blush and sage.",
     urbangreens: "Urban Greens green and gray, with black and white.",
+    vikings: "Purple and gold.",
+    wolves: "Midnight, lake blue, aurora green and grey.",
+    wild: "Forest green, red, harvest gold and wheat.",
+    twins: "Navy, scarlet and Kasota gold.",
+    gophers: "Maroon and gold.",
+    ajax: "Red, white and black.",
+    mnufc: "Black, sky blue and gray.",
     seasonal: seasonNow === "classic"
       ? "Halloween every October, Classic the rest of the year."
       : `${THEMES[seasonNow].label} now, Classic from ${escapeHtml(endsLabel)}.`,
@@ -17435,19 +17442,23 @@ function displaySettingsTemplate() {
         </div>
         <p class="display-hint">Auto follows your device's light or dark setting.</p>
       </section>
-      <section class="display-group">
+      <section class="display-group" role="radiogroup" aria-label="Theme">
         <h3 class="display-group-title">Theme</h3>
-        <div class="display-themes" role="radiogroup" aria-label="Theme">
-          ${THEME_CHOICES.map((key) => `
-            <label class="display-theme-card">
-              <input type="radio" name="displayTheme" value="${key}" ${prefs.theme === key ? "checked" : ""} />
-              ${swatch(key)}
-              <span class="display-theme-text">
-                <span class="display-theme-name">${key === "seasonal" ? "Seasonal" : THEMES[key].label}</span>
-                <span class="display-theme-desc">${themeDesc[key]}</span>
-              </span>
-            </label>`).join("")}
-        </div>
+        ${THEME_GROUPS.map((g) => `
+          <div class="display-theme-group">
+            <h4 class="display-theme-group-title">${escapeHtml(g.label)}</h4>
+            <div class="display-themes" data-theme-group="${escapeHtml(g.key)}">
+              ${g.themes.map((key) => `
+                <label class="display-theme-card">
+                  <input type="radio" name="displayTheme" value="${key}" ${prefs.theme === key ? "checked" : ""} />
+                  ${swatch(key)}
+                  <span class="display-theme-text">
+                    <span class="display-theme-name">${key === "seasonal" ? "Seasonal" : escapeHtml(THEMES[key].label)}</span>
+                    <span class="display-theme-desc">${themeDesc[key] || ""}</span>
+                  </span>
+                </label>`).join("")}
+            </div>
+          </div>`).join("")}
       </section>
       ${currentViewKey() === primaryView(currentViewList()) ? iconRow : ""}
       <p class="display-hint">Your mode and theme are just yours. They don't change what anyone else in the household sees.</p>
@@ -17577,7 +17588,17 @@ function renderContextSettingsDialog(kind) {
 
   // Display mode + theme (THEMES_DESIGN.md). Per person; saves as you tap.
   if (kind === "display") {
-    elements.contextSettingsBody.innerHTML = displaySettingsTemplate();
+    // Theme rows scroll sideways (like Leisure). Re-rendering after a pick keeps
+    // each row where it was; on first open, each row shows its chosen card.
+    const body = elements.contextSettingsBody;
+    const kept = {};
+    body.querySelectorAll("[data-theme-group]").forEach((row) => { kept[row.dataset.themeGroup] = row.scrollLeft; });
+    body.innerHTML = displaySettingsTemplate();
+    body.querySelectorAll("[data-theme-group]").forEach((row) => {
+      if (row.dataset.themeGroup in kept) { row.scrollLeft = kept[row.dataset.themeGroup]; return; }
+      const card = row.querySelector("input:checked")?.closest(".display-theme-card");
+      if (card && card.offsetLeft + card.offsetWidth > row.clientWidth) row.scrollLeft = card.offsetLeft - 12;
+    });
     return;
   }
 

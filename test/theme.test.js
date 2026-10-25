@@ -1,6 +1,6 @@
 // Display mode + theme resolution (theme.js, THEMES_DESIGN.md).
 import { describe, it, expect } from "vitest";
-import { cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, seasonalTheme, seasonEnds, THEMES } from "../theme.js";
+import { cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, seasonalTheme, seasonEnds, THEMES, THEME_GROUPS, THEME_CHOICES } from "../theme.js";
 
 const oct = new Date(2026, 9, 13);
 const nov1 = new Date(2026, 10, 1);
@@ -66,5 +66,21 @@ describe("resolveTheme", () => {
     }
     expect(normalizeDisplayPrefs({}).theme).toBe("classic");
     expect(resolveTheme({}, { now: nov1 }).palette).toBe("classic");
+  });
+  it("Display rows: General, Holiday, Business, Sports; every theme in exactly one (Luke, 2026-10-25)", () => {
+    expect(THEME_GROUPS.map((g) => g.label)).toEqual(["General", "Holiday", "Business", "Sports"]);
+    const listed = THEME_GROUPS.flatMap((g) => g.themes);
+    expect(new Set(listed).size).toBe(listed.length);
+    expect([...listed].sort()).toEqual([...Object.keys(THEMES), "seasonal"].sort());
+    expect(THEME_CHOICES).toEqual(listed);
+    expect(THEME_GROUPS.find((g) => g.key === "sports").themes).toEqual(["vikings", "wolves", "wild", "twins", "gophers", "ajax", "mnufc"]);
+    expect(THEME_GROUPS.find((g) => g.key === "holiday").themes).toEqual(["halloween", "seasonal"]);
+  });
+  it("sports themes are pickable and resolve in both modes; Classic stays the default", () => {
+    for (const t of THEME_GROUPS.find((g) => g.key === "sports").themes) {
+      expect(cleanDisplayPrefs({ theme: t })).toEqual({ theme: t });
+      expect(resolveTheme({ theme: t, mode: "dark" }, { now: oct })).toMatchObject({ palette: t, scheme: "dark", icon: "" });
+    }
+    expect(normalizeDisplayPrefs({}).theme).toBe("classic");
   });
 });

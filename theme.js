@@ -3,7 +3,8 @@
 // Two independent per-person choices, kept in state.displayPrefs (personal
 // `recreate` section, stamped field by field in settings-sync.js):
 //   mode  — "light" | "dark" | "auto"   (auto follows the device setting)
-//   theme — "classic" | "halloween" | "seasonal"
+//   theme — any key of THEMES, or "seasonal" (THEME_CHOICES; grouped for the
+//           Display screen in THEME_GROUPS)
 //           seasonal = the theme of the current season (Halloween in October),
 //           Classic the rest of the year. Opt-in: the default is classic.
 //   icon  — true: on the iPhone, the home-screen icon follows the active theme.
@@ -44,10 +45,63 @@ export const THEMES = Object.freeze({
     themeColor: Object.freeze({ light: "#111111", dark: "#0a0a0a" }),
     swatch: Object.freeze(["#111111", "#78bb34", "#7e7e7e", "#ffffff"]),
   }),
+  // Sports (Luke, 2026-10-25): his favorite teams, in their official colors.
+  vikings: Object.freeze({
+    label: "Vikings",
+    icon: "",
+    themeColor: Object.freeze({ light: "#4f2683", dark: "#150f22" }),
+    swatch: Object.freeze(["#4f2683", "#ffc62f", "#ffffff"]),
+  }),
+  wolves: Object.freeze({
+    label: "Timberwolves & Lynx",
+    icon: "",
+    themeColor: Object.freeze({ light: "#0c2340", dark: "#0a1626" }),
+    swatch: Object.freeze(["#0c2340", "#236192", "#78be20", "#9ea2a2"]),
+  }),
+  wild: Object.freeze({
+    label: "Wild",
+    icon: "",
+    themeColor: Object.freeze({ light: "#154734", dark: "#0d1a13" }),
+    swatch: Object.freeze(["#154734", "#a6192e", "#eaaa00", "#ddcba4"]),
+  }),
+  twins: Object.freeze({
+    label: "Twins",
+    icon: "",
+    themeColor: Object.freeze({ light: "#002b5c", dark: "#08131f" }),
+    swatch: Object.freeze(["#002b5c", "#d31145", "#b9975b"]),
+  }),
+  gophers: Object.freeze({
+    label: "Golden Gophers",
+    icon: "",
+    themeColor: Object.freeze({ light: "#7a0019", dark: "#170a0b" }),
+    swatch: Object.freeze(["#7a0019", "#ffcc33"]),
+  }),
+  ajax: Object.freeze({
+    label: "Ajax",
+    icon: "",
+    themeColor: Object.freeze({ light: "#d2122e", dark: "#0f0f0f" }),
+    swatch: Object.freeze(["#d2122e", "#ffffff", "#111111"]),
+  }),
+  mnufc: Object.freeze({
+    label: "Minnesota United",
+    icon: "",
+    themeColor: Object.freeze({ light: "#231f20", dark: "#121011" }),
+    swatch: Object.freeze(["#231f20", "#8cd2f4", "#e4e5e6"]),
+  }),
 });
 
+// The Display screen's rows (Luke, 2026-10-25), each a heading over a sideways
+// row of theme cards, like Leisure. Every theme belongs to exactly one group;
+// "seasonal" sits with the holiday themes it switches between.
+export const THEME_GROUPS = Object.freeze([
+  Object.freeze({ key: "general", label: "General", themes: Object.freeze(["classic", "household"]) }),
+  Object.freeze({ key: "holiday", label: "Holiday", themes: Object.freeze(["halloween", "seasonal"]) }),
+  Object.freeze({ key: "business", label: "Business", themes: Object.freeze(["urbangreens"]) }),
+  Object.freeze({ key: "sports", label: "Sports", themes: Object.freeze(["vikings", "wolves", "wild", "twins", "gophers", "ajax", "mnufc"]) }),
+]);
+
 // Selectable choices, in display order. "seasonal" is not a palette itself.
-export const THEME_CHOICES = Object.freeze(["classic", "household", "urbangreens", "halloween", "seasonal"]);
+export const THEME_CHOICES = Object.freeze(THEME_GROUPS.flatMap((g) => g.themes));
 
 // month is 1–12, inclusive ranges. First match wins.
 export const SEASONS = Object.freeze([
