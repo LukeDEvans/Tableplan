@@ -284,6 +284,464 @@ body[data-palette="urbangreens"][data-theme="dark"] .bottom-dock {
   --dock-bg2: #0a0a0a;
 }
 
+/* ── Sports themes (Luke, 2026-10-25): his favorite teams' colors. Each team's
+   own colors, with danger kept clear of the accent hue (THEMES_DESIGN.md). */
+/* Vikings: purple #4f2683 and gold #ffc62f. Purple leads in light, gold in dark. */
+/* theme:vikings:light */
+body[data-palette="vikings"] {
+  --bg: #f6f2fa;
+  --surface: #fdfbff;
+  --surface-strong: #ffffff;
+  --ink: #1d1430;
+  --muted: #594f6b;
+  --line: #ddd3ea;
+  --accent: #4f2683;
+  --accent-dark: #3d1d66;
+  --accent-soft: #ece3f7;
+  --on-accent: #ffffff;
+  --tomato: #b3261e;
+  --tomato-soft: #f8dcd9;
+  --on-tomato: #ffffff;
+  --sun: #ffc62f;
+  --sun-soft: #f7f0dc;
+  --sun-pale: #fdf8e8;
+  --blue: #4f2683;
+  --window-bg: #ffffff;
+  --window-border: #4f2683;
+  --purple: #7a5a00;
+  --paper: #ffffff;
+  --card: #fffdf8;
+  --text-muted: #594f6b;
+}
+
+/* theme:vikings:dark */
+body[data-palette="vikings"][data-theme="dark"] {
+  --bg: #150f22;
+  --surface: #1e1730;
+  --surface-strong: #271e3d;
+  --ink: #f4f0fa;
+  --muted: #bdb3cf;
+  --line: #3f3359;
+  --accent: #ffc62f;
+  --accent-dark: #ffdb7a;
+  --accent-soft: #3a2d0a;
+  --on-accent: #150f22;
+  --tomato: #ff8a80;
+  --tomato-soft: #4a1f1d;
+  --on-tomato: #150f22;
+  --sun: #ffc62f;
+  --sun-soft: #2a2010;
+  --sun-pale: #120d1d;
+  --blue: #ffc62f;
+  --window-bg: #1e1730;
+  --window-border: #a989e6;
+  --purple: #a989e6;
+  --paper: #1e1730;
+  --card: #271e3d;
+  --text-muted: #bdb3cf;
+}
+body[data-palette="vikings"] .bottom-dock {
+  --dock-bg1: #4f2683;
+  --dock-bg2: #2b1450;
+  --dock-ink: #ffffff;
+  border-top-color: #ffc62f;
+}
+body[data-palette="vikings"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #3a1d63;
+  --dock-bg2: #120d1d;
+}
+
+/* Timberwolves & Lynx (same colors): midnight #0c2340, lake blue #236192, aurora green #78be20, moonlight grey #9ea2a2. */
+/* theme:wolves:light */
+body[data-palette="wolves"] {
+  --bg: #f3f6f9;
+  --surface: #fbfdff;
+  --surface-strong: #ffffff;
+  --ink: #0c1a2c;
+  --muted: #4f5b68;
+  --line: #d3dbe3;
+  --accent: #236192;
+  --accent-dark: #1a4a70;
+  --accent-soft: #e0ecf5;
+  --on-accent: #ffffff;
+  --tomato: #b3261e;
+  --tomato-soft: #f8dcd9;
+  --on-tomato: #ffffff;
+  --sun: #78be20;
+  --sun-soft: #e9eff5;
+  --sun-pale: #f6f9fc;
+  --blue: #236192;
+  --window-bg: #ffffff;
+  --window-border: #0c2340;
+  --purple: #3f6b0e;
+  --paper: #ffffff;
+  --card: #fbfdff;
+  --text-muted: #4f5b68;
+}
+
+/* theme:wolves:dark */
+body[data-palette="wolves"][data-theme="dark"] {
+  --bg: #0a1626;
+  --surface: #11223a;
+  --surface-strong: #182c47;
+  --ink: #eef3f8;
+  --muted: #a9b7c6;
+  --line: #2c4260;
+  --accent: #78be20;
+  --accent-dark: #a3d96a;
+  --accent-soft: #1d3310;
+  --on-accent: #0a1626;
+  --tomato: #ff8a80;
+  --tomato-soft: #4a1f1d;
+  --on-tomato: #0a1626;
+  --sun: #78be20;
+  --sun-soft: #14261a;
+  --sun-pale: #08111e;
+  --blue: #6fa8d6;
+  --window-bg: #11223a;
+  --window-border: #6fa8d6;
+  --purple: #9ea2a2;
+  --paper: #11223a;
+  --card: #182c47;
+  --text-muted: #a9b7c6;
+}
+body[data-palette="wolves"] .bottom-dock {
+  --dock-bg1: #236192;
+  --dock-bg2: #0c2340;
+  --dock-ink: #ffffff;
+  border-top-color: #78be20;
+}
+body[data-palette="wolves"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #173f63;
+  --dock-bg2: #08111e;
+}
+
+/* Wild: forest green #154734, harvest gold #eaaa00, Minnesota wheat #ddcba4, Iron Range red #a6192e (dock edge only, so it never reads as a warning). */
+/* theme:wild:light */
+body[data-palette="wild"] {
+  --bg: #f7f4ec;
+  --surface: #fdfbf5;
+  --surface-strong: #ffffff;
+  --ink: #13231b;
+  --muted: #4f5a52;
+  --line: #d9d2bf;
+  --accent: #154734;
+  --accent-dark: #0f3626;
+  --accent-soft: #e1ece5;
+  --on-accent: #ffffff;
+  --tomato: #b3261e;
+  --tomato-soft: #f8dcd9;
+  --on-tomato: #ffffff;
+  --sun: #eaaa00;
+  --sun-soft: #f1eadb;
+  --sun-pale: #faf6ec;
+  --blue: #154734;
+  --window-bg: #ffffff;
+  --window-border: #154734;
+  --purple: #7a5c00;
+  --paper: #ffffff;
+  --card: #fffdf7;
+  --text-muted: #4f5a52;
+}
+
+/* theme:wild:dark */
+body[data-palette="wild"][data-theme="dark"] {
+  --bg: #0d1a13;
+  --surface: #14261c;
+  --surface-strong: #1b3125;
+  --ink: #f3efe4;
+  --muted: #bdb6a3;
+  --line: #34483b;
+  --accent: #eaaa00;
+  --accent-dark: #f5c94d;
+  --accent-soft: #3a2d08;
+  --on-accent: #0d1a13;
+  --tomato: #ff8a80;
+  --tomato-soft: #4a1f1d;
+  --on-tomato: #0d1a13;
+  --sun: #eaaa00;
+  --sun-soft: #2a2410;
+  --sun-pale: #0a140e;
+  --blue: #ddcba4;
+  --window-bg: #14261c;
+  --window-border: #ddcba4;
+  --purple: #ddcba4;
+  --paper: #14261c;
+  --card: #1b3125;
+  --text-muted: #bdb6a3;
+}
+body[data-palette="wild"] .bottom-dock {
+  --dock-bg1: #1d5a42;
+  --dock-bg2: #0f3626;
+  --dock-ink: #ffffff;
+  border-top-color: #a6192e;
+}
+body[data-palette="wild"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #154734;
+  --dock-bg2: #0a140e;
+}
+
+/* Twins: navy #002b5c, scarlet #d31145, Kasota gold #b9975b. Scarlet is the danger color and the dock edge. */
+/* theme:twins:light */
+body[data-palette="twins"] {
+  --bg: #f6f5f1;
+  --surface: #fdfcf9;
+  --surface-strong: #ffffff;
+  --ink: #0f1b2b;
+  --muted: #505a68;
+  --line: #d8d6d0;
+  --accent: #002b5c;
+  --accent-dark: #001f44;
+  --accent-soft: #e0e8f2;
+  --on-accent: #ffffff;
+  --tomato: #c0103f;
+  --tomato-soft: #f9dde4;
+  --on-tomato: #ffffff;
+  --sun: #b9975b;
+  --sun-soft: #f1ebdf;
+  --sun-pale: #f8f5ee;
+  --blue: #002b5c;
+  --window-bg: #ffffff;
+  --window-border: #002b5c;
+  --purple: #7a6034;
+  --paper: #ffffff;
+  --card: #fffdf8;
+  --text-muted: #505a68;
+}
+
+/* theme:twins:dark */
+body[data-palette="twins"][data-theme="dark"] {
+  --bg: #08131f;
+  --surface: #0f1d2e;
+  --surface-strong: #16273b;
+  --ink: #f1f0ec;
+  --muted: #b2b8c2;
+  --line: #2b3b52;
+  --accent: #d6b77c;
+  --accent-dark: #e8d2a6;
+  --accent-soft: #33291a;
+  --on-accent: #08131f;
+  --tomato: #ff7b97;
+  --tomato-soft: #46172a;
+  --on-tomato: #08131f;
+  --sun: #b9975b;
+  --sun-soft: #221d14;
+  --sun-pale: #060e18;
+  --blue: #7fa7d9;
+  --window-bg: #0f1d2e;
+  --window-border: #7fa7d9;
+  --purple: #7fa7d9;
+  --paper: #0f1d2e;
+  --card: #16273b;
+  --text-muted: #b2b8c2;
+}
+body[data-palette="twins"] .bottom-dock {
+  --dock-bg1: #0d3a70;
+  --dock-bg2: #001f44;
+  --dock-ink: #ffffff;
+  border-top-color: #d31145;
+}
+body[data-palette="twins"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #002b5c;
+  --dock-bg2: #060e18;
+}
+
+/* Golden Gophers: maroon #7a0019 and gold #ffcc33. Danger is a burnt orange in light, so it doesn't read as maroon. */
+/* theme:gophers:light */
+body[data-palette="gophers"] {
+  --bg: #fbf6ec;
+  --surface: #fffcf6;
+  --surface-strong: #ffffff;
+  --ink: #22130f;
+  --muted: #5e5049;
+  --line: #e3d6c4;
+  --accent: #7a0019;
+  --accent-dark: #5e0013;
+  --accent-soft: #f5e1e4;
+  --on-accent: #ffffff;
+  --tomato: #a84300;
+  --tomato-soft: #fbe4d3;
+  --on-tomato: #ffffff;
+  --sun: #ffcc33;
+  --sun-soft: #f9efcf;
+  --sun-pale: #fdf8e6;
+  --blue: #7a0019;
+  --window-bg: #ffffff;
+  --window-border: #7a0019;
+  --purple: #7a5a00;
+  --paper: #ffffff;
+  --card: #fffdf6;
+  --text-muted: #5e5049;
+}
+
+/* theme:gophers:dark */
+body[data-palette="gophers"][data-theme="dark"] {
+  --bg: #170a0b;
+  --surface: #221214;
+  --surface-strong: #2c181a;
+  --ink: #f7efe6;
+  --muted: #c9b8ab;
+  --line: #4a2e2e;
+  --accent: #ffcc33;
+  --accent-dark: #ffdc70;
+  --accent-soft: #3a2c08;
+  --on-accent: #170a0b;
+  --tomato: #ff8f8f;
+  --tomato-soft: #4a1f22;
+  --on-tomato: #170a0b;
+  --sun: #ffcc33;
+  --sun-soft: #2c2008;
+  --sun-pale: #120809;
+  --blue: #ffcc33;
+  --window-bg: #221214;
+  --window-border: #e0707f;
+  --purple: #e0707f;
+  --paper: #221214;
+  --card: #2c181a;
+  --text-muted: #c9b8ab;
+}
+body[data-palette="gophers"] .bottom-dock {
+  --dock-bg1: #7a0019;
+  --dock-bg2: #4a000f;
+  --dock-ink: #ffffff;
+  border-top-color: #ffcc33;
+}
+body[data-palette="gophers"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #5e0013;
+  --dock-bg2: #120809;
+}
+
+/* Ajax: red #d2122e, white and black. Danger is amber, so it doesn't read as the club red. */
+/* theme:ajax:light */
+body[data-palette="ajax"] {
+  --bg: #f7f7f7;
+  --surface: #fdfdfd;
+  --surface-strong: #ffffff;
+  --ink: #141414;
+  --muted: #555555;
+  --line: #e0dcdc;
+  --accent: #d2122e;
+  --accent-dark: #a50e24;
+  --accent-soft: #fdedf0;
+  --on-accent: #ffffff;
+  --tomato: #a35200;
+  --tomato-soft: #fbe7d3;
+  --on-tomato: #ffffff;
+  --sun: #d2122e;
+  --sun-soft: #f2f2f2;
+  --sun-pale: #fafafa;
+  --blue: #d2122e;
+  --window-bg: #ffffff;
+  --window-border: #141414;
+  --purple: #a50e24;
+  --paper: #ffffff;
+  --card: #ffffff;
+  --text-muted: #555555;
+}
+
+/* theme:ajax:dark */
+body[data-palette="ajax"][data-theme="dark"] {
+  --bg: #0f0f0f;
+  --surface: #1a1a1a;
+  --surface-strong: #232323;
+  --ink: #f5f5f5;
+  --muted: #b5b5b5;
+  --line: #3a3a3a;
+  --accent: #ff5266;
+  --accent-dark: #ff8a96;
+  --accent-soft: #3d1016;
+  --on-accent: #0f0f0f;
+  --tomato: #ffa24d;
+  --tomato-soft: #45290f;
+  --on-tomato: #0f0f0f;
+  --sun: #ff5266;
+  --sun-soft: #2a1a1c;
+  --sun-pale: #0a0a0a;
+  --blue: #ff5266;
+  --window-bg: #1a1a1a;
+  --window-border: #f5f5f5;
+  --purple: #ff5266;
+  --paper: #1a1a1a;
+  --card: #232323;
+  --text-muted: #b5b5b5;
+}
+body[data-palette="ajax"] .bottom-dock {
+  --dock-bg1: #d2122e;
+  --dock-bg2: #8f0c1f;
+  --dock-ink: #ffffff;
+  border-top-color: #ffffff;
+}
+body[data-palette="ajax"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #a50e24;
+  --dock-bg2: #0a0a0a;
+}
+
+/* Minnesota United: black #231f20, sky blue #8cd2f4, gray #e4e5e6. Light: a deep loon blue accent with black outlines; dark: sky blue. */
+/* theme:mnufc:light */
+body[data-palette="mnufc"] {
+  --bg: #f4f5f6;
+  --surface: #fcfcfd;
+  --surface-strong: #ffffff;
+  --ink: #1a1718;
+  --muted: #55595c;
+  --line: #d9dcdf;
+  --accent: #1f6d96;
+  --accent-dark: #164f6e;
+  --accent-soft: #e1f2fb;
+  --on-accent: #ffffff;
+  --tomato: #b3261e;
+  --tomato-soft: #f8dcd9;
+  --on-tomato: #ffffff;
+  --sun: #8cd2f4;
+  --sun-soft: #e4e5e6;
+  --sun-pale: #f1f2f3;
+  --blue: #1f6d96;
+  --window-bg: #ffffff;
+  --window-border: #231f20;
+  --purple: #231f20;
+  --paper: #ffffff;
+  --card: #ffffff;
+  --text-muted: #55595c;
+}
+
+/* theme:mnufc:dark */
+body[data-palette="mnufc"][data-theme="dark"] {
+  --bg: #121011;
+  --surface: #1c1a1b;
+  --surface-strong: #252223;
+  --ink: #f2f3f4;
+  --muted: #b6b9bc;
+  --line: #3b3839;
+  --accent: #8cd2f4;
+  --accent-dark: #bfe6f9;
+  --accent-soft: #15303d;
+  --on-accent: #121011;
+  --tomato: #ff8a80;
+  --tomato-soft: #4a1f1d;
+  --on-tomato: #121011;
+  --sun: #8cd2f4;
+  --sun-soft: #1d2a31;
+  --sun-pale: #0d0c0c;
+  --blue: #8cd2f4;
+  --window-bg: #1c1a1b;
+  --window-border: #e4e5e6;
+  --purple: #9a9c9e;
+  --paper: #1c1a1b;
+  --card: #252223;
+  --text-muted: #b6b9bc;
+}
+body[data-palette="mnufc"] .bottom-dock {
+  --dock-bg1: #3a3536;
+  --dock-bg2: #231f20;
+  --dock-ink: #ffffff;
+  border-top-color: #8cd2f4;
+}
+body[data-palette="mnufc"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #231f20;
+  --dock-bg2: #0d0c0c;
+}
+
+
 * {
   box-sizing: border-box;
 }
@@ -14791,6 +15249,76 @@ body[data-palette="urbangreens"][data-theme="dark"] .mail-thread-panel {
   --window-border: #1f1f1f;
   --line: #d9ddd3;
 }
+body[data-palette="vikings"][data-theme="dark"] .mail-thread-panel {
+  --accent: #4f2683;
+  --accent-dark: #3d1d66;
+  --accent-soft: #ece3f7;
+  --on-accent: #ffffff;
+  --tomato: #b3261e;
+  --tomato-soft: #f8dcd9;
+  --window-border: #4f2683;
+  --line: #ddd3ea;
+}
+body[data-palette="wolves"][data-theme="dark"] .mail-thread-panel {
+  --accent: #236192;
+  --accent-dark: #1a4a70;
+  --accent-soft: #e0ecf5;
+  --on-accent: #ffffff;
+  --tomato: #b3261e;
+  --tomato-soft: #f8dcd9;
+  --window-border: #0c2340;
+  --line: #d3dbe3;
+}
+body[data-palette="wild"][data-theme="dark"] .mail-thread-panel {
+  --accent: #154734;
+  --accent-dark: #0f3626;
+  --accent-soft: #e1ece5;
+  --on-accent: #ffffff;
+  --tomato: #b3261e;
+  --tomato-soft: #f8dcd9;
+  --window-border: #154734;
+  --line: #d9d2bf;
+}
+body[data-palette="twins"][data-theme="dark"] .mail-thread-panel {
+  --accent: #002b5c;
+  --accent-dark: #001f44;
+  --accent-soft: #e0e8f2;
+  --on-accent: #ffffff;
+  --tomato: #c0103f;
+  --tomato-soft: #f9dde4;
+  --window-border: #002b5c;
+  --line: #d8d6d0;
+}
+body[data-palette="gophers"][data-theme="dark"] .mail-thread-panel {
+  --accent: #7a0019;
+  --accent-dark: #5e0013;
+  --accent-soft: #f5e1e4;
+  --on-accent: #ffffff;
+  --tomato: #a84300;
+  --tomato-soft: #fbe4d3;
+  --window-border: #7a0019;
+  --line: #e3d6c4;
+}
+body[data-palette="ajax"][data-theme="dark"] .mail-thread-panel {
+  --accent: #d2122e;
+  --accent-dark: #a50e24;
+  --accent-soft: #fdedf0;
+  --on-accent: #ffffff;
+  --tomato: #a35200;
+  --tomato-soft: #fbe7d3;
+  --window-border: #141414;
+  --line: #e0dcdc;
+}
+body[data-palette="mnufc"][data-theme="dark"] .mail-thread-panel {
+  --accent: #1f6d96;
+  --accent-dark: #164f6e;
+  --accent-soft: #e1f2fb;
+  --on-accent: #ffffff;
+  --tomato: #b3261e;
+  --tomato-soft: #f8dcd9;
+  --window-border: #231f20;
+  --line: #d9dcdf;
+}
 /* While a mail menu (move / snooze / more) is open, taps on an email go to the
    page instead of into its frame, so they close the menu (app.js
    wireMailMenuDismiss). */
@@ -23595,44 +24123,74 @@ button.scores-idle:hover { background: color-mix(in srgb, var(--ink) 5%, transpa
 }
 .display-seg-opt input:checked + span { background: var(--accent); color: var(--on-accent, #fff); }
 .display-seg-opt input:focus-visible + span { outline: 3px solid var(--accent-dark); outline-offset: -5px; }
-.display-themes { display: grid; gap: 8px; }
+/* Theme rows (Luke, 2026-10-25): General / Holiday / Business / Sports, each a
+   heading over a sideways-scrolling row of cards, like the Leisure page. */
+.display-theme-group { display: grid; gap: 6px; min-width: 0; }
+.display-theme-group-title {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+.display-themes {
+  position: relative; /* cards' offsetLeft is measured from the row */
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 8px;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.display-themes::-webkit-scrollbar { display: none; }
 .display-theme-card {
   position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 60px;
-  padding: 10px 12px;
+  flex: 0 0 118px; /* on a phone the third card peeks in, so the row reads as scrollable */
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 8px;
+  padding: 10px;
   border: 2px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--surface-strong);
   cursor: pointer;
+  scroll-snap-align: start;
 }
 .display-theme-card input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 .display-theme-card:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .display-theme-card:has(input:checked)::after {
   content: "✓";
-  margin-left: auto;
-  color: var(--accent-dark);
-  font-size: 1.1rem;
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-size: 0.8rem;
   font-weight: 900;
 }
 .display-theme-card:has(input:focus-visible) { outline: 3px solid var(--accent-dark); outline-offset: 2px; }
 .display-swatch {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 1fr; /* one stripe per color (3 or 4) */
-  flex: 0 0 auto;
-  width: 48px;
-  height: 36px;
+  grid-auto-columns: 1fr; /* one stripe per color (2 to 4) */
+  width: 100%;
+  height: 48px;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
 }
 .display-swatch i { display: block; }
-.display-theme-text { display: grid; gap: 2px; min-width: 0; }
-.display-theme-name { color: var(--ink); font-size: 0.98rem; font-weight: 850; }
-.display-theme-desc { color: var(--muted); font-size: 0.8rem; line-height: 1.3; }
+.display-theme-text { display: grid; gap: 2px; min-width: 0; align-content: start; }
+.display-theme-name { color: var(--ink); font-size: 0.92rem; font-weight: 850; line-height: 1.2; }
+.display-theme-desc { color: var(--muted); font-size: 0.76rem; line-height: 1.3; }
 
 /* App-wide text-box clear button (input-clear.js; CLAUDE.md "Text-box clear
    button"). Shown at the right of any single-line text box the user has typed

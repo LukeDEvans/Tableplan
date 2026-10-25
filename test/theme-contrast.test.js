@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const css = readFileSync(fileURLToPath(new URL("../styles.css", import.meta.url)), "utf8");
-const CHECKED = ["halloween", "household", "urbangreens"];
+const CHECKED = ["halloween", "household", "urbangreens", "vikings", "wolves", "wild", "twins", "gophers", "ajax", "mnufc"];
 
 function block(name, mode) {
   const m = css.match(new RegExp(`/\\* theme:${name}:${mode} \\*/\\s*[^{]+\\{([^}]*)\\}`));

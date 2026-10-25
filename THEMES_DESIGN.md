@@ -2,8 +2,8 @@
 
 Decisions (Luke, 2026-10-14):
 
-- **Two separate choices: Mode and Theme.** Mode is Light / Dark / Auto. Theme is Classic,
-  Household, Urban Greens, Halloween, or Seasonal. Every theme has both a light and a dark version, so Auto works
+- **Two separate choices: Mode and Theme.** Mode is Light / Dark / Auto. Theme is any entry
+  in `THEMES` or Seasonal, picked from the grouped rows below. Every theme has both a light and a dark version, so Auto works
   inside any theme.
 - **Per person.** Stored in `state.displayPrefs` (`{ mode, theme, icon }`) in the personal
   `recreate` section, stamped field by field (`TRACKED_SETTINGS`, `"fields"`). One
@@ -32,6 +32,22 @@ Decisions (Luke, 2026-10-14):
     and fills so it reaches 4.5:1 on white; dark mode uses the logo green itself. Window
     outlines are black (light) / gray (dark). Dock: black with a logo-green edge.
   - No alternate iPhone icon or favicon for either yet.
+- **Display rows** (Luke, 2026-10-25). Settings › Display lists themes like the Leisure
+  page: a heading over a sideways-scrolling row of cards for each group in `THEME_GROUPS`
+  (`theme.js`) — **General** (Classic, Household), **Holiday** (Halloween, Seasonal — more
+  holidays coming), **Business** (Urban Greens), **Sports**. Every theme is in exactly one
+  group (`test/theme.test.js`). A new theme goes in `THEMES` and in one group. Picking a card
+  keeps every row where it was; on opening, each row shows its chosen card.
+- **Sports** (Luke, 2026-10-25): his favorite teams, in their official colors — Vikings
+  (`vikings`), Timberwolves & Lynx (`wolves`; the two teams use the same four colors),
+  Wild (`wild`), Twins (`twins`), Golden Gophers (`gophers`), Ajax (`ajax`) and Minnesota
+  United (`mnufc`). Each light set leads with the team's darker color; dark sets lead with
+  the brighter one (Vikings gold, Wolves aurora green, Wild harvest gold, Twins Kasota gold,
+  Gophers gold, Ajax red, United sky blue). Where a team's red sits next to the danger red
+  (Wild's Iron Range red) it's kept to the dock edge; where the accent itself is red or
+  maroon (Ajax, Gophers), danger is amber or burnt orange so a warning never reads as the
+  team color. Each has a dock in team colors. No team app icons yet. Palettes are generated
+  in one place per theme in `styles.css` (search "Sports themes").
 
 ## How it works
 
