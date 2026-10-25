@@ -10,6 +10,10 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Themes: Sports row and grouped Display rows** · #167 · **TestFlight build** (client-only; the laptop needs a Netlify deploy). Settings › Display lists themes in Leisure-style rows — General (Classic, Household), Holiday (Halloween, Seasonal), Business (Urban Greens), Sports — and adds seven team themes in light and dark: Vikings, Timberwolves & Lynx, Wild, Twins, Golden Gophers, Ajax, Minnesota United. Classic stays the default. No migration, no new env vars.
+  Post-deploy:
+  1. Settings › Display: four rows; swipe the Sports row and pick each team, in Light and Dark — Calendar, Meal Plan, Shop, Finance and News read clearly and the dock takes the team colors.
+  2. Close and reopen Display — the chosen card is in view in its row.
 - **Meal Plan: Events & Notes always open; a + adds an event or note** · #166 · **TestFlight build** (client-only; the laptop web app picks it up at the next deploy). No open/close toggle; where its chevron was, a same-size + offers Event (the editor on that day, timed across the meal's mealtime and ticked Meal Plan) or Note (reveals the note box; an empty one stays hidden). No migration, no new env vars.
   Post-deploy:
   1. iPhone, Household › Meal Plan: every meal's Events & Notes shows its events and note with no toggle; the + sits at the right of the header.
