@@ -26,6 +26,7 @@
     "qa:calendar-month": "node scripts/qa-calendar-month.mjs",
     "qa:meal-context": "node scripts/qa-meal-context.mjs",
     "qa:watch-search": "node scripts/qa-watch-search.mjs",
+    "qa:watch-links": "node scripts/qa-watch-links.mjs",
     "qa:language": "node scripts/qa-language.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"

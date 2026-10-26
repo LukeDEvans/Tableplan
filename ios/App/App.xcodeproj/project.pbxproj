@@ -26,6 +26,7 @@
 		A1C0FFEE2E90000100A1C0DE /* AppIconPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */; };
 		B7A11AC02E90000100A77AC0 /* AttachmentPreviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */; };
 		D07C4A102E90000100D07C4A /* LiveLanguagePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */; };
+		E1A40C102E90000100E1A40C /* LinkOutPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A40C112E90000100E1A40C /* LinkOutPlugin.swift */; };
 		7A1C0E722E90000100C0FFEE /* ShareTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E742E90000100C0FFEE /* ShareTokenStore.swift */; };
 		7A1C0E732E90000100C0FFEE /* ShareTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E742E90000100C0FFEE /* ShareTokenStore.swift */; };
 		7A1C0E762E90000100C0FFEE /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E772E90000100C0FFEE /* ShareViewController.swift */; };
@@ -80,6 +81,7 @@
 		A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconPlugin.swift; sourceTree = "<group>"; };
 		B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPreviewPlugin.swift; sourceTree = "<group>"; };
 		D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLanguagePlugin.swift; sourceTree = "<group>"; };
+		E1A40C112E90000100E1A40C /* LinkOutPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkOutPlugin.swift; sourceTree = "<group>"; };
 		7A1C0E742E90000100C0FFEE /* ShareTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareTokenStore.swift; sourceTree = "<group>"; };
 		7A1C0E752E90000100C0FFEE /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		7A1C0E772E90000100C0FFEE /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
@@ -152,6 +154,7 @@
 				A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */,
 				B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */,
 				D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */,
+				E1A40C112E90000100E1A40C /* LinkOutPlugin.swift */,
 				7A1C0E752E90000100C0FFEE /* App.entitlements */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -348,6 +351,7 @@
 				A1C0FFEE2E90000100A1C0DE /* AppIconPlugin.swift in Sources */,
 				B7A11AC02E90000100A77AC0 /* AttachmentPreviewPlugin.swift in Sources */,
 				D07C4A102E90000100D07C4A /* LiveLanguagePlugin.swift in Sources */,
+				E1A40C102E90000100E1A40C /* LinkOutPlugin.swift in Sources */,
 				7A1C0E722E90000100C0FFEE /* ShareTokenStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

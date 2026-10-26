@@ -21,6 +21,9 @@ import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, 
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule, isNewsletterBriefing } from './news-ui.js';
 import { createScoresModule, gameCardHtml } from './scores-ui.js';
+import { OUT_TARGETS, openOutLink, titleHandoff, targetHandoff, linkOutAttrs, linkOutFromElement } from './link-out.js';
+import { matchProviderId } from './media-availability.js';
+import { createStreamLinksCache, linksForProvider } from './media-stream-links.js';
 import { createLanguageModule } from './language-ui.js';
 import { createSpeech } from './language-speech.js';
 import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions, normalizeLanguagePrefs } from './language-progress.js';
@@ -53,7 +56,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
@@ -3962,6 +3965,8 @@ function setupDiagnostics() {
     businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
     watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); persist(); return true; },
     showScoresForQa: () => { if (!localDevMode) return null; showScoresApp(); return true; },
+    mediaServicesForQa: (ids) => { if (!localDevMode) return null; state.mediaServices = ids.map(String); resetMediaHub(); return true; },
+    settingsForQa: (kind) => { if (!localDevMode) return null; openContextSettingsDialog(kind); return true; },
     billsSeedForQa: (bills) => { if (!localDevMode) return null; state.financeRecurring = bills; planAppDataIndex = null; planRangeCache.clear(); return true; },
     planSeedForQa: (events) => { if (!localDevMode) return null; state.planEvents = events; planRangeCache.clear(); persist(); return true; },
     planEventsInRangeForQa: (a, b) => (localDevMode ? getPlanEventsForRange(a, b).map((e) => ({ id: e.id, title: e.title, source: e.source, layerView: e.layerView || null })) : null),
@@ -16763,7 +16768,7 @@ async function openTickerGameCard(dateKey, gameId) {
   let games = null;
   try { games = await getScoresBoard(dateKey); } catch { games = null; }
   const game = (games || []).find((g) => g.id === gameId) || null;
-  body.innerHTML = gameCardHtml(game, escapeHtml);
+  body.innerHTML = gameCardHtml(game, escapeHtml, {}, state.mediaServices || []);
 }
 
 // The other views whose calendars show on this calendar as layers right now.
@@ -17259,7 +17264,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "watch", "watch-services", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "watch-services", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "link-test", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -17536,8 +17541,51 @@ function displaySettingsTemplate() {
     </div>`;
 }
 
+const LINK_TEST_KEY = "live-link-test-v1";
+function readLinkTest() {
+  try { return JSON.parse(localStorage.getItem(LINK_TEST_KEY) || "{}") || {}; } catch { return {}; }
+}
+function renderLinkTestPanel() {
+  const results = readLinkTest();
+  const native = Boolean(nativeLinkOut());
+  const word = { app: "App opened", web: "Website", none: "Nothing opened" };
+  elements.contextSettingsBody.innerHTML = `
+    <p class="settings-panel-note">${native
+      ? "Tap each one. “App opened” means the app is installed and took the link; “Website” means it went to Safari."
+      : "This is a check for the iPhone app. Here, every link opens the website."}</p>
+    <div class="link-test-list">
+      ${Object.entries(OUT_TARGETS).map(([id, t]) => `
+        <div class="link-test-row">
+          <span class="link-test-name">${escapeHtml(t.label)}</span>
+          <span class="link-test-result${results[id] ? ` is-${escapeHtml(results[id])}` : ""}">${escapeHtml(word[results[id]] || "")}</span>
+          <button type="button" class="secondary-btn compact-btn" data-link-test="${escapeHtml(id)}">Open</button>
+        </div>`).join("")}
+    </div>
+    <div class="settings-action-grid">
+      <button type="button" data-link-test-copy>Copy results</button>
+      <button type="button" data-link-test-clear>Clear</button>
+    </div>`;
+  const body = elements.contextSettingsBody;
+  body.querySelectorAll("[data-link-test]").forEach((btn) => btn.addEventListener("click", async () => {
+    const id = btn.dataset.linkTest;
+    const opened = await handOff(targetHandoff(id));
+    const next = { ...readLinkTest(), [id]: opened };
+    try { localStorage.setItem(LINK_TEST_KEY, JSON.stringify(next)); } catch { /* noop */ }
+    if (contextSettingsKind === "link-test") renderLinkTestPanel();
+  }));
+  body.querySelector("[data-link-test-copy]")?.addEventListener("click", async () => {
+    const r = readLinkTest();
+    const text = Object.entries(OUT_TARGETS).map(([id, t]) => `${t.label}: ${word[r[id]] || "not tried"}`).join("\n");
+    try { await navigator.clipboard.writeText(text); showMailToast("Copied."); } catch { showMailToast("Couldn't copy."); }
+  });
+  body.querySelector("[data-link-test-clear]")?.addEventListener("click", () => {
+    try { localStorage.removeItem(LINK_TEST_KEY); } catch { /* noop */ }
+    renderLinkTestPanel();
+  });
+}
+
 // Where a Settings panel's back arrow goes (anything not listed → the main list).
-const SETTINGS_PANEL_PARENT = { assistant: "beta", "ai-log": "beta" };
+const SETTINGS_PANEL_PARENT = { assistant: "beta", "ai-log": "beta", "link-test": "beta" };
 
 // A small (i) button beside a setting; tapping it opens that setting's write-up
 // in a little window under the row (Luke, 2026-10-14), so long explanations
@@ -17610,6 +17658,7 @@ function renderContextSettingsDialog(kind) {
     "podcasts": "Podcasts",
     "display": "Display",
     "beta": "Beta",
+    "link-test": "Link Test",
     "ai-log": "AI Action Log"
   };
   const isSubPanel = !["general", "watch", "watch-services", "radio", "recreate", "read-sync", "mail-ai"].includes(kind);
@@ -17652,8 +17701,17 @@ function renderContextSettingsDialog(kind) {
       <div class="settings-action-grid">
         <button type="button" data-context-settings-action="assistant">Assistant</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
+        <button type="button" data-context-settings-action="link-test">Link Test</button>
       </div>
     `;
+    return;
+  }
+
+  // Link Test (admin, STREAMING_HANDOFF_DESIGN.md step 1): tap each service once
+  // on the iPhone to see whether its app opens. Results stay on this device;
+  // "Copy results" puts them on the clipboard to paste into a chat.
+  if (kind === "link-test") {
+    renderLinkTestPanel();
     return;
   }
 
@@ -18382,16 +18440,9 @@ function renderWatchContextSettings() {
 // the explanation opens from an (i).
 function renderWatchServicesSettings() {
   const have = new Set(state.mediaServices || []);
-  elements.contextSettingsBody.innerHTML = `
-    <div class="sync-context-settings">
-      <div class="sync-context-heading">
-        <p class="sync-context-label">Services you subscribe to</p>
-        ${settingsInfoButton("watch-services", "streaming services")}
-      </div>
-      ${settingsInfoPanel("watch-services", "Mark the streaming services you subscribe to. When you search on Watch, titles on these services show first, under Your services.")}
-      ${DISCOVER_SERVICE_OPTIONS.map(([id, label]) => {
-        const on = have.has(id);
-        return `
+  const row = ([id, label]) => {
+    const on = have.has(id);
+    return `
         <div class="sync-context-field">
           <div class="sync-context-field-header">
             <span class="sync-context-label">${escapeHtml(label)}</span>
@@ -18401,7 +18452,19 @@ function renderWatchServicesSettings() {
             </span>
           </div>
         </div>`;
-      }).join("")}
+  };
+  elements.contextSettingsBody.innerHTML = `
+    <div class="sync-context-settings">
+      <div class="sync-context-heading">
+        <p class="sync-context-label">Services you subscribe to</p>
+        ${settingsInfoButton("watch-services", "streaming services")}
+      </div>
+      ${settingsInfoPanel("watch-services", "Mark the streaming services you subscribe to. When you search on Watch, titles on these services show first, under Your services. In Scores, a game's Watch buttons list these first; with Xfinity Stream added, games on TV channels (FOX, NBC, CBS, ESPN…) open in Xfinity Stream.")}
+      ${DISCOVER_SERVICE_OPTIONS.map(row).join("")}
+      <div class="sync-context-heading">
+        <p class="sync-context-label">Sports apps</p>
+      </div>
+      ${SPORTS_SERVICE_OPTIONS.map(row).join("")}
     </div>`;
   elements.contextSettingsBody.querySelectorAll("[data-watch-service]").forEach((btn) => btn.addEventListener("click", () => {
     const set = new Set(state.mediaServices || []);
@@ -18522,6 +18585,7 @@ function handleContextSettingsAction(event) {
     "assistant": () => renderContextSettingsDialog("assistant"),
     "api-usage": () => renderContextSettingsDialog("api-usage"),
     "beta": () => renderContextSettingsDialog("beta"),
+    "link-test": () => renderContextSettingsDialog("link-test"),
     "paper-signin": () => signInToArticlePaper(SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper)),
     "paper-signout": async () => {
       const paper = SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper);
@@ -21785,6 +21849,15 @@ const STREAMING_SEARCH_TEMPLATES = {
   1899: (t) => `https://www.max.com/search?q=${encodeURIComponent(t)}`
 };
 
+// A Watch card's provider link (before the media hub loads). The href keeps
+// working on its own; the app-wide "Link out" listener opens the service's app
+// on the iPhone instead (STREAMING_HANDOFF_DESIGN.md §4.1).
+function watchProviderLinkHtml(p, item, justWatchUrl, extraCls) {
+  const url = streamingProviderUrl(p, item.title, justWatchUrl);
+  const spec = watchTitleSpec(matchProviderId(p.provider_name), item.title, url, item);
+  return `<a class="watch-provider-link${extraCls}" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" ${linkOutAttrs(spec, escapeHtml)}>${escapeHtml(p.provider_name)}</a>`;
+}
+
 function streamingProviderUrl(provider, title, justWatchFallback) {
   const template = STREAMING_SEARCH_TEMPLATES[provider.provider_id];
   if (template) return template(title);
@@ -22219,6 +22292,7 @@ function watchProviderOrShowtimesHtml(item) {
   }
   const providers = item.streamingProviders;
   if (!providers) return "";
+  prefetchStreamLinks(item);
   // Watch⇄Media UI merge: once the media hub is loaded, render the SAME
   // Coordinator-driven availability the Discover cards use — "Your services" vs
   // "Other services" with provider-aware Open (and in-app Play where possible) —
@@ -22232,13 +22306,13 @@ function watchProviderOrShowtimesHtml(item) {
   if (freeOptions.length) {
     return `<div class="watch-providers">
       <span class="watch-providers-label">Stream:</span>
-      ${freeOptions.slice(0, 4).map((p) => `<a class="watch-provider-link" href="${escapeHtml(streamingProviderUrl(p, item.title, justWatchUrl))}" target="_blank" rel="noopener noreferrer">${escapeHtml(p.provider_name)}</a>`).join("")}
+      ${freeOptions.slice(0, 4).map((p) => watchProviderLinkHtml(p, item, justWatchUrl, "")).join("")}
     </div>`;
   }
   if (rentOptions.length) {
     return `<div class="watch-providers">
       <span class="watch-providers-label">Rent on:</span>
-      ${rentOptions.slice(0, 3).map((p) => `<a class="watch-provider-link watch-provider-rent" href="${escapeHtml(streamingProviderUrl(p, item.title, justWatchUrl))}" target="_blank" rel="noopener noreferrer">${escapeHtml(p.provider_name)}</a>`).join("")}
+      ${rentOptions.slice(0, 3).map((p) => watchProviderLinkHtml(p, item, justWatchUrl, " watch-provider-rent")).join("")}
     </div>`;
   }
   if (justWatchUrl) {
@@ -29234,7 +29308,7 @@ function hubPlayItem(item, hub) {
     openVideoSurface(target.uri, target.mode, item.title || "", startPos);
     return { ok: true, mode: target.mode };
   }
-  if (target.uri) { window.open(target.uri, "_blank", "noopener"); return { ok: true, mode: "handoff" }; }
+  if (target.uri) { handOff(watchTitleSpec(target.providerId, item.title || "", target.uri, item)); return { ok: true, mode: "handoff" }; }
   return { ok: false, reason: "no uri" };
 }
 
@@ -29299,12 +29373,99 @@ if (typeof window !== "undefined" && canUseLocalBackend()) {
 // Drop the cached hub so a services/config change is picked up on the next search.
 function resetMediaHub() { mediaHub = null; watchHubReady = false; watchHubLoading = false; }
 
+// ── Link out (STREAMING_HANDOFF_DESIGN.md §4.1) ─────────────────────────────
+// Every hand-off to a streaming service goes through handOff(): on the iPhone
+// the LinkOut plugin opens the service's app (on the title when we have its
+// exact link), else the website; on the web app, the website. Buttons rendered
+// with linkOutAttrs() (Scores, the game card, Watch's links) are opened by the
+// one listener below.
+function handOff(spec) {
+  if (!spec || (!spec.webUrl && !(spec.appUrls || []).length)) return Promise.resolve("none");
+  if (spec.note) { try { showVoiceToast(spec.note, 3500); } catch { /* noop */ } }
+  return openOutLink(spec, {
+    linkOut: nativeLinkOut(),
+    windowOpen: (u) => window.open(u, "_blank", "noopener"),
+  });
+}
+document.addEventListener("click", (e) => {
+  const el = e.target && e.target.closest ? e.target.closest("[data-link-out]") : null;
+  if (!el) return;
+  e.preventDefault();
+  e.stopPropagation();
+  handOff(linkOutFromElement(el));
+}, true);
+
+// What to open for a title on a service: its exact title / next-episode link
+// when Stream links has one (step 2), else the app's home, else `fallbackUrl`
+// (today's search page or JustWatch). `watchItem` may be a Watch-list item.
+function watchTitleSpec(providerId, title, fallbackUrl, watchItem) {
+  const links = streamLinksForItem(watchItem, providerId);
+  const spec = titleHandoff(providerId, { ...links, search: fallbackUrl });
+  if (!spec.appUrls.length && !spec.webUrl && /^https?:/i.test(fallbackUrl || "")) spec.webUrl = fallbackUrl;
+  if (spec.exact && links.episode && spec.label) spec.note = `Opening ${spec.label} — ${links.episode}`;
+  else if (!spec.exact && spec.label && title && nativeLinkOut()) spec.note = `Opening ${spec.label} — search for “${title}” there`;
+  return spec;
+}
+
+// Stream links (step 2): exact title / next-episode links, cached on the device
+// for a week (media-stream-links.js). Asked for lazily, two at a time, only for
+// Watch-list titles that some service carries. Off until the function's key is
+// set — then every answer is { links: null } and nothing changes.
+let _streamLinks = null;
+function streamLinksCache() {
+  if (_streamLinks) return _streamLinks;
+  let storage = null;
+  try { storage = window.localStorage; } catch { storage = null; }
+  _streamLinks = createStreamLinksCache({
+    storage,
+    fetchLinks: async (type, id) => {
+      const qs = `type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`;
+      const res = await fetch(canUseLocalBackend() ? `/api/stream-links?${qs}` : `/.netlify/functions/stream-links?${qs}`);
+      if (!res.ok) throw new Error(`stream-links ${res.status}`);
+      return res.json();
+    },
+  });
+  return _streamLinks;
+}
+// A Watch-list item ({ type, tmdbId }) or a canonical media item ({ meta }).
+function streamRefOf(item) {
+  if (!item) return null;
+  if (item.meta && item.meta.tmdbId) return { type: item.meta.tmdbType === "tv" ? "tv" : "movie", id: String(item.meta.tmdbId) };
+  if (item.tmdbId) return { type: item.type === "tv" ? "tv" : "movie", id: String(item.tmdbId) };
+  if (item.source && item.source.tmdbId) return streamRefOf(item.source);
+  return null;
+}
+function streamLinksForItem(item, providerId) {
+  const ref = streamRefOf(item);
+  if (!ref || !providerId) return {};
+  try {
+    const entry = streamLinksCache().get(ref.type, ref.id);
+    const progressOf = item.seasonProgress || (item.source && item.source.seasonProgress) || {};
+    return entry ? linksForProvider(entry, providerId, progressOf) : {};
+  } catch { return {}; }
+}
+// Warm the cache for a Watch card that some service carries, so a tap opens
+// the exact title (the tap itself can't wait: browsers only open a window
+// straight from the tap).
+function prefetchStreamLinks(item) {
+  if (!item || item.status === "watched" || !item.streamingProviders) return;
+  const ref = streamRefOf(item);
+  if (ref) { try { streamLinksCache().get(ref.type, ref.id); } catch { /* noop */ } }
+}
+
 // The commercial streamers the user can mark as subscribed (the catalog's
 // handoff-only providers). Kept in sync with media-provider.js PROVIDER_CATALOG.
 const DISCOVER_SERVICE_OPTIONS = [
   ["netflix", "Netflix"], ["disney", "Disney+"], ["max", "Max"], ["hulu", "Hulu"],
   ["prime", "Prime Video"], ["paramount", "Paramount+"], ["appletv", "Apple TV"],
   ["peacock", "Peacock"], ["espn", "ESPN"], ["xfinity", "Xfinity Stream"],
+];
+
+// Sports apps a game can open in (Scores' Watch buttons, sports-watch.js) that
+// aren't Watch-search streamers. Same Add/Remove list (state.mediaServices).
+const SPORTS_SERVICE_OPTIONS = [
+  ["foxone", "Fox One"], ["nfl", "NFL+"], ["nba", "NBA League Pass"], ["nhl", "NHL"],
+  ["mlb", "MLB.TV"], ["fanduel", "FanDuel Sports Network"],
 ];
 
 // ── Watch search scope (the header filter button) ─────────────────────────────
@@ -29584,7 +29745,7 @@ function discoverSvcActivate(btn, hub) {
     const startPos = p && p.kind === "position" && p.position ? p.position : 0; // Jellyfin resume tick
     openVideoSurface(uri, mode, btn.dataset.title || "", startPos);
   }
-  else window.open(uri, "_blank", "noopener");
+  else handOff(watchTitleSpec(btn.dataset.provider, btn.dataset.title || "", uri, item));
 }
 
 // `pick` (the Watch page): no Save buttons — tapping a result adds it to the

@@ -26,7 +26,7 @@ Scores. Scores has no menu entry of its own.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `news-*.js`, `scores-ui.js`, `sports-model.js`, `reader-return.js`, `article-native-reader.js`, `article-scan.js`, `import-canonical.js`, `netlify/functions/_news-*.js`, `netlify/functions/news-feeds.js`, `netlify/functions/scores.mjs`, `netlify/functions/_scores-*.mjs`, `netlify/functions/fetch-article.js`, `netlify/functions/save-article.js`, `netlify/functions/save-page-articles.js`, `netlify/functions/scan-article.js`, `netlify/functions/save-sync-cookie.js`, `netlify/functions/sync-saved-articles.js`, `netlify/functions/_article-extract.js`, `netlify/functions/_import-*.js`, `netlify/functions/import.js`, `netlify/functions/import-pdf-background.js`
+- files: `news-*.js`, `scores-ui.js`, `sports-model.js`, `sports-watch.js`, `reader-return.js`, `article-native-reader.js`, `article-scan.js`, `import-canonical.js`, `netlify/functions/_news-*.js`, `netlify/functions/news-feeds.js`, `netlify/functions/scores.mjs`, `netlify/functions/_scores-*.mjs`, `netlify/functions/fetch-article.js`, `netlify/functions/save-article.js`, `netlify/functions/save-page-articles.js`, `netlify/functions/scan-article.js`, `netlify/functions/save-sync-cookie.js`, `netlify/functions/sync-saved-articles.js`, `netlify/functions/_article-extract.js`, `netlify/functions/_import-*.js`, `netlify/functions/import.js`, `netlify/functions/import-pdf-background.js`
 - state: `savedArticles`, `article*`, `readArticleIds`, `readPublications`, `sportsPrefs`
 
 ## Your scope (edit these)
@@ -77,6 +77,13 @@ Scores. Scores has no menu entry of its own.
   Scores themselves are never stored.
 
 ## Luke's decisions (keep them)
+- **Watch buttons on games (Luke, 2026-10-26; STREAMING_HANDOFF_DESIGN.md §4.3):** a
+  game that's live or starts within the hour shows "Watch" buttons in Scores' expanded
+  game and the dock's game card. `sports-watch.js` maps the scoreboard's broadcaster
+  names (never team → network) to apps in `link-out.js`. Luke's live TV is **Xfinity**:
+  with Xfinity Stream in his Streaming Services, a TV channel (FOX, NBC, CBS, ESPN…)
+  opens in Xfinity Stream first, the network's own app second; streaming-only names
+  (ESPN+, Peacock, Prime Video, Apple TV…) open their own app.
 - Papers: **NYT, Economist, Star Tribune, The Athletic.** A signed-in session proves
   a subscription. The Front page leads with each paper's main-newsletter lead story,
   then newest first. Stories stay **3 days**.

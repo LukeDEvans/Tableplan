@@ -208,6 +208,19 @@ summary: in Amazon open the order → Order Summary → Save → Live. If Live i
 sheet, Amazon is sharing a link rather than a PDF; use Print → pinch out on the preview →
 Share → Live instead.
 
+## Opening streaming apps (LinkOut plugin)
+
+`LinkOutPlugin.swift` (registered in `MainViewController.swift`) is how Watch and
+Scores hand a title or a game to the service's own app — STREAMING_HANDOFF_DESIGN.md.
+`open({ appUrls, webUrl })` tries each app link in order (an https link only as a
+universal link, a custom scheme only if it's in `allowedSchemes`), then the website.
+No Info.plist change: `open` doesn't need `LSApplicationQueriesSchemes`. A new scheme
+in `link-out.js` must go in `allowedSchemes` too (a test checks).
+
+**Check on the phone after a TestFlight build:** Settings › Admin › Beta › Link Test —
+tap each service, then "Copy results" and paste them into a chat. Then Scores during a
+live game: the Watch buttons open Xfinity Stream / the network's app.
+
 ## Coming next (not now)
 - **Stage 1:** CORS + Supabase auth + Gmail native OAuth + confirm asset serving.
 - **Stage 2:** native background-audio queue + on-device TTS behind `native-bridge.js`.
