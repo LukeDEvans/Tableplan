@@ -1,21 +1,25 @@
-// Language practice UI (LANGUAGE_PRACTICE.md): the Dutch row's full view on the
-// Leisure page — lessons, the start screen, the matching board and the summary.
-// The game rules live in language-match.js (pure); this module only draws,
-// turns taps into select() calls and asks tick() when something is due.
+// Language practice UI (LANGUAGE_PRACTICE.md): the Dutch view on the Leisure
+// page. This module is the hub and router — Today, the practice buttons, the
+// course (your Rosetta Stone lessons, then the starter set), a lesson's screen,
+// settings — and it still runs the timed matching board itself. The other
+// exercises are screens in language-ui-cards.js (flashcards, de/het),
+// language-ui-drills.js (listen, sentences, speak) and language-ui-words.js
+// (add words, word list). Rules and scheduling live in the pure modules.
 //
 // createLanguageModule(deps) — deps (all injected by app.js):
-//   getState()   the live state object (languageWords / languageSessions)
-//   persist()    save state (called once per finished session)
+//   getState()   the live state object (language* keys)
+//   persist()    save state (once per finished session or edit, never per tap)
 //   escapeHtml, icon(name, opts)
 //   accountKey() who is signed in; a game only saves to the account it began in
 //   isShowing()  is the Dutch view on screen (Leisure page, Dutch open)?
+//   speech       language-speech.js instance (null → a silent stand-in)
 //   now, setTimer, clearTimer, setRepeat, clearRepeat — clock seams for tests
-//   course       defaults to the Dutch course
+//   course       the base course (defaults to the Dutch starter set)
 
 import { DUTCH_COURSE } from "./language-nl-starter.js";
+import { STARTER_SENTENCES } from "./language-nl-sentences.js";
 import {
-  resolveScope, scopeKey, scopeLabel, reviewLessonIds, lessonStatus, lessonsInOrder,
-  entriesForLesson,
+  resolveScope, scopeKey, scopeLabel, reviewLessonIds, lessonsInOrder, findLesson, findUnit,
 } from "./language-curriculum.js";
 import {
   createMatchGame, startGame, select, tick, endGame, pauseGame, resumeGame,
@@ -23,9 +27,21 @@ import {
 } from "./language-match.js";
 import {
   applySessionToWordStats, addSession, wordTotals, normalizeSessions, lastSession,
+  languagePrefs, NEW_PER_DAY_CHOICES, SPEECH_RATE_CHOICES,
 } from "./language-progress.js";
+import {
+  buildCourse, entriesInCourseOrder, normalizeUserLessons, normalizeUserWords,
+} from "./language-words.js";
+import {
+  normalizeCards, buildSession, deckCounts, pullForward, cardKey, decodeCard, localDay, isKnown,
+} from "./language-srs.js";
+import { deHetItems, plain } from "./language-drills.js";
+import { createFlashcards, createDeHet } from "./language-ui-cards.js";
+import { createListen, createSentences, createSpeak } from "./language-ui-drills.js";
+import { createAddWords, createWordList } from "./language-ui-words.js";
 
 const MISS_FLASH_MS = 450;
+const ALL_POOL_MIN = 12;
 
 export function formatClock(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
@@ -35,6 +51,31 @@ export function formatClock(ms) {
 export function formatAccuracy(acc) {
   return acc == null ? "—" : `${Math.round(acc * 100)}%`;
 }
+
+const SILENT_SPEECH = Object.freeze({
+  info: () => ({ speak: false, listen: false, record: false, native: false }),
+  voiceName: async () => "",
+  hasDutchVoice: () => false,
+  speak: async () => {},
+  stop: () => {},
+  permission: async () => ({ microphone: "denied", speech: "denied" }),
+  ask: async () => ({ microphone: "denied", speech: "denied" }),
+  listen: async () => ({ transcripts: [], recording: false, error: "unavailable" }),
+  stopListening: () => {},
+  isListening: () => false,
+  hasRecording: () => false,
+  playRecording: async () => {},
+  discardRecording: () => {},
+});
+
+const PRACTICE = [
+  ["cards", "Flashcards", "flashcards"],
+  ["match", "Match", "pairs"],
+  ["dehet", "de / het", "label"],
+  ["listen", "Listen", "volumeHigh"],
+  ["sentences", "Sentences", "wordTiles"],
+  ["speak", "Speak", "mic"],
+];
 
 export function createLanguageModule(deps) {
   const {
@@ -47,47 +88,195 @@ export function createLanguageModule(deps) {
     clearTimer = (id) => clearTimeout(id),
     setRepeat = (fn, ms) => setInterval(fn, ms),
     clearRepeat = (id) => clearInterval(id),
-    course = DUTCH_COURSE,
+    course: baseCourse = DUTCH_COURSE,
+    starterSentences = STARTER_SENTENCES,
+    speech: speechDep = null,
     rng,
     gameOptions = () => null, // overrides for local-dev QA (shorter games)
     onChange = () => {},
   } = deps;
+  const speech = speechDep || SILENT_SPEECH;
+  const random = rng || Math.random;
 
   let root = null;
-  // screen: lessons | start | play | summary
-  let view = { screen: "lessons", scope: null };
+  // screen: hub | lesson | start | play | summary | cards | dehet | listen | sentences | speak | add | words
+  let view = { screen: "hub", scope: null };
   let game = null;
   let gameAccount = "";
   let saved = false;
   let dueTimer = null;
   let clockTimer = null;
+  let screen = null; // the mounted exercise screen (cards, listen…)
+  let settingsOpen = false;
   const missTimers = new Map();
 
   const ico = (name, size = 18) => (icon ? icon(name, { size }) : "");
-  const words = () => wordTotals(getState()?.languageWords);
-  const sessions = () => normalizeSessions(getState()?.languageSessions);
+  const st = () => getState() || {};
+  const words = () => wordTotals(st().languageWords);
+  const sessions = () => normalizeSessions(st().languageSessions);
+  const prefs = () => languagePrefs(st().languagePrefs);
+  const cards = () => {
+    const s = st();
+    if (!s.languageCards || typeof s.languageCards !== "object") s.languageCards = {};
+    return s.languageCards;
+  };
+
+  // ── The course: starter set + your words, rebuilt only when they change ────
+  let memo = { key: "", course: null, byId: null };
+  function course() {
+    const s = st();
+    const lessons = s.languageUserLessons || {};
+    const userWords = s.languageUserWords || {};
+    const show = prefs().showStarter;
+    const key = `${show}|${Object.keys(lessons).length}|${Object.keys(userWords).length}|${JSON.stringify(lessons).length}|${JSON.stringify(userWords).length}`;
+    if (memo.key !== key || !memo.course) {
+      const c = buildCourse(baseCourse, lessons, userWords, { showStarter: show, starterSentences });
+      const byId = new Map();
+      for (const e of [...c.entries, ...(c.sentences || [])]) byId.set(e.id, e);
+      memo = { key, course: c, byId, ordered: entriesInCourseOrder(c) };
+    }
+    return memo.course;
+  }
+  const entryById = (id) => { course(); return memo.byId.get(id) || null; };
+  const orderedEntries = () => { course(); return memo.ordered; };
+
+  // ── Scopes ────────────────────────────────────────────────────────────────
+  // { kind: "all" } everything · { kind: "due" } what's due or shaky ·
+  // lesson / unit / review as before.
+  function entriesFor(scope) {
+    const c = course();
+    if (!scope) return [];
+    if (scope.kind === "lesson" || scope.kind === "unit" || scope.kind === "review") return resolveScope(c, scope);
+    const ordered = orderedEntries();
+    const cs = cards();
+    const learned = ordered.filter((e) => cs[cardKey(e.id, "r")]);
+    if (scope.kind === "due") {
+      const today = localDay(now());
+      const totals = words();
+      const due = learned.filter((e) => {
+        const r = decodeCard(cs[cardKey(e.id, "r")]);
+        const p = decodeCard(cs[cardKey(e.id, "p")]);
+        return (r && r.due <= today) || (p && p.due <= today) || (totals[e.id]?.w || 0) > (totals[e.id]?.c || 0);
+      });
+      if (due.length >= ALL_POOL_MIN) return due;
+      // Top up with the least-settled learned words.
+      const extra = learned.filter((e) => !due.includes(e))
+        .sort((a, b) => decodeCard(cs[cardKey(a.id, "r")]).s - decodeCard(cs[cardKey(b.id, "r")]).s);
+      const out = [...due, ...extra].slice(0, Math.max(ALL_POOL_MIN, due.length));
+      return out.length ? out : ordered.slice(0, ALL_POOL_MIN * 2);
+    }
+    // all: what you've learned; if that's still small, the next words in order.
+    if (learned.length >= ALL_POOL_MIN) return learned;
+    const rest = ordered.filter((e) => !cs[cardKey(e.id, "r")]);
+    return [...learned, ...rest.slice(0, ALL_POOL_MIN * 2 - learned.length)];
+  }
+
+  function sentencesFor(scope) {
+    const all = course().sentences || [];
+    if (!scope) return [];
+    if (scope.kind === "lesson") return all.filter((x) => x.lesson === scope.id);
+    if (scope.kind === "unit") return all.filter((x) => x.unit === scope.id);
+    if (scope.kind === "review") { const ids = new Set(scope.lessonIds || []); return all.filter((x) => ids.has(x.lesson)); }
+    return all;
+  }
+
+  function labelFor(scope) {
+    if (!scope) return "";
+    if (scope.kind === "all") return "Everything";
+    if (scope.kind === "due") return "Review due";
+    return scopeLabel(course(), scope);
+  }
+
+  // ── Shared context for the exercise screens ─────────────────────────────────
+  const ctx = {
+    escapeHtml, ico, speech, rng: random,
+    prefs, course, entryById, now,
+    today: () => localDay(now()),
+    cards,
+    setCard: (key, tuple) => { cards()[key] = tuple; },
+    pull: (entryId) => {
+      const k = cardKey(entryId, "r");
+      const cs = cards();
+      if (cs[k]) cs[k] = pullForward(cs[k], now());
+    },
+    wordTotals: () => words(),
+    countWords: (map) => {
+      const s = st();
+      s.languageWords = applySessionToWordStats(s.languageWords, map, { at: new Date(now()).toISOString(), scope: scopeKey(view.scope), device: deviceId() });
+    },
+    saveSession: ({ kind, label, startedAt, correct, attempts }) => {
+      if (accountKey() !== sessionAccount) return;
+      const s = st();
+      const end = now();
+      s.languageSessions = addSession(s.languageSessions, {
+        id: `lang-${kind}-${Number(startedAt).toString(36)}-${Math.floor(random() * 1e9).toString(36)}`,
+        kind, lang: baseCourse.lang, scope: scopeKey(view.scope), label,
+        startedAt: new Date(startedAt).toISOString(), endedAt: new Date(end).toISOString(),
+        durationMs: Math.max(0, end - startedAt), correct, attempts, target: 0, reached: false, endReason: "",
+      });
+      onChange();
+    },
+    persist: () => { if (accountKey() === sessionAccount) persist(); },
+    back: () => goBack(),
+    examplesFor: (e) => examplesFor(e),
+    allSentences: () => course().sentences || [],
+    userLessons: () => normalizeUserLessons(st().languageUserLessons),
+    userWords: () => normalizeUserWords(st().languageUserWords),
+    setUser: ({ lessons, words: w }) => {
+      const s = st();
+      if (lessons) s.languageUserLessons = lessons;
+      if (w) s.languageUserWords = w;
+      memo.key = ""; // rebuild the course
+    },
+    openLesson: (id) => openLesson(id),
+    openAddWords: (lessonId) => openScreen("add", { lessonId }),
+    isoNow: () => new Date(now()).toISOString(),
+  };
+  // Answers only save to the account the screen was opened in.
+  let sessionAccount = "";
+
+  // A sentence from the same lesson that uses the word (for the back of a card).
+  function examplesFor(e) {
+    const word = plain(String(e.text || "").replace(/^(de|het|een)\s+/i, ""));
+    if (!word || word.includes(" ") && word.split(" ").length > 2) return [];
+    const re = new RegExp(`(^|\\s)${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`);
+    const all = course().sentences || [];
+    const same = all.filter((x) => x.lesson === e.lesson && re.test(plain(x.text)));
+    return same.length ? same : all.filter((x) => re.test(plain(x.text))).slice(0, 1);
+  }
 
   // ── Data for the Leisure row (rendered by app.js) ──────────────────────────
+  function todayCounts() {
+    const plan = buildSession(cards(), orderedEntries(), now(), { newLimit: prefs().newPerDay });
+    return { due: plan.counts.due, fresh: plan.counts.fresh };
+  }
+
   function rowSummary() {
-    const last = sessions()[0];
-    if (!last) return "Not practiced yet";
-    const when = last.endedAt ? new Date(last.endedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
-    return `Last ${last.correct} matched${when ? ` · ${when}` : ""}`;
+    const { due, fresh } = todayCounts();
+    if (due) return `${due} to review${fresh ? ` · ${fresh} new` : ""}`;
+    if (!Object.keys(cards()).length && !sessions().length) return fresh ? `${fresh} new words to start` : "Not started";
+    return fresh ? `All reviewed · ${fresh} new` : "All caught up";
+  }
+
+  function lessonCounts(lessonId) {
+    const list = resolveScope(course(), { kind: "lesson", id: lessonId });
+    const sents = sentencesFor({ kind: "lesson", id: lessonId });
+    return { ...deckCounts(cards(), list, now()), sentences: sents.length };
   }
 
   function rowLessons() {
-    const stats = words();
-    return lessonsInOrder(course).map((l) => {
-      const s = lessonStatus(course, l.id, stats);
-      return { id: l.id, title: l.title, sub: s.seen ? `${s.matched}/${s.total} matched` : `${s.total} words` };
+    return lessonsInOrder(course()).map((l) => {
+      const c = lessonCounts(l.id);
+      const learned = c.known + c.learning;
+      return { id: l.id, title: l.title, user: !!l.user, sub: learned ? `${c.known} of ${c.total} known` : `${c.total} words` };
     });
   }
 
   function reviewAvailable() {
-    return reviewLessonIds(course, words()).length > 0;
+    return Object.keys(cards()).length > 0 || reviewLessonIds(course(), words()).length > 0;
   }
 
-  // ── Timers (all guarded by the game they were set for) ─────────────────────
+  // ── Matching: timers (all guarded by the game they were set for) ──────────
   function stopTimers() {
     if (dueTimer != null) clearTimer(dueTimer);
     if (clockTimer != null) clearRepeat(clockTimer);
@@ -130,14 +319,15 @@ export function createLanguageModule(deps) {
     if (game.pausedAt == null) advance();
   }
 
-  // ── Session lifecycle ───────────────────────────────────────────────────────
+  // ── Matching: session lifecycle ────────────────────────────────────────────
   function beginGame(scope) {
     stopTimers();
-    const pool = resolveScope(course, scope);
+    const pool = entriesFor(scope);
     game = createMatchGame(pool, { ...(gameOptions() || {}), ...(rng ? { rng } : {}) });
+    game.listen = !!view.listen && speech.info().speak;
     gameAccount = accountKey();
     saved = false;
-    view = { screen: "play", scope };
+    view = { ...view, screen: "play", scope };
     startGame(game, now());
     if (game.status === "ended") { finish(); return; }
     render();
@@ -146,22 +336,25 @@ export function createLanguageModule(deps) {
   }
 
   // Save once, to the account the game began in, only if something was tried.
+  // Words missed on the board come back in flashcards today.
   function saveResult() {
     if (!game || saved) return;
     saved = true;
     const sum = gameSummary(game, now());
     if (!sum.attempts) return;
     if (accountKey() !== gameAccount) return;
-    const st = getState();
-    if (!st) return;
+    const s = getState();
+    if (!s) return;
     const at = new Date(game.endedAt ?? now()).toISOString();
     const key = scopeKey(view.scope);
-    st.languageWords = applySessionToWordStats(st.languageWords, sum.words, { at, scope: key, device: deviceId() });
-    st.languageSessions = addSession(st.languageSessions, {
-      id: `lang-${game.startedAt.toString(36)}-${Math.floor((rng || Math.random)() * 1e9).toString(36)}`,
-      lang: course.lang,
+    s.languageWords = applySessionToWordStats(s.languageWords, sum.words, { at, scope: key, device: deviceId() });
+    for (const [id, w] of Object.entries(sum.words)) if (w.w > 0) ctx.pull(id);
+    s.languageSessions = addSession(s.languageSessions, {
+      id: `lang-${game.startedAt.toString(36)}-${Math.floor(random() * 1e9).toString(36)}`,
+      kind: "match",
+      lang: baseCourse.lang,
       scope: key,
-      label: scopeLabel(course, view.scope),
+      label: labelFor(view.scope),
       startedAt: new Date(game.startedAt).toISOString(),
       endedAt: at,
       durationMs: sum.durationMs,
@@ -187,8 +380,8 @@ export function createLanguageModule(deps) {
     finish();
   }
 
-  // Leaving the Dutch view mid-game: end it (counted once, as "left") and
-  // forget it, so coming back never resumes a stale clock.
+  // Leaving the Dutch view: end a running game (counted once, as "left"), close
+  // any exercise (saving what was answered), and come back to the hub next time.
   function leave() {
     if (game && game.status === "playing") {
       endGame(game, now(), "left");
@@ -196,11 +389,19 @@ export function createLanguageModule(deps) {
     }
     stopTimers();
     game = null;
-    view = { screen: "lessons", scope: null };
+    closeScreen();
+    speech.stop();
+    view = { screen: "hub", scope: null };
     if (root && root.isConnected) render();
   }
 
   function onVisibility() {
+    if (typeof document === "undefined") return;
+    if (document.visibilityState === "hidden") {
+      // An exercise in progress keeps its answers: save them now (one write).
+      if (screen && screen.dirty?.()) persist();
+      speech.stop();
+    }
     if (!game || game.status !== "playing") return;
     if (document.visibilityState === "hidden") {
       pauseGame(game, now());
@@ -211,7 +412,7 @@ export function createLanguageModule(deps) {
   }
   if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
   // Closing the app or tab mid-game: record what was played, as "left".
-  if (typeof window !== "undefined") window.addEventListener("pagehide", () => { if (game && game.status === "playing") leave(); });
+  if (typeof window !== "undefined") window.addEventListener("pagehide", () => { if ((game && game.status === "playing") || screen) leave(); });
 
   function resume() {
     if (!game) return;
@@ -220,89 +421,272 @@ export function createLanguageModule(deps) {
     schedule();
   }
 
-  // ── Rendering ───────────────────────────────────────────────────────────────
+  // ── Navigation ─────────────────────────────────────────────────────────────
   const mounted = new WeakSet();
   function mount(el) {
     root = el;
-    if (!mounted.has(el)) { mounted.add(el); el.addEventListener("click", onClick); }
+    if (!mounted.has(el)) { mounted.add(el); el.addEventListener("click", onClick); el.addEventListener("change", onChange_); }
     render();
   }
 
-  function openStart(scope) {
+  function closeScreen() {
+    if (screen) { try { screen.leave(); } catch { /* ignore */ } }
+    screen = null;
+  }
+
+  // Back from an exercise: to the lesson it came from, else the hub.
+  function goBack() {
+    closeScreen();
+    speech.stop();
+    const from = view.from;
+    if (from?.screen === "lesson") view = { screen: "lesson", lessonId: from.lessonId, scope: { kind: "lesson", id: from.lessonId } };
+    else if (from?.screen === "words") view = { screen: "words", scope: null, lessonId: from.lessonId };
+    else view = { screen: "hub", scope: null };
+    render();
+  }
+
+  function openScreen(name, opts = {}) {
     if (game && game.status === "playing") leave();
-    view = { screen: "start", scope };
+    closeScreen();
+    const from = view.screen === "lesson" ? { screen: "lesson", lessonId: view.lessonId } : view.screen === "words" ? { screen: "words", lessonId: view.lessonId } : null;
+    view = { screen: name, scope: opts.scope || null, from, opts };
     if (root) render();
+  }
+
+  function openLesson(id) {
+    if (game && game.status === "playing") leave();
+    closeScreen();
+    view = { screen: "lesson", lessonId: id, scope: { kind: "lesson", id } };
+    if (root) render();
+  }
+
+  function openStart(scope, extra = {}) {
+    if (game && game.status === "playing") leave();
+    closeScreen();
+    const from = view.screen === "lesson" ? { screen: "lesson", lessonId: view.lessonId } : null;
+    view = { screen: "start", scope, from, listen: !!extra.listen };
+    if (root) render();
+  }
+
+  function practice(kind, scope) {
+    sessionAccount = accountKey();
+    if (kind === "match") { openStart(scope); return; }
+    openScreen(kind, { scope });
   }
 
   function render() {
     if (!root) return;
-    if (view.screen === "play" && game) root.innerHTML = playHtml();
-    else if (view.screen === "summary" && game) root.innerHTML = summaryHtml();
-    else if (view.screen === "start" && view.scope) root.innerHTML = startHtml();
-    else root.innerHTML = lessonsHtml();
-    if (view.screen === "play") { paintAll(); paintStatus(); }
+    const sc = view.screen;
+    if (sc === "play" && game) { root.innerHTML = playHtml(); paintAll(); paintStatus(); return; }
+    if (sc === "summary" && game) { root.innerHTML = summaryHtml(); return; }
+    if (sc === "start" && view.scope) { root.innerHTML = startHtml(); return; }
+    if (sc === "lesson" && findLesson(course(), view.lessonId)) { root.innerHTML = lessonHtml(); return; }
+    if (["cards", "dehet", "listen", "sentences", "speak", "add", "words"].includes(sc)) { mountScreen(sc); return; }
+    view = { screen: "hub", scope: null };
+    root.innerHTML = hubHtml();
   }
 
-  function provisionalNote() {
-    return `<p class="lang-note" role="note">${ico("info", 16)}<span>Starter set — not yet matched to your Rosetta Stone lessons. Words are common beginner Dutch; each one is marked <em>provisional</em> until checked against your course list.</span></p>`;
+  function mountScreen(name) {
+    if (screen && screen.name === name && screen.el?.isConnected) return; // already on screen
+    closeScreen();
+    root.innerHTML = `<div class="lang-screen" data-lang-screen="${name}"></div>`;
+    const el = root.firstElementChild;
+    const scope = view.scope;
+    const label = labelFor(scope);
+    let s = null;
+    if (name === "cards") {
+      s = createFlashcards(ctx);
+      s.mount(el, { entries: scope?.kind === "all" || scope?.kind === "due" ? orderedEntries() : entriesFor(scope), label: scope?.kind === "all" ? "Today" : label });
+    } else if (name === "dehet") {
+      s = createDeHet(ctx);
+      s.mount(el, { entries: scope?.kind === "all" ? orderedEntries() : entriesFor(scope), label });
+    } else if (name === "listen") {
+      s = createListen(ctx);
+      s.mount(el, { entries: entriesFor(scope), label });
+    } else if (name === "sentences") {
+      s = createSentences(ctx);
+      s.mount(el, { sentences: sentencesFor(scope), label });
+    } else if (name === "speak") {
+      s = createSpeak(ctx);
+      s.mount(el, { entries: entriesFor(scope), sentences: sentencesFor(scope), label });
+    } else if (name === "add") {
+      s = createAddWords(ctx);
+      sessionAccount = accountKey();
+      s.mount(el, { lessonId: view.opts?.lessonId || "" });
+    } else if (name === "words") {
+      s = createWordList(ctx);
+      sessionAccount = accountKey();
+      s.mount(el, { lessonId: view.opts?.lessonId || view.lessonId || "" });
+    }
+    screen = { name, el, leave: () => s?.leave(), dirty: () => { const x = s?._state?.(); return !!(x && x.reviewed && !x.saved); }, inner: s };
   }
 
-  function lessonsHtml() {
-    const stats = words();
-    const reviewIds = reviewLessonIds(course, stats);
-    const levels = (course.levels || []).map((level) => `
-      <section class="lang-level" aria-label="${escapeHtml(level.title)}">
-        <h3 class="lang-level-title">${escapeHtml(level.title)}${level.provisional ? ' <span class="lang-tag">Provisional</span>' : ""}</h3>
-        ${(level.units || []).map((unit) => {
-          const unitWords = resolveScope(course, { kind: "unit", id: unit.id }).length;
-          return `
-          <div class="lang-unit">
-            <div class="lang-unit-head">
-              <h4 class="lang-unit-title">${escapeHtml(unit.title)}</h4>
-              <button class="secondary-btn compact-btn" type="button" data-lang-start="unit" data-lang-id="${escapeHtml(unit.id)}" aria-label="Practice all of ${escapeHtml(unit.title)} (${unitWords} words)">Whole unit</button>
-            </div>
-            <ul class="lang-lessons">
-              ${(unit.lessons || []).map((lesson) => {
-                const s = lessonStatus(course, lesson.id, stats);
-                const status = !s.seen ? "Not started" : `${s.matched} of ${s.total} matched${s.last ? ` · ${new Date(s.last).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}`;
-                return `<li><button class="lang-lesson" type="button" data-lang-start="lesson" data-lang-id="${escapeHtml(lesson.id)}">
-                  <span class="lang-lesson-title">${escapeHtml(lesson.title)}</span>
-                  <span class="lang-lesson-meta">${s.total} words · ${escapeHtml(status)}</span>
-                  <span class="lang-lesson-verify ${s.verified ? "is-verified" : ""}">${s.verified ? `${ico("verified", 14)} Verified` : "Provisional"}</span>
-                </button></li>`;
-              }).join("")}
-            </ul>
-          </div>`;
-        }).join("")}
-      </section>`).join("");
+  // ── Hub ────────────────────────────────────────────────────────────────────
+  function hubHtml() {
+    const c = course();
+    const p = prefs();
+    const plan = buildSession(cards(), orderedEntries(), now(), { newLimit: p.newPerDay });
+    const { due, fresh } = plan.counts;
+    const total = deckCounts(cards(), orderedEntries(), now());
+    const today = due || fresh
+      ? `<p class="lang-today-counts"><strong>${due}</strong> to review · <strong>${fresh}</strong> new</p>
+         <button class="primary-btn lang-go" type="button" data-lang-today>${ico("play", 16)} Start</button>`
+      : `<p class="lang-today-counts">All caught up${total.fresh ? "" : " — every word is learned"}.</p>
+         ${total.fresh ? `<button class="secondary-btn" type="button" data-lang-today>${ico("add", 16)} Learn a few more</button>` : ""}`;
+    const practiceBtns = PRACTICE.map(([kind, label, ic]) => `
+      <button class="lang-practice-btn" type="button" data-lang-practice="${kind}" data-lang-scope="${kind === "match" ? "due" : "all"}">
+        ${ico(ic, 22)}<span>${label}</span>
+      </button>`).join("");
     return `
-      <div class="lang-view">
-        <div class="lang-toolbar">
-          <button class="primary-btn" type="button" data-lang-start="review" ${reviewIds.length ? "" : "disabled"}>${ico("replay", 16)} Review practiced lessons</button>
-          <span class="lang-toolbar-hint">${reviewIds.length ? `${reviewIds.length} ${reviewIds.length === 1 ? "lesson" : "lessons"} practiced` : "Practice a lesson to unlock review"}</span>
-        </div>
-        ${provisionalNote()}
-        ${levels}
+      <div class="lang-view lang-hub">
+        <section class="lang-today" aria-label="Today">
+          <p class="lang-kicker">Today</p>
+          ${today}
+          <p class="lang-today-known">${total.known} known · ${total.learning} learning · ${total.fresh} not started</p>
+        </section>
+        <section aria-label="Practice">
+          <h3 class="lang-level-title">Practice</h3>
+          <div class="lang-practice-grid">${practiceBtns}</div>
+        </section>
+        <section class="lang-course" aria-label="Lessons">
+          <div class="lang-unit-head">
+            <h3 class="lang-level-title">Lessons</h3>
+            <span class="lang-actions">
+              <button class="secondary-btn compact-btn" type="button" data-lang-words>Word list</button>
+              <button class="primary-btn compact-btn" type="button" data-lang-add>${ico("add", 16)} Add words</button>
+            </span>
+          </div>
+          ${c.hasUserCourse ? "" : `<p class="lang-note" role="note">${ico("info", 16)}<span>Add your Rosetta Stone lessons with <b>Add words</b>: paste a lesson's vocabulary, one per line (<span lang="nl">de hond</span> = dog). Until then you're practicing a starter set of common Dutch.</span></p>`}
+          ${levelsHtml(c)}
+        </section>
+        ${settingsHtml(p, c)}
       </div>`;
   }
 
+  function levelsHtml(c) {
+    return (c.levels || []).map((level) => `
+      <section class="lang-level" aria-label="${escapeHtml(level.title)}">
+        <h4 class="lang-level-sub">${escapeHtml(level.title)}${level.provisional ? ' <span class="lang-tag">Provisional</span>' : ""}</h4>
+        ${(level.units || []).map((unit) => `
+          <div class="lang-unit">
+            <h5 class="lang-unit-title">${escapeHtml(unit.title)}</h5>
+            <ul class="lang-lessons">
+              ${(unit.lessons || []).map((lesson) => {
+                const n = lessonCounts(lesson.id);
+                const learned = n.known + n.learning;
+                const meta = `${n.total} ${n.total === 1 ? "word" : "words"}${n.sentences ? ` · ${n.sentences} ${n.sentences === 1 ? "sentence" : "sentences"}` : ""}${learned ? ` · ${n.known} known` : ""}${n.due ? ` · ${n.due} due` : ""}`;
+                return `<li><button class="lang-lesson" type="button" data-lang-lesson="${escapeHtml(lesson.id)}">
+                  <span class="lang-lesson-title">${escapeHtml(lesson.title)}</span>
+                  <span class="lang-lesson-meta">${escapeHtml(meta)}</span>
+                  ${level.user ? "" : '<span class="lang-lesson-verify">Starter</span>'}
+                </button></li>`;
+              }).join("")}
+            </ul>
+          </div>`).join("")}
+      </section>`).join("");
+  }
+
+  function settingsHtml(p, c) {
+    const rateLabel = (r) => (r <= 0.7 ? "Slow" : r < 1 ? "Relaxed" : "Normal");
+    return `
+      <details class="lang-settings" ${settingsOpen ? "open" : ""} data-lang-settings>
+        <summary>${ico("settings", 16)} Practice settings</summary>
+        <div class="lang-settings-body">
+          <label class="lang-setting">New words a day
+            <select data-lang-pref="newPerDay">${NEW_PER_DAY_CHOICES.map((n) => `<option value="${n}" ${n === p.newPerDay ? "selected" : ""}>${n === 0 ? "None (review only)" : n}</option>`).join("")}</select>
+          </label>
+          <label class="lang-setting">Speaking speed
+            <select data-lang-pref="speechRate">${SPEECH_RATE_CHOICES.map((r) => `<option value="${r}" ${r === p.speechRate ? "selected" : ""}>${rateLabel(r)}</option>`).join("")}</select>
+          </label>
+          <label class="lang-setting lang-setting--toggle">Play Dutch automatically
+            <input type="checkbox" class="live-toggle" data-lang-pref="autoPlay" ${p.autoPlay ? "checked" : ""} />
+          </label>
+          ${c.hasUserCourse ? `<label class="lang-setting lang-setting--toggle">Show the starter set
+            <input type="checkbox" class="live-toggle" data-lang-pref="showStarter" ${p.showStarter ? "checked" : ""} />
+          </label>` : ""}
+          <p class="lang-start-detail" data-lang-voice>${voiceNote()}</p>
+        </div>
+      </details>`;
+  }
+
+  let voiceText = "";
+  function voiceNote() {
+    const i = speech.info();
+    if (!i.speak) return "This device can't speak Dutch aloud.";
+    if (!voiceText) {
+      speech.voiceName().then((name) => {
+        voiceText = name ? `Voice: ${name}.` : "No Dutch voice found on this device.";
+        const el = root?.querySelector("[data-lang-voice]");
+        if (el) el.textContent = `${voiceText} ${voiceTip(i)}`;
+      });
+      return voiceTip(i);
+    }
+    return `${voiceText} ${voiceTip(i)}`;
+  }
+  const voiceTip = (i) => (i.native
+    ? "For a more natural voice, download Dutch (Premium) in iPhone Settings › Accessibility › Spoken Content › Voices."
+    : "");
+
+  // ── Lesson screen ──────────────────────────────────────────────────────────
+  function lessonHtml() {
+    const c = course();
+    const lesson = findLesson(c, view.lessonId);
+    const unit = findUnit(c, lesson.unitId);
+    const n = lessonCounts(lesson.id);
+    const nouns = deHetItems(resolveScope(c, { kind: "lesson", id: lesson.id })).length;
+    const scope = `data-lang-scope="lesson" data-lang-id="${escapeHtml(lesson.id)}"`;
+    const btn = (kind, label, ic, enabled = true, why = "") => `
+      <button class="lang-practice-btn" type="button" data-lang-practice="${kind}" ${scope} ${enabled ? "" : "disabled"} ${why ? `title="${escapeHtml(why)}"` : ""}>
+        ${ico(ic, 22)}<span>${label}</span>
+      </button>`;
+    return `
+      <div class="lang-view lang-lesson-view">
+        <button class="secondary-btn compact-btn lang-back" type="button" data-lang-hub>${ico("back", 16)} All lessons</button>
+        <p class="lang-kicker">${escapeHtml(unit?.title || "")}</p>
+        <h3 class="lang-start-title">${escapeHtml(lesson.title)}</h3>
+        <dl class="lang-facts">
+          <div><dt>Words</dt><dd>${n.total}</dd></div>
+          <div><dt>Known</dt><dd>${n.known}</dd></div>
+          <div><dt>Due</dt><dd>${n.due}</dd></div>
+          <div><dt>New</dt><dd>${n.fresh}</dd></div>
+        </dl>
+        <div class="lang-practice-grid">
+          ${btn("cards", "Flashcards", "flashcards", n.total > 0)}
+          ${btn("match", "Match", "pairs", n.total > 1)}
+          ${btn("dehet", "de / het", "label", nouns > 0, "No nouns with de/het in this lesson")}
+          ${btn("listen", "Listen", "volumeHigh", n.total > 0)}
+          ${btn("sentences", "Sentences", "wordTiles", n.sentences > 0, "No sentences in this lesson")}
+          ${btn("speak", "Speak", "mic", n.total + n.sentences > 0)}
+        </div>
+        <div class="lang-actions">
+          ${unit ? `<button class="secondary-btn compact-btn" type="button" data-lang-practice="match" data-lang-scope="unit" data-lang-id="${escapeHtml(unit.id)}">Match the whole unit</button>` : ""}
+          ${lesson.user ? `<button class="secondary-btn compact-btn" type="button" data-lang-add data-lang-id="${escapeHtml(lesson.id)}">${ico("add", 16)} Add words</button>` : ""}
+          <button class="secondary-btn compact-btn" type="button" data-lang-words data-lang-id="${escapeHtml(lesson.id)}">${lesson.user ? "Edit words" : "Word list"}</button>
+        </div>
+      </div>`;
+  }
+
+  // ── Match: start, board, summary ──────────────────────────────────────────
   function scopeForReview() {
-    return { kind: "review", lessonIds: reviewLessonIds(course, words()) };
+    return { kind: "review", lessonIds: reviewLessonIds(course(), words()) };
   }
 
   function startHtml() {
     const scope = view.scope;
-    const pool = resolveScope(course, scope);
-    const label = scopeLabel(course, scope);
+    const pool = entriesFor(scope);
+    const label = labelFor(scope);
     const board = Math.min(MATCH_DEFAULTS.boardSize, pool.length);
-    const last = lastSession(sessions(), scopeKey(scope));
-    const kind = scope.kind === "lesson" ? "Lesson" : scope.kind === "unit" ? "Unit" : "Review";
+    const last = lastSession(sessions(), scopeKey(scope), "match");
+    const kind = scope.kind === "lesson" ? "Lesson" : scope.kind === "unit" ? "Unit" : scope.kind === "due" ? "Match" : "Review";
     let detail = "";
     if (scope.kind === "review") {
       detail = scope.lessonIds.length
-        ? `Words from ${scope.lessonIds.length} practiced ${scope.lessonIds.length === 1 ? "lesson" : "lessons"}: ${scope.lessonIds.map((id) => escapeHtml(scopeLabel(course, { kind: "lesson", id }))).join(", ")}.`
+        ? `Words from ${scope.lessonIds.length} practiced ${scope.lessonIds.length === 1 ? "lesson" : "lessons"}: ${scope.lessonIds.map((id) => escapeHtml(scopeLabel(course(), { kind: "lesson", id }))).join(", ")}.`
         : "";
+    } else if (scope.kind === "due") {
+      detail = "Words that are due or you've missed lately, topped up with recent ones.";
     }
+    const canListen = speech.info().speak;
     const body = !pool.length
       ? `<p class="empty-state">${scope.kind === "review" ? "Nothing to review yet. Practice a lesson first, and its words join the review." : "This set has no words yet."}</p>`
       : `
@@ -313,12 +697,14 @@ export function createLanguageModule(deps) {
         </dl>
         ${detail ? `<p class="lang-start-detail">${detail}</p>` : ""}
         ${board < MATCH_DEFAULTS.boardSize ? `<p class="lang-start-detail">This set has ${pool.length} ${pool.length === 1 ? "word" : "words"}, so the board shows ${board} ${board === 1 ? "pair" : "pairs"}.</p>` : ""}
-        <p class="lang-start-detail">Tap a Dutch word, then its English meaning. Wrong pairs cost nothing.</p>
+        <p class="lang-start-detail">Tap a Dutch word, then its English meaning. Wrong pairs cost nothing; missed words come back in your flashcards.</p>
+        ${canListen ? `<label class="lang-setting lang-setting--toggle">Listen mode (the Dutch column plays its word)
+          <input type="checkbox" class="live-toggle" data-lang-listen ${view.listen ? "checked" : ""} /></label>` : ""}
         ${last ? `<p class="lang-start-last">Last time: ${last.correct} matched · ${formatAccuracy(last.attempts ? last.correct / last.attempts : null)} accurate</p>` : ""}
         <button class="primary-btn lang-go" type="button" data-lang-begin>${ico("play", 16)} Start</button>`;
     return `
       <div class="lang-view lang-start">
-        <button class="secondary-btn compact-btn lang-back" type="button" data-lang-lessons>${ico("back", 16)} Lessons</button>
+        <button class="secondary-btn compact-btn lang-back" type="button" data-lang-lessons>${ico("back", 16)} ${view.from?.screen === "lesson" ? "Lesson" : "Back"}</button>
         <p class="lang-kicker">${kind}</p>
         <h3 class="lang-start-title">${escapeHtml(label)}</h3>
         ${body}
@@ -331,9 +717,9 @@ export function createLanguageModule(deps) {
 
   function playHtml() {
     const n = game.left.length;
-    const cards = (side) => Array.from({ length: n }, (_, i) => cardHtml(side, i)).join("");
+    const cardsHtml = (side) => Array.from({ length: n }, (_, i) => cardHtml(side, i)).join("");
     return `
-      <div class="lang-view lang-play">
+      <div class="lang-view lang-play${game.listen ? " is-listen" : ""}">
         <div class="lang-hud">
           <span class="lang-clock" data-lang-clock role="timer" aria-label="Time left">${ico("clock", 16)}<span data-lang-clock-text>${formatClock(remainingMs(game, now()))}</span></span>
           <div class="lang-progress" aria-label="Matches">
@@ -343,8 +729,8 @@ export function createLanguageModule(deps) {
           <button class="secondary-btn compact-btn" type="button" data-lang-quit>End</button>
         </div>
         <div class="lang-board" role="group" aria-label="Match Dutch to English">
-          <div class="lang-col" role="group" aria-label="Dutch"><p class="lang-col-head" lang="nl">Nederlands</p>${cards("left")}</div>
-          <div class="lang-col" role="group" aria-label="English"><p class="lang-col-head">English</p>${cards("right")}</div>
+          <div class="lang-col" role="group" aria-label="Dutch"><p class="lang-col-head" lang="nl">${game.listen ? "Luister" : "Nederlands"}</p>${cardsHtml("left")}</div>
+          <div class="lang-col" role="group" aria-label="English"><p class="lang-col-head">English</p>${cardsHtml("right")}</div>
         </div>
         <div class="lang-paused" data-lang-paused hidden>
           <p>Paused</p>
@@ -361,8 +747,10 @@ export function createLanguageModule(deps) {
     if (!btn || !slot) return;
     const pair = slot.pairId ? pairText(game, slot.pairId) : null;
     const text = pair ? (side === "left" ? pair.text : pair.en) : "";
-    btn.querySelector(".lang-card-text").textContent = text;
-    if (side === "left") btn.setAttribute("lang", course.lang); else btn.removeAttribute("lang");
+    // Listen mode: the Dutch card shows a speaker until it's matched.
+    const hideText = side === "left" && game.listen && slot.state === "active";
+    btn.querySelector(".lang-card-text").innerHTML = hideText ? `${ico("volumeHigh", 22)}<span class="visually-hidden">Play word ${i + 1}</span>` : escapeHtml(text);
+    if (side === "left") btn.setAttribute("lang", baseCourse.lang); else btn.removeAttribute("lang");
     const selected = game.selected[side] === i;
     btn.classList.toggle("is-selected", selected);
     btn.classList.toggle("is-matched", slot.state === "matched");
@@ -376,7 +764,7 @@ export function createLanguageModule(deps) {
     btn.setAttribute("aria-pressed", selected ? "true" : "false");
     btn.disabled = slot.state !== "active" || game.status !== "playing";
     btn.querySelector(".lang-card-mark").innerHTML = slot.state === "matched" ? ico("checkmark", 16) : "";
-    btn.setAttribute("aria-label", slot.state === "matched" ? `${text}, matched` : slot.state === "empty" ? "Empty" : text);
+    btn.setAttribute("aria-label", slot.state === "matched" ? `${text}, matched` : slot.state === "empty" ? "Empty" : hideText ? `Play word ${i + 1}` : text);
   }
 
   function paintAll() {
@@ -432,6 +820,11 @@ export function createLanguageModule(deps) {
     if (!game) return;
     applyDue();
     if (game.status === "ended") { finish(); return; }
+    if (side === "left" && game.listen) {
+      const slot = game.left[i];
+      const p = slot?.pairId ? pairText(game, slot.pairId) : null;
+      if (p && slot.state === "active") speech.speak(p.text, { rate: prefs().speechRate });
+    }
     const prev = { ...game.selected };
     const ev = select(game, side, i, now());
     if (ev.type === "ignored") {
@@ -458,8 +851,9 @@ export function createLanguageModule(deps) {
 
   function summaryHtml() {
     const sum = gameSummary(game, now());
-    const label = scopeLabel(course, view.scope);
+    const label = labelFor(view.scope);
     const headline = sum.reached ? "Goal reached" : sum.endReason === "left" ? "Session ended" : "Time's up";
+    const missed = Object.entries(sum.words).filter(([, w]) => w.w > 0).length;
     return `
       <div class="lang-view lang-summary">
         <p class="lang-kicker">${escapeHtml(label)}</p>
@@ -470,18 +864,60 @@ export function createLanguageModule(deps) {
           <div><dt>Accuracy</dt><dd>${formatAccuracy(sum.accuracy)}</dd></div>
           <div><dt>Time</dt><dd>${formatClock(sum.durationMs)}</dd></div>
         </dl>
-        <p class="lang-start-detail">${sum.attempts ? `${sum.correct} right out of ${sum.attempts} ${sum.attempts === 1 ? "try" : "tries"}.` : "No pairs tried, so nothing was saved."}</p>
+        <p class="lang-start-detail">${sum.attempts ? `${sum.correct} right out of ${sum.attempts} ${sum.attempts === 1 ? "try" : "tries"}.${missed ? ` ${missed} missed ${missed === 1 ? "word comes" : "words come"} back in today's flashcards.` : ""}` : "No pairs tried, so nothing was saved."}</p>
         <div class="lang-actions">
           <button class="primary-btn" type="button" data-lang-again>${ico("replay", 16)} Play again</button>
-          <button class="secondary-btn" type="button" data-lang-lessons>Back to lessons</button>
+          <button class="secondary-btn" type="button" data-lang-lessons>${view.from?.screen === "lesson" ? "Back to the lesson" : "Back"}</button>
         </div>
       </div>`;
   }
 
+  // ── Events ─────────────────────────────────────────────────────────────────
+  function scopeFromButton(t) {
+    const kind = t.dataset.langScope || "all";
+    if (kind === "lesson" || kind === "unit") return { kind, id: t.dataset.langId };
+    if (kind === "review") return scopeForReview();
+    return { kind };
+  }
+
+  function setPref(key, value) {
+    const s = st();
+    s.languagePrefs = { ...(s.languagePrefs || {}), [key]: value };
+    memo.key = "";
+    persist();
+    onChange();
+  }
+
+  function onChange_(e) {
+    const t = e.target;
+    if (!root || !root.contains(t)) return;
+    if (t.matches("[data-lang-pref]")) {
+      const k = t.dataset.langPref;
+      const v = t.type === "checkbox" ? t.checked : Number(t.value);
+      setPref(k, v);
+      render();
+      return;
+    }
+    if (t.matches("[data-lang-listen]")) { view = { ...view, listen: t.checked }; }
+  }
+
   function onClick(e) {
+    // Exercise screens handle their own buttons.
+    if (screen && screen.el?.contains(e.target)) return;
+    const sum = e.target.closest("summary");
+    if (sum && root.contains(sum) && sum.parentElement?.matches("[data-lang-settings]")) {
+      settingsOpen = !sum.parentElement.open; // toggles after this event
+      return;
+    }
     const t = e.target.closest("button");
     if (!t || !root.contains(t)) return;
     if (t.matches(".lang-card")) { onTap(t.dataset.side, Number(t.dataset.slot)); return; }
+    if (t.hasAttribute("data-lang-today")) { practice("cards", { kind: "all" }); return; }
+    if (t.hasAttribute("data-lang-practice")) { practice(t.dataset.langPractice, scopeFromButton(t)); return; }
+    if (t.hasAttribute("data-lang-lesson")) { openLesson(t.dataset.langLesson); return; }
+    if (t.hasAttribute("data-lang-add")) { openScreen("add", { lessonId: t.dataset.langId || "" }); return; }
+    if (t.hasAttribute("data-lang-words")) { openScreen("words", { lessonId: t.dataset.langId || "" }); return; }
+    if (t.hasAttribute("data-lang-hub")) { view = { screen: "hub", scope: null }; render(); return; }
     if (t.hasAttribute("data-lang-start")) {
       const kind = t.dataset.langStart;
       openStart(kind === "review" ? scopeForReview() : { kind, id: t.dataset.langId });
@@ -495,21 +931,33 @@ export function createLanguageModule(deps) {
     }
     if (t.hasAttribute("data-lang-quit")) { quit(); return; }
     if (t.hasAttribute("data-lang-resume")) { resume(); return; }
-    if (t.hasAttribute("data-lang-lessons")) { game = null; view = { screen: "lessons", scope: null }; render(); }
+    if (t.hasAttribute("data-lang-lessons")) {
+      game = null;
+      const from = view.from;
+      view = from?.screen === "lesson" ? { screen: "lesson", lessonId: from.lessonId, scope: { kind: "lesson", id: from.lessonId } } : { screen: "hub", scope: null };
+      render();
+    }
   }
 
   return {
     mount,
     leave,
-    isPlaying: () => !!game && game.status === "playing" && view.screen === "play",
-    refresh: () => { if (root && root.isConnected && view.screen !== "play") render(); },
-    openStart,
-    openReview: () => openStart(scopeForReview()),
+    isPlaying: () => (!!game && game.status === "playing" && view.screen === "play") || !!screen,
+    refresh: () => { if (root && root.isConnected && view.screen !== "play" && !screen) render(); },
+    openStart: (scope) => { sessionAccount = accountKey(); openStart(scope); },
+    openReview: () => { sessionAccount = accountKey(); openStart(scopeForReview()); },
+    openToday: () => practice("cards", { kind: "all" }),
+    openLesson,
+    openAddWords: () => openScreen("add", {}),
     rowSummary,
     rowLessons,
     reviewAvailable,
-    // for tests
-    _state: () => ({ view, game, saved }),
-    _entriesForLesson: (id) => entriesForLesson(course, id),
+    todayCounts,
+    // for tests / QA
+    _state: () => ({ view, game, saved, screen: screen?.inner?._state?.() || null }),
+    _course: () => course(),
+    _entriesFor: (scope) => entriesFor(scope),
   };
 }
+
+export { isKnown };

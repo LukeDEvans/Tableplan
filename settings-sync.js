@@ -68,6 +68,7 @@ export const TRACKED_SETTINGS = Object.freeze({
     displayPrefs: "fields", // mode · theme · icon (theme.js) — per person
     viewDisplayPrefs: "fields", // household · business — each view's { mode, theme } (views.js)
     viewLayers: "fields", // household · business — layers on the Personal calendar (views.js)
+    languagePrefs: "fields", // newPerDay · showStarter · autoPlay · speechRate (language-progress.js)
   }),
   plan: Object.freeze({
     planMealPlanCalendars: "fields", // { calendarId: on } — "Show on Meal Plan" per calendar
