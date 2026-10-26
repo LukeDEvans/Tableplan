@@ -13,6 +13,7 @@ import * as LiveMealPlanServings from './meal-plan-servings.js';
 import { isFridayBeforeLastMeal } from './meal-plan-time.js';
 import { categoriesFor, categoryById, resolveGenreId, filterSavedLibrary, filterTracks, textMatches, entityText, greetingFor } from './music-discover.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
+import { ocrRowsFromObservations } from './receipt-reconcile.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { DIET_OPTIONS, ALLERGEN_OPTIONS, normalizeMemberDiets, normalizeDietEntry, mergeMemberDiets, isEmptyDiet, describeDiets, describeAllergies, foodRestrictionsContext } from './food-restrictions.js';
@@ -1168,6 +1169,7 @@ const elements = {
   shopReceiptEditBackBtn: document.querySelector("#shopReceiptEditBackBtn"),
   shopReceiptEditCloseBtn: document.querySelector("#shopReceiptEditCloseBtn"),
   receiptEditForm: document.querySelector("#receiptEditForm"),
+  editReceiptReconcileBanner: document.querySelector("#editReceiptReconcileBanner"),
   editReceiptStoreName: document.querySelector("#editReceiptStoreName"),
   editReceiptStoreId: document.querySelector("#editReceiptStoreId"),
   editReceiptPurchaseDate: document.querySelector("#editReceiptPurchaseDate"),
@@ -1924,6 +1926,17 @@ const _groceries = createGroceriesModule({
   scaleIngredientAmount: (...a) => scaleIngredientAmount(...a), scaledIngredientToText: (...a) => scaledIngredientToText(...a), sectionScope, setWeekToolsMode, showInventoryApp, showMailToast,
   showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState,
   inventoryItemList, renderInventoryPage, isNativeApp,
+  // Scan and go (RECEIPTS.md): a session token that's been refreshed if needed,
+  // the iPhone's own text recognition for library photos, and "signed-in state
+  // has loaded" (results are only imported into a loaded receipts list).
+  getFreshAccessToken: async () => {
+    try {
+      const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
+      return session?.data?.session?.access_token || authSession?.access_token || "";
+    } catch { return authSession?.access_token || ""; }
+  },
+  recognizeReceiptText: (...a) => recognizeReceiptText(...a),
+  isStateReady: () => sharedStorageReady && !!authSession?.access_token,
 });
 const {
   acquireGroceryStoreSearchLocation,
@@ -1985,6 +1998,9 @@ const {
   openPublishedGroceryReview,
   openReceiptScanDialog,
   openReceiptScanWithFiles,
+  startReceiptScanQueue,
+  refreshReceiptScanResults,
+  handleReceiptScanResults,
   openShopReceiptsDialog,
   receiptsForFinance,
   importFinanceInboxReceipts,
@@ -3044,6 +3060,8 @@ function bindEvents() {
       // Orders shared from the iPhone share sheet land in the Finance inbox; pick
       // them up when coming back to Finance (throttled in finance-ui.js).
       if (activeAppArea === "finance" && authSession?.access_token) refreshFinanceInboxReceipts();
+      // Scan and go: send anything cut off when the app closed, pick up finished reads.
+      if (authSession?.access_token) startReceiptScanQueue();
       return;
     }
     appHiddenAt = Date.now();
@@ -3174,6 +3192,7 @@ async function initializeApp() {
   refreshAllCalendarSources({ kinds: ["linked"] }); // boot: refresh the linked pipeline (ics refreshes on Plan-open)
   initGoogleCalendarSync(); // Google Calendar API: OAuth return, calendar discovery, 5-min refresh while visible
   initEventReminders(); // per-user reminders: prefs refresh, legacy fold, iPhone local notifications
+  startReceiptScanQueue(); // scan and go: resend anything cut off, import receipts read meanwhile
   initAiChatPanel();
   initRecipeTimer();
   refreshBottomDock(); // state has loaded: idle "play" pick, weather availability + ticker
@@ -3899,6 +3918,9 @@ function setupDiagnostics() {
       return getPendingReceiptDraft().id;
     },
     banner: () => (localDevMode ? { cls: elements.receiptReconcileBanner?.className || "", text: elements.receiptReconcileBanner?.textContent || "" } : null),
+    // Scan and go (RECEIPTS.md): feed receipt-scans results through the real import.
+    importResults: (data) => (localDevMode ? handleReceiptScanResults(data) : null),
+    openReceipts: () => { if (localDevMode) openShopReceiptsDialog(); },
     flaggedRows: () => (localDevMode ? (elements.receiptLineList?.querySelectorAll(".receipt-line--flagged").length || 0) : 0),
     thumbs: () => (localDevMode ? (elements.receiptSourceImages?.querySelectorAll("img").length || 0) : 0),
   };
@@ -17110,19 +17132,45 @@ async function openReceiptCamera() {
   const scanner = nativeDocumentScanner();
   if (!scanner) { elements.receiptScannerCameraInput.click(); return; }
   try {
-    const result = await scanner.scan({ maxPages: 4, maxDimension: 1600, quality: 0.82 });
+    // ocr: the camera also reads the text on the phone (app builds from 2026-10-26;
+    // older builds ignore it and the read goes ahead without it).
+    const result = await scanner.scan({ maxPages: 4, maxDimension: 1600, quality: 0.82, ocr: true });
     if (result?.cancelled) return;
-    scanReceiptFromHeader(scannedPagesToFiles(result?.pages));
+    scanReceiptFromHeader(scannedPagesToFiles(result?.pages), { ocrPages: ocrPagesFromNative(result?.text) });
   } catch (e) {
     // No fallback click here: iOS only opens a file picker from a direct tap.
     showMailToast(`Couldn't open the camera: ${e?.message || "unknown error"} — try Photo instead`);
   }
 }
 
-function scanReceiptFromHeader(files) {
+function scanReceiptFromHeader(files, options = {}) {
   const images = files.filter((f) => /^image\//.test(f.type || ""));
   if (!images.length) return;
-  openReceiptScanWithFiles(images);
+  openReceiptScanWithFiles(images, options);
+}
+
+// The iPhone's text recognition → printed rows per page (receipt-reconcile.js).
+function ocrPagesFromNative(text) {
+  if (!Array.isArray(text)) return null;
+  const pages = text.map((page) => ocrRowsFromObservations(page));
+  return pages.some((rows) => rows.length) ? pages : null;
+}
+
+// Text recognition for photos picked from the library (the document camera does
+// its own while scanning). null in a browser or an app build without it.
+async function recognizeReceiptText(blobs) {
+  const scanner = nativeDocumentScanner();
+  if (!scanner || typeof scanner.recognizeText !== "function") return null;
+  try {
+    const images = await Promise.all((blobs || []).map(async (blob) => {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return btoa(bin);
+    }));
+    const result = await scanner.recognizeText({ images });
+    return ocrPagesFromNative(result?.text);
+  } catch { return null; }
 }
 
 function toggleAppMenu(event) {

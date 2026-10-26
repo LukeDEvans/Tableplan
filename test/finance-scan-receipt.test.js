@@ -16,7 +16,7 @@ function fakeFetch(url, opts = {}) {
   if (u.includes("/auth/v1/user")) return ok({ id: "u1" });
   if (u.includes("live_group_members")) return ok([{ group_id: "g1" }]);
   if (u.includes("api.anthropic.com")) return ok({ content: [{ text: JSON.stringify({ receipt: aiReply }) }] });
-  if (u.includes("id=eq.g1%3Afinance")) return ok([{ state: { financeBudgetGroups: [{ id: "food", label: "Food", categories: [{ id: "groc", name: "Groceries" }] }] } }]);
+  if (u.includes("id=eq.g1%3Afinance")) return ok([{ groups: [{ id: "food", label: "Food", categories: [{ id: "groc", name: "Groceries" }] }] }]);
   throw new Error("unexpected fetch " + u);
 }
 const call = (body) => handler({ httpMethod: "POST", headers: { authorization: "Bearer tok" }, body: JSON.stringify({ action: "scanReceipt", ...body }) });

@@ -63,6 +63,10 @@
 [functions."scan-receipt"]
   node_bundler = "esbuild"
 
+# Scan and go (RECEIPTS.md): the same receipt read, after the phone has moved on.
+[functions."scan-receipt-background"]
+  node_bundler = "esbuild"
+
 [functions."estimate-nutrition"]
   node_bundler = "esbuild"
 
