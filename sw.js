@@ -1,7 +1,7 @@
 // v36: caching narrowed to same-origin static files (+ versioned CDN libs);
 // navigations keyed to "/" only when ok. Bumping the name also drops every
 // hashed /assets/ file the old worker accumulated across deploys.
-const CACHE = "live-v51";
+const CACHE = "live-v52";
 
 // Recipe photos (RECIPE_PHOTOS_DESIGN.md §4.3): own photos live in the PUBLIC
 // recipe-photos bucket at URLs that never change (every upload gets a new name),
