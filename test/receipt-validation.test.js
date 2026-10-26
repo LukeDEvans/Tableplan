@@ -34,8 +34,9 @@ describe("validateReceipt — arithmetic reconciliation", () => {
 
 describe("validateReceipt — per-line flags", () => {
   it("missing price, negative line, bad quantity, low confidence, duplicate", () => {
+    // A total the lines don't reach: duplicates are only a hint when it doesn't add up.
     const v = validateReceipt({
-      subtotal: 0, tax: 0, total: 0,
+      subtotal: 0, tax: 0, total: 50,
       lineItems: [
         line({ id: "a", name: "No Price", totalPrice: 0 }),
         line({ id: "b", name: "Refund", totalPrice: -3 }),

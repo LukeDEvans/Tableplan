@@ -24,11 +24,13 @@ async function loadFinanceCategories(serviceKey, groupId) {
   if (!groupId) return [];
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`,
+      // Only the budget groups, not the whole finance section (egress: every
+      // receipt scan reads this).
+      `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=groups:state->financeBudgetGroups`,
       { headers: svc(serviceKey), cache: "no-store" }
     );
     const rows = res.ok ? await res.json() : [];
-    const groups = rows[0]?.state?.financeBudgetGroups || [];
+    const groups = Array.isArray(rows[0]?.groups) ? rows[0].groups : [];
     return groups.flatMap((g) => (g.categories || []).map((c) => ({ key: `cat:${g.id}:${c.id}`, name: `${g.label} · ${c.name}` })));
   } catch { return []; }
 }

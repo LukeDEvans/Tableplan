@@ -18,7 +18,7 @@ function fakeFetch(url, opts = {}) {
   }
   if (u.includes("live_group_members")) return ok(groupFor ? [{ group_id: groupFor }] : []);
   if (u.includes("api.anthropic.com")) return ok({ content: [{ text: JSON.stringify(aiReply) }] });
-  if (u.includes("id=eq.g1%3Afinance")) return ok([{ state: { financeBudgetGroups: [{ id: "home", label: "Home", categories: [{ id: "sup", name: "Supplies" }] }] } }]);
+  if (u.includes("id=eq.g1%3Afinance")) return ok([{ groups: [{ id: "home", label: "Home", categories: [{ id: "sup", name: "Supplies" }] }] }]);
   if (u.includes("finreceipts_g1")) {
     if (!opts.method || opts.method === "GET") return ok([{ state: { receipts: inbox }, updated_at: "2026-10-01T00:00:00Z" }]);
     const body = JSON.parse(opts.body);

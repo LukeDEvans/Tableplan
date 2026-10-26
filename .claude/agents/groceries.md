@@ -20,10 +20,20 @@ almost all your work is there. Make focused changes to the Groceries domain only
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `groceries-ui.js`, `grocery-*.js`, `instacart.js`, `receipt-*.js`, `scan-content.js`, `netlify/functions/instacart-list.mjs`, `netlify/functions/scan-receipt.js`, `netlify/functions/auto-tag-grocery.js`, `netlify/functions/google-places.js`
+- files: `groceries-ui.js`, `grocery-*.js`, `instacart.js`, `receipt-*.js`, `scan-content.js`, `netlify/functions/instacart-list.mjs`, `netlify/functions/scan-receipt.js`, `netlify/functions/scan-receipt-background.js`, `netlify/functions/receipt-scans.js`, `netlify/functions/_receipt-scans.js`, `netlify/functions/auto-tag-grocery.js`, `netlify/functions/google-places.js`
 - state: `grocery*`, `pantry`, `persistentManualGroceries`, `persistentManualGroceryStamps`, `checkedGroceries`, `receipts`, `receiptItemMappings`, `priceHistory`, `nextStopItems`, `instacartOrders`, `dailyDozenTagSeedVersion`
 
 ## Your scope (edit these)
+- **Receipts: scan and go, code does the math (Luke, 2026-10-26).** The AI only *transcribes*
+  (items, coupons/fees as their own lines, the summary numbers as printed); `receipt-reconcile.js`
+  decides whether it adds up by trying where savings and fees sit (before/after the subtotal), with
+  per-store profiles as tie-breaks. A read that doesn't add up gets one second look with a stronger
+  model (background path only). Scanning sends the photos off and the person can close the app:
+  photos → reading-content bucket, `scan-receipt-background` reads them, results wait in
+  `receiptscan_<group>_<id>` rows, `receipt-scans` hands them to any household device, which
+  imports them (`receipt-scan-queue.js` + "Scan and go" in groceries-ui.js). Receipts that add up are
+  ready as they are; others show "Needs a look". The iPhone's own text recognition (DocumentScanner
+  plugin, `ocr`) cross-checks prices when available. See RECEIPTS.md.
 - **Store search near Home (Luke, 2026-10-13):** when location sharing is off or the device's
   position can't be had, store autocomplete biases to Home from the Profile (injected
   `getHomeLocation`, the Weather "home" place) instead of searching nowhere in particular.

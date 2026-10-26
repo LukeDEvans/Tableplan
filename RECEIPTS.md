@@ -32,22 +32,74 @@ extraction. Added for Finance:
 Only `scan`/`manual` receipts feed grocery price history, item mappings and the
 grocery catalog (`feedsPriceHistory`). Amazon-style email orders do not.
 
-## Scanning
+## Reading a receipt (2026-10-26)
 
-One AI read per receipt. `scan-receipt` loads the household's budget categories
-(`_finance-categories.js`). The prompt (`receipt-scan.js`) asks for a budget category on
-each line, and unknown keys are dropped.
+**Decision (Luke, 2026-10-26):** the AI reads, code does the math. Scans of correct Costco
+and Target receipts (2026-10-23) had been marked "doesn't add up" because the check used one
+fixed formula: Costco takes coupons off *before* the subtotal and Target's RedCard 5% comes off
+*after* it, with the bag fee inside the subtotal.
 
-The model's reply uses a **compact line shape** so long receipts finish inside Netlify's
-30 s limit (a 30+ line receipt timed out on 2026-10-16): short keys (`text`, `name`, `cat`,
-`qty`, `unit`, `price`, `disc`, `conf`), `qty`/`unit`/`disc` left out when they're the
-default, no unit price (the normalizer derives it from price ÷ qty), and the budget
-category as a list number `b` rather than the long `cat:<group>:<category>` key.
-`expandScanReceipt` maps it back to the record's field names (and still reads the old
-long shape). The AI call stops at about 26 s into the function and returns a 504 with a
-readable message instead of Netlify's bare 504. In the review and edit forms, each line has a
-budget-category picker. The header scanner (Camera / Photo) opens this same review.
-In the iPhone app, Camera uses the native document scanner.
+1. **Transcribe** (`receipt-scan.js` prompt). The model copies what is printed and does no
+   arithmetic: every priced line above the subtotal, with coupons / instant savings as their own
+   lines (`k:"d"`, negative, `for` = the product they apply to) and fees or bags among the items
+   as their own lines (`k:"f"`); then subtotal, tax and total as printed, plus only the savings
+   and fees printed *below* the subtotal. Compact line shape as before (short keys, defaults left
+   out, budget category as a list number `b`), so long receipts stay fast. A coupon line becomes
+   a negative line with category `Savings` and its product's budget category, so Finance's split
+   nets it.
+2. **Reconcile** (`receipt-reconcile.js`, pure, shared by the app and the functions). Tries each
+   placement of receipt-level savings (repeating coupon lines / before / after the subtotal) and
+   fees (inside / after the subtotal) and keeps the one under which the lines, subtotal and total
+   agree (±2¢). When nothing agrees it says which part is off and by how much ("the items come to
+   $95.92, $1.17 less than the subtotal"). `validateReceipt` uses it; duplicate-line hints only
+   show when the receipt doesn't add up (two identical lines are usually two of the item).
+3. **Store profiles** (`RECEIPT_STORE_PROFILES`): Costco, Target, ALDI, Whole Foods, Trader
+   Joe's. Each has a one-line reading hint for the prompt and, where known, which side of the
+   subtotal its savings and fees sit on (a tie-break only; the numbers decide first).
+4. **Second look.** When the first read doesn't add up, the background reader asks once more
+   with the stronger model (`ANTHROPIC_RECEIPT_RECHECK_MODEL`, default `claude-sonnet-4-6`),
+   giving it the first reading and what's off. The second read is kept only if it adds up
+   better. The synchronous `scan-receipt` (older app builds) has no second look (30 s limit).
+5. **The iPhone's own text recognition** (DocumentScanner plugin: `scan({ ocr: true })` for the
+   camera, `recognizeText` for library photos; app builds from 2026-10-26). Rows are rebuilt from
+   Vision's boxes (`ocrRowsFromObservations`) and sent with the photos. The server puts the text
+   in the prompt, adopts the printed subtotal/tax/total when the AI's don't add up and those do,
+   and lowers the confidence of any line whose price appears nowhere in the printed text (shown
+   as low-confidence in review). Older builds and browsers simply send none.
+
+A read that adds up is **ready**: `extraction.status = "ok"`, and it feeds price history at
+once. Otherwise `"check"`: the receipt shows **Needs a look** in Receipts, its edit view says
+what's off and updates as numbers are changed, and saving it marks it `"reviewed"` (price
+history is built then). `extraction.status` lives inside `extraction`, which older builds keep.
+
+## Scan and go (2026-10-26)
+
+**Decision (Luke, 2026-10-26):** scan, send, close the app.
+
+- **Phone:** the header Camera / Photo (and the Receipts dialog's **Send receipt**) prepare the
+  photos, upload them to the person's own folder of the `reading-content` bucket (the same
+  backstop scan images always used, via `scan-content.js`; also kept on the phone), and POST a
+  small request to `scan-receipt-background` (Netlify caps background-function bodies near
+  256 KB, so no images ride it). The toast says "Receipt sent ✓ You can close the app" once the
+  202 is back, usually a couple of seconds.
+- **Queue** (`receipt-scan-queue.js`, localStorage `live-receipt-scans-v1`, account-scoped):
+  `uploading` → `sent`; `waiting` when offline (sent again on `online` or next open); an upload
+  cut off by closing the app is sent again on the next open; `failed` with the reason (or after
+  10 min with no answer) shows **Try again / Remove** above the list.
+- **Server:** `scan-receipt-background` checks the photos are in the caller's folder, downloads
+  them with the service key, runs the read above, and writes one row per result,
+  `receiptscan_<groupId>_<receiptId>` in `tableplan_states` (no `:`, so clients can't read it;
+  rows over 21 days are deleted on the next save). `receipt-scans` returns the results written
+  after the `since` a device sends, so the usual answer is empty.
+- **Into the list:** any household device imports finished reads (new ids only; tombstones
+  respected), links the store, applies item mappings, and toasts "ALDI · $97.09 is in — it needs
+  a quick look". The sending phone's photo refs are attached when another device imported first.
+- **When it asks:** only while a read is out (≈20 s, 40 s, 70 s, 2 min, 4 min after sending and
+  on returning to the app, never closer than 12 s); otherwise at most every 10 min, on app start
+  and on opening Shop.
+- **Local dev** (`canUseLocalBackend`) still reads in the dialog with review, as before.
+- Each scan reads the household's budget categories with `select=state->financeBudgetGroups`,
+  not the whole finance section (egress).
 
 ## Finance's interface (injected; Finance never reads `state.receipts` directly)
 

@@ -23526,6 +23526,26 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
   font-weight: 750;
 }
 .shop-receipt-meta .shop-receipt-source::after { content: ""; margin-left: 0; }
+/* Scan and go (RECEIPTS.md): receipts this device sent to be read, above the
+   list until their read comes back, and the "Needs a look" chip on a receipt
+   whose numbers didn't add up. */
+.shop-receipt-source.is-check {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
+}
+.receipt-queue-card {
+  cursor: default;
+  margin-bottom: 8px;
+  border-style: dashed;
+}
+.receipt-queue-card.is-failed { border-style: solid; }
+.receipt-queue-card .shop-receipt-store { overflow-wrap: anywhere; }
+.receipt-queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
 
 /* ══ Bottom dock: permanent, swipeable ticker (mini-player, weather, …) ═══════ */
 /* The dock's standard colours (Luke, 2026-10-06): one blue behind every slide,

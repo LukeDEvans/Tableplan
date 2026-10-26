@@ -1,3 +1,4 @@
+import { reconcileReceipt } from "./receipt-reconcile.js";
   const RECEIPT_SOURCES = ["scan", "email", "extension", "share", "manual"];
 
   function text(value) {
@@ -116,7 +117,9 @@ return {
       totalPrice,
       unitPrice,
       discountAmount: Math.max(0, number(line?.discountAmount || line?.discount)),
-      confidenceScore: Math.min(1, Math.max(0, number(line?.confidenceScore, 0.7))),
+      // A missing score is "unknown" (0.7), not 0: number("") is 0, which flagged
+      // every line the model left conf off as low-confidence.
+      confidenceScore: line?.confidenceScore === undefined || line?.confidenceScore === null || line?.confidenceScore === "" ? 0.7 : Math.min(1, Math.max(0, number(line.confidenceScore, 0.7))),
       userCorrected: Boolean(line?.userCorrected),
       // Finance budget category key ("cat:<groupId>:<categoryId>") or "".
       budgetCategory: text(line?.budgetCategory)
@@ -124,50 +127,53 @@ return {
   }
 
   // Lightweight, PURE validation to steer the reviewer (never blocks saving).
-  // Arithmetic reconciliation + per-line flags. The receipt TOTAL is treated as the
-  // ground truth to reconcile against; tolerance is the greater of an absolute floor
-  // and ±0.5% of the total (rounding/rounding-per-line noise).
+  // The arithmetic is receipt-reconcile.js: it tries where the store printed its
+  // savings and fees (before or after the subtotal) and keeps the placement under
+  // which the printed numbers agree, so a correct Costco or Target receipt no
+  // longer reads as "doesn't add up". Per-line flags are hints for the review.
   function validateReceipt(receipt, options = {}) {
-    const tolerance = Number.isFinite(options.tolerance) ? options.tolerance : 0.02;
-    const round2 = (n) => Math.round(n * 100) / 100;
+    const verdict = reconcileReceipt(receipt, { tolerance: Number.isFinite(options.tolerance) ? options.tolerance : undefined });
     const lines = Array.isArray(receipt?.lineItems) ? receipt.lineItems : [];
-    const subtotal = number(receipt?.subtotal);
-    const tax = number(receipt?.tax);
-    const fees = number(receipt?.fees);
-    const discounts = number(receipt?.discounts);
-    const total = number(receipt?.total);
-    const lineSum = round2(lines.reduce((sum, line) => sum + number(line?.totalPrice), 0));
-    const computedTotal = round2(subtotal + tax + fees - discounts);
-    const subtotalDelta = round2(lineSum - subtotal);
-    const totalDelta = round2(computedTotal - total);
-    const tol = Math.max(tolerance, Math.abs(total) * 0.005);
-    const subtotalReconciles = subtotal === 0 || Math.abs(subtotalDelta) <= tol;
-    const reconciles = total === 0 || Math.abs(totalDelta) <= tol;
-
     const flags = [];
-    if (total > 0 && !reconciles) {
-      flags.push({ type: "totals-mismatch", delta: totalDelta, message: `Subtotal + tax + fees − discounts (${computedTotal.toFixed(2)}) doesn't match the total (${total.toFixed(2)}).` });
+    if (verdict.totalOk === false) {
+      flags.push({ type: "totals-mismatch", delta: verdict.totalGap, message: verdict.message });
+    } else if (verdict.subtotalOk === false) {
+      flags.push({ type: "subtotal-mismatch", delta: verdict.lineGap, message: verdict.message });
     }
-    if (subtotal > 0 && !subtotalReconciles) {
-      flags.push({ type: "subtotal-mismatch", delta: subtotalDelta, message: `Line items add to ${lineSum.toFixed(2)} but the subtotal says ${subtotal.toFixed(2)}.` });
-    }
+    const ocrMisses = new Set(Array.isArray(options.ocrUnmatchedLineIds) ? options.ocrUnmatchedLineIds : []);
     const seen = new Set();
     lines.forEach((line) => {
       const name = text(line?.normalizedName || line?.rawText) || "This line";
       const price = number(line?.totalPrice);
       const qty = number(line?.quantity, 1);
+      const isSavings = /^(savings|discount|coupon)$/i.test(text(line?.category));
       if (price === 0 && number(line?.discountAmount) === 0) flags.push({ type: "missing-price", lineId: line?.id, message: `${name} has no price.` });
-      if (price < 0) flags.push({ type: "negative-line", lineId: line?.id, message: `${name} has a negative price — a discount or refund?` });
+      if (price < 0 && !isSavings) flags.push({ type: "negative-line", lineId: line?.id, message: `${name} has a negative price — a discount or refund?` });
       if (qty <= 0) flags.push({ type: "bad-quantity", lineId: line?.id, message: `${name} has quantity ${line?.quantity}.` });
       if (number(line?.confidenceScore, 1) < 0.6 && !line?.userCorrected) flags.push({ type: "low-confidence", lineId: line?.id, message: `${name} was read with low confidence.` });
+      if (ocrMisses.has(line?.id) && !line?.userCorrected) flags.push({ type: "price-not-printed", lineId: line?.id, message: `${name}'s price wasn't found in the receipt's printed text.` });
+      // Two identical lines are usually two of the same thing bought, so this is
+      // only a hint (raised only when the receipt doesn't add up or can't be checked).
       const key = `${normalizedName(line?.rawText)}|${price}`;
       if (normalizedName(line?.rawText) && price !== 0) {
-        if (seen.has(key)) flags.push({ type: "duplicate", lineId: line?.id, message: `${name} looks like a duplicate line.` });
+        if (seen.has(key) && !(verdict.ok && verdict.checked)) flags.push({ type: "duplicate", lineId: line?.id, message: `${name} looks like a duplicate line.` });
         else seen.add(key);
       }
     });
 
-    return { reconciles, subtotalReconciles, lineSum, computedTotal, subtotalDelta, totalDelta, flags };
+    return {
+      reconciles: verdict.totalOk !== false,
+      subtotalReconciles: verdict.subtotalOk !== false,
+      ok: verdict.ok,
+      checked: verdict.checked,
+      layout: verdict.layout,
+      lineSum: verdict.lineSum,
+      computedTotal: verdict.computedTotal,
+      subtotalDelta: verdict.lineGap === null ? 0 : round2(-verdict.lineGap),
+      totalDelta: verdict.totalGap === null ? 0 : round2(-verdict.totalGap),
+      message: verdict.message,
+      flags
+    };
   }
 
   function normalizeMappings(mappings) {
@@ -289,9 +295,18 @@ return {
       byCat.set(line.budgetCategory, round2((byCat.get(line.budgetCategory) || 0) + amount));
       assigned += amount;
     }
-    const portions = [...byCat.entries()].map(([label, amount]) => ({ label, amount }));
+    let portions = [...byCat.entries()].map(([label, amount]) => ({ label, amount }));
     const remainder = round2(total - assigned);
     if (remainder > 0.02) portions.push({ label: "", amount: remainder });
+    // Savings taken off below the subtotal (Target's RedCard 5%) can leave the
+    // categories adding up to more than was charged. Scale them down so the
+    // split still matches the charge; the last portion takes the rounding.
+    if (remainder < -0.02 && total > 0 && assigned > 0) {
+      const scale = total / assigned;
+      portions = portions.map((p) => ({ label: p.label, amount: round2(p.amount * scale) }));
+      const drift = round2(total - portions.reduce((sum, p) => sum + p.amount, 0));
+      if (portions.length && drift) portions[portions.length - 1].amount = round2(portions[portions.length - 1].amount + drift);
+    }
     return portions;
   }
 

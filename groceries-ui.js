@@ -11,6 +11,7 @@
 import * as LiveGroceryCatalog from './grocery-catalog.js';
 import * as LiveGrocerySources from './grocery-sources.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
+import * as ReceiptQueue from './receipt-scan-queue.js';
 import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
 import * as LiveInstacart from './instacart.js';
@@ -449,7 +450,7 @@ export function baseGroceryItemKey(item) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createGroceriesModule(deps) {
   const {
-    state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp, getHomeLocation,
+    state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp, getHomeLocation, getFreshAccessToken, recognizeReceiptText, isStateReady,
   } = deps;
   _appState = state; // wire the module-scope live-state ref used by pure exports
 
@@ -1318,6 +1319,14 @@ function openReceiptEditView(receiptId) {
   (receipt.lineItems || []).forEach((line) => addEditReceiptLine(line));
   elements.shopReceiptsListView.hidden = true;
   elements.shopReceiptsEditView.hidden = false;
+  if (elements.receiptEditForm && !elements.receiptEditForm.dataset.reconcileWired) {
+    elements.receiptEditForm.dataset.reconcileWired = "1";
+    let timer = null;
+    const refresh = () => { clearTimeout(timer); timer = setTimeout(refreshEditReceiptValidation, 250); };
+    elements.receiptEditForm.addEventListener("input", refresh);
+    elements.receiptEditForm.addEventListener("click", (e) => { if (e.target.closest("[data-remove-receipt-line]")) refresh(); });
+  }
+  refreshEditReceiptValidation();
 }
 
 function closeReceiptEditView() {
@@ -1421,9 +1430,15 @@ function editedReceiptFromForm() {
   }, createId);
 }
 
+// Saved by hand from a review: no longer "needs a look".
+function markReceiptReviewed(receipt) {
+  if (!receipt?.extraction) return receipt;
+  return { ...receipt, extraction: { ...receipt.extraction, status: "reviewed" } };
+}
+
 function saveReceiptEdit(event) {
   event.preventDefault();
-  const receipt = editedReceiptFromForm();
+  const receipt = markReceiptReviewed(editedReceiptFromForm());
   if (!receipt.storeName || !receipt.purchaseDate) return;
   const oldLineItemIds = new Set(
     ((state.receipts || []).find((r) => r.id === editingReceiptId)?.lineItems || []).map((li) => li.id)
@@ -1491,17 +1506,29 @@ function openReceiptScanDialog() {
   renderReceiptImagePreviews();
   elements.receiptReviewForm.hidden = true;
   elements.scanReceiptImagesBtn.hidden = false;
-  setReceiptScanStatus("Upload a clear receipt photo, then review every line before saving.");
+  elements.scanReceiptImagesBtn.textContent = scanAndGoAvailable() ? "Send receipt" : "Read receipt";
+  setReceiptScanStatus(receiptScanIntro());
   elements.groceryPricingDialog.close();
   if (elements.shopReceiptsDialog.open) elements.shopReceiptsDialog.close();
   elements.receiptScanDialog.showModal();
 }
 
-// The header scanner's entry: open the scan dialog with the photos already
-// chosen and start reading right away — one tap from anywhere in the app.
-function openReceiptScanWithFiles(files) {
+function receiptScanIntro() {
+  return scanAndGoAvailable()
+    ? "Add the receipt photos and send. It's read in the background, so you can close the app."
+    : "Upload a clear receipt photo, then review every line before saving.";
+}
+
+// The header scanner's entry: one tap from anywhere in the app. In the live app the
+// photos are sent straight off to be read (scan and go); the dialog never opens.
+// ocrPages: the document camera's own text recognition, when it did any.
+function openReceiptScanWithFiles(files, { ocrPages = null } = {}) {
   const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 6);
   if (!list.length) return;
+  if (scanAndGoAvailable()) {
+    sendReceiptForReading(list, { ocrPages }).catch(() => {});
+    return;
+  }
   openReceiptScanDialog();
   receiptScanFiles = list;
   receiptImageEdits = retainScanImageEdits(receiptScanFiles, receiptImageEdits);
@@ -1532,13 +1559,13 @@ function clearReceiptScanFiles() {
   pendingReceiptDraft = null;
   elements.receiptReviewForm.hidden = true;
   elements.scanReceiptImagesBtn.hidden = false;
-  setReceiptScanStatus("Upload a clear receipt photo, then review every line before saving.");
+  setReceiptScanStatus(receiptScanIntro());
 }
 
 function updateReceiptScanSelectionStatus() {
   renderReceiptImagePreviews();
   if (!receiptScanFiles.length) {
-    setReceiptScanStatus("Upload a clear receipt photo, then review every line before saving.");
+    setReceiptScanStatus(receiptScanIntro());
     return;
   }
   setReceiptScanStatus(`${receiptScanFiles.length} receipt photo${receiptScanFiles.length === 1 ? "" : "s"} selected.`);
@@ -1566,9 +1593,316 @@ async function storeScanImages(receiptId, blobs) {
   } catch { return []; }
 }
 
+// ── Scan and go (RECEIPTS.md) ──────────────────────────────────────────────
+// Take the photos, send, close the app. The photos go to this person's folder in
+// the reading-content bucket (the same backstop scan images always used), then a
+// small request starts scan-receipt-background, which reads the receipt with no
+// 30 s limit and leaves the result for receipt-scans. Any of the household's
+// devices imports it into the list the next time it looks. Receipts that add up
+// are ready as they are; the rest are marked for a quick look in Receipts.
+//
+// Requests are bounded: one send per receipt; result checks only while a read is
+// out (about 20 s, 40 s, 70 s, 2 min, 4 min after sending, and on coming back to
+// the app, never closer than 12 s), otherwise at most every 10 minutes when Shop
+// or Finance is opened. Each check asks only for results newer than the last.
+const RECEIPT_BG_URL = "/.netlify/functions/scan-receipt-background";
+const RECEIPT_RESULTS_URL = "/.netlify/functions/receipt-scans";
+const RECEIPT_CHECK_DELAYS_MS = [20000, 40000, 70000, 120000, 240000];
+const RECEIPT_IDLE_CHECK_MS = 10 * 60 * 1000;
+const RECEIPT_BUSY_CHECK_MS = 12000;
+let receiptCheckTimers = [];
+let receiptResultsInFlight = false;
+let receiptResultsLastAt = 0;
+let receiptQueueStarted = false;
+
+// The photos can go to the background reader only from the live app (not the
+// local dev backend, which still reads them in the dialog as before).
+function scanAndGoAvailable() {
+  if (canUseLocalBackend()) return false;
+  return window.location.protocol.startsWith("http") || !!isNativeApp?.();
+}
+
+function readReceiptQueue() {
+  try { return ReceiptQueue.parseQueue(localStorage.getItem(ReceiptQueue.RECEIPT_QUEUE_KEY)); }
+  catch { return ReceiptQueue.emptyQueue(); }
+}
+
+function writeReceiptQueue(queue) {
+  try { localStorage.setItem(ReceiptQueue.RECEIPT_QUEUE_KEY, JSON.stringify(queue)); } catch { /* storage full/blocked: the send still happens */ }
+  if (elements.shopReceiptsDialog?.open && !editingReceiptId) renderShopReceipts();
+}
+
+function patchReceiptQueue(id, patch) {
+  const queue = ReceiptQueue.updateInQueue(readReceiptQueue(), id, patch);
+  writeReceiptQueue(queue);
+  return queue.items.find((i) => i.id === id);
+}
+
+// The phone's own text recognition for photos (the document camera does it while
+// scanning). Best-effort and quick: nothing here may hold up the send.
+async function recognizeTextForPhotos(blobs) {
+  if (typeof recognizeReceiptText !== "function") return null;
+  try {
+    const pages = await Promise.race([
+      recognizeReceiptText(blobs),
+      new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
+    return Array.isArray(pages) && pages.some((p) => Array.isArray(p) && p.length) ? pages : null;
+  } catch { return null; }
+}
+
+// Rows from the phone's text recognition ride the request body, which Netlify
+// caps near 256 KB for background functions; keep them well under that.
+function boundedOcrPages(pages) {
+  if (!Array.isArray(pages)) return null;
+  let budget = 30000;
+  const out = pages.slice(0, 6).map((rows) => (Array.isArray(rows) ? rows : []).filter((row) => {
+    const text = String(row || "");
+    if (!text || budget < text.length) return false;
+    budget -= text.length;
+    return true;
+  }).map((row) => String(row).slice(0, 200)));
+  return out.some((rows) => rows.length) ? out : null;
+}
+
+async function sendReceiptForReading(files, { ocrPages = null, edits = null } = {}) {
+  const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 6);
+  if (!list.length) return false;
+  trackUsage("claude_receipt_scan");
+  const id = createId("receipt");
+  writeReceiptQueue(ReceiptQueue.addToQueue(readReceiptQueue(), {
+    id,
+    at: new Date().toISOString(),
+    state: "uploading",
+    pages: list.length,
+    fileRef: list.map((f) => f.name).join(", ").slice(0, 200),
+  }));
+  showMailToast("Sending receipt…");
+  try {
+    const prepared = await Promise.all(list.map((file) =>
+      prepareScanImage(file, edits?.get?.(file), { maxDimension: 1600, quality: 0.82 })));
+    const [text, refs] = await Promise.all([
+      ocrPages ? Promise.resolve(ocrPages) : recognizeTextForPhotos(prepared),
+      storeScanImages(id, prepared),
+    ]);
+    patchReceiptQueue(id, { refs, ocrPages: boundedOcrPages(text) });
+  } catch (error) {
+    patchReceiptQueue(id, { state: "failed", error: error?.message || "Couldn't prepare the photos." });
+    showMailToast("Couldn't prepare that receipt — open Receipts to try again");
+    return false;
+  }
+  return postReceiptForReading(id, { announce: true });
+}
+
+// Upload any photo that didn't reach the backstop yet (from this phone's copy),
+// then start the background read. Used for the first send and every retry.
+async function postReceiptForReading(id, { announce = false } = {}) {
+  let item = readReceiptQueue().items.find((i) => i.id === id);
+  if (!item) return false;
+  let refs = Array.isArray(item.refs) ? item.refs : [];
+  if (refs.length < (item.pages || 1) || refs.some((r) => !r?.cloud)) {
+    try {
+      const sc = await getScanContent();
+      if (sc) {
+        const again = [];
+        for (let i = 0; i < (item.pages || refs.length || 1); i++) {
+          const existing = refs.find((r) => r?.index === i);
+          if (existing?.cloud) { again.push(existing); continue; }
+          const bytes = await sc.loadImage(id, i, { ref: existing || null });
+          if (!bytes) continue;
+          const ref = await sc.saveImage(id, i, bytes, existing?.mimeType || "image/jpeg");
+          if (ref) again.push(ref);
+        }
+        refs = again;
+        item = patchReceiptQueue(id, { refs });
+      }
+    } catch { /* stays waiting */ }
+  }
+  const photos = refs.filter((r) => r?.cloud).map((r) => ({ bucket: r.cloud.bucket, path: r.cloud.path, mimeType: r.mimeType || "image/jpeg" }));
+  const tries = (item.tries || 0) + 1;
+  if (!photos.length || photos.length < refs.length) {
+    patchReceiptQueue(id, { state: "waiting", tries });
+    if (announce) showMailToast("Saved on this phone — it'll send when you're back online");
+    return false;
+  }
+  let ok = false;
+  try {
+    const token = typeof getFreshAccessToken === "function" ? await getFreshAccessToken() : getAuthSession()?.access_token;
+    const res = await fetch(RECEIPT_BG_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token || ""}` },
+      body: JSON.stringify({ receiptId: id, photos, ocrPages: item.ocrPages || null, fileRef: item.fileRef || "" }),
+    });
+    ok = res.status === 202 || res.ok;
+  } catch { ok = false; }
+  if (!ok) {
+    patchReceiptQueue(id, { state: "waiting", tries });
+    if (announce) showMailToast("Saved on this phone — it'll send when you're back online");
+    return false;
+  }
+  patchReceiptQueue(id, { state: "sent", sentAt: new Date().toISOString(), tries, error: "" });
+  if (announce) showMailToast("Receipt sent ✓ You can close the app — it'll be in Receipts in about a minute");
+  scheduleReceiptResultChecks();
+  return true;
+}
+
+function scheduleReceiptResultChecks() {
+  receiptCheckTimers.forEach((t) => clearTimeout(t));
+  receiptCheckTimers = RECEIPT_CHECK_DELAYS_MS.map((delay) => setTimeout(() => {
+    if (document.visibilityState === "visible") refreshReceiptScanResults().catch(() => {});
+  }, delay));
+}
+
+async function refreshReceiptScanResults({ force = false } = {}) {
+  if (!scanAndGoAvailable() || receiptResultsInFlight) return;
+  if (typeof isStateReady === "function" && !isStateReady()) return;
+  const queue = readReceiptQueue();
+  const waiting = ReceiptQueue.awaitingResults(queue);
+  const since = Date.now() - receiptResultsLastAt;
+  if (waiting ? since < RECEIPT_BUSY_CHECK_MS : (!force && since < RECEIPT_IDLE_CHECK_MS)) return;
+  receiptResultsInFlight = true;
+  receiptResultsLastAt = Date.now();
+  try {
+    const token = typeof getFreshAccessToken === "function" ? await getFreshAccessToken() : getAuthSession()?.access_token;
+    if (!token) return;
+    const res = await fetch(RECEIPT_RESULTS_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ since: queue.since || "" }),
+    });
+    if (!res.ok) return;
+    handleReceiptScanResults(await res.json().catch(() => ({})));
+  } catch { /* next check tries again */ } finally {
+    receiptResultsInFlight = false;
+  }
+}
+
+// { scans, latest } from receipt-scans → the queue and the receipts list.
+function handleReceiptScanResults(data) {
+  const out = ReceiptQueue.applyScanResults(readReceiptQueue(), data?.scans || [], {
+    existingIds: new Set((state.receipts || []).map((r) => r.id)),
+    deletedIds: new Set((state.tombstones?.receipts || []).map(String)),
+    latest: data?.latest || "",
+  });
+  writeReceiptQueue(out.queue);
+  const added = importScannedReceipts(out.imports, out.attach);
+  if (out.failed.length) showMailToast(`${out.failed.length === 1 ? "A receipt" : `${out.failed.length} receipts`} couldn't be read — open Receipts to try again`);
+  return { added: added.map((r) => r.id), failed: out.failed };
+}
+
+// Finished reads join the one list. A receipt that adds up feeds price history
+// right away; one marked for a look does when it's saved from Receipts.
+function importScannedReceipts(imports, attach = []) {
+  const attachById = new Map((attach || []).map((a) => [a.id, a.refs]));
+  if (!(imports || []).length && !attachById.size) return [];
+  const added = (imports || []).map(({ scan, refs }) => {
+    const receipt = LiveReceiptDomain.normalizeReceipt(ReceiptQueue.receiptFromScanResult(scan, refs), createId);
+    if (!receipt.storeId) receipt.storeId = matchReceiptStoreId(receipt.storeName);
+    return LiveReceiptDomain.applyReceiptMappings(receipt, receiptItemMappings());
+  });
+  const current = (state.receipts || []).map((r) => (attachById.has(r.id) && !(r.imageRefs || []).length ? { ...r, imageRefs: attachById.get(r.id) } : r));
+  state.receipts = normalizeReceipts([...current, ...added]);
+  const ready = added.filter((r) => r.extraction?.status === "ok" && LiveReceiptDomain.feedsPriceHistory(r));
+  if (ready.length) {
+    state.priceHistory = normalizePriceHistory([
+      ...receiptPriceHistory(),
+      ...ready.flatMap((r) => LiveReceiptDomain.priceHistoryFromReceipt(r, createId)),
+    ], groceryStores());
+    state.groceryBaseItems = normalizeGroceryBaseItems([
+      ...groceryBaseItems(),
+      ...ready.flatMap((r) => r.lineItems.filter((l) => l.totalPrice > 0).map((l) => l.normalizedName)),
+    ]);
+  }
+  persist();
+  renderShopReceipts();
+  if (added.length) {
+    renderGroceries();
+    showMailToast(ReceiptQueue.resultsToast(added));
+  }
+  return added;
+}
+
+// Re-send whatever was cut off or couldn't go (offline), then look for results.
+async function resumeReceiptQueue() {
+  if (!scanAndGoAvailable()) return;
+  if (typeof isStateReady === "function" && !isStateReady()) return;
+  for (const item of ReceiptQueue.itemsToResend(readReceiptQueue())) {
+    await postReceiptForReading(item.id).catch(() => {});
+  }
+  await refreshReceiptScanResults().catch(() => {});
+}
+
+// Called once the signed-in state has loaded, and again on coming back to the app.
+function startReceiptScanQueue() {
+  if (!receiptQueueStarted) {
+    receiptQueueStarted = true;
+    window.addEventListener("online", () => { resumeReceiptQueue().catch(() => {}); });
+    if (ReceiptQueue.awaitingResults(readReceiptQueue())) scheduleReceiptResultChecks();
+  }
+  resumeReceiptQueue().catch(() => {});
+}
+
+function retryReceiptScan(id) {
+  patchReceiptQueue(id, { state: "uploading", at: new Date().toISOString(), error: "" });
+  showMailToast("Sending receipt again…");
+  postReceiptForReading(id, { announce: true }).catch(() => {});
+}
+
+function removeReceiptScan(id) {
+  const item = readReceiptQueue().items.find((i) => i.id === id);
+  writeReceiptQueue(ReceiptQueue.removeFromQueue(readReceiptQueue(), id));
+  getScanContent().then((sc) => sc && sc.removeImages(id, Math.max(1, item?.pages || 1))).catch(() => {});
+}
+
+function receiptQueueCardsHtml() {
+  const items = readReceiptQueue().items.slice().reverse();
+  return items.map((item) => {
+    const when = item.at ? new Date(item.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+    const pages = `${item.pages || 1} photo${(item.pages || 1) === 1 ? "" : "s"}`;
+    const label = item.state === "failed"
+      ? `Couldn't read this receipt${item.error ? `: ${item.error}` : ""}`
+      : item.state === "waiting" ? "Waiting to send — it goes when you're back online"
+        : item.state === "uploading" ? "Sending…" : "Reading…";
+    const actions = item.state === "failed" || item.state === "waiting"
+      ? `<div class="receipt-queue-actions">
+          <button class="secondary-btn compact-btn" type="button" data-receipt-queue-retry="${escapeHtml(item.id)}">Try again</button>
+          <button class="secondary-btn compact-btn" type="button" data-receipt-queue-remove="${escapeHtml(item.id)}">Remove</button>
+        </div>`
+      : "";
+    return `<div class="shop-receipt-card receipt-queue-card${item.state === "failed" ? " is-failed" : ""}" role="status">
+        <div class="shop-receipt-store">${escapeHtml(label)}</div>
+        <div class="shop-receipt-meta"><span>${escapeHtml(pages)}</span>${when ? `<span>${escapeHtml(when)}</span>` : ""}</div>
+        ${actions}
+      </div>`;
+  }).join("");
+}
+
+// The edit view's "does it add up" line, refreshed as numbers are changed.
+function refreshEditReceiptValidation() {
+  const banner = elements.editReceiptReconcileBanner;
+  if (!banner || !editingReceiptId) return;
+  const v = LiveReceiptDomain.validateReceipt(editedReceiptFromForm());
+  if (!v.checked) { banner.hidden = true; return; }
+  banner.hidden = false;
+  if (v.ok) {
+    banner.className = "receipt-reconcile is-ok";
+    banner.textContent = "✓ Adds up — the items, savings, fees and tax come to the total.";
+    return;
+  }
+  banner.className = "receipt-reconcile is-warn";
+  banner.textContent = `⚠ ${v.message}`;
+}
+
 async function scanReceiptImages() {
   if (!receiptScanFiles.length) {
     setReceiptScanStatus("Choose at least one receipt photo first.");
+    return;
+  }
+  if (scanAndGoAvailable()) {
+    const files = receiptScanFiles;
+    const edits = receiptImageEdits;
+    elements.receiptScanDialog.close();
+    sendReceiptForReading(files, { edits }).catch(() => {});
     return;
   }
   trackUsage("claude_receipt_scan");
@@ -1603,7 +1937,7 @@ async function scanReceiptImages() {
         kind: "receipt",
         rawOutput: payload.rawText || "",
         extractedAt: new Date().toISOString(),
-        status: "ok",
+        status: payload.status === "check" ? "check" : "ok",
         confidence: averageReceiptConfidence(payload.receipt)
       }
     }, createId);
@@ -1814,7 +2148,7 @@ function reviewedReceiptFromForm() {
 
 function saveReviewedReceipt(event) {
   event.preventDefault();
-  const receipt = reviewedReceiptFromForm();
+  const receipt = markReceiptReviewed(reviewedReceiptFromForm());
   if (!receipt.storeName || !receipt.purchaseDate || !receipt.lineItems.length) return;
   state.receipts = normalizeReceipts([...(state.receipts || []), receipt]);
   state.receiptItemMappings = LiveReceiptDomain.correctedMappingsFromReceipt(receipt, receiptItemMappings());
@@ -4373,6 +4707,7 @@ function manualCarryByRowKey() {
 // Saves only when something changed; opening the page with nothing to tidy writes nothing.
 function tidyGroceriesOnShopOpen() {
   groceryBoughtShownStores.clear();
+  refreshReceiptScanResults().catch(() => {}); // receipts read since (throttled)
   let changed = false;
 
   const carry = manualCarryByRowKey();
@@ -5190,11 +5525,12 @@ function renderShopReceipts() {
   const receipts = (state.receipts || [])
     .slice()
     .sort((a, b) => (b.purchaseDate || "").localeCompare(a.purchaseDate || ""));
-  if (!receipts.length) {
+  const queued = receiptQueueCardsHtml();
+  if (!receipts.length && !queued) {
     el.innerHTML = `<div class="empty-state">No receipts yet. Scan a receipt to start tracking prices.</div>`;
     return;
   }
-  el.innerHTML = receipts.map((r) => {
+  el.innerHTML = queued + receipts.map((r) => {
     const date = r.purchaseDate
       ? new Date(r.purchaseDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
       : "";
@@ -5206,6 +5542,7 @@ function renderShopReceipts() {
         <div class="shop-receipt-store">${escapeHtml(r.storeName || "Unknown store")}</div>
         <div class="shop-receipt-meta">
           ${sourceTag ? `<span class="shop-receipt-source">${sourceTag}</span>` : ""}
+          ${r.extraction?.status === "check" ? `<span class="shop-receipt-source is-check">Needs a look</span>` : ""}
           ${r.financeTxnId ? `<span class="shop-receipt-source">In Finance</span>` : ""}
           ${date ? `<span>${escapeHtml(date)}</span>` : ""}
           ${itemCount ? `<span>${itemCount} item${itemCount !== 1 ? "s" : ""}</span>` : ""}
@@ -5216,6 +5553,12 @@ function renderShopReceipts() {
   }).join("");
   el.querySelectorAll("[data-receipt-id]").forEach((card) => {
     card.addEventListener("click", () => openReceiptEditView(card.dataset.receiptId));
+  });
+  el.querySelectorAll("[data-receipt-queue-retry]").forEach((btn) => {
+    btn.addEventListener("click", () => retryReceiptScan(btn.dataset.receiptQueueRetry));
+  });
+  el.querySelectorAll("[data-receipt-queue-remove]").forEach((btn) => {
+    btn.addEventListener("click", () => removeReceiptScan(btn.dataset.receiptQueueRemove));
   });
 }
 
@@ -5276,6 +5619,9 @@ function renderShopReceipts() {
   function setPendingReceiptDraft(v) { pendingReceiptDraft = v; }
 
   return {
+    startReceiptScanQueue,
+    refreshReceiptScanResults,
+    handleReceiptScanResults,
     groceryRowInfoLines,
     acquireGroceryStoreSearchLocation,
     addCurrentGroceryReviewItem,

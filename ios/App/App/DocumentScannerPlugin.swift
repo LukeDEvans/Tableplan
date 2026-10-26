@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import VisionKit
+import Vision
 import Capacitor
 
 // Receipt camera for the header scanner, exposed to the web app as the
@@ -11,21 +12,29 @@ import Capacitor
 // pages for a long receipt. The pages come back to the web app as JPEG
 // base64; nothing is written to the Photos library.
 //   • isAvailable() — { available } (false on devices without a camera).
-//   • scan({ maxPages, maxDimension, quality }) — presents the camera and
-//     resolves { pages: [base64 JPEG…], cancelled }.
+//   • scan({ maxPages, maxDimension, quality, ocr }) — presents the camera and
+//     resolves { pages: [base64 JPEG…], cancelled, text? }. With ocr: true it also
+//     runs Apple's on-device text recognition on each page and returns
+//     text: [[{ text, x, y, w, h }…] per page] (0–1 page coordinates, top-left
+//     origin). The app rebuilds printed rows from these (receipt-reconcile.js) and
+//     uses the exact digits to check the AI's read (RECEIPTS.md, "Reading a receipt").
+//   • recognizeText({ images: [base64 JPEG…] }) — the same text recognition for
+//     photos picked from the library; resolves { text: [[…] per image] }.
 @objc(DocumentScannerPlugin)
 public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCameraViewControllerDelegate {
     public let identifier = "DocumentScannerPlugin"
     public let jsName = "DocumentScanner"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "isAvailable", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "scan", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "scan", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "recognizeText", returnType: CAPPluginReturnPromise)
     ]
 
     private var pendingCall: CAPPluginCall?
     private var maxPages = 4
     private var maxDimension: CGFloat = 1600
     private var quality: CGFloat = 0.82
+    private var wantsText = false
 
     @objc func isAvailable(_ call: CAPPluginCall) {
         call.resolve(["available": VNDocumentCameraViewController.isSupported])
@@ -39,6 +48,7 @@ public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCamer
         maxPages = max(1, min(call.getInt("maxPages") ?? 4, 10))
         maxDimension = CGFloat(max(600, min(call.getInt("maxDimension") ?? 1600, 4000)))
         quality = CGFloat(max(0.3, min(call.getDouble("quality") ?? 0.82, 1.0)))
+        wantsText = call.getBool("ocr") ?? false
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             if self.pendingCall != nil {
@@ -61,12 +71,18 @@ public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCamer
         let images = (0..<count).map { scan.imageOfPage(at: $0) }
         let maxDimension = self.maxDimension
         let quality = self.quality
+        let wantsText = self.wantsText
         controller.dismiss(animated: true)
-        // Resize + encode off the main thread; a multi-page scan can take a moment.
+        // Resize + encode (and read the text) off the main thread; a multi-page
+        // scan can take a moment.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let pages = images.compactMap { DocumentScannerPlugin.jpegBase64($0, maxDimension: maxDimension, quality: quality) }
+            var result: [String: Any] = ["pages": pages, "cancelled": false]
+            if wantsText {
+                result["text"] = images.map { DocumentScannerPlugin.recognize($0.cgImage) }
+            }
             DispatchQueue.main.async {
-                self?.finish(["pages": pages, "cancelled": false])
+                self?.finish(result)
             }
         }
     }
@@ -81,6 +97,42 @@ public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCamer
         let call = pendingCall
         pendingCall = nil
         call?.reject(error.localizedDescription)
+    }
+
+    @objc func recognizeText(_ call: CAPPluginCall) {
+        let encoded = (call.getArray("images") as? [String]) ?? []
+        DispatchQueue.global(qos: .userInitiated).async {
+            let text: [[[String: Any]]] = encoded.prefix(6).map { b64 -> [[String: Any]] in
+                guard let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
+                      let image = UIImage(data: data) else { return [] }
+                return DocumentScannerPlugin.recognize(image.cgImage)
+            }
+            DispatchQueue.main.async { call.resolve(["text": text]) }
+        }
+    }
+
+    // Apple's on-device text recognition (Vision), accurate mode, no language
+    // correction (it would "fix" product codes and prices). Each observation's
+    // box is flipped to a top-left origin for the web side.
+    private static func recognize(_ cgImage: CGImage?) -> [[String: Any]] {
+        guard let cgImage = cgImage else { return [] }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do { try handler.perform([request]) } catch { return [] }
+        let observations = request.results ?? []
+        return observations.compactMap { obs -> [String: Any]? in
+            guard let candidate = obs.topCandidates(1).first else { return nil }
+            let box = obs.boundingBox
+            return [
+                "text": candidate.string,
+                "x": Double(box.minX),
+                "y": Double(1 - box.maxY),
+                "w": Double(box.width),
+                "h": Double(box.height)
+            ]
+        }
     }
 
     private func finish(_ result: [String: Any]) {

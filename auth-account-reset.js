@@ -33,6 +33,7 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "live-dock-ticker-v1",     // TICKER_CACHE_KEY (news-ticker.js) — last headlines/scores shown in the dock
   "live-display-v1",         // DISPLAY_CACHE_KEY — this person's last theme, applied before first paint
   "live-view-v1",            // the last view used and this person's view list (views.js)
+  "live-receipt-scans-v1",   // RECEIPT_QUEUE_KEY (receipt-scan-queue.js) — receipts sent to be read, with photo refs
 ];
 
 // Some account-scoped keys are DYNAMIC (a stable prefix + a variable suffix), so
