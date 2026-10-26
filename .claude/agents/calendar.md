@@ -66,6 +66,14 @@ changes to the Calendar (and its sibling Tasks) domain only.
 - **Views (VIEWS_DESIGN.md, 2026-10-20):** the Calendar reads the row of the view on screen — Personal: the person's own (`u-<uid>:plan`), Household: the household's, Business: the business space's (`<spaceId>:plan`, live_spaces). Shadows are keyed by scope (`shadowData(section, scope)`); the old two-scope `shadowSections.plan` shape is gone. The Personal calendar shows Household / Business events and Household tasks as **layers** (`source: "layer"` / `"layer-task"`, opt-in per person in `state.viewLayers`), read-only; opening one switches to its view. Household and Business never show Personal events (the old "personal-overlay" is removed). Business events never feed the meal plan. **Tasks has no menu entry** (Luke, 2026-10-20): it's reached from inside the Calendar only. **The Business calendar shows only its own events** (Luke, 2026-10-20): none of the entries other pages add (Bills, Meal Plan, Exercise, Tasks, Birthdays — `getAppDataEvents`), and no sidebar switches for them (`planShowsAppData()`).
 - **Month view title spells the month out** (2026-10-15): "October 2026", at every
   width (`planViewLabel`), never "Oct, 2026".
+- **Phone month view: dots in the grid, the tapped day listed below** (2026-10-26,
+  "option C"; replaces dots-only). At ≤560px each day shows at most three colour
+  dots (tasks as one hollow dot), no titles, no "+N". Tapping a day selects it
+  (`planMonthSelectedDay`, `selectPlanMonthDay`) and lists all its events, tasks and
+  paydays under the grid (`renderPlanMonthDayList`, rows shared with Agenda via
+  `planAgendaRowTemplate`); it no longer opens the new-event dialog — the list's **+**
+  does, and its date opens the day view. Opens on today (or the 1st). Wider screens
+  keep titled chips and no list. QA: `npm run qa:calendar-month`.
 
 ## Domain landmines (do NOT change without flagging)
 - **The authority flip is HELD.** Never make `calendarSources` authoritative or
