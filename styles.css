@@ -24502,6 +24502,23 @@ input[type="search"]::-webkit-search-cancel-button {
 .game-card-extra, .game-card-empty { margin: 10px 0 0; color: var(--muted); font-size: 0.88rem; }
 .game-card-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
 
+/* "Watch" buttons on a live / about-to-start game (Scores + the game card) —
+   STREAMING_HANDOFF_DESIGN.md §4.3. Open the service's own app. */
+.game-watch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 2px; min-width: 0; }
+.game-watch-label { font-size: 0.72rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-right: 2px; }
+.game-watch-btn { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 32px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 5px 12px 5px 9px; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+.game-watch-btn.is-mine { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.game-watch-btn svg { flex-shrink: 0; width: 12px; height: 12px; fill: currentColor; }
+.game-watch-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-watch-btn small { font-weight: 600; opacity: 0.8; white-space: nowrap; }
+
+/* Settings › Admin › Beta › Link Test. */
+.link-test-list { display: flex; flex-direction: column; gap: 2px; margin: 8px 0 14px; }
+.link-test-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.link-test-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-test-result { font-size: 0.8rem; color: var(--muted); }
+.link-test-result.is-app { color: var(--ink); font-weight: 700; }
+
 /* Personal Finance: the household's summary card (FINANCE_SPLIT_DESIGN.md §2.3). */
 .fin-household-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .fin-household-summary-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

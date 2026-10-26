@@ -302,3 +302,20 @@ export function parseAppCallback(url) {
     return { status: u.searchParams.get("status") || "unknown", reason: u.searchParams.get("reason") || "" };
   } catch { return { status: "unknown" }; }
 }
+
+// Hand-off to another app (LinkOut plugin): open({ appUrls, webUrl }) →
+// { opened: "app" | "web" | "none" }. null in a browser/PWA or an app build
+// from before the plugin existed → link-out.js opens the website instead.
+let _linkOut;
+export function nativeLinkOut() {
+  if (_linkOut !== undefined) return _linkOut;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _linkOut = null;
+      return _linkOut;
+    }
+    const p = registerPlugin("LinkOut");
+    _linkOut = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("LinkOut")) ? p : null;
+  } catch { _linkOut = null; }
+  return _linkOut;
+}

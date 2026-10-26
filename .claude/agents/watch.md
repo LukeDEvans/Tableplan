@@ -20,7 +20,7 @@ changes to the Watch page only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `media-provider-tmdb.js`, `media-provider-youtube.js`, `media-provider-jellyfin.js`, `media-availability.js`, `media-deeplink.js`, `media-watch-adapter.js`, `media-search-scope.js`, `netlify/functions/tmdb-*.js`, `netlify/functions/youtube-search.js`, `netlify/functions/showtimes.js`
+- files: `media-provider-tmdb.js`, `media-provider-youtube.js`, `media-provider-jellyfin.js`, `media-availability.js`, `media-deeplink.js`, `media-watch-adapter.js`, `media-search-scope.js`, `media-stream-links.js`, `netlify/functions/stream-links.mjs`, `netlify/functions/tmdb-*.js`, `netlify/functions/youtube-search.js`, `netlify/functions/showtimes.js`
 - state: `watch*`, `jellyfin`, `mediaServices`
 
 ## Your scope (edit these)
@@ -34,8 +34,17 @@ changes to the Watch page only.
   `media-provider-jellyfin.js` (Luke's own server — `state.jellyfin` config),
   `media-deeplink.js` (provider-aware deep links into native apps),
   `media-watch-adapter.js` (Watch → canonical media envelope),
-  `media-search-scope.js` (Watch's search filter: **Movies & TV and Videos only**).
-- **Server:** `netlify/functions/tmdb-search.js`, `tmdb-season.js`,
+  `media-search-scope.js` (Watch's search filter: **Movies & TV and Videos only**),
+  `media-stream-links.js` (exact title / next-episode links, a week's device cache).
+- **Hand-off (STREAMING_HANDOFF_DESIGN.md, Luke 2026-10-26):** no in-app playback for
+  the DRM services (WKWebView won't work and breaks their terms). Every Open goes
+  through `handOff()` in app.js → `link-out.js` `openOutLink()` → the iPhone
+  `LinkOut` plugin, which opens the service's app (on the exact title when
+  `stream-links` has it, else the app's home), else the website. Uninstalled app →
+  the website (Luke, 2026-10-26), not the App Store.
+- **Server:** `netlify/functions/stream-links.mjs` (Streaming Availability API,
+  CDN-cached a week, off until `STREAMING_AVAILABILITY_KEY` is set),
+  `netlify/functions/tmdb-search.js`, `tmdb-season.js`,
   `tmdb-watch-providers.js`, `youtube-search.js`, `showtimes.js`. API keys stay here.
 - **`app.js`:** the Watch sections — `showWatchApp`, `renderWatchTab`,
   `renderWatchPlanner`, the watch log/stars, `renderWatchSettingsMenu`,

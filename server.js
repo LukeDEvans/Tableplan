@@ -149,6 +149,10 @@ const server = http.createServer(async (request, response) => {
       await handleNetlifyFunction("./netlify/functions/weather", request, response, url);
       return;
     }
+    if (url.pathname === "/api/stream-links") {
+      await handleNetlifyFunction("./netlify/functions/stream-links.mjs", request, response, url);
+      return;
+    }
     if (url.pathname === "/api/scores") {
       await handleNetlifyFunction("./netlify/functions/scores.mjs", request, response, url);
       return;

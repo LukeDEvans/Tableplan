@@ -17,6 +17,8 @@
 // (sports-model.js nextRefreshMs). The timer reads the CDN-cached function, never
 // the database, and stops when the page is hidden or left.
 
+import { inWatchWindow, watchOptionsForGame } from "./sports-watch.js";
+import { linkOutAttrs } from "./link-out.js";
 import {
   LEAGUES, LEAGUE_BY_KEY, LEAGUE_GROUPS, cleanGames, cleanGame, cleanTeam, normalizeSportsPrefs, leaguesToRequest,
   arrangeScores, addFavorite, removeFavorite, isFavorite, setLeagueOn, moveLeague, isLeagueOn, enabledLeagueKeys,
@@ -90,6 +92,7 @@ export function filterTeams(teams, query) {
   return (teams || []).map((t) => [score(t), t]).filter(([s]) => s < 9).sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name)).map(([, t]) => t);
 }
 
+const PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
 const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.6 9.7l5.8-.8z"/></svg>';
 const CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 const ARROW_UP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg>';
@@ -103,7 +106,23 @@ const CLOSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6
 // The small game card the dock's ticker opens in the Household and Business views
 // (VIEWS_DESIGN.md decision 15): Scores is a Personal page, so a tap there shows
 // the game in place instead of switching views. `esc` escapes text for HTML.
-export function gameCardHtml(game, esc, fmt = {}) {
+// "Watch on …" buttons for a game that's live or about to start
+// (STREAMING_HANDOFF_DESIGN.md §4.3). `services` = the person's Streaming
+// Services. "" when there's nothing to offer.
+export function gameWatchHtml(game, esc, services = []) {
+  if (!inWatchWindow(game)) return "";
+  const opts = watchOptionsForGame(game, { services });
+  if (!opts.length) return "";
+  const btns = opts.map((o) => {
+    // The channel, when it isn't the app's own name ("FOX" on Xfinity, "NBC" on Peacock).
+    const via = o.network && !o.label.toLowerCase().startsWith(o.network.toLowerCase()) ? o.network : "";
+    const note = o.id === "xfinity" && via ? `Opening Xfinity Stream — ${via} is under Live TV` : "";
+    return `<button type="button" class="game-watch-btn${o.mine ? " is-mine" : ""}" ${linkOutAttrs({ ...o, note }, esc)}>${PLAY}<span>${esc(o.label)}</span>${via ? `<small>${esc(via)}</small>` : ""}</button>`;
+  }).join("");
+  return `<div class="game-watch" role="group" aria-label="Watch"><span class="game-watch-label">Watch</span>${btns}</div>`;
+}
+
+export function gameCardHtml(game, esc, fmt = {}, services = []) {
   if (!game) return `<p class="game-card-empty">This game isn't on the board right now.</p>`;
   const league = LEAGUE_BY_KEY[game.league];
   const side = (s) => `
@@ -119,7 +138,8 @@ export function gameCardHtml(game, esc, fmt = {}) {
     </div>
     ${side(game.away)}
     ${side(game.home)}
-    ${extra.length ? `<p class="game-card-extra">${extra.map((x) => esc(x)).join(" · ")}</p>` : ""}`;
+    ${extra.length ? `<p class="game-card-extra">${extra.map((x) => esc(x)).join(" · ")}</p>` : ""}
+    ${gameWatchHtml(game, esc, services)}`;
 }
 
 export function createScoresModule(deps) {
@@ -318,6 +338,7 @@ export function createScoresModule(deps) {
       const facts = [LEAGUE_BY_KEY[game.league].short, game.note, game.venue, game.broadcasts.join(", ")].filter(Boolean).map(esc).join(" · ");
       detail = `<div class="scores-detail">
         ${facts ? `<div class="scores-facts">${facts}</div>` : ""}
+        ${gameWatchHtml(game, esc, getState().mediaServices || [])}
         <div class="scores-actions">
           ${order.map((w) => followBtn(game[w].team, game.league)).join("")}
         </div>
