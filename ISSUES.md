@@ -17,8 +17,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
       Policy "members can update own row" plus a table-wide UPDATE grant to `authenticated` lets any member PATCH her own row's `role` to `admin` (reproduced in PGlite against the live policies). Admin unlocks every page, admin settings and, with the views shell, all three views. → Fixed by `migrations/2026-10-20-views-spaces.sql` §3 (UPDATE limited to `display_name` + `personal_disabled_pages`), applied 2026-10-20; checked afterwards: `authenticated` can no longer UPDATE `role`. Verdict: FIXED.
 
 ## P1
-- [ ] **[P2] iPhone text recognition for receipts is unbuilt on a device** (receipts · ios/App/App/DocumentScannerPlugin.swift · 2026-10-26)
-      `scan({ ocr: true })` and `recognizeText` use Vision's `VNRecognizeTextRequest`; written without a Swift toolchain (cloud sandbox). The web side is tested with sample observations. → Next TestFlight build: CI compiles it; then scan a receipt and check the Netlify log line for scan-receipt-background. A compile error would fail the TestFlight workflow, not the app. Verdict: OPEN (verify on TestFlight).
+- [ ] **[P2] iPhone text recognition for receipts hasn't run on a device** (receipts · ios/App/App/DocumentScannerPlugin.swift · 2026-10-26)
+      `scan({ ocr: true })` and `recognizeText` use Vision's `VNRecognizeTextRequest`. Compiles (PR #172's `xcodebuild (unsigned)` passed); the web side is tested with sample observations, but it hasn't run on a phone. → Next TestFlight build: scan a receipt and check that the read's prompt had the phone's text (Netlify log for scan-receipt-background). Verdict: OPEN (verify on TestFlight).
 - [ ] **[P2] Scan and go reaches the iPhone only with a TestFlight build** (receipts · groceries-ui.js · 2026-10-26)
       The app bundles its web code, so until a new build the phone keeps the old scan-and-review dialog (which now gets the new read and reconcile from the server). The browser gets it on deploy. Verdict: OPEN (ship TestFlight).
 - [ ] **[P3] Receipt line header row clips "Category" at 360–390px** (receipts · styles.css .receipt-line-row-head · 2026-10-26)
