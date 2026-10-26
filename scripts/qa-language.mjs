@@ -1,10 +1,15 @@
 #!/usr/bin/env node
-// Headless QA for Dutch practice (LANGUAGE_PRACTICE.md) through the real app:
-// the Leisure row, a lesson's start screen, the matching board (wrong pairs cost
-// nothing, a right pair scores once, replacements arrive, scope stays inside the
-// lesson), reaching the goal, time running out, pausing when hidden, leaving
-// mid-game, review unlocking, saved progress, phone widths, dark mode, reduced
-// motion and the keyboard.
+// Headless QA for Dutch practice (LANGUAGE_PRACTICE.md) through the real app.
+// Part 1, matching: the Leisure row, a lesson's screen, the board (wrong pairs
+// cost nothing, a right pair scores once, replacements arrive, scope stays inside
+// the lesson), the goal, time running out, pausing when hidden, leaving mid-game,
+// saved progress, phone widths, dark mode, reduced motion and the keyboard.
+// Part 2, the learning build: Add words (paste), your course first, flashcards
+// (grades, Again comes back, type-it on produce cards, saved schedule survives a
+// reload), de/het, Listen, Sentences, Speak (fake mic + stubbed recognizer),
+// settings, the word list, and every screen fitting 390/360 px.
+// Speech is stubbed (window.speechSynthesis / webkitSpeechRecognition) so the
+// run doesn't depend on voices the headless browser lacks.
 //
 //   node scripts/qa-language.mjs [url]   (default http://localhost:4174/; needs `npm run dev:local`)
 //   Delete data/tableplan-state.json first (local dev keeps one state file across runs).
@@ -15,7 +20,7 @@ import { DUTCH_COURSE } from "../language-nl-starter.js";
 
 const URL = process.argv[2] || "http://localhost:4174/";
 const SHOT = process.env.QA_LANG_SHOT || "";
-const LAUNCH = { headless: true, args: ["--no-proxy-server", "--proxy-bypass-list=*"] };
+const LAUNCH = { headless: true, args: ["--no-proxy-server", "--proxy-bypass-list=*", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] };
 const results = [];
 const check = (cond, name, detail) => {
   results.push([cond ? "PASS" : "FAIL", name]);
@@ -25,8 +30,9 @@ const check = (cond, name, detail) => {
 async function launch() {
   try { return await chromium.launch({ ...LAUNCH, channel: "chrome" }); } catch { /* none */ }
   try { return await chromium.launch(LAUNCH); } catch { /* none */ }
-  const p = `${process.env.PLAYWRIGHT_BROWSERS_PATH || "/opt/pw-browsers"}/chromium`;
-  if (existsSync(p)) return chromium.launch({ ...LAUNCH, executablePath: p });
+  for (const p of [`${process.env.PLAYWRIGHT_BROWSERS_PATH || "/opt/pw-browsers"}/chromium`, "/opt/pw-browsers/chromium-1243/chrome-linux64/chrome"]) {
+    if (existsSync(p)) { try { return await chromium.launch({ ...LAUNCH, executablePath: p }); } catch { /* next */ } }
+  }
   throw new Error("No Chromium available");
 }
 
@@ -36,7 +42,32 @@ const enOf = new Map(lessonEntries.map((e) => [e.text, e.en]));
 
 const browser = await launch();
 try {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, timezoneId: "America/Chicago" });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, timezoneId: "America/Chicago", permissions: ["microphone"] });
+  await context.addInitScript(() => {
+    // Speech stubs: every spoken text is recorded; the recognizer "hears"
+    // window.__nextHeard (default: whatever is asked).
+    window.__spoken = [];
+    window.SpeechSynthesisUtterance = class { constructor(t) { this.text = t; } };
+    const synth = {
+      speak(u) { window.__spoken.push(u.text); setTimeout(() => u.onend && u.onend(), 20); },
+      cancel() {}, getVoices() { return [{ name: "Xander", lang: "nl-NL", localService: true }]; }, addEventListener() {},
+    };
+    Object.defineProperty(window, "speechSynthesis", { value: synth, configurable: true });
+    window.__nextHeard = null;
+    class Rec {
+      start() {
+        setTimeout(() => {
+          const heard = window.__nextHeard || [""];
+          const res = Object.assign(heard.map((t) => ({ transcript: t })), { isFinal: true });
+          this.onresult && this.onresult({ results: [res] });
+          this.onend && this.onend();
+        }, 400);
+      }
+      stop() {}
+    }
+    window.webkitSpeechRecognition = Rec;
+    window.SpeechRecognition = Rec;
+  });
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -74,8 +105,297 @@ try {
   };
   const openLesson = async () => {
     await page.click(`[data-leisure-lesson="${LESSON}"]`);
+    await page.waitForSelector(".lang-lesson-view");
+    await page.click('.lang-lesson-view [data-lang-practice="match"]');
     await page.waitForSelector(".lang-start [data-lang-begin]");
   };
+
+
+  // ── Part 2: the learning build ────────────────────────────────────────────
+  async function part2() {
+    const spoken = () => page.evaluate(() => window.__spoken.slice());
+    const clearSpoken = () => page.evaluate(() => { window.__spoken.length = 0; });
+    const text = (sel) => page.evaluate((s) => document.querySelector(s)?.textContent.replace(/\s+/g, " ").trim() || "", sel);
+
+    console.log("Add words");
+    await page.click(".lang-hub [data-lang-add]");
+    await page.waitForSelector("[data-wd-form]");
+    check(await fits(), "Add words fits 390px");
+    await page.fill('[data-wd-field="unit"]', "1");
+    await page.fill('[data-wd-field="lesson"]', "2");
+    await page.fill('[data-wd-field="unitTitle"]', "Basics");
+    await page.fill('[data-wd-field="title"]', "Food");
+    await page.fill('[data-wd-field="text"]', [
+      "het brood = bread", "de appel = apple", "de kaas — cheese", "het water\twater", "drinken = to drink; to have a drink",
+      "de melk = milk", "het ei = egg", "Ik eet een appel. = I'm eating an apple.", "De jongen drinkt water. = The boy drinks water.",
+      "zomaar",
+    ].join("\n"));
+    await page.click("[data-wd-preview]");
+    await page.waitForSelector(".lang-preview");
+    const pv = await page.evaluate(() => ({
+      rows: document.querySelectorAll(".lang-preview-list li").length,
+      errors: document.querySelectorAll(".lang-preview-list li.is-error").length,
+      sentences: [...document.querySelectorAll(".lang-chip")].filter((c) => c.textContent.trim() === "Sentence").length,
+      head: document.querySelector(".lang-preview h4")?.textContent || "",
+    }));
+    check(pv.rows === 10 && pv.errors === 1, "preview lists every line and flags the one without English", JSON.stringify(pv));
+    check(pv.sentences === 2, "whole sentences are filed as sentences", pv.sentences);
+    check(/9 to add to Unit 1 \(Basics\) · Lesson 2: Food/.test(pv.head), "preview names the unit and lesson", pv.head);
+    check(await fits(), "preview fits 390px");
+    await shot("add-preview");
+    // Leave one out, then save.
+    await page.click('[data-wd-drop="6"]');
+    await page.click("[data-wd-save]");
+    await page.waitForSelector("[data-wd-open]");
+    const added = await text(".lang-summary");
+    check(/Added 8/.test(added), "saving adds what was kept", added);
+    let st = await stored();
+    const userWords = Object.values(st.userWords || {});
+    check(userWords.length === 8 && userWords.filter((w) => w.kind === "sentence").length === 2, "8 items saved, 2 of them sentences", userWords.length);
+    check(userWords.find((w) => w.text === "drinken")?.alsoEn?.[0] === "to have a drink", "a second English meaning is kept");
+    check(st.userLessons?.["nl-u1-2"]?.title === "Food", "the lesson is saved with its title");
+    // Paste the same again: duplicates are skipped.
+    await page.click("[data-wd-more]");
+    await page.fill('[data-wd-field="text"]', "het brood = bread\nde boter = butter");
+    await page.click("[data-wd-preview]");
+    await page.click("[data-wd-save]");
+    await page.waitForSelector("[data-wd-open]");
+    const again = await text(".lang-summary");
+    check(/Added 1/.test(again) && /1 was already in this lesson/.test(again), "a word already in the lesson is skipped", again);
+    await page.click("[data-wd-open]");
+    await page.waitForSelector(".lang-lesson-view");
+    const lv = await text(".lang-lesson-view");
+    check(/Unit 1: Basics/.test(lv) && /Lesson 2: Food/.test(lv) && /Words\s*7/.test(lv), "the lesson screen shows your lesson", lv);
+    check(await fits(), "lesson screen fits 390px");
+    await shot("lesson");
+    await page.click("[data-lang-hub]");
+    await page.waitForSelector(".lang-hub");
+    const firstLevel = await text(".lang-level .lang-level-sub");
+    check(/Your course/.test(firstLevel), "Your course is listed first", firstLevel);
+    check(!(await page.$(".lang-hub .lang-note")), "the starter note goes once you have lessons");
+
+    console.log("Flashcards");
+    await page.click('.lang-lesson[data-lang-lesson="nl-u1-2"]');
+    await page.click('.lang-lesson-view [data-lang-practice="cards"]');
+    await page.waitForSelector(".lang-fc");
+    await page.waitForTimeout(150);
+    const front = await text(".lang-fc-word");
+    check(front === "het brood", "the first new word is the first one pasted", front);
+    check((await spoken()).includes("het brood"), "the Dutch is played automatically");
+    check(!(await page.$("[data-fc-grade]")), "no grades before the answer is shown");
+    check(await fits(), "flashcard fits 390px");
+    await page.click("[data-fc-show]");
+    const back = await text(".lang-fc-card");
+    check(/bread/.test(back) && /het-word/.test(back), "the back shows the English and the gender", back);
+    const grades = await page.evaluate(() => [...document.querySelectorAll("[data-fc-grade]")].map((b) => [...b.children].map((c) => c.textContent.trim()).join(" ")));
+    check(grades.join("|") === "Again 1d|Hard 1d|Good 4d|Easy 2w", "grades show when the card comes back", grades.join("|"));
+    await shot("card-back");
+    await page.click("[data-fc-grade='1']"); // Again: comes back later in the session
+    const leftAfterAgain = await text(".lang-fc-left");
+    check(/7 left/.test(leftAfterAgain), "Again puts the card back in the session", leftAfterAgain);
+    const seenFronts = [front];
+    for (let n = 0; n < 12; n += 1) {
+      if (!(await page.$("[data-fc-show]"))) break;
+      seenFronts.push(await text(".lang-fc-word"));
+      await page.keyboard.press(" ");
+      await page.keyboard.press("3");
+    }
+    check(seenFronts.filter((f) => f === "het brood").length === 2, "the missed card was shown again", seenFronts.join(", "));
+    await page.waitForSelector(".lang-summary");
+    const done = await text(".lang-summary");
+    check(/Done for now/.test(done) && /8 cards reviewed, 7 new words/.test(done), "the session ends with a plain summary", done);
+    check(!/Learn 5 more/.test(done), "no 'more words' offer when the lesson has none left");
+    st = await stored();
+    const keys = Object.keys(st.cards || {});
+    check(keys.length === 7 && keys.every((k) => k.endsWith("|r")), "seven recognize cards scheduled (the 7 words, not the sentences)", keys.join(","));
+    check(st.sessions[0].kind === "cards" && st.sessions[0].attempts === 8 && st.sessions[0].correct === 7, "one flashcard session saved", JSON.stringify(st.sessions[0]));
+    await page.click("[data-fc-back]");
+
+    console.log("Saved across a reload; produce cards next day");
+    await boot("#leisure");
+    st = await stored();
+    check(Object.keys(st.cards || {}).length === 7 && Object.keys(st.userWords || {}).length === 9, "cards and words survive a reload", `${Object.keys(st.cards || {}).length} / ${Object.keys(st.userWords || {}).length}`);
+    // Pretend the cards were answered yesterday: the produce side unlocks.
+    const yesterday = Date.now() - 86_400_000;
+    const day = (ms) => Math.floor((ms - new Date(ms).getTimezoneOffset() * 60_000) / 86_400_000);
+    const seeded = {};
+    for (const k of Object.keys(st.cards)) seeded[k] = [4, 5, day(yesterday) + 4, yesterday, 1, 0, day(yesterday)];
+    await page.evaluate((c) => window.__liveQA.languageCardsForQa(c), seeded);
+    await page.click('[data-open-hobby="dutch"]');
+    await page.click('.lang-lesson[data-lang-lesson="nl-u1-2"]');
+    await page.click('.lang-lesson-view [data-lang-practice="cards"]');
+    await page.waitForSelector(".lang-fc");
+    const dir = await page.evaluate(() => document.querySelector(".lang-fc")?.dataset.fcDir);
+    check(dir === "p", "the produce card (English → Dutch) comes up", dir);
+    const en = await text(".lang-fc-word");
+    const nlOf = { bread: "het brood", apple: "de appel", cheese: "de kaas", water: "het water", "to drink": "drinken", milk: "de melk", butter: "de boter" };
+    await page.fill("[data-fc-input]", (nlOf[en] || "").replace(/^(de|het) /, ""));
+    await page.keyboard.press("Enter");
+    const typed = await text(".lang-typed");
+    const suggested = await page.evaluate(() => document.querySelector(".lang-grade.is-suggested")?.dataset.fcGrade);
+    check(/Almost/.test(typed) && suggested === "2", "a missing article is 'almost' and suggests Hard", `${typed} / ${suggested}`);
+    await shot("card-typed");
+    await page.click("[data-fc-grade='2']");
+    // Type one exactly.
+    const en2 = await text(".lang-fc-word");
+    if (nlOf[en2]) {
+      await page.fill("[data-fc-input]", nlOf[en2]);
+      await page.keyboard.press("Enter");
+      const g2 = await page.evaluate(() => document.querySelector(".lang-grade.is-suggested")?.dataset.fcGrade);
+      check(g2 === "3", "an exact answer suggests Good", g2);
+    }
+    await page.click("[data-fc-back]");
+    st = await stored();
+    check(Object.keys(st.cards).some((k) => k.endsWith("|p")), "leaving mid-session keeps the answers given");
+
+    console.log("de / het");
+    await page.waitForSelector(".lang-lesson-view");
+    await page.click('.lang-lesson-view [data-lang-practice="dehet"]');
+    await page.waitForSelector(".lang-dh");
+    const nouns = new Map([["brood", "het"], ["appel", "de"], ["kaas", "de"], ["water", "het"], ["melk", "de"], ["boter", "de"]]);
+    let firstWrong = "";
+    for (let n = 0; n < 20; n += 1) {
+      if (await page.$(".lang-summary")) break;
+      const noun = (await text(".lang-dh .lang-fc-word")).trim();
+      const art = nouns.get(noun);
+      const pickArt = !firstWrong ? (art === "de" ? "het" : "de") : art; // miss the first one
+      if (!firstWrong) firstWrong = noun;
+      await clearSpoken();
+      await page.click(`[data-dh-pick="${pickArt}"]`);
+      if (n === 0) {
+        const res = await text(".lang-dh-result");
+        check(new RegExp(`It's ${art} ${noun}`).test(res), "a wrong article shows the right one", res);
+        check((await spoken()).includes(`${art} ${noun}`), "and says it");
+        await shot("dehet");
+      }
+      await page.click("[data-dh-next]");
+    }
+    const dh = await text(".lang-summary");
+    check(/5 of 6 right the first time/.test(dh), "the missed noun came back; summary counts first tries", dh);
+    await page.click("[data-dh-back]");
+
+    console.log("Listen");
+    await page.click('.lang-lesson-view [data-lang-practice="listen"]');
+    await page.waitForSelector(".lang-ls");
+    await page.waitForTimeout(100);
+    check((await spoken()).length > 0, "a question plays as it opens");
+    check(await fits(), "listen fits 390px");
+    let lsRight = 0;
+    for (let n = 0; n < 12; n += 1) {
+      if (await page.$(".lang-summary")) break;
+      const said = (await spoken()).slice(-1)[0];
+      if (await page.$("[data-ls-input]")) {
+        await page.fill("[data-ls-input]", said);
+        await page.click(".lang-ls [type=submit]");
+      } else {
+        const k = await page.evaluate((t) => [...document.querySelectorAll("[data-ls-pick]")].findIndex((b) => b.querySelector("[lang=nl]").textContent === t), said);
+        await page.click(`[data-ls-pick="${k}"]`);
+      }
+      if (/Right/.test(await text(".lang-dh-result"))) lsRight += 1;
+      await clearSpoken();
+      await page.click("[data-ls-next]");
+      await page.waitForTimeout(60);
+    }
+    const ls = await text(".lang-summary");
+    check(/Round done/.test(ls) && lsRight >= 7, "answering what was heard gets them right", `${ls} (${lsRight})`);
+    await page.click("[data-ls-back]");
+
+    console.log("Sentences");
+    await page.click('.lang-lesson-view [data-lang-practice="sentences"]');
+    await page.waitForSelector(".lang-sb");
+    const target = { "I'm eating an apple.": ["ik", "eet", "een", "appel"], "The boy drinks water.": ["de", "jongen", "drinkt", "water"] };
+    for (let n = 0; n < 3; n += 1) {
+      if (await page.$(".lang-summary")) break;
+      if (await page.$("[data-sb-hint]")) await page.click("[data-sb-hint]");
+      const en = await text(".lang-sb-en");
+      for (const w of target[en] || []) {
+        await page.evaluate((word) => [...document.querySelectorAll(".lang-sb-bank .lang-tile:not([disabled])")].find((b) => b.textContent.toLowerCase() === word)?.click(), w);
+      }
+      await page.click("[data-sb-check]");
+      const r = await text(".lang-dh-result");
+      check(/Ik eet een appel\.|De jongen drinkt water\./.test(r), `built "${en}" right`, r);
+      if (n === 0) { check(await fits(), "sentences fit 390px"); await shot("sentence"); }
+      await page.click("[data-sb-next]");
+    }
+    const sb = await text(".lang-summary");
+    check(/2 of 2 built right/.test(sb), "sentence summary", sb);
+    st = await stored();
+    check(Object.keys(st.cards).filter((k) => k.endsWith("|s")).length === 2, "built sentences are scheduled too");
+    await page.click("[data-sb-back]");
+
+    console.log("Speak");
+    await page.click('.lang-lesson-view [data-lang-practice="speak"]');
+    await page.waitForSelector(".lang-sp");
+    const say1 = await text(".lang-sp .lang-fc-word");
+    await page.evaluate((t) => { window.__nextHeard = [t.toLowerCase()]; }, say1);
+    await page.click("[data-sp-mic]");
+    await page.waitForSelector(".lang-mic.is-listening");
+    check(true, "the mic shows it's listening");
+    await page.waitForSelector(".lang-sp .lang-dh-result", { timeout: 5000 });
+    const r1 = await text(".lang-sp .lang-dh-result");
+    check(/Understood/.test(r1), "saying the word is understood", r1);
+    const mine = await page.evaluate(() => !document.querySelector("[data-sp-mine]")?.disabled);
+    check(mine, "your recording can be played back");
+    check(await fits(), "speak fits 390px");
+    await shot("speak");
+    await page.click("[data-sp-next]");
+    await page.evaluate(() => { window.__nextHeard = ["helemaal iets anders"]; });
+    await page.click("[data-sp-mic]");
+    await page.waitForSelector(".lang-sp .lang-dh-result", { timeout: 5000 });
+    const r2 = await text(".lang-sp .lang-dh-result");
+    check(/^Heard: helemaal iets anders/.test(r2), "something else is shown as heard, not understood", r2);
+    await page.click("[data-sp-back]");
+    st = await stored();
+    check(st.sessions.some((x) => x.kind === "speak" && x.attempts === 2 && x.correct === 1), "a speak session is saved", JSON.stringify(st.sessions.filter((x) => x.kind === "speak")));
+
+    console.log("Word list, settings");
+    await page.click('.lang-lesson-view [data-lang-words]');
+    await page.waitForSelector(".lang-wordlist");
+    check((await page.$$(".lang-wl-row")).length === 9, "the word list shows the lesson's 9 items");
+    await page.fill("[data-wl-search]", "kaas");
+    check((await page.$$(".lang-wl-row")).length === 1, "search narrows the list");
+    await page.click("[data-wl-edit]");
+    await page.fill("[data-wl-en]", "cheese; a cheese");
+    await page.click(".lang-wl-edit [type=submit]");
+    st = await stored();
+    check(Object.values(st.userWords).find((w) => w.text === "de kaas")?.alsoEn?.[0] === "a cheese", "editing a word saves it");
+    await page.click("[data-wl-edit]");
+    await page.click("[data-wl-delete]");
+    st = await stored();
+    check(Object.values(st.userWords).find((w) => w.text === "" && w.del) && !Object.values(st.userWords).some((w) => w.text === "de kaas"), "deleting leaves a tombstone");
+    check(await fits(), "word list fits 390px");
+    await page.click("[data-wl-back]");
+    await page.click("[data-lang-hub]");
+    await page.waitForSelector(".lang-hub");
+    await page.click(".lang-settings summary");
+    await page.selectOption('[data-lang-pref="newPerDay"]', "5");
+    st = await stored();
+    check(st.prefs?.newPerDay === 5, "the daily new-word setting is saved");
+    const today2 = await text(".lang-today-counts");
+    // Limit 5; one produce card was introduced today (sentences don't count);
+    // the de/het miss is due again.
+    check(/1 to review · 4 new/.test(today2), "and Today follows it", today2);
+    await page.click('[data-lang-pref="showStarter"]');
+    const starterGone = await page.evaluate(() => ![...document.querySelectorAll(".lang-level-sub")].some((h) => /Starter/.test(h.textContent)));
+    check(starterGone, "the starter set can be hidden");
+    await page.click(".lang-settings summary"); // closed again on re-render? reopen to toggle back
+    if (!(await page.$('.lang-settings[open]'))) await page.click(".lang-settings summary");
+    await page.click('[data-lang-pref="showStarter"]');
+
+    console.log("360px");
+    await page.setViewportSize({ width: 360, height: 740 });
+    check(await fits(), "hub fits 360px");
+    await page.click('.lang-lesson[data-lang-lesson="nl-u1-2"]');
+    check(await fits(), "lesson fits 360px");
+    await page.click('.lang-lesson-view [data-lang-practice="sentences"]');
+    await page.waitForSelector(".lang-sb");
+    check(await fits(), "sentences fit 360px");
+    await page.click("[data-sb-back]");
+    await page.click('.lang-lesson-view [data-lang-practice="cards"]');
+    await page.waitForSelector(".lang-fc, .lang-summary");
+    check(await fits(), "flashcards fit 360px");
+    await page.click("[data-fc-back]");
+  }
 
   await boot("#leisure");
 
@@ -86,32 +406,38 @@ try {
       title: sec.querySelector(".recreate-section-title")?.textContent,
       lessons: sec.querySelectorAll("[data-leisure-lesson]").length,
       review: sec.querySelector("[data-leisure-review] .workout-pool-last")?.textContent,
+      add: !!sec.querySelector("[data-leisure-add-words]"),
       emoji: /\p{Extended_Pictographic}/u.test(sec.textContent),
     } : null;
   });
   check(row?.title === "Dutch", "Leisure has a Dutch row", JSON.stringify(row));
   check(row?.lessons === 12, "the row shows the first 12 lessons", row?.lessons);
-  check(row?.review === "Practice a lesson first", "Review waits for a practiced lesson", row?.review);
+  check(row?.review === "10 new today", "the Flashcards card says what's new today", row?.review);
+  check(row?.add, "the row ends with Add words");
   check(row && !row.emoji, "no emoji in the row (house pictograms only)");
   check(await fits(), "Leisure fits 390px");
   await shot("row");
 
-  console.log("Lessons screen");
+  console.log("Hub");
   await page.click('[data-open-hobby="dutch"]');
-  await page.waitForSelector(".lang-lesson");
-  const lessons = await page.evaluate(() => ({
+  await page.waitForSelector(".lang-hub");
+  const hub = await page.evaluate(() => ({
     count: document.querySelectorAll(".lang-lesson").length,
-    provisionalTags: [...document.querySelectorAll(".lang-lesson-verify")].filter((t) => t.textContent.trim() === "Provisional").length,
+    starterTags: [...document.querySelectorAll(".lang-lesson-verify")].filter((t) => t.textContent.trim() === "Starter").length,
     note: document.querySelector(".lang-note")?.textContent || "",
-    reviewDisabled: document.querySelector('[data-lang-start="review"]')?.disabled,
+    today: document.querySelector(".lang-today-counts")?.textContent.replace(/\s+/g, " ") || "",
+    practice: [...document.querySelectorAll(".lang-hub .lang-practice-btn")].map((b) => b.textContent.trim()),
+    xp: /\b(xp|streak|hearts?|lives)\b/i.test(document.querySelector(".lang-hub").textContent),
   }));
   const totalLessons = DUTCH_COURSE.levels.flatMap((l) => l.units.flatMap((u) => u.lessons)).length;
-  check(lessons.count === totalLessons, `all ${totalLessons} lessons listed`, lessons.count);
-  check(lessons.provisionalTags === totalLessons, "every lesson is labeled Provisional");
-  check(/not yet matched to your Rosetta Stone/.test(lessons.note), "the starter-set note says it isn't the Rosetta Stone list");
-  check(lessons.reviewDisabled === true, "Review is off until a lesson is practiced");
-  check(await fits(), "lessons fit 390px");
-  await shot("lessons");
+  check(hub.count === totalLessons, `all ${totalLessons} starter lessons listed`, hub.count);
+  check(hub.starterTags === totalLessons, "every starter lesson is labeled Starter");
+  check(/Add words/.test(hub.note) && /Rosetta Stone/.test(hub.note), "the hub explains adding your Rosetta Stone lessons");
+  check(/0 to review · 10 new/.test(hub.today), "Today: nothing to review, 10 new", hub.today);
+  check(hub.practice.join("|") === "Flashcards|Match|de / het|Listen|Sentences|Speak", "six practice buttons", hub.practice.join("|"));
+  check(!hub.xp, "no XP, streaks or hearts anywhere");
+  check(await fits(), "hub fits 390px");
+  await shot("hub");
   await page.click('[data-recreate-back]');
   await page.waitForSelector('[data-recreate-section="dutch"]');
 
@@ -209,7 +535,7 @@ try {
   check(/Accuracy\s*86%/.test(summary), "accuracy = 6 right of 7 tries", summary);
   await shot("summary");
   let saved = await stored();
-  check(saved.sessions.length === 1 && saved.sessions[0].reached && saved.sessions[0].correct === 6 && saved.sessions[0].attempts === 7, "the session is saved once", JSON.stringify(saved.sessions));
+  check(saved.sessions.length === 1 && saved.sessions[0].kind === "match" && saved.sessions[0].reached && saved.sessions[0].correct === 6 && saved.sessions[0].attempts === 7, "the session is saved once", JSON.stringify(saved.sessions));
   const touched = Object.keys(saved.words);
   check(touched.length >= 6 && touched.every((id) => id.startsWith(`${LESSON}-`)), "progress only for this lesson's words", touched.join(","));
 
@@ -238,13 +564,11 @@ try {
   await page.click("#homeLeisureBtn");
   await page.waitForSelector('[data-open-hobby="dutch"]');
   await page.click('[data-open-hobby="dutch"]');
-  await page.waitForSelector(".lang-lesson");
-  check(!(await page.$(".lang-card")), "coming back opens the lessons, not a stale game");
-  const reviewOn = await page.evaluate(() => document.querySelector('[data-lang-start="review"]')?.disabled === false);
-  check(reviewOn, "Review is on after practicing");
-  await page.click('[data-lang-start="review"]');
+  await page.waitForSelector(".lang-hub");
+  check(!(await page.$(".lang-card")), "coming back opens the hub, not a stale game");
+  await page.click('.lang-hub [data-lang-practice="match"]');
   const rv = await page.evaluate(() => document.querySelector(".lang-start")?.textContent.replace(/\s+/g, " "));
-  check(/1 practiced lesson: People and animals/.test(rv) && /Words\s*10/.test(rv), "Review draws from the practiced lesson only", rv);
+  check(/Review due/.test(rv) && /missed lately/.test(rv), "the hub's Match draws from due and missed words", rv);
 
   console.log("Time, pause");
   await shorten({ target: 30, durationMs: 3000 });
@@ -272,7 +596,8 @@ try {
   await page.setViewportSize({ width: 360, height: 740 });
   await shorten({ target: 30, durationMs: 60_000 });
   await page.click("[data-lang-lessons]");
-  await page.click('[data-lang-start="lesson"][data-lang-id="nl-s2-2"]'); // the longest phrases
+  await page.click('.lang-lesson[data-lang-lesson="nl-s2-2"]'); // the longest phrases
+  await page.click('.lang-lesson-view [data-lang-practice="match"]');
   await page.click("[data-lang-begin]");
   await page.waitForSelector(".lang-card");
   check(await fits(), "the phrases board fits 360px");
@@ -316,6 +641,14 @@ try {
   check(anim === "none" || anim === "no-miss", "reduced motion turns the shake off", anim);
   await page.click("[data-lang-quit]");
   await page.waitForSelector(".lang-summary");
+  await page.evaluate(() => { document.body.dataset.theme = "light"; });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.click("[data-lang-lessons]"); // back to the lesson
+  await page.click("[data-lang-hub]");
+  await page.waitForSelector(".lang-hub");
+
+  await part2();
 
   check(errors.length === 0, "no page errors", errors.join(" | "));
 } finally {

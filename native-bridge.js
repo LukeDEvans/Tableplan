@@ -128,6 +128,24 @@ export function nativeLocalNotifications() {
   return _localNotifications;
 }
 
+// Dutch practice audio (LiveLanguagePlugin.swift): speaks with the best Dutch
+// voice, recognizes speech and records for shadowing (language-speech.js).
+// null in a browser/PWA, or in an app build from before the plugin was added →
+// the Web Speech API instead.
+let _language;
+export function nativeLanguage() {
+  if (_language !== undefined) return _language;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _language = null;
+      return _language;
+    }
+    const p = registerPlugin("LiveLanguage");
+    _language = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("LiveLanguage")) ? p : null;
+  } catch { _language = null; }
+  return _language;
+}
+
 // Base64 JPEG pages from the native scanner → File objects the scan pipeline
 // takes. Decoded by hand: fetch(data:) can be intercepted by CapacitorHttp.
 export function scannedPagesToFiles(pages, stamp = Date.now()) {

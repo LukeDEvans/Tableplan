@@ -18,6 +18,7 @@
 // newest SESSION_CAP kept.
 
 export const SESSION_CAP = 50;
+const SESSION_KINDS = new Set(["match", "cards", "dehet", "listen", "sentences", "speak"]);
 
 const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : 0);
 const triple = (t) => (Array.isArray(t) ? [num(t[0]), num(t[1]), num(t[2])] : [0, 0, 0]);
@@ -94,6 +95,9 @@ export function normalizeSessions(raw) {
     .filter((s) => s && typeof s.id === "string" && s.id)
     .map((s) => ({
       id: s.id,
+      // What was practiced: match (the board, and every session from before
+      // 2026-10-26) · cards · dehet · listen · sentences · speak.
+      kind: SESSION_KINDS.has(s.kind) ? s.kind : "match",
       lang: typeof s.lang === "string" ? s.lang : "nl",
       scope: typeof s.scope === "string" ? s.scope : "",
       label: typeof s.label === "string" ? s.label : "",
@@ -120,7 +124,33 @@ export function addSession(list, session, cap = SESSION_CAP) {
   return mergeSessions([session], list, cap);
 }
 
-export function lastSession(list, scopeKeyValue) {
-  const all = normalizeSessions(list).sort(newestFirst);
+export function lastSession(list, scopeKeyValue, kind = "") {
+  const all = normalizeSessions(list).filter((s) => !kind || s.kind === kind).sort(newestFirst);
   return scopeKeyValue ? all.find((s) => s.scope === scopeKeyValue) || null : all[0] || null;
+}
+
+// ── Practice settings (state.languagePrefs, a TRACKED_SETTINGS "fields" object)
+// Each field syncs by its own stamp (settings-sync.js). Only these keys, with
+// these values, are kept.
+export const NEW_PER_DAY_CHOICES = Object.freeze([0, 5, 10, 15, 20, 30]);
+export const SPEECH_RATE_CHOICES = Object.freeze([0.7, 0.85, 1]);
+export const LANGUAGE_PREF_DEFAULTS = Object.freeze({ newPerDay: 10, showStarter: true, autoPlay: true, speechRate: 0.85 });
+
+export function normalizeLanguagePrefs(raw) {
+  const p = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  if (NEW_PER_DAY_CHOICES.includes(p.newPerDay)) out.newPerDay = p.newPerDay;
+  if (typeof p.showStarter === "boolean") out.showStarter = p.showStarter;
+  if (typeof p.autoPlay === "boolean") out.autoPlay = p.autoPlay;
+  if (SPEECH_RATE_CHOICES.includes(p.speechRate)) out.speechRate = p.speechRate;
+  return out;
+}
+
+export function languagePrefs(raw) {
+  return { ...LANGUAGE_PREF_DEFAULTS, ...normalizeLanguagePrefs(raw) };
+}
+
+// A word's misses across devices (for weighting drills toward weak words).
+export function missesOf(totals, id) {
+  return totals?.[id]?.w || 0;
 }

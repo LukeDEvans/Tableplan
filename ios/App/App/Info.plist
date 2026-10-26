@@ -28,6 +28,10 @@
 	<string>Live uses the camera to scan receipts.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Live uses your location to show the weather where you are and to find nearby stores and restaurants.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Live uses the microphone when you practice speaking Dutch, to hear what you say and let you play your recording back. Recordings stay on your iPhone.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Live uses speech recognition to check the Dutch words and sentences you practice saying.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Live plays songs from your Apple Music subscription and shows your Apple Music library.</string>
 	<key>NSAppTransportSecurity</key>

@@ -21,7 +21,10 @@ import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule, isNewsletterBriefing } from './news-ui.js';
 import { createScoresModule, gameCardHtml } from './scores-ui.js';
 import { createLanguageModule } from './language-ui.js';
-import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions } from './language-progress.js';
+import { createSpeech } from './language-speech.js';
+import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions, normalizeLanguagePrefs } from './language-progress.js';
+import { normalizeCards as normalizeLanguageCards, mergeCards as mergeLanguageCards } from './language-srs.js';
+import { normalizeUserLessons, normalizeUserWords, mergeUserLessons, mergeUserWords } from './language-words.js';
 import { createNewsTickerModule } from './news-ticker.js';
 import { normalizeSportsPrefs } from './sports-model.js';
 import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonEnds } from './theme.js';
@@ -49,7 +52,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
@@ -342,7 +345,7 @@ const STATE_SECTIONS = {
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "languageWords", "languageSessions", "recreateHobbies", "sportsPrefs", "displayPrefs", "viewDisplayPrefs", "viewLayers", "recreateSettingStamps"],
+  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "languageWords", "languageSessions", "languageCards", "languageUserLessons", "languageUserWords", "languagePrefs", "recreateHobbies", "sportsPrefs", "displayPrefs", "viewDisplayPrefs", "viewLayers", "recreateSettingStamps"],
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
@@ -3923,8 +3926,11 @@ function setupDiagnostics() {
     },
     // Dutch practice (scripts/qa-language.mjs): stored progress, and a shorter game
     // so a browser run doesn't take two minutes. Local dev only.
-    languageForQa: () => (localDevMode ? { words: state.languageWords, sessions: state.languageSessions } : null),
+    languageForQa: () => (localDevMode ? { words: state.languageWords, sessions: state.languageSessions, cards: state.languageCards, userLessons: state.languageUserLessons, userWords: state.languageUserWords, prefs: state.languagePrefs } : null),
     languageGameForQa: (opts) => { if (!localDevMode) return null; languageQaGameOptions = opts || null; return true; },
+    // Puts flashcard schedules in place (e.g. a card answered yesterday, so its
+    // produce card unlocks). Local dev only.
+    languageCardsForQa: (cards) => { if (!localDevMode) return null; state.languageCards = { ...(state.languageCards || {}), ...(cards || {}) }; persist(); return true; },
     // Views (scripts/qa-views.mjs): the view on screen, and acting as a household
     // member (Household only) or the admin. Local dev only.
     view: () => (localDevMode ? currentViewKey() : null),
@@ -5283,6 +5289,12 @@ function defaultState() {
     // Dutch practice (LANGUAGE_PRACTICE.md): per-word counters + recent sessions.
     languageWords: {},
     languageSessions: [],
+    // Flashcard schedule (language-srs.js), your own Rosetta Stone lessons and
+    // words (language-words.js), and practice settings (LANGUAGE_PRACTICE.md §11–12).
+    languageCards: {},
+    languageUserLessons: {},
+    languageUserWords: {},
+    languagePrefs: {},
     recreateHobbies: { sailing: true, piano: true },
     // Scores (News → Sports): this person's favorite teams and league choices.
     // In `recreate` because that section is always per user (SPORTS_SCORES_DESIGN.md §5).
@@ -5478,6 +5490,10 @@ function normalizeState(parsed) {
     pianoLog: normalizePianoLog(parsed?.pianoLog),
     languageWords: normalizeWordStats(parsed?.languageWords),
     languageSessions: normalizeSessions(parsed?.languageSessions),
+    languageCards: normalizeLanguageCards(parsed?.languageCards),
+    languageUserLessons: normalizeUserLessons(parsed?.languageUserLessons),
+    languageUserWords: normalizeUserWords(parsed?.languageUserWords),
+    languagePrefs: normalizeLanguagePrefs(parsed?.languagePrefs),
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
     sportsPrefs: normalizeSportsPrefs(parsed?.sportsPrefs),
     displayPrefs: cleanDisplayPrefs(parsed?.displayPrefs),
@@ -7064,6 +7080,12 @@ function mergeStates(newer, older) {
   // stale copy can never lower progress); sessions union by id, newest 50 kept.
   merged.languageWords = mergeWordStats(newer.languageWords, older.languageWords);
   merged.languageSessions = mergeSessions(newer.languageSessions, older.languageSessions);
+  // Flashcards: per card, the later review wins (a missing card never deletes).
+  // Your words and lessons: per id, the later edit wins; deletions are tombstones.
+  merged.languageCards = mergeLanguageCards(newer.languageCards, older.languageCards);
+  merged.languageUserLessons = mergeUserLessons(newer.languageUserLessons, older.languageUserLessons);
+  merged.languageUserWords = mergeUserWords(newer.languageUserWords, older.languageUserWords);
+  merged.languagePrefs = { ...(older.languagePrefs || {}), ...(newer.languagePrefs || {}) }; // each field then goes by its own stamp
   merged.articleSync = { ...(older.articleSync || {}), ...(newer.articleSync || {}) };
   merged.groceryPricingSettings = { ...(older.groceryPricingSettings || {}), ...(newer.groceryPricingSettings || {}) };
   merged.collapsedSections = { ...(older.collapsedSections || {}), ...(newer.collapsedSections || {}) };
@@ -23354,7 +23376,18 @@ function languageDeviceId() {
     return id;
   } catch { return "device"; }
 }
+// Dutch audio: the LiveLanguage plugin in the iPhone app, the Web Speech API in a
+// browser (language-speech.js). Before the mic opens, anything the app is playing
+// pauses: a read-aloud/podcast in the native player, or any <audio>/<video>.
+const languageSpeech = createSpeech({
+  native: () => nativeLanguage(),
+  pauseMedia: () => {
+    try { if (listenSpeechSynth?.native && !listenSpeechSynth.paused) toggleListenPlayPause(); } catch { /* nothing playing */ }
+    try { document.querySelectorAll("audio, video").forEach((m) => { if (!m.paused) m.pause(); }); } catch { /* ignore */ }
+  },
+});
 const languageModule = createLanguageModule({
+  speech: languageSpeech,
   gameOptions: () => (localDevMode ? languageQaGameOptions : null),
   getState: () => state,
   persist: (...a) => persist(...a),
@@ -23527,11 +23560,14 @@ function renderLeisureRows() {
         `data-leisure-score="${escapeHtml(w.id)}"`, cadenceScoreIconSvg(), w.title || "Untitled", w.composer || "")).join("");
       cards += recreateAddCardTemplate("data-leisure-import-score", "Import score", cadenceImporting ? "Importing…" : "MusicXML file");
     } else if (h.key === "dutch") {
-      // Lessons in course order, then Review (words from practiced lessons only).
+      // Today's flashcards, then lessons in course order (your Rosetta Stone
+      // lessons first), then "+ Add words" (LANGUAGE_PRACTICE.md §10).
+      const today = languageModule.todayCounts();
+      cards += recreateCardTemplate("data-leisure-review", `<span class="lang-hobby-icon is-small">${ldeIcon("flashcards", { size: 28 })}</span>`, "Flashcards",
+        today.due ? `${today.due} to review` : today.fresh ? `${today.fresh} new today` : "All caught up");
       cards += languageModule.rowLessons().slice(0, RECREATE_ROW_MAX).map((l) => recreateCardTemplate(
         `data-leisure-lesson="${escapeHtml(l.id)}"`, `<span class="lang-hobby-icon is-small">${ldeIcon("book", { size: 28 })}</span>`, l.title, l.sub)).join("");
-      cards += recreateCardTemplate("data-leisure-review", `<span class="lang-hobby-icon is-small">${ldeIcon("replay", { size: 28 })}</span>`, "Review",
-        languageModule.reviewAvailable() ? "Practiced lessons" : "Practice a lesson first");
+      cards += recreateAddCardTemplate("data-leisure-add-words", "Add words", "From Rosetta Stone");
     }
     rows.push(recreateSectionTemplate(h.key, h.label, cards));
   }
@@ -23562,13 +23598,18 @@ function renderRecreatePage() {
     grid.querySelector("[data-leisure-new-sail]")?.addEventListener("click", () => openSailLogDialog(null));
     grid.querySelectorAll("[data-leisure-lesson]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        languageModule.openStart({ kind: "lesson", id: btn.dataset.leisureLesson });
+        languageModule.openLesson(btn.dataset.leisureLesson);
         activeRecreateHobby = "dutch";
         renderRecreatePage();
       });
     });
     grid.querySelector("[data-leisure-review]")?.addEventListener("click", () => {
-      languageModule.openReview();
+      languageModule.openToday();
+      activeRecreateHobby = "dutch";
+      renderRecreatePage();
+    });
+    grid.querySelector("[data-leisure-add-words]")?.addEventListener("click", () => {
+      languageModule.openAddWords();
       activeRecreateHobby = "dutch";
       renderRecreatePage();
     });
