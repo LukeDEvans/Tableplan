@@ -1,8 +1,8 @@
 # Dutch practice — design & as built
 
-Status: **Built on `claude/dutch-matching` (2026-10-20). Not deployed.** Requested by Luke, 2026-10-20.
+Status: **Matching game built 2026-10-20 (§1–7). The full learning build (§8–17: your Rosetta Stone words, spaced-repetition flashcards, de/het, listening, sentence building, speaking) designed and built 2026-10-26 on `claude/dutch-learning`.** Requested by Luke, 2026-10-20 and 2026-10-26.
 
-Goal: a fast, low-pressure Dutch vocabulary game. Match Dutch words or phrases to their English in a timed board, with lessons organized around Luke's Rosetta Stone Dutch course.
+Goal: a calm, low-pressure way to refresh and slowly build Dutch vocabulary around Luke's Rosetta Stone course. Strong flashcards and matching first; sentence building, listening and speaking as additions.
 
 ## 1. Where it lives
 
@@ -78,3 +78,90 @@ Written **once per finished session** with the normal `persist()`; nothing per t
 ## 7. Not built (on purpose)
 
 Streaks, achievements, spaced repetition, audio, multi-language UI, a setting for the goal or time (fixed at 30 / 2:00; the engine takes both as options).
+
+---
+
+# Part 2 — the full learning build (2026-10-26)
+
+## 8. What Luke asked for (2026-10-26)
+
+- He liked Duolingo but **not hearts** (losing lives for wrong answers limits learning) and is **not interested in XP or gamification**. He likes Rosetta Stone.
+- Mostly he refreshes and slowly builds vocabulary with **flashcards and the matching game**, so those must be strong. **Sentence building, speaking and listening** are welcome additions.
+- Decisions (2026-10-26): build all parts, in the order Claude sees fit; **copy the word list from Rosetta Stone** into the app; **microphone access is fine** to implement.
+
+## 9. Principles
+
+- **No hearts, XP, streaks, leagues or badges.** A wrong answer never ends or limits practice. Progress is shown plainly: words due, words known per lesson.
+- **One word bank feeds everything.** Flashcards, matching, de/het, listening, sentences and speaking all draw from the same course (the starter set plus Luke's own Rosetta Stone words), so a word added once shows up everywhere.
+- **The schedule decides what to review.** Spaced repetition (FSRS) brings a word back just before it would be forgotten. Misses in the other exercises pull a word forward; they never cost anything.
+- **Everything stays on the device or in Luke's own `recreate` row.** No new tables, functions, buckets or polling. Audio is synthesized on the device; speech is recognized on the device where iOS supports it; recordings are never saved or uploaded.
+
+## 10. Where it lives
+
+Leisure › **Dutch** (Personal view), as today. The Dutch view becomes a hub:
+
+- **Today**: "N to review · M new" and a **Start** button (flashcards over everything due).
+- **Practice**: Flashcards · Match · de / het · Listen · Sentences · Speak. Each runs over "everything" or, from a lesson, over that lesson or unit.
+- **Your course** (Luke's Rosetta Stone lessons) then the **Starter set** (can be hidden in the hub's settings).
+- **Add words** (paste from Rosetta Stone) and **Word list** (browse, edit, delete).
+
+The Leisure row: the Dutch card (shows what's due), **Review due**, then lessons, then a **+ Add words** card.
+
+## 11. Your Rosetta Stone words (word bank)
+
+Rosetta Stone's content isn't available to the app (LANGUAGE_PRACTICE §4), so Luke copies it in.
+
+- **Paste import:** choose Unit and Lesson numbers (titles optional), paste lines, review a preview, save. Accepted line shapes: `Dutch = English`, `Dutch — English`, `Dutch - English`, `Dutch<TAB>English`, `Dutch : English`. Extra English meanings after `;` or `/` become alternatives. A line starting with `de ` / `het ` records the noun's gender. A line that reads like a sentence (3+ words, or ending in `.`, `?`, `!`) is filed as a **sentence** (editable in the preview). Duplicates of a word already in that lesson are skipped and listed.
+- **Storage:** `languageUserLessons` `{ <lessonId>: { unit, lesson, unitTitle, title, at, del? } }` and `languageUserWords` `{ <id>: { kind: "word"|"sentence", text, en, alsoEn?, lesson, note?, at, del? } }`. Ids are random and permanent (progress is keyed by them). Deleting marks `del` with a new `at` (a tombstone), so a copy that still has the word can't bring it back.
+- **Merge:** per id, the copy with the later `at` wins; absence is never a deletion (an older app build that drops the keys can't erase them — the device that has them writes them back).
+- **In the course:** user lessons form a level **"Your course"** (verified source `rosetta-stone`, curriculumVersion `copied`), listed first. Because Luke copies these from his course, they count as verified.
+
+## 12. Flashcards (spaced repetition)
+
+- **Scheduler:** FSRS-4.5 with its published default weights, target retention 90%. Pure module `language-srs.js` (no DOM, clock injected). Intervals are whole days (a card due "today" is due from the start of the local day).
+- **Two cards per word:** *recognize* (Dutch → English) and *produce* (English → Dutch). A word's produce card unlocks the day after its recognize card was first answered right. Sentences get one card (built in Sentences, §15).
+- **A session:** due cards first (most overdue first), then up to **N new words** a day (default 10; 0/5/10/15/20/30 in settings), new words in course order (your course first). "Again" puts the card back a few cards later in the same session; nothing ends early.
+- **Card:** front shows the Dutch (with ▶ to hear it; auto-play optional) or the English. **Show** reveals the answer, gender, note and an example sentence from the same lesson if one contains the word. Grade **Again / Hard / Good / Easy**, each labeled with when it comes back ("1d", "4d", "3w").
+- **Type it** (produce cards): type the Dutch and check. Exact → Good; one small slip or a missing accent → Hard and the difference is shown; otherwise → Again. The grade can be changed before moving on.
+- **Storage:** `languageCards` `{ "<entryId>|r" | "<entryId>|p" | "<entryId>|s": [stability, difficulty, dueDay, lastMs, reps, lapses] }` (compact: ~40 bytes a card). `dueDay` is the local day number (days since 1970-01-01). Written once at the end of a session (and when leaving mid-session, if anything was graded).
+- **Merge:** per card, the copy with the later `lastMs` wins (each review fully determines a card's state).
+- **"Known"** (shown per lesson): the recognize card's stability is at least 21 days.
+
+## 13. Matching (upgraded)
+
+- Unchanged rules (§2), plus:
+- **Review due** draws its board from due and recently-missed words first, topped up with recently-learned ones.
+- **Listen mode**: the Dutch column shows ▶ cards; tapping plays the word and selects it.
+- A **wrong match** pulls that word's recognize card forward to today (stability unchanged). Right matches don't change the schedule (matching is recognition with hints).
+
+## 14. de / het
+
+- Every noun whose Dutch starts with `de ` or `het ` (starter and your words). The noun is shown without its article (with its English); tap **de** or **het**. Immediate feedback, the full form is spoken, misses come back at the end of the round. A round is 15 nouns, weighted to ones missed before (`languageWords` counters). A miss pulls the recognize card forward.
+
+## 15. Listening and sentences
+
+- **Listen** (three kinds, mixed): *Which did you hear?* (four written choices from the same lesson), *Type what you hear* (lenient check as in §12), and *Sounds* (minimal pairs: man/maan, zon/zoon, vis/vies, mus/muis, boek/buik, deur/duur, tien/tuin…). A miss on a course word pulls its card forward.
+- **Sentences:** English shown; build the Dutch by tapping word tiles (the sentence's words plus two from other sentences). **Check**: right → spoken and graded Good (Hard if a retry was needed); wrong → the wrong tiles are marked, retry or **Show**. Variant: *hear it, build it*. Sources: your pasted sentences, plus a small **starter sentence set** (provisional, original, built from starter words). Accepted alternatives (e.g. time-first inversion) can be listed per sentence.
+
+## 16. Speaking (microphone)
+
+- **Say it:** the Dutch (and its English) is shown; tap the mic, say it; the app shows what it heard and whether it matches (any of the recognizer's top guesses, compared leniently). **Not a pronunciation score** — just "it understood you". No grade feeds the schedule.
+- **Shadow:** hear the word or sentence, record yourself, then play yours and the model back to back. Recordings live only in memory (web) or a temp file deleted on the next recording or when leaving (iPhone); never uploaded.
+- **iPhone:** a new native plugin, **`LiveLanguage`** (`ios/App/App/LiveLanguagePlugin.swift`): speaks with the best installed Dutch voice (AVSpeechSynthesizer; download *Dutch (Premium/Enhanced)* in iOS Settings › Accessibility › Spoken Content for a better voice), recognizes Dutch with Apple's speech recognizer (`nl-NL`, on-device when the phone supports it) and records at the same time. Needs `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` (added), and a TestFlight build. Asks for permission the first time Speak is used.
+- **Browser (laptop):** the Web Speech API for voice and recognition where the browser has them (Chrome: yes; it sends audio to Google for recognition), `MediaRecorder` for shadowing. Missing pieces hide their buttons with a one-line note.
+- Media playing in the app is paused before the mic opens.
+
+## 17. Egress and size
+
+- No new Supabase tables, functions, buckets or polling; nothing new is read on a timer.
+- All new keys are in the personal `recreate` row (`u-<uid>:recreate`), written with the normal `persist()` once per finished session or edit.
+- Sizes: cards ~40 B each (2,000 words ≈ 160 KB worst case with both directions — Luke's course is far smaller), user words ~120 B each. Recreate row stays well under 250 KB even for a full course.
+- Speech: TTS and recognition run on the device (Chrome's recognizer is Google's, not Supabase's).
+
+## 18. Build order (as done)
+
+1. Pure cores: `language-srs.js`, `language-words.js` (user bank, paste parser, course builder), `language-drills.js` (de/het, listening, minimal pairs, answer checking), `language-sentences.js` (tiles, checking) + `language-nl-sentences.js` (starter sentences).
+2. State: four new keys in `STATE_SECTIONS.recreate` with merge rules; `languagePrefs` in `TRACKED_SETTINGS`.
+3. UI: the hub, Add words / Word list, flashcards, match upgrade, de/het, listening, sentences, speaking (`language-ui*.js`).
+4. Speech: `language-speech.js` (native plugin or Web Speech) and the `LiveLanguage` Swift plugin.
+5. Tests + `qa:language` extended.
