@@ -951,6 +951,7 @@ let pendingRepMoodKey = null;
 const recordingSession = {};
 let planViewMode = "month";
 let planViewDate = new Date();
+let planMonthSelectedDay = ""; // phone month view: the day listed under the grid ("" = today, or the 1st of a month without today)
 let planDotTooltipEl = null; // hoisted: initPlanDotTooltip runs during init, before its own file position
 let planSuppressGridClick = false; // set by a completed drag-to-create so the trailing click doesn't also open the day dialog
 let planDragCreate = null; // active drag-to-create gesture state
@@ -25581,7 +25582,8 @@ function initPlanDotTooltip() {
   };
   root.addEventListener("mouseover", (e) => {
     const dot = e.target.closest("[data-tip]");
-    if (dot) place(dot);
+    // Phones list the tapped day under the grid instead (a tap fires mouseover).
+    if (dot && !planIsPhoneWidth()) place(dot);
   });
   root.addEventListener("mouseout", (e) => {
     if (e.target.closest("[data-tip]")) tip.hidden = true;
@@ -26544,6 +26546,7 @@ function renderPlanMonthView() {
   const eventsByDay = {};
   allEvents.forEach((e) => { (eventsByDay[e.date] = eventsByDay[e.date] || []).push(e); });
   const paydaysByDay = paydaysByDate(rangeStart, rangeEnd);
+  const selected = planMonthSelectedKey();
   // Full day names normally; short forms (Su, M, Tu, …) on phones.
   const dayNames = [["Sun","Su"],["Mon","M"],["Tue","Tu"],["Wed","W"],["Thu","Th"],["Fri","F"],["Sat","Sa"]];
   const headers = dayNames.map(([full, sh]) =>
@@ -26567,7 +26570,8 @@ function renderPlanMonthView() {
     if (eventChips.length) ariaParts.push(`${eventChips.length} event${eventChips.length > 1 ? "s" : ""}`);
     if (taskCount) ariaParts.push(`${taskCount} task${taskCount > 1 ? "s" : ""}`);
     const aria = `${date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}${ariaParts.length ? ", " + ariaParts.join(", ") : ""}`;
-    return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0" role="gridcell" aria-label="${escapeHtml(aria)}">
+    const isSelected = key === selected;
+    return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}${isSelected ? " is-selected" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0" role="gridcell"${isSelected ? ' aria-selected="true"' : ""} aria-label="${escapeHtml(aria)}">
       <div class="plan-month-day-head">
         <span class="plan-day-number">${date.getDate()}</span>
       </div>
@@ -26575,10 +26579,76 @@ function renderPlanMonthView() {
       ${(shown.length || hidden || taskChip) ? `<div class="plan-month-events">${shown.map(planMonthChipTemplate).join("")}${hidden ? `<span class="plan-month-more" role="button" aria-label="${hidden} more — open day">+${hidden}</span>` : ""}${taskChip}</div>` : ""}
     </div>`;
   }).join("");
+  // Phones (Luke, 2026-10-26, option C): the grid stays dots only and the
+  // selected day is listed underneath. Hidden by CSS on wider screens, where
+  // the cells show titles.
+  const selectedPanel = renderPlanMonthDayList(selected, eventsByDay[selected] || [], paydaysByDay[selected] || []);
   return `<div class="plan-month">
     <div class="plan-month-header">${headers}</div>
     <div class="plan-month-grid" role="grid" aria-label="Month calendar">${cells}</div>
+    <div class="plan-month-daylist" aria-live="polite">${selectedPanel}</div>
   </div>`;
+}
+
+// The day the phone month view lists: the one tapped, if it's in the month on
+// screen; otherwise today (when that month is showing) or the 1st.
+function planMonthSelectedKey() {
+  const y = planViewDate.getFullYear(), m = planViewDate.getMonth();
+  const inMonth = (key) => {
+    const d = key ? new Date(key + "T00:00:00") : null;
+    return !!d && !Number.isNaN(d.getTime()) && d.getFullYear() === y && d.getMonth() === m;
+  };
+  if (inMonth(planMonthSelectedDay)) return planMonthSelectedDay;
+  const today = dateKeyFromDate(new Date());
+  return inMonth(today) ? today : dateKeyFromDate(new Date(y, m, 1));
+}
+
+function renderPlanMonthDayList(key, events, paydays) {
+  const today = dateKeyFromDate(new Date());
+  const date = new Date(key + "T00:00:00");
+  const label = date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const rows = events.map((e) => planAgendaRowTemplate(e, key)).join("");
+  const payRows = (paydays || []).map((p) => `<div class="plan-agenda-event is-payday">
+      <span class="plan-payday-dot" aria-hidden="true">$</span>
+      <div class="plan-agenda-info">
+        <span class="plan-agenda-title">${escapeHtml(p.person ? `${p.person} payday` : "Payday")}</span>
+        <span class="plan-agenda-time">${escapeHtml(formatFinMoney(p.amount))}</span>
+      </div>
+    </div>`).join("");
+  const body = rows || payRows ? rows + payRows : `<div class="plan-month-daylist-empty">Nothing planned</div>`;
+  return `<div class="plan-month-daylist-head">
+      <button type="button" class="plan-month-daylist-date" data-plan-open-day="${escapeHtml(key)}" aria-label="Open ${escapeHtml(label)} in day view">${key === today ? `<span class="plan-month-daylist-today">Today</span> ` : ""}${escapeHtml(label)}</button>
+      <button type="button" class="icon-btn plan-month-daylist-add" data-plan-add-day="${escapeHtml(key)}" title="Add event" aria-label="New event on ${escapeHtml(label)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>
+    </div>
+    <div class="plan-month-daylist-rows">${body}</div>`;
+}
+
+// Phone month view: tapping a day selects it and lists it under the grid,
+// without re-rendering the month.
+function selectPlanMonthDay(key) {
+  if (!key) return;
+  const root = elements.planCalendar;
+  const cell = root?.querySelector(`.plan-month-day[data-plan-day="${CSS.escape(key)}"]`);
+  if (!cell || cell.classList.contains("is-other-month")) {
+    // A day from the neighbouring month: go to that month with the day selected.
+    planMonthSelectedDay = key;
+    planViewDate = new Date(key + "T00:00:00");
+    renderPlanPage();
+    return;
+  }
+  planMonthSelectedDay = key;
+  root.querySelectorAll(".plan-month-day.is-selected").forEach((c) => { c.classList.remove("is-selected"); c.removeAttribute("aria-selected"); });
+  cell.classList.add("is-selected");
+  cell.setAttribute("aria-selected", "true");
+  const list = root.querySelector(".plan-month-daylist");
+  if (list) {
+    const events = getPlanEventsForRange(key, key).filter((e) => e.date === key);
+    list.innerHTML = renderPlanMonthDayList(key, events, paydaysByDate(key, key)[key] || []);
+  }
+}
+
+function planIsPhoneWidth() {
+  return typeof window.matchMedia === "function" && window.matchMedia("(max-width: 560px)").matches;
 }
 
 function renderPlanWeekView() {
@@ -26680,6 +26750,20 @@ function renderPlanDayView() {
   </div>`;
 }
 
+// One event as a list row (colour dot, title, time, calendar) — shared by the
+// Agenda view and the month view's day list.
+function planAgendaRowTemplate(e, key) {
+  const timeStr = e.allDay ? "All day" : (e.startTime ? planFormatTime(e.startTime) + (e.endTime ? ` – ${planFormatTime(e.endTime)}` : "") : "");
+  const calLabel = e.calendarName ? `<span class="plan-agenda-cal">${escapeHtml(e.calendarName)}</span>` : "";
+  return `<div class="plan-agenda-event" data-plan-event-id="${escapeHtml(e.id)}" data-plan-event-date="${escapeHtml(e.date || key)}" data-plan-event-source="${escapeHtml(e.source || "")}" data-plan-event-layer="${escapeHtml(e.layerView || "")}" data-plan-day="${escapeHtml(key)}" tabindex="0" role="button">
+    <span class="plan-agenda-dot" style="background:${escapeHtml(e.color || PLAN_COLORS[0])}"></span>
+    <div class="plan-agenda-info">
+      <span class="plan-agenda-title${planIsTaskEvent(e) ? " is-task" : ""}">${planIsTaskEvent(e) ? planTaskGlyph(e) + " " : ""}${escapeHtml(e.title)}${e.recurrence || e.occurrenceOf ? ' <span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}</span>
+      <span class="plan-agenda-time">${escapeHtml(timeStr)}${calLabel}</span>
+    </div>
+  </div>`;
+}
+
 function renderPlanAgendaView() {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end = new Date(start); end.setDate(end.getDate() + 90);
@@ -26696,17 +26780,7 @@ function renderPlanAgendaView() {
   const tomorrow = dateKeyFromDate(tomorrowD);
   const groups = Object.keys(byDay).sort().map((key) => {
     const label = key === today ? "Today" : key === tomorrow ? "Tomorrow" : new Date(key + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-    const rows = byDay[key].map((e) => {
-      const timeStr = e.allDay ? "All day" : (e.startTime ? planFormatTime(e.startTime) + (e.endTime ? ` – ${planFormatTime(e.endTime)}` : "") : "");
-      const calLabel = e.calendarName ? `<span class="plan-agenda-cal">${escapeHtml(e.calendarName)}</span>` : "";
-      return `<div class="plan-agenda-event" data-plan-event-id="${escapeHtml(e.id)}" data-plan-event-date="${escapeHtml(e.date || key)}" data-plan-day="${escapeHtml(key)}">
-        <span class="plan-agenda-dot" style="background:${escapeHtml(e.color || PLAN_COLORS[0])}"></span>
-        <div class="plan-agenda-info">
-          <span class="plan-agenda-title${planIsTaskEvent(e) ? " is-task" : ""}">${planIsTaskEvent(e) ? planTaskGlyph(e) + " " : ""}${escapeHtml(e.title)}${e.recurrence || e.occurrenceOf ? ' <span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}</span>
-          <span class="plan-agenda-time">${escapeHtml(timeStr)}${calLabel}</span>
-        </div>
-      </div>`;
-    }).join("");
+    const rows = byDay[key].map((e) => planAgendaRowTemplate(e, key)).join("");
     return `<div class="plan-agenda-group">
       <div class="plan-agenda-date">${escapeHtml(label)}</div>
       ${rows}
@@ -27977,6 +28051,22 @@ function initPlanCalListDelegation() {
   // day opens the new-event dialog for that date.
   elements.planCalendar?.addEventListener("click", (e) => {
     if (planSuppressGridClick) { planSuppressGridClick = false; return; } // just finished a drag-to-create
+    // Phone month view: the day list under the grid has its own two buttons, and
+    // a tap anywhere on a day (its dots included) selects that day for the list.
+    const openDay = e.target.closest("[data-plan-open-day]");
+    if (openDay) {
+      planViewDate = new Date(openDay.dataset.planOpenDay + "T00:00:00");
+      planViewMode = "day";
+      setWeekToolsMode("plan");
+      renderPlanPage();
+      return;
+    }
+    const addDay = e.target.closest("[data-plan-add-day]");
+    if (addDay) { openPlanEventDialog(addDay.dataset.planAddDay); return; }
+    if (planViewMode === "month" && planIsPhoneWidth()) {
+      const dayCell = e.target.closest(".plan-month-grid .plan-month-day[data-plan-day]");
+      if (dayCell) { selectPlanMonthDay(dayCell.dataset.planDay); return; }
+    }
     const pill = e.target.closest("[data-plan-event-id]");
     if (pill) {
       // A birthday / important date jumps straight to that contact's card.
@@ -28027,7 +28117,12 @@ function initPlanCalListDelegation() {
     if (planViewMode !== "month") return;
     const cell = e.target.closest(".plan-month-day[data-plan-day]");
     if (!cell) return;
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPlanEventDialog(cell.dataset.planDay); return; }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (planIsPhoneWidth()) selectPlanMonthDay(cell.dataset.planDay);
+      else openPlanEventDialog(cell.dataset.planDay);
+      return;
+    }
     const delta = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
     if (delta === undefined) return;
     const cells = [...elements.planCalendar.querySelectorAll(".plan-month-day[data-plan-day]")];
