@@ -77,7 +77,7 @@ Written **once per finished session** with the normal `persist()`; nothing per t
 
 ## 7. Not built (on purpose)
 
-Streaks, achievements, spaced repetition, audio, multi-language UI, a setting for the goal or time (fixed at 30 / 2:00; the engine takes both as options).
+Streaks, achievements, XP, hearts, multi-language UI, a setting for the goal or time (fixed at 30 / 2:00; the engine takes both as options). *(Spaced repetition and audio came with Part 2, below.)*
 
 ---
 
@@ -165,3 +165,24 @@ Rosetta Stone's content isn't available to the app (LANGUAGE_PRACTICE §4), so L
 3. UI: the hub, Add words / Word list, flashcards, match upgrade, de/het, listening, sentences, speaking (`language-ui*.js`).
 4. Speech: `language-speech.js` (native plugin or Web Speech) and the `LiveLanguage` Swift plugin.
 5. Tests + `qa:language` extended.
+
+## 19. As built (branch `claude/dutch-learning`, 2026-10-26)
+
+| Module | What | Pure? |
+|---|---|---|
+| `language-words.js` | paste parser, your lessons/words (normalize, merge, edit, tombstones), `buildCourse` (your course + starter), course order | yes |
+| `language-srs.js` | FSRS-4.5 (`reviewCard`, `previewIntervals`, `pullForward`), compact card tuples + merge, `buildSession`, `deckCounts` | yes |
+| `language-drills.js` | typed-answer check (exact / close: accent, article, one slip / wrong), speech match, de/het items, weighted picks, listening choices, minimal pairs | yes |
+| `language-sentences.js` + `language-nl-sentences.js` | tiles, checking (with accepted alternatives); 38 provisional starter sentences | yes / data |
+| `language-speech.js` | speak / listen / record: `LiveLanguage` plugin on the iPhone, Web Speech + MediaRecorder in a browser | platform |
+| `language-ui.js` | hub, lesson screen, settings, router; still runs the matching board (now with Listen mode) | DOM |
+| `language-ui-cards.js` · `language-ui-drills.js` · `language-ui-words.js` | flashcards + de/het · listen, sentences, speak · add words, word list | DOM |
+| `ios/App/App/LiveLanguagePlugin.swift` | AVSpeechSynthesizer (best Dutch voice), SFSpeechRecognizer `nl-NL` (on-device when supported) + recording, playback | native |
+
+- **State** (personal `recreate` row): `languageCards`, `languageUserLessons`, `languageUserWords`, `languagePrefs` (TRACKED_SETTINGS `"fields"`), plus the existing `languageWords` / `languageSessions` (sessions now carry `kind`). Merge rules in `mergeStates`. No migration, no new tables or functions.
+- **Leisure row:** Dutch (hub) · Flashcards (what's due) · lessons (yours first) · **+ Add words**. A lesson card opens the lesson screen.
+- **Hub Match** uses "Review due" (due or missed words, topped up with the least-settled learned ones; the first lessons when nothing is learned yet).
+- **Persisting:** answers update state in memory; one `persist()` when a round ends, when leaving it, when the app is hidden mid-round, or on `pagehide`.
+- **Media:** `pauseMedia` (app.js) pauses a native read-aloud/podcast session and any `<audio>`/`<video>` before the mic opens.
+- **Tests:** `test/language-srs.test.js`, `-words`, `-drills` (incl. sentences), `-speech`, plus the existing three. **QA:** `npm run qa:language` — 112 checks through the real app with stubbed speech and a fake microphone (390 and 360 px; dark mode on the board).
+- **Not verified:** the Swift plugin hasn't been compiled (no Xcode in the build sandbox) — the first TestFlight build is its compile check; real Dutch voices and Apple's recognizer on the phone; Chrome's real recognizer.

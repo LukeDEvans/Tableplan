@@ -1,6 +1,6 @@
 ---
 name: language
-description: Use for changes scoped to Dutch practice — the timed Dutch↔English matching game, its lesson curriculum (provisional starter set now, Rosetta Stone lessons later) and per-word progress. Lives on the Leisure page (Recreate group) as the "Dutch" row; all code is in the language-*.js modules.
+description: Use for changes scoped to Dutch practice — the hub on Leisure › Dutch with spaced-repetition flashcards, the timed matching game, de/het, listening, sentence building and speaking; Luke's own Rosetta Stone words (pasted in) plus the provisional starter set; per-word progress and schedules; the LiveLanguage iOS plugin. All code is in the language-*.js modules.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -18,7 +18,22 @@ single-page, vanilla-ESM web app. Dutch practice is self-contained in the
 - files: `language-*.js`
 - state: `language*`
 
-## Your scope
+Also yours (not checked by CI): `ios/App/App/LiveLanguagePlugin.swift` (registered in
+`MainViewController.swift`), `nativeLanguage()` in `native-bridge.js`, the Dutch block in
+`styles.css`, and the `mic` / `flashcards` / `wordTiles` / `pairs` icons in `live-icons.js`.
+
+## Your scope (Part 2, 2026-10-26 — LANGUAGE_PRACTICE.md §8–19)
+- **`language-words.js`** — paste parser, Luke's lessons/words (`languageUserLessons`,
+  `languageUserWords`; per id later `at` wins; deletes are tombstones), `buildCourse`.
+- **`language-srs.js`** — FSRS-4.5 scheduler and `languageCards` (compact tuples; per card the
+  later review wins; ties keep the earlier due day so a pull-forward survives).
+- **`language-drills.js`**, **`language-sentences.js`**, **`language-nl-sentences.js`** — pure
+  checking and drill building; starter sentences are provisional like the starter words.
+- **`language-speech.js`** — speak / listen / record (native plugin or Web Speech).
+- **`language-ui.js`** (hub, lesson screen, settings, router, matching board),
+  **`language-ui-cards.js`**, **`language-ui-drills.js`**, **`language-ui-words.js`** — screens.
+
+## Your scope (matching game, 2026-10-20)
 - **`language-match.js`** — the game, a pure state machine (`createMatchGame`,
   `startGame`, `select`, `tick`, `endGame`, `pauseGame`/`resumeGame`, `nextDueAt`,
   `gameSummary`). Time comes in as `now`, randomness from an injected rng. Keep it free
@@ -47,3 +62,17 @@ single-page, vanilla-ESM web app. Dutch practice is self-contained in the
 - Leaving the Dutch view mid-game ends it as "left" (saved once if any pair was tried); hiding the
   app pauses it. A game only saves to the account it started in.
 - Review draws only from lessons the person has already practiced.
+
+## Decisions and rules (Luke, 2026-10-26)
+- **No hearts, XP, streaks or other gamification.** Wrong answers never end or limit practice.
+  Progress is plain: due today, known per lesson.
+- **Flashcards and matching are the core; make them strong.** Sentence building, listening and
+  speaking are additions.
+- **Luke copies his Rosetta Stone words in** (Add words: paste `Dutch = English`, by Unit /
+  Lesson). They count as verified (source `rosetta-user`). Don't scrape or bundle Rosetta
+  Stone content.
+- **Microphone use is approved.** Recognition is "did it understand you", never a pronunciation
+  score; recordings stay on the device (memory on the web, a temp file on the phone).
+- Defaults (Claude's, changeable in the hub's Practice settings): 10 new words a day, Dutch
+  plays automatically, "Relaxed" speed (0.85), starter set shown until hidden.
+- Answers persist once per round (end, leave, app hidden, pagehide) — never per tap.

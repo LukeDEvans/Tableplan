@@ -24579,14 +24579,14 @@ body[data-theme="dark"] .lang-card.is-miss { background: color-mix(in srgb, var(
 .lang-practice-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
   min-height: 72px; min-width: 0; padding: 10px 6px; border: 1px solid var(--line); border-radius: 14px;
-  background: var(--surface); color: var(--ink); font-weight: 700; font-size: 0.86rem; cursor: pointer;
+  background: var(--surface); color: var(--ink); font-weight: 700; font-size: clamp(0.76rem, 3.5vw, 0.86rem); cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 .lang-practice-btn svg { color: var(--accent-dark); }
 body[data-theme="dark"] .lang-practice-btn svg { color: var(--accent); }
 .lang-practice-btn:hover:not([disabled]), .lang-practice-btn:focus-visible { border-color: var(--accent); outline: none; }
 .lang-practice-btn[disabled] { opacity: 0.45; cursor: default; }
-.lang-practice-btn span { overflow-wrap: anywhere; text-align: center; }
+.lang-practice-btn span { text-align: center; white-space: nowrap; }
 .lang-level-sub { margin: 8px 0 0; font-size: 0.95rem; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .lang-course .lang-unit-head { flex-wrap: wrap; }
 .lang-settings { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }

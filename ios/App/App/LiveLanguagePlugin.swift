@@ -279,12 +279,15 @@ public class LiveLanguagePlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesize
         req.shouldReportPartialResults = true
         if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
 
+        // A recording is a bonus: if the file can't be made, listen without one.
         var file: AVAudioFile? = nil
         if record {
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("live-language-\(UUID().uuidString).caf")
-            file = try AVAudioFile(forWriting: url, settings: format.settings)
-            recordURL = url
+            if let f = try? AVAudioFile(forWriting: url, settings: format.settings) {
+                file = f
+                recordURL = url
+            }
         }
         let recFile = file
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
@@ -292,7 +295,12 @@ public class LiveLanguagePlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesize
             if let f = recFile { try? f.write(from: buffer) }
         }
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            throw error
+        }
 
         let token = UUID()
         listenToken = token
