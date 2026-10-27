@@ -106,3 +106,23 @@ export function dedupeRecurringTaskInstances(tasks) {
   });
   return list.filter((task) => !task?.recurringTaskId || winner.get(task.recurringTaskId) === task);
 }
+
+// Tick one task in a copy of a "do" section ({ doPlans, doBacklog, … }) without
+// touching anything else (VIEWS_DESIGN decision 20 / Luke 2026-10-26: Household
+// tasks can be ticked from Personal's Tasks list). `dayId` "backlog" means the
+// chores list; otherwise the task lives in doPlans[weekKey][dayId]. Returns the
+// new section data, or null when the task isn't there (deleted elsewhere).
+export function setTaskDoneInDoData(data, weekKey, dayId, taskId, done) {
+  if (!data || typeof data !== "object" || taskId == null) return null;
+  const same = (t) => t && String(t.id) === String(taskId);
+  const tick = (t) => (same(t) ? { ...t, done: Boolean(done) } : t);
+  if (dayId === "backlog") {
+    const list = Array.isArray(data.doBacklog) ? data.doBacklog : [];
+    if (!list.some(same)) return null;
+    return { ...data, doBacklog: list.map(tick) };
+  }
+  const week = data.doPlans?.[weekKey];
+  const list = Array.isArray(week?.[dayId]) ? week[dayId] : [];
+  if (!list.some(same)) return null;
+  return { ...data, doPlans: { ...data.doPlans, [weekKey]: { ...week, [dayId]: list.map(tick) } } };
+}

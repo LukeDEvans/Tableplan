@@ -316,6 +316,40 @@ try {
   while (await view() !== "personal") await go(1);
   await page.evaluate(() => { window.__liveQA.setLayerForQa("household", false); window.__liveQA.setLayerForQa("business", false); });
 
+  console.log("Household tasks in Personal's Tasks list");
+  while (await view() !== "personal") await go(1);
+  {
+    const info = await page.evaluate(() => window.__liveQA.householdTasksForQa());
+    const wk = info.weekKey, day = info.dayId || "mon";
+    await page.evaluate(({ wk, day }) => window.__liveQA.householdTasksForQa({
+      doPlans: { [wk]: { [day]: [{ id: "hh-1", title: "Household trash", done: false }, { id: "hh-2", title: "Household vacuum", done: false }] } },
+      doBacklog: [{ id: "hh-c", title: "Household gutters", done: false }],
+    }), { wk, day });
+    await page.evaluate(() => window.__liveQA.setLayerForQa("household", false));
+    await page.evaluate(() => window.__liveQA.openTasksForQa());
+    await page.waitForTimeout(500);
+    const groupText = () => page.evaluate(() => [...document.querySelectorAll("#doPlannerGrid .do-layer-group")].map((g) => g.textContent.replace(/\s+/g, " ").trim()).join(" | "));
+    check(!(await groupText()), "layer off: no Household group in Personal's Tasks");
+    await page.evaluate(() => window.__liveQA.setLayerForQa("household", true));
+    await page.evaluate(() => window.__liveQA.openTasksForQa());
+    await page.waitForTimeout(500);
+    const text = await groupText();
+    check(/Household trash/.test(text) && /Household gutters/.test(text), "layer on: Household group shows the day's tasks and the chores", text);
+    await page.evaluate(() => { const c = document.querySelector('[data-household-task-toggle="hh-1"]'); c.click(); });
+    await page.waitForTimeout(400);
+    const after = await page.evaluate(() => window.__liveQA.householdTasksForQa().data);
+    const day1 = Object.values(after.doPlans)[0][Object.keys(Object.values(after.doPlans)[0])[0]];
+    check(day1.find((t) => t.id === "hh-1")?.done === true && day1.find((t) => t.id === "hh-2")?.done === false, "ticking one marks just that household task done", JSON.stringify(day1));
+    check(await page.evaluate(() => document.querySelector('[data-household-task-toggle="hh-1"]')?.checked === true), "…and it stays ticked in the list");
+    check(await page.evaluate(() => !document.querySelector('#doPlannerGrid .do-task-list [data-do-task-toggle="hh-1"]')), "household tasks aren't mixed into Personal's own list");
+    check(await fits(), "Tasks with the Household group fits at this width");
+    await shot("household-tasks");
+    await page.evaluate(() => window.__liveQA.setLayerForQa("household", false));
+    await page.evaluate(() => window.__liveQA.householdTasksForQa(null));
+    await page.evaluate(() => document.getElementById("tasksPageDialog")?.close());
+    await goHome();
+  }
+
   console.log("Watch redraws with the view");
   while (await view() !== "personal") await go(1);
   await page.evaluate(() => window.__liveQA.watchSeedForQa([{ id: "w-qa", title: "Dune QA", type: "movie" }]));

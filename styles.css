@@ -22627,6 +22627,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   line-height: 18px;
   text-align: center;
 }
+/* Household tasks shown in Personal's Tasks list (Household layer on). */
+.do-layer-group { margin-top: 12px; padding-top: 8px; border-top: 1px dashed color-mix(in srgb, var(--ink) 16%, transparent); }
+.do-layer-head { font-size: 0.74rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 2px 0 6px; }
 .do-notif-head { font-size: 0.74rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 6px 0 4px; }
 .do-notif-empty { font-size: 0.8rem; color: var(--muted); padding: 6px 0; }
 .do-notif-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }

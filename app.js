@@ -51,7 +51,7 @@ import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.
 import { normalizeExternalEvent } from './calendar/normalize.js';
 import { buildSharedSnapshot, mealPlanDisplayEvents, mealPlanEventsFromScope, mergeMealPlanSharedEvents, normalizeMealPlanCalendarFlags, normalizeMealPlanSharedEvents } from './calendar/meal-plan-share.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
-import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
+import { taskIsScheduled, dedupeRecurringTaskInstances, setTaskDoneInDoData } from './calendar/tasks-project.js';
 import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googleReminderMinutes, googleEventStart } from './calendar/google.js';
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
@@ -3974,6 +3974,10 @@ function setupDiagnostics() {
     planSeedForQa: (events) => { if (!localDevMode) return null; state.planEvents = events; planRangeCache.clear(); persist(); return true; },
     planEventsInRangeForQa: (a, b) => (localDevMode ? getPlanEventsForRange(a, b).map((e) => ({ id: e.id, title: e.title, source: e.source, layerView: e.layerView || null })) : null),
     setLayerForQa: (view, on) => { if (!localDevMode) return null; setPlanLayer(view, on); return true; },
+    // Household tasks in Personal's Tasks list (qa-views): put a household "do" copy on
+    // the device and read it back. Local dev only.
+    openTasksForQa: () => { if (!localDevMode) return null; showDoApp(); renderDoPlanner(); return true; },
+    householdTasksForQa: (data) => { if (!localDevMode) return null; if (data !== undefined) { setShadowData("do", "household", data); persistShadowSections(); planRangeCache.clear(); } return { data: shadowData("do", "household"), weekKey: weekKey(), dayId: activePlannerDayId }; },
     personalFinanceForQa: (on) => { if (!localDevMode) return null; setPersonalFinanceFlag(on); return true; },
     shadowOnDeviceForQa: () => (localDevMode ? Object.keys(JSON.parse(localStorage.getItem("live-shadow-sections-v2") || "{}")) : null),
     tickerGameForQa: (dateKey, id) => { if (!localDevMode) return null; openTickerGameCard(dateKey, id); return true; },
@@ -12695,6 +12699,7 @@ function initDoPlannerDelegation() {
     const dayTab = e.target.closest("[data-do-day-tab]");
     if (dayTab) { selectPlannerDay(dayTab.dataset.doDayTab); return; }
     if (e.target.closest("[data-open-add-task]")) { openAddTaskDialog(); return; }
+    if (e.target.closest("[data-household-task-open]")) { openTasksInView("household"); return; }
     const detail = e.target.closest("[data-do-task-detail]");
     if (detail) { openDoTaskDetail(detail.dataset.doDay, detail.dataset.doTaskDetail); return; }
     const del = e.target.closest("[data-do-task-delete]");
@@ -12707,6 +12712,8 @@ function initDoPlannerDelegation() {
   });
 
   grid.addEventListener("change", (e) => {
+    const householdToggle = e.target.closest("[data-household-task-toggle]");
+    if (householdToggle) { setHouseholdTaskDone(householdToggle.dataset.householdTaskDay, householdToggle.dataset.householdTaskToggle, householdToggle.checked); return; }
     const toggle = e.target.closest("[data-do-task-toggle]");
     if (toggle) { toggleDoTask(toggle.dataset.doDay, toggle.dataset.doTaskToggle, toggle.checked); return; }
     // Suggested section: checking an item marks that task done for the week.
@@ -12824,6 +12831,7 @@ function renderDoPlanner() {
           <div class="do-task-list" data-do-task-drop-day="${activeDay.id}">
             ${doTaskListTemplate(activeDay.id)}
           </div>
+          ${householdLayerTaskGroupHtml(activeDay.id)}
         </div>
       </section>
       <section class="day-column planner-day-panel do-backlog-panel" aria-label="Chores">
@@ -12840,6 +12848,7 @@ function renderDoPlanner() {
           <div class="do-task-list" data-do-backlog-drop>
             ${doBacklogListTemplate()}
           </div>
+          ${householdLayerTaskGroupHtml("backlog")}
         </div>
       </section>
     </div>
@@ -12863,6 +12872,115 @@ function doDayTabTemplate(day, isActive) {
       <strong class="day-tab-date day-tab-date-short">${escapeHtml(shortDateLabel)}</strong>
     </button>
   `;
+}
+
+// ── Household tasks in Personal's Tasks list (Luke, 2026-10-26) ─────────────
+// With the Household layer on in the Personal calendar, Personal's Tasks list
+// shows the household's tasks for the same day (and its chores) in their own
+// "Household" group. Ticking one writes just that task to the household's row
+// (setHouseholdTaskDone); tapping its title opens Tasks in Household.
+function householdLayerTasksOn() {
+  return currentViewKey() === "personal" && sectionScope("do") === "personal" && planLayerViews().includes("household");
+}
+
+function householdLayerTasks(dayId) {
+  if (!householdLayerTasksOn()) return [];
+  const data = shadowData("do", "household");
+  if (!data) return [];
+  if (dayId === "backlog") {
+    const key = weekKey();
+    return normalizeDoTasks(data.doBacklog).filter((t) => !t.done || !t.weekKey || t.weekKey === key);
+  }
+  return normalizeDoTasks(data.doPlans?.[weekKey()]?.[dayId]);
+}
+
+function householdLayerTaskGroupHtml(dayId) {
+  const tasks = sortDoTasksForDisplay(householdLayerTasks(dayId));
+  if (!tasks.length) return "";
+  return `
+    <div class="do-layer-group" aria-label="Household tasks">
+      <div class="do-layer-head">${escapeHtml(VIEW_LABELS.household || "Household")}</div>
+      ${tasks.map((task) => {
+        const timeLabel = formatTaskTime(task.time);
+        return `
+        <article class="do-task-item do-layer-task ${task.done ? "is-done" : ""}">
+          <div class="do-task-main">
+            <input type="checkbox" class="do-task-check" data-household-task-toggle="${escapeHtml(task.id)}" data-household-task-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} done (Household)" />
+            <button type="button" class="do-task-title" data-household-task-open title="Open in Household">
+              <span class="do-task-title-text">${escapeHtml(task.title)}</span>
+              ${timeLabel ? `<span class="do-task-time">${escapeHtml(timeLabel)}</span>` : ""}
+            </button>
+          </div>
+        </article>`;
+      }).join("")}
+    </div>`;
+}
+
+// Writes ONE household task's done flag. The household row is read fresh, the
+// tick applied to that copy (setTaskDoneInDoData), and the row written back only
+// if nobody changed it in between (updated_at match; retried twice). So this
+// device's possibly older copy of the household's tasks can never revert anyone
+// else's edits — the risk a whole-section write from Personal would carry.
+async function setHouseholdTaskDone(dayId, taskId, done, attempt = 0) {
+  const key = weekKey();
+  const local = shadowData("do", "household");
+  const optimistic = setTaskDoneInDoData(local, key, dayId, taskId, done);
+  if (optimistic && attempt === 0) {
+    setShadowData("do", "household", optimistic);
+    persistShadowSections();
+    planRangeCache.clear();
+    renderDoPlanner();
+  }
+  if (localDevMode || !canUseCloudStorage() || !authSession?.access_token) return;
+  const stateId = supabaseConfig().stateId;
+  const rowId = rowIdForScope(scopeRowIds(stateId), "do", "household");
+  const keys = STATE_SECTIONS.do || [];
+  const failed = (message) => {
+    if (local) setShadowData("do", "household", local); // put the household copy back as it was
+    persistShadowSections();
+    planRangeCache.clear();
+    renderDoPlanner();
+    showMailToast(message);
+  };
+  try {
+    const res = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`, { headers: supabaseHeaders(), cache: "no-store" });
+    if (!res.ok) throw new Error(String(res.status));
+    const row = (await res.json())[0];
+    if (!row) { failed("Couldn't find the household's tasks."); return; }
+    const { stateUpdatedAt, ...remote } = row.state || {};
+    const next = setTaskDoneInDoData(remote, key, dayId, taskId, done);
+    if (!next) { // removed or moved on another device: show the household's copy as it is now
+      const fresh = {};
+      for (const k of keys) if (remote[k] !== undefined) fresh[k] = remote[k];
+      setShadowData("do", "household", fresh);
+      persistShadowSections();
+      planRangeCache.clear();
+      renderDoPlanner();
+      showMailToast("That task changed in Household. The list is up to date now.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const upd = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(row.updated_at)}&select=updated_at`,
+      { method: "PATCH", headers: { ...supabaseHeaders(), Prefer: "return=representation" }, body: JSON.stringify({ state: { ...next, stateUpdatedAt: now }, updated_at: now }) }
+    );
+    if (!upd.ok) throw new Error(String(upd.status));
+    const updRows = await upd.json();
+    if (!updRows.length) {
+      if (attempt >= 2) throw new Error("conflict");
+      return setHouseholdTaskDone(dayId, taskId, done, attempt + 1);
+    }
+    lastSeenSectionStamp[rowId] = updRows[0].updated_at || now;
+    const fresh = {};
+    for (const k of keys) if (next[k] !== undefined) fresh[k] = next[k];
+    setShadowData("do", "household", fresh);
+    persistShadowSections();
+    planRangeCache.clear();
+    renderDoPlanner();
+  } catch (error) {
+    console.warn("[household task] tick failed:", error?.message);
+    failed("Couldn't update the household task. Check your connection and try again.");
+  }
 }
 
 function renderTasksPage() {
