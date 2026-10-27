@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   EXPLORE_SCOPES, LOCAL_KM, distanceKm, classifyPlace, tripScope, groupTrips, placeFromNominatim, isExploreScope,
+  scopeIconUrl, tripImagePath, tripCardImageUrl, tripImageStoragePath,
 } from "../explore-scope.js";
 
 const home = { lat: 44.9778, lng: -93.265, country: "us", state: "Minnesota" }; // Minneapolis
@@ -91,5 +92,30 @@ describe("explore scopes", () => {
     expect(placeFromNominatim({ lat: "x", lon: "1" })).toBeNull();
     expect(placeFromNominatim(null)).toBeNull();
     expect(placeFromNominatim({ error: "Unable to geocode" })).toBeNull();
+  });
+});
+
+describe("trip pictures", () => {
+  const SB = "https://abc.supabase.co";
+  it("a trip's own picture wins over its row's default", () => {
+    const url = tripCardImageUrl({ image: "u1/trips/t1/trip-5.png" }, "world", SB);
+    expect(url).toBe(`${SB}/storage/v1/object/public/recipe-photos/u1/trips/t1/trip-5.png`);
+  });
+  it("falls back to the row picture, or nothing when unsorted", () => {
+    expect(tripCardImageUrl({}, "local", SB)).toBe(scopeIconUrl("local"));
+    expect(tripCardImageUrl({ image: "" }, "state", SB)).toBe("./explore-regional.png");
+    expect(tripCardImageUrl({}, null, SB)).toBe("");
+  });
+  it("ignores values that aren't a storage path", () => {
+    for (const bad of ["data:image/png;base64,xx", "blob:abc", "https://evil.com/x.png", "../x.png", "  "]) {
+      expect(tripImagePath({ image: bad })).toBe("");
+    }
+    expect(tripCardImageUrl({ image: "data:image/png;base64,xx" }, "world", SB)).toBe("./explore-global.png");
+  });
+  it("without a Supabase URL (local dev) shows the row picture", () => {
+    expect(tripCardImageUrl({ image: "u/trips/t/trip-1.png" }, "country", "")).toBe("./explore-national.png");
+  });
+  it("builds a fresh, safe path per upload", () => {
+    expect(tripImageStoragePath("u-1", "trip_9/x", 42)).toBe("u-1/trips/trip-9-x/trip-42.png");
   });
 });

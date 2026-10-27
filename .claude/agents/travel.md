@@ -23,6 +23,14 @@ changes to the Travel domain only. (In the UI this domain is surfaced as
 - files: `travel-*.js`, `explore-scope.js`, `booking-scan.js`, `netlify/functions/travel-time.js`, `netlify/functions/scan-booking.js`, `netlify/functions/maps-static.js`
 - state: `trips`, `travelIdeas`, `travelHome`
 
+- **Trip pictures (Luke, 2026-10-27):** a trip may carry `trip.image`, a storage path in
+  the public `recipe-photos` bucket (`<user>/trips/<trip>/trip-<ts>.png`, PNG so
+  transparent pictograms stay transparent; new name per upload, cached forever by the
+  service worker). It replaces the row's default picture on that trip's card; trips
+  without one, and every row's **New trip** card, show the row's picture
+  (`explore-scope.js` `tripCardImageUrl`). Set from the trip header's 🖼️ chip or the
+  card's hold menu. **New trip is the first card in each row** (2026-10-27).
+
 ## Your scope (edit these)
 - **Modules:** `travel-geo.js`, `travel-ingest.js`, `travel-interpret.js`,
   `travel-itinerary.js`, `travel-mode.js`, `travel-model.js` (canonical),

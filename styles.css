@@ -24353,6 +24353,26 @@ input[type="search"]::-webkit-search-cancel-button {
 /* Row pictures (Local / Regional / National / Global) are wide, so they get the
    card's width rather than the square 52px icon box. */
 .workout-pool-img.explore-scope-img { width: 104px; height: 60px; }
+/* "New trip" leads each row with the row's picture and a "+" badge on it. */
+.explore-add-icon { position: relative; display: block; width: 104px; height: 60px; margin: 0 auto 4px; }
+.explore-add-badge {
+  position: absolute; right: -6px; bottom: -6px;
+  width: 24px; height: 24px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--on-accent);
+  font-size: 1.1rem; font-weight: 700; line-height: 1;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--ink) 25%, transparent);
+}
+#exploreEditPictureBtn { cursor: pointer; }
+.explore-picture-note { margin: 0 0 12px; color: var(--muted); font-size: 0.9rem; }
+.explore-picture-preview {
+  display: flex; align-items: center; justify-content: center;
+  height: 160px; border-radius: 14px; padding: 12px;
+  background: color-mix(in srgb, var(--ink) 5%, var(--surface));
+}
+.explore-picture-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+body[data-theme="dark"] .explore-picture-preview { background: #f3ede2; }
+.explore-picture-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
 /* ── Views: the view band (views.js, VIEWS_DESIGN.md §4) ──
    The current view's name in the page menus' script face, with ‹ › on either
