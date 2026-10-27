@@ -15263,13 +15263,24 @@ function workoutLogSummary(workout, log) {
   return log.gameName ? `${dateLabel} · ${log.gameName}` : dateLabel;
 }
 
-function workoutTypeIcon(type) {
-  // LDE activity pictograms (transparent PNGs). reps→weightlifting,
-  // game→soccer, timed/default→cycling.
-  const src = type === "reps" ? "./activity-weightlifting.png"
+// Lift pictograms by muscle group (Luke, 2026-10-27): a Strength card whose
+// title names chest/back, arms/shoulders or legs gets its own picture;
+// any other Strength card keeps the general weightlifting one.
+const LIFT_PICTOGRAMS = [
+  { test: /leg|squat|quad|glute|hamstring/i, src: "./activity-lift-legs.png", alt: "Legs" },
+  { test: /arm|shoulder|bicep|tricep|curl/i, src: "./activity-lift-arms-shoulders.png", alt: "Arms and shoulders" },
+  { test: /chest|back|bench|pec/i, src: "./activity-lift-chest-back.png", alt: "Chest and back" },
+];
+
+function workoutTypeIcon(type, title = "") {
+  // LDE activity pictograms (transparent PNGs). reps→lift pictogram by muscle
+  // group (falls back to weightlifting), game→soccer, timed/default→cycling.
+  const lift = type === "reps" ? LIFT_PICTOGRAMS.find((p) => p.test.test(title)) : null;
+  const src = lift ? lift.src
+    : type === "reps" ? "./activity-weightlifting.png"
     : type === "game" ? "./activity-soccer.png"
     : "./activity-cycling.png";
-  const alt = type === "reps" ? "Weightlifting" : type === "game" ? "Soccer" : "Cycling";
+  const alt = lift ? lift.alt : type === "reps" ? "Weightlifting" : type === "game" ? "Soccer" : "Cycling";
   return `<img class="workout-pool-img" src="${src}" alt="${alt}" width="52" height="52" draggable="false" />`;
 }
 
@@ -15279,7 +15290,7 @@ function workoutPoolCardTemplate(workout) {
   return `
     <div class="workout-pool-card-wrap">
       <button class="workout-pool-card" type="button" data-record-workout="${escapeHtml(workout.id)}">
-        <span class="workout-pool-icon" aria-hidden="true">${workoutTypeIcon(workout.type)}</span>
+        <span class="workout-pool-icon" aria-hidden="true">${workoutTypeIcon(workout.type, workout.title)}</span>
         <span class="workout-pool-title">${escapeHtml(workout.title)}</span>
         <span class="workout-pool-last">${escapeHtml(summary)}</span>
       </button>

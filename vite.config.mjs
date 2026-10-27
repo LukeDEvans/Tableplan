@@ -34,6 +34,9 @@ function copyRootFilesPlugin() {
       copyFileSync('./favicon-16.png', './dist/favicon-16.png');
       copyFileSync('./icon-halloween-32.png', './dist/icon-halloween-32.png');
       copyFileSync('./activity-weightlifting.png', './dist/activity-weightlifting.png');
+      copyFileSync('./activity-lift-chest-back.png', './dist/activity-lift-chest-back.png');
+      copyFileSync('./activity-lift-arms-shoulders.png', './dist/activity-lift-arms-shoulders.png');
+      copyFileSync('./activity-lift-legs.png', './dist/activity-lift-legs.png');
       copyFileSync('./activity-cycling.png', './dist/activity-cycling.png');
       copyFileSync('./activity-soccer.png', './dist/activity-soccer.png');
       copyFileSync('./activity-sailing.png', './dist/activity-sailing.png');
