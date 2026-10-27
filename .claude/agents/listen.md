@@ -73,6 +73,12 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
   (`showMediaApp(null, { keepView: true })`).
 - The mini-player shows no rewind-10s button (rewind lives in Now Playing). The dock
   uses the shared dock colors (`--dock-bg1/2`, `--dock-ink`).
+- **Queue / Recent windows stop at "Past month" (2026-10-26).** Stored subscription
+  episodes go back 30 days (`podcast-retention.js`), so don't add longer windows
+  without keeping more (bigger synced `media` row). Stored 2/3-month values load as
+  "month".
+- **A podcast whose audio never loads moves the queue on** (`onPodcastLoadFailed`,
+  2026-10-26), like music; an error after playback started leaves it for a retry.
 
 ## Shared infrastructure you steward (flag cross-domain effects)
 `playback-engine.js`, `playback-coordinator.js`, `playback-speed.js` (one speed for

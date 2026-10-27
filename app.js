@@ -5721,6 +5721,10 @@ function normalizeState(parsed) {
     podcastTierCount: deriveMediaTierCount(parsed?.podcastTierCount, parsed?.podcastShowTiers, parsed?.publicationTiers),
     podcastPrioritySort: parsed?.podcastPrioritySort === "newest" ? "newest" : "oldest"
   };
+  // Queue windows longer than a month no longer exist (see RECENT_WINDOW_OPTIONS).
+  for (const key of ["podcastPlaylistWindow", "podcastRecentWindow"]) {
+    if (normalized[key] === "2months" || normalized[key] === "3months") normalized[key] = "month";
+  }
   ensureGroceryCatalog(normalized);
   ensureDailyDozenSeedTags(normalized);
   normalized.personChecklistSettings = LiveFoodHealth.normalizePersonSettings(
@@ -33022,8 +33026,9 @@ const RECENT_WINDOW_OPTIONS = [
   { value: "2weeks",   label: "Past 2 weeks",  ms: 14 * 24 * 60 * 60 * 1000 },
   { value: "3weeks",   label: "Past 3 weeks",  ms: 21 * 24 * 60 * 60 * 1000 },
   { value: "month",    label: "Past month",    ms: 30 * 24 * 60 * 60 * 1000 },
-  { value: "2months",  label: "Past 2 months", ms: 60 * 24 * 60 * 60 * 1000 },
-  { value: "3months",  label: "Past 3 months", ms: 90 * 24 * 60 * 60 * 1000 },
+  // No "Past 2/3 months" (removed 2026-10-26, Luke): stored subscription episodes
+  // only go back 30 days (podcast-retention.js), so longer windows showed more only
+  // until the next cold start. normalizeState moves anyone on them to "month".
 ];
 
 function renderRecentEpisodes() {
