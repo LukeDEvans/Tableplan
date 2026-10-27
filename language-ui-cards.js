@@ -11,6 +11,7 @@
 
 import {
   buildSession, reviewCard, previewIntervals, formatInterval, againGap, GRADES, localDay, decodeCard,
+  cardKey, LEECH_LAPSES, lapsesOf,
 } from "./language-srs.js";
 import { compareAnswer, gradeForTyped, deHetItems, weightedPick } from "./language-drills.js";
 import { genderOf } from "./language-words.js";
@@ -28,15 +29,22 @@ export function createFlashcards(ctx) {
   let root = null;
   let s = null; // the session
 
-  function start(el, { entries, label, extraNew = 0 }) {
+  // cram: practice every card of these words now, due or not (problem words).
+  function start(el, { entries, label, extraNew = 0, cram = false }) {
     root = el;
     const now = ctx.now();
     const limit = ctx.prefs().newPerDay + extraNew;
     const plan = buildSession(ctx.cards(), entries, now, { newLimit: limit });
+    const cs = ctx.cards();
+    const queue = cram
+      ? entries.flatMap((e) => ["r", "p"].filter((d) => cs[cardKey(e.id, d)]).map((dir) => ({ key: cardKey(e.id, dir), entryId: e.id, dir, isNew: false })))
+      : plan.queue.slice();
     s = {
       label,
       entries,
-      queue: plan.queue.slice(),
+      cram,
+      noteOpen: false,
+      queue,
       i: 0,
       revealed: false,
       typing: false,
@@ -110,6 +118,18 @@ export function createFlashcards(ctx) {
         : `<div class="lang-actions"><button class="primary-btn lang-fc-show" type="button" data-fc-show>Show answer</button></div>`;
     } else {
       const examples = ctx.examplesFor(e).slice(0, 1);
+      const lapses = lapsesOf(ctx.cards(), e.id);
+      const note = ctx.noteFor(e.id);
+      const problem = lapses >= LEECH_LAPSES;
+      const noteBlock = s.noteOpen || (problem && !note)
+        ? `<form class="lang-note-edit" data-fc-noteform>
+             ${problem ? `<p class="lang-problem">${ico("warning", 16)} Problem word — missed ${lapses} times. A note or memory trick can help it stick.</p>` : ""}
+             <label class="visually-hidden" for="langFcNote">Note for ${escapeHtml(e.text)}</label>
+             <input id="langFcNote" type="text" maxlength="300" value="${escapeHtml(note)}" placeholder="e.g. “brood” sounds like “bread”" data-fc-note />
+             <button class="secondary-btn compact-btn" type="submit">Save note</button>
+           </form>`
+        : `<p class="lang-fc-usernote">${problem ? `<span class="lang-problem-tag">${ico("warning", 14)} Problem word</span>` : ""}${note ? `<span>${escapeHtml(note)}</span>` : ""}
+             <button class="lang-linkbtn" type="button" data-fc-noteopen>${note ? "Edit note" : "Add a note"}</button></p>`;
       const answer = item.dir === "r"
         ? `<p class="lang-fc-answer">${escapeHtml(e.en)}${e.alsoEn?.length ? `<span class="lang-fc-also"> · ${e.alsoEn.map(escapeHtml).join(" · ")}</span>` : ""}</p>`
         : `<p class="lang-fc-answer" lang="nl">${escapeHtml(e.text)} ${speakBtn(e.text)}</p>`;
@@ -121,7 +141,8 @@ export function createFlashcards(ctx) {
           ${answer}
           ${typed}
           <p class="lang-fc-meta">${genderLine(e)}${e.note ? `<span class="lang-fc-note">${escapeHtml(e.note)}</span>` : ""}</p>
-          ${examples.map((x) => `<p class="lang-fc-example"><span lang="nl">${escapeHtml(x.text)}</span> ${speakBtn(x.text, "Hear the sentence")}<br><span class="lang-fc-example-en">${escapeHtml(x.en)}</span></p>`).join("")}
+          ${examples.map((x) => `<p class="lang-fc-example"><span lang="nl">${escapeHtml(x.text)}</span> ${speakBtn(x.text, "Hear the sentence")}<br><span class="lang-fc-example-en">${escapeHtml(x.en || (x.src ? `From “${x.src}”` : ""))}</span></p>`).join("")}
+          ${noteBlock}
         </div>
         <div class="lang-grades" role="group" aria-label="How well did you know it?">
           ${GRADE_BUTTONS.map(([g, label, cls]) => `
@@ -164,7 +185,7 @@ export function createFlashcards(ctx) {
     }
     // New words still waiting in this set (produce cards unlock tomorrow, so
     // they don't count here).
-    const more = buildSession(ctx.cards(), s.entries, ctx.now(), { newLimit: 1e6 }).counts.freshAvailable > 0;
+    const more = !s.cram && buildSession(ctx.cards(), s.entries, ctx.now(), { newLimit: 1e6 }).counts.freshAvailable > 0;
     return `
       <div class="lang-view lang-summary">
         <p class="lang-kicker">${escapeHtml(s.label)}</p>
@@ -220,6 +241,7 @@ export function createFlashcards(ctx) {
     s.i += 1;
     s.revealed = false;
     s.typed = null;
+    s.noteOpen = false;
     render(true);
     if (!current()) finish();
   }
@@ -251,6 +273,7 @@ export function createFlashcards(ctx) {
     if (!t || !root.contains(t)) return;
     if (t.hasAttribute("data-fc-say")) { ctx.speech.speak(t.dataset.fcSay, { rate: ctx.prefs().speechRate }); return; }
     if (t.hasAttribute("data-fc-show")) { reveal(); return; }
+    if (t.hasAttribute("data-fc-noteopen")) { s.noteOpen = true; render(); root.querySelector("[data-fc-note]")?.focus(); return; }
     if (t.hasAttribute("data-fc-grade")) { grade(Number(t.dataset.fcGrade)); return; }
     if (t.hasAttribute("data-fc-more")) {
       const { entries, label, extraNew } = s;
@@ -262,6 +285,7 @@ export function createFlashcards(ctx) {
   }
 
   function onKey(ev) {
+    if (ev.target.matches?.("[data-fc-note]")) return;
     if (ev.target.matches?.("[data-fc-input]")) {
       if (ev.key === "Enter") { ev.preventDefault(); check(); }
       return;
@@ -273,6 +297,14 @@ export function createFlashcards(ctx) {
 
   // The type-it form submits through here (Enter on a phone keyboard too).
   function onSubmit(ev) {
+    if (ev.target.matches?.("[data-fc-noteform]")) {
+      ev.preventDefault();
+      const item = current();
+      if (item) ctx.setNote(item.entryId, root.querySelector("[data-fc-note]")?.value || "");
+      s.noteOpen = false;
+      render();
+      return;
+    }
     if (!ev.target.matches?.("[data-fc-form]")) return;
     ev.preventDefault();
     check();

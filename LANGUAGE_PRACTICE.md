@@ -186,3 +186,38 @@ Rosetta Stone's content isn't available to the app (LANGUAGE_PRACTICE §4), so L
 - **Media:** `pauseMedia` (app.js) pauses a native read-aloud/podcast session and any `<audio>`/`<video>` before the mic opens.
 - **Tests:** `test/language-srs.test.js`, `-words`, `-drills` (incl. sentences), `-speech`, plus the existing three. **QA:** `npm run qa:language` — 112 checks through the real app with stubbed speech and a fake microphone (390 and 360 px; dark mode on the board).
 - **Not verified:** the Swift plugin hasn't been compiled (no Xcode in the build sandbox) — the first TestFlight build is its compile check; real Dutch voices and Apple's recognizer on the phone; Chrome's real recognizer.
+
+---
+
+# Part 3 — verbs, word order, fill in, problem words, reading (2026-10-26)
+
+Asked by Luke, 2026-10-26: "build the rest" of Claude's next-step list — conjugation, word order, fill in the blank, problem words — plus the **easy Dutch news** reader ("I really like the easy Dutch news idea"). **No daily reminder** (Luke declined it). Dutch podcasts: Luke will look into them himself (no code). Photo cards weren't requested; not built.
+
+## 20. Verbs (`language-verbs.js`)
+- Present, past and perfect for ik / jij / hij·zij / wij / jullie / zij. Type the form; the pronoun may be typed or not. Feedback shows the form, any accepted alternative (kunt / kan, heb / ben gelopen) and the rule behind it ('t kofschip, strong verb, hebben or zijn).
+- **Never a guessed form:** a table of ~100 strong / irregular verbs written out in full, a list of known regular verbs, and the spelling rules. Past and perfect are drilled only for verbs in the table or the known-regular list (many verbs that look regular are strong). Other verbs get the present only. Separable verbs (opstaan), reflexive / multi-word verbs, diaeresis words, "er-" verbs and -eren verbs of unknown stress are left out.
+- Verbs come from the lesson (Dutch infinitive with English "to …"), or on the hub from the whole course plus 40 common verbs. Misses are counted under `verb:<infinitive>` in `languageWords` and weight later rounds.
+
+## 21. Word order (`language-nl-wordorder.js`)
+- 32 original sentences in four rules: verb second (inversion), questions, verb at the end after omdat/dat/als/of/toen, and two verbs (helping verb second, the other at the end). The first word(s) are given; tap the rest into order; the rule is explained after the first try. Provisional, like the starter set. Misses counted under `wo:<id>`.
+
+## 22. Fill in the blank (`language-cloze.js`)
+- From your pasted sentences, the starter sentences, and the sentence saved with each word from your reading. Blanks a word you're learning when the sentence has one, otherwise a content word (never de / het / ik…). Shows the sentence's English (or, for a reading sentence, the word's meaning); "Hint" gives the first letter and length. A miss pulls that word's flashcard forward.
+
+## 23. Reading the news (`language-ui-more.js` createReader, `netlify/functions/dutch-reader.js`)
+- **Where:** a "Read the news" card on the Dutch hub and in the Leisure row (Personal view). Kept in the Dutch view, not the News page, because it feeds your flashcards.
+- **Sources:** *Easy* = NOS Jeugdjournaal (news written for children: short sentences, everyday words), RSS `feeds.nos.nl/jeugdjournaal`; *Regular* = NOS Nieuws `feeds.nos.nl/nosnieuwsalgemeen`. NOS's own "Journaal in Makkelijke Taal" is a daily video, not text, so it isn't used. Feed text is used when the feed carries the full article (≥ 600 chars); otherwise the article page is fetched through the app's guarded fetcher (`safeFetch`, NOS hosts only) and run through the existing article extractor. If that fails: the summary and an "Open on NOS" link.
+- **Tap a word:** its dictionary form (nouns with de/het), meaning *in this sentence*, which form it is ("plural", "past tense"), an occasional learner note — from Claude Haiku via the function, with the app's existing `ANTHROPIC_API_KEY`. "Translate sentence" on request. **Add to my words** saves the dictionary form + meaning, the sentence, the form it had and the article title into a fixed lesson, **"From your reading" › "Words from the news"** (`lesson: "nl-read"`; marked provisional since the meaning comes from AI). Words you know / are learning / have saved are underlined in the text.
+- **Caching / egress:** nothing in Supabase. The function caches feeds 15 min and articles 6 h in memory; the device caches the list 20 min and up to 400 lookups (`live-dutch-news-v1`, `live-dutch-gloss-v1` in localStorage). A lookup already made on this device costs nothing. Lookups need a signed-in session.
+- **Needs a Netlify deploy** to work anywhere (the function is new).
+
+## 24. Problem words
+- A word whose recognize or produce card has been answered "Again" 4+ times after it was learned (`LEECH_LAPSES`). The hub shows "N problem words — practice them" (all their cards now, due or not); on the card's back a "Problem word" flag and a note field ("a memory trick can help").
+- **Notes** work for any word (starter or yours): `state.languageNotes` `{ <entryId>: { text, at } }`, personal `recreate` row, later edit wins, a cleared note stays cleared. Shown on the card back.
+
+## 25. As built (branch `claude/dutch-learning-2`)
+- New: `language-verbs.js`, `language-nl-wordorder.js`, `language-cloze.js`, `language-ui-more.js`, `netlify/functions/dutch-reader.js` (+ local route in `server.js`).
+- Changed: `language-words.js` (reading words: `ex`, `w`, `src`, the reading lesson), `language-srs.js` (problem words), `language-progress.js` (notes, session kinds verbs / order / cloze / read), `language-ui.js` (hub tiles, Read card, problem words, lesson tiles), `language-ui-cards.js` (notes, problem flag, practice-all mode), `app.js` (`languageNotes`, `callReader`, the Leisure Read card), icons `verbs` / `cloze`.
+- Automatic speech in the new screens follows "Play Dutch automatically".
+- Tests: `test/language-verbs.test.js` (57 forms checked), `test/language-more.test.js`, `test/language-reader-fn.test.js`; `qa:language` 151/151 (reader stubbed).
+- **Not verified:** the live NOS feeds and article extraction (the build sandbox can't reach nos.nl), and Claude's lookups (stubbed in QA). After the deploy: open Read the news on the phone, check both levels list articles, an article opens with full text, and a tap gives a sensible meaning.

@@ -68,6 +68,10 @@ const server = http.createServer(async (request, response) => {
       await handleNetlifyFunction("./netlify/functions/save-page-articles", request, response);
       return;
     }
+    if (url.pathname === "/.netlify/functions/dutch-reader") {
+      await handleNetlifyFunction("./netlify/functions/dutch-reader", request, response);
+      return;
+    }
     if (url.pathname === "/api/fetch-article" || url.pathname === "/.netlify/functions/fetch-article") {
       await handleNetlifyFunction("./netlify/functions/fetch-article", request, response);
       return;

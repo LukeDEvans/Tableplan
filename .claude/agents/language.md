@@ -15,7 +15,7 @@ single-page, vanilla-ESM web app. Dutch practice is self-contained in the
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->
-- files: `language-*.js`
+- files: `language-*.js`, `netlify/functions/dutch-reader.js`
 - state: `language*`
 
 Also yours (not checked by CI): `ios/App/App/LiveLanguagePlugin.swift` (registered in
@@ -76,3 +76,14 @@ Also yours (not checked by CI): `ios/App/App/LiveLanguagePlugin.swift` (register
 - Defaults (Claude's, changeable in the hub's Practice settings): 10 new words a day, Dutch
   plays automatically, "Relaxed" speed (0.85), starter set shown until hidden.
 - Answers persist once per round (end, leave, app hidden, pagehide) — never per tap.
+
+## Decisions and rules (Luke, 2026-10-26, part 3)
+- Built: verb conjugation, word order, fill in the blank, problem words (with notes), and the easy-Dutch
+  news reader (LANGUAGE_PRACTICE.md §20–25). **No daily reminder** — Luke declined it; don't add one.
+  Dutch podcasts: Luke subscribes himself in Listen; no code.
+- Verbs: never teach a guessed form. Past/perfect only for verbs in the table or the known-regular list
+  (`language-verbs.js`); add a verb there (with its real forms) rather than loosening the rules.
+- Reader: lives in the Dutch hub (it feeds the flashcards), sources are NOS Jeugdjournaal (Easy) and NOS
+  Nieuws (Regular) via `netlify/functions/dutch-reader.js`; article fetches are limited to NOS hosts.
+  Lookups use Claude Haiku with the existing key, are cached on the device, and nothing is stored in
+  Supabase. Saved words go to the fixed `nl-read` lesson ("From your reading").

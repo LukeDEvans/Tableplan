@@ -17,6 +17,10 @@
 import { chromium } from "playwright";
 import { existsSync } from "node:fs";
 import { DUTCH_COURSE } from "../language-nl-starter.js";
+import { conjugate, verbFor } from "../language-verbs.js";
+import { WORD_ORDER_ITEMS } from "../language-nl-wordorder.js";
+import { sentenceTokens } from "../language-sentences.js";
+import { STARTER_SENTENCES } from "../language-nl-sentences.js";
 
 const URL = process.argv[2] || "http://localhost:4174/";
 const SHOT = process.env.QA_LANG_SHOT || "";
@@ -68,6 +72,7 @@ try {
     window.webkitSpeechRecognition = Rec;
     window.SpeechRecognition = Rec;
   });
+  await context.addInitScript((list) => { window.__qaStarterSentences = list; }, STARTER_SENTENCES.map((x) => x.text));
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -372,9 +377,10 @@ try {
     st = await stored();
     check(st.prefs?.newPerDay === 5, "the daily new-word setting is saved");
     const today2 = await text(".lang-today-counts");
-    // Limit 5; one produce card was introduced today (sentences don't count);
-    // the de/het miss is due again.
-    check(/1 to review · 4 new/.test(today2), "and Today follows it", today2);
+    // Limit 5; one produce card was introduced today (sentences don't count).
+    // The de/het miss is due again unless the missed noun was the one deleted
+    // above (the round's order is random), so 0 or 1 to review.
+    check(/[01] to review · 4 new/.test(today2), "and Today follows it", today2);
     await page.click('[data-lang-pref="showStarter"]');
     const starterGone = await page.evaluate(() => ![...document.querySelectorAll(".lang-level-sub")].some((h) => /Starter/.test(h.textContent)));
     check(starterGone, "the starter set can be hidden");
@@ -395,6 +401,210 @@ try {
     await page.waitForSelector(".lang-fc, .lang-summary");
     check(await fits(), "flashcards fit 360px");
     await page.click("[data-fc-back]");
+  }
+
+  // ── Part 3: verbs, word order, fill in, problem words, reading (§20–24) ───
+  async function part3() {
+    const text = (sel) => page.evaluate((s) => document.querySelector(s)?.textContent.replace(/\s+/g, " ").trim() || "", sel);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.click("[data-recreate-back]"); // back to the Leisure rows
+    await page.waitForSelector('[data-open-hobby="dutch"]');
+    const rowRead = await page.$('[data-leisure-read]');
+    check(!!rowRead, "the Dutch row has a Read the news card");
+    await page.click('[data-open-hobby="dutch"]');
+    await page.waitForSelector(".lang-hub");
+    const tiles = await page.evaluate(() => [...document.querySelectorAll(".lang-hub .lang-practice-btn")].map((b) => b.textContent.trim()));
+    check(["Verbs", "Word order", "Fill in"].every((t) => tiles.includes(t)), "Verbs, Word order and Fill in are on the hub", tiles.join("|"));
+    check(!!(await page.$(".lang-read-card")), "the hub has a Read the news card");
+    check(await fits(), "hub fits 390px");
+
+    console.log("Verbs");
+    await page.click('.lang-hub [data-lang-practice="verbs"]');
+    await page.waitForSelector("[data-vb-begin]");
+    const vbStart = await text(".lang-start");
+    check(/verbs\. Type the form/.test(vbStart), "the verb drill opens on its start screen", vbStart);
+    await page.click('[data-vb-tense="mixed"]');
+    await page.click("[data-vb-begin]");
+    let vbRight = 0;
+    for (let n = 0; n < 12; n += 1) {
+      if (await page.$(".lang-summary")) break;
+      const inf = await text(".lang-vb .lang-fc-word");
+      const tense = (await text(".lang-vb .lang-kicker")).toLowerCase();
+      const personLabel = await text(".lang-vb-person");
+      const person = personLabel.startsWith("hij") ? "hij" : personLabel.startsWith("zij") ? "zij" : personLabel;
+      const f = conjugate(verbFor(inf), tense, person);
+      await page.fill("[data-vb-input]", n === 0 ? "xxx" : f.answer);
+      await page.keyboard.press("Enter");
+      const res = await text(".lang-vb .lang-dh-result");
+      if (n === 0) {
+        check(/^It's/.test(res) && res.includes(f.answer), "a wrong form shows the right one", res);
+        check((await text(".lang-vb .lang-start-detail")).length > 10, "and the rule behind it");
+        check(await fits(), "verbs fit 390px");
+        await shot("verbs");
+      } else if (/Right/.test(res)) vbRight += 1;
+      await page.click("[data-vb-next]");
+    }
+    check(vbRight === 11, "typing the right form is marked right every time", vbRight);
+    const vbDone = await text(".lang-summary");
+    check(/11 of 12 right/.test(vbDone), "verb summary", vbDone);
+    let st = await stored();
+    check(st.sessions.some((x) => x.kind === "verbs" && x.attempts === 12), "a verbs session is saved");
+    check(Object.keys(st.words).some((k) => k.startsWith("verb:")), "verb misses are counted for weighting");
+    await page.click("[data-vb-back]");
+
+    console.log("Word order");
+    await page.click('.lang-hub [data-lang-practice="order"]');
+    await page.waitForSelector(".lang-wo");
+    const placeAll = async (wrong = false) => {
+      const en = await text(".lang-wo .lang-sb-en");
+      const item = WORD_ORDER_ITEMS.find((x) => x.en === en);
+      const rest = sentenceTokens(item.text).slice(item.start);
+      const order = wrong ? [...rest].reverse() : rest;
+      for (const word of order) {
+        await page.evaluate((w) => [...document.querySelectorAll(".lang-wo .lang-sb-bank .lang-tile:not([disabled])")].find((b) => b.textContent === w)?.click(), word);
+      }
+      return item;
+    };
+    const first = await placeAll(true);
+    await page.click("[data-wo-check]");
+    const woWrong = await text(".lang-wo .lang-dh-result");
+    check(/wrong place/.test(woWrong) || /✓/.test(woWrong), "a wrong order is marked", woWrong);
+    check(/(verb|helping)/i.test(await text(".lang-wo-rule")), "the rule is explained after a try");
+    await shot("word-order");
+    await page.click("[data-wo-show]");
+    await page.click("[data-wo-next]");
+    for (let n = 1; n < 8; n += 1) {
+      await placeAll(false);
+      await page.click("[data-wo-check]");
+      const r = await text(".lang-wo .lang-dh-result");
+      if (n === 1) check(/\./.test(r) && !/wrong/.test(r), "the right order is accepted", r);
+      await page.click("[data-wo-next]");
+    }
+    const woDone = await text(".lang-summary");
+    check(/7 of 8 right/.test(woDone), "word order summary", `${woDone} (first: ${first.id})`);
+    await page.click("[data-wo-back]");
+
+    console.log("Fill in");
+    await page.click('.lang-hub [data-lang-practice="cloze"]');
+    await page.waitForSelector(".lang-cz");
+    const fullOf = async () => page.evaluate(() => {
+      const f = document.querySelector(".lang-cz-sentence");
+      return { before: f.childNodes[0]?.textContent || "", after: f.lastChild?.textContent || "" };
+    });
+    const allSentences = await page.evaluate(() => [...(window.__liveQA.languageForQa() ? [] : [])]);
+    void allSentences;
+    let czRight = 0;
+    for (let n = 0; n < 10; n += 1) {
+      if (await page.$(".lang-summary")) break;
+      if (n === 0) { await page.click("[data-cz-hint]"); check(/Starts with/.test(await text(".lang-cz")), "a hint gives the first letter and length"); }
+      const { before, after } = await fullOf();
+      // The answer is whatever word sits between before and after in one of the known sentences.
+      const answer = await page.evaluate(([b, a]) => {
+        const st = window.__liveQA.languageForQa();
+        const pool = [...Object.values(st.userWords || {}).map((w) => w.text), ...(window.__qaStarterSentences || [])];
+        for (const t of pool) if (t.startsWith(b) && t.endsWith(a) && t.length > b.length + a.length) return t.slice(b.length, t.length - a.length);
+        return "";
+      }, [before, after]);
+      await page.fill("[data-cz-input]", answer || "zzz");
+      await page.keyboard.press("Enter");
+      if (/Right/.test(await text(".lang-cz .lang-dh-result"))) czRight += 1;
+      if (n === 0) { check(await fits(), "fill in fits 390px"); await shot("cloze"); }
+      await page.click("[data-cz-next]");
+    }
+    check(czRight >= 9, "typing the missing word is marked right", czRight);
+    await page.click("[data-cz-back]");
+
+    console.log("Problem words");
+    st = await stored();
+    const someId = Object.keys(st.cards).find((k) => k.endsWith("|r")).split("|")[0];
+    const now = Date.now();
+    const day = (ms) => Math.floor((ms - new Date(ms).getTimezoneOffset() * 60_000) / 86_400_000);
+    await page.evaluate((c) => window.__liveQA.languageCardsForQa(c), { [`${someId}|r`]: [1.2, 8, day(now) + 3, now - 3600_000, 9, 5, day(now) - 20] });
+    await page.click('[data-recreate-back]');
+    await page.click('[data-open-hobby="dutch"]');
+    await page.waitForSelector(".lang-hub");
+    const plink = await text('.lang-hub [data-lang-practice="problems"]');
+    check(/1 problem word/.test(plink), "the hub flags a word missed 5 times", plink);
+    await page.click('.lang-hub [data-lang-practice="problems"]');
+    await page.waitForSelector(".lang-fc");
+    const pl = await text(".lang-fc-left");
+    check(/^[12] left$/.test(pl), "problem-word practice shows its cards even though they aren't due", pl);
+    await page.click("[data-fc-show]");
+    check(/Problem word — missed 5 times/.test(await text(".lang-fc-card")), "the card says it's a problem word");
+    await page.fill("[data-fc-note]", "brood klinkt als bread");
+    await page.click(".lang-note-edit [type=submit]");
+    st = await stored();
+    check(st.notes?.[someId]?.text === "brood klinkt als bread", "the note is saved");
+    check(/brood klinkt als bread/.test(await text(".lang-fc-usernote")), "and shown on the card");
+    await shot("problem-word");
+    await page.click("[data-fc-grade='3']");
+    await page.click("[data-fc-back]");
+
+    console.log("Reading");
+    const longPara = "De kinderen van groep 8 bakken vandaag taarten voor de hele school. Ze lopen naar de keuken. ";
+    await page.route("**/.netlify/functions/dutch-reader", async (route) => {
+      const body = JSON.parse(route.request().postData() || "{}");
+      let out = { error: "?" };
+      if (body.action === "list") out = { items: [
+        { id: "a1", title: "Groep 8 bakt taarten", url: "https://jeugdjournaal.nl/artikel/1", publishedAt: new Date(Date.now() - 3600_000).toISOString(), summary: "De kinderen bakken.", paragraphs: [longPara.repeat(2).trim(), "Het brood is lekker."] },
+        { id: "a2", title: "Een ander verhaal", url: "https://jeugdjournaal.nl/artikel/2", publishedAt: new Date().toISOString(), summary: "Kort." },
+      ] };
+      if (body.action === "article") out = { title: "Een ander verhaal", paragraphs: ["Dit is de tekst van het artikel."] };
+      if (body.action === "gloss") out = body.word === "lopen" || body.word === "lopen" ? {} : { lemma: body.word === "kinderen" ? "het kind" : body.word.toLowerCase(), en: body.word === "kinderen" ? "child" : "word", pos: "noun", form: body.word === "kinderen" ? "plural" : "", note: "" };
+      if (body.action === "translate") out = { en: "The children of group 8 bake cakes for the whole school today." };
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(out) });
+    });
+    await page.click(".lang-read-card");
+    await page.waitForSelector(".lang-rd-item");
+    check((await page.$$(".lang-rd-item")).length === 2, "the article list loads");
+    check(await fits(), "reader list fits 390px");
+    await shot("reader-list");
+    await page.click('[data-rd-open="a1"]');
+    await page.waitForSelector(".lang-rd-w");
+    const known = await page.evaluate(() => [...document.querySelectorAll(".lang-rd-w.is-learning, .lang-rd-w.is-known")].map((b) => b.textContent));
+    check(known.includes("brood"), "words you're learning are underlined", known.join(","));
+    await page.evaluate(() => [...document.querySelectorAll(".lang-rd-w")].find((b) => b.textContent === "kinderen").click());
+    await page.waitForSelector(".lang-rd-lemma");
+    const sheet = await text(".lang-rd-sheet");
+    check(/het kind/.test(sheet) && /child/.test(sheet) && /plural/.test(sheet), "tapping a word shows its meaning in context", sheet);
+    await page.click("[data-rd-translate]");
+    await page.waitForSelector(".lang-rd-trans");
+    check(/whole school/.test(await text(".lang-rd-trans")), "the sentence can be translated");
+    check(await fits(), "article fits 390px");
+    await shot("reader-word");
+    await page.click("[data-rd-add]");
+    check(/In your words/.test(await text(".lang-rd-sheet")), "the word is added");
+    st = await stored();
+    const saved = Object.values(st.userWords).find((w) => w.lesson === "nl-read");
+    check(saved?.text === "het kind" && saved?.w === "kinderen" && /kinderen van groep 8/.test(saved?.ex || "") && saved?.src === "Groep 8 bakt taarten", "it's saved with its sentence, form and article", JSON.stringify(saved));
+    const cached = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("live-dutch-gloss-v1") || "{}")).length);
+    check(cached >= 2, "lookups are cached on the device", cached);
+    // The same word again comes from the cache: no new request.
+    let calls = 0;
+    page.on("request", (r) => { if (r.url().includes("dutch-reader")) calls += 1; });
+    await page.click("[data-rd-close]");
+    await page.evaluate(() => [...document.querySelectorAll(".lang-rd-w")].find((b) => b.textContent === "kinderen").click());
+    await page.waitForSelector(".lang-rd-lemma");
+    check(calls === 0, "a word looked up before needs no new request", calls);
+    await page.click("[data-rd-list]");
+    await page.click('[data-rd-open="a2"]');
+    await page.waitForSelector(".lang-rd-p");
+    check(/tekst van het artikel/.test(await text(".lang-rd-article")), "an article without full text in the feed is fetched");
+    await page.click("[data-rd-list]");
+    await page.click("[data-rd-back]");
+    await page.waitForSelector(".lang-hub");
+    const levels = await page.evaluate(() => [...document.querySelectorAll(".lang-level-sub")].map((h) => h.textContent.trim()));
+    check(levels.includes("From your reading"), "saved words get their own lesson", levels.join("|"));
+    st = await stored();
+    check(st.sessions.some((x) => x.kind === "read" && x.correct === 1), "a reading session is saved (1 word saved)");
+    await page.unroute("**/.netlify/functions/dutch-reader");
+
+    await page.setViewportSize({ width: 360, height: 740 });
+    check(await fits(), "hub fits 360px with the new tiles");
+    await page.click('.lang-hub [data-lang-practice="order"]');
+    await page.waitForSelector(".lang-wo");
+    check(await fits(), "word order fits 360px");
+    await page.click("[data-wo-back]");
   }
 
   await boot("#leisure");
@@ -434,7 +644,7 @@ try {
   check(hub.starterTags === totalLessons, "every starter lesson is labeled Starter");
   check(/Add words/.test(hub.note) && /Rosetta Stone/.test(hub.note), "the hub explains adding your Rosetta Stone lessons");
   check(/0 to review · 10 new/.test(hub.today), "Today: nothing to review, 10 new", hub.today);
-  check(hub.practice.join("|") === "Flashcards|Match|de / het|Listen|Sentences|Speak", "six practice buttons", hub.practice.join("|"));
+  check(hub.practice.join("|") === "Flashcards|Match|de / het|Listen|Sentences|Speak|Verbs|Word order|Fill in", "nine practice buttons", hub.practice.join("|"));
   check(!hub.xp, "no XP, streaks or hearts anywhere");
   check(await fits(), "hub fits 390px");
   await shot("hub");
@@ -649,6 +859,7 @@ try {
   await page.waitForSelector(".lang-hub");
 
   await part2();
+  await part3();
 
   check(errors.length === 0, "no page errors", errors.join(" | "));
 } finally {

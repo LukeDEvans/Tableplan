@@ -18,7 +18,7 @@
 // newest SESSION_CAP kept.
 
 export const SESSION_CAP = 50;
-const SESSION_KINDS = new Set(["match", "cards", "dehet", "listen", "sentences", "speak"]);
+const SESSION_KINDS = new Set(["match", "cards", "dehet", "listen", "sentences", "speak", "verbs", "order", "cloze", "read"]);
 
 const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : 0);
 const triple = (t) => (Array.isArray(t) ? [num(t[0]), num(t[1]), num(t[2])] : [0, 0, 0]);
@@ -153,4 +153,29 @@ export function languagePrefs(raw) {
 // A word's misses across devices (for weighting drills toward weak words).
 export function missesOf(totals, id) {
   return totals?.[id]?.w || 0;
+}
+
+// ── Notes on words (state.languageNotes) ────────────────────────────────────
+// { <entryId>: { text, at } } — a memory trick for a word you keep missing
+// (problem words, §24), for any word (starter or yours). Per id the later `at`
+// wins; clearing a note keeps { text: "", at } so it can't come back.
+export function normalizeNotes(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [id, n] of Object.entries(raw)) {
+    if (!id || !n || typeof n !== "object") continue;
+    out[id] = { text: String(n.text || "").replace(/\s+/g, " ").trim().slice(0, 300), at: typeof n.at === "string" ? n.at : "" };
+  }
+  return out;
+}
+
+export function mergeNotes(newer, older) {
+  const a = normalizeNotes(newer);
+  const out = { ...a };
+  for (const [id, n] of Object.entries(normalizeNotes(older))) if (!out[id] || (n.at || "") > (out[id].at || "")) out[id] = n;
+  return out;
+}
+
+export function setNote(notes, id, text, at) {
+  return { ...normalizeNotes(notes), [id]: { text: String(text || "").replace(/\s+/g, " ").trim().slice(0, 300), at } };
 }
