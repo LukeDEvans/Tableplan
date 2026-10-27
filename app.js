@@ -1922,7 +1922,7 @@ const _groceries = createGroceriesModule({
   getPendingAutoRuleIngredientSelection: () => pendingAutoRuleIngredientSelection,
   clearPendingMealIngredientSelection: () => { pendingMealIngredientSelection = null; },
   clearPendingAutoRuleIngredientSelection: () => { pendingAutoRuleIngredientSelection = null; },
-  activeRecipes: (...a) => activeRecipes(...a), applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule: (...a) => chooseIngredientForPendingAutoRule(...a),
+  activeRecipes: (...a) => activeRecipes(...a), applyScanImageAction, canUseLocalBackend, isLocalDevHost: () => isLocalDevHost(), chooseIngredientForPendingAutoRule: (...a) => chooseIngredientForPendingAutoRule(...a),
   chooseIngredientForPendingMeal: (...a) => chooseIngredientForPendingMeal(...a), closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu: (...a) => closeFolderMenu(...a),
   closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey,
   dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent,
@@ -2493,7 +2493,7 @@ function bindEvents() {
   document.getElementById("lockSignInBtn")?.addEventListener("click", () => elements.authDialog.showModal());
   // Local-dev escape hatch on the gate — only shown on localhost.
   const lockDevBtn = document.getElementById("lockDevSignInBtn");
-  if (lockDevBtn && canUseLocalBackend()) {
+  if (lockDevBtn && isLocalDevHost()) {
     lockDevBtn.hidden = false;
     lockDevBtn.addEventListener("click", signInLocalDev);
   }
@@ -3078,7 +3078,7 @@ function bindEvents() {
     if (sharedStorageReady && activeSharedStorageProvider) {
       writeStateToSharedStorage().catch(() => {});
     }
-    if (canUseLocalBackend()) {
+    if (isLocalDevHost()) {
       writeLocalBackup().catch(() => {});
     }
   });
@@ -3178,7 +3178,7 @@ async function initializeApp() {
   handleInviteUrlParameter();
   // Localhost dev mode persists across reloads via the live_local_dev flag; when
   // set, skip Supabase entirely and boot straight against the local backend.
-  if (canUseLocalBackend() && localStorage.getItem("live_local_dev") === "1") {
+  if (isLocalDevHost() && localStorage.getItem("live_local_dev") === "1") {
     await signInLocalDev();
   } else {
     await initializeSupabaseAuth();
@@ -3412,7 +3412,7 @@ function updateAppLockState() {
 // state from the local file backend (server.js), no Supabase. Persists a flag so
 // reloads stay in dev mode until the user logs out. Localhost-only.
 async function signInLocalDev() {
-  if (!canUseLocalBackend()) return;
+  if (!isLocalDevHost()) return;
   // When auto-entered on boot (via the live_local_dev flag) this runs during
   // module evaluation. Yield once so the rest of the module finishes evaluating
   // first — otherwise touching any module-level `let` declared below here throws
@@ -5258,7 +5258,7 @@ async function persistImmediately(label = "saving") {
   if (sharedStorageReady && activeSharedStorageProvider) {
     writes.push(writeStateToSharedStorage());
   }
-  if (canUseLocalBackend()) {
+  if (isLocalDevHost()) {
     writes.push(writeLocalBackup());
   }
   if (!writes.length) return;
@@ -7766,7 +7766,7 @@ function updateSyncStatus(status) {
 }
 
 function scheduleLocalBackup() {
-  if (!canUseLocalBackend()) return;
+  if (!isLocalDevHost()) return;
   window.clearTimeout(localBackupTimer);
   localBackupTimer = window.setTimeout(() => {
     writeLocalBackup().catch((error) => console.warn("Local backup failed.", error));
@@ -7774,7 +7774,7 @@ function scheduleLocalBackup() {
 }
 
 async function writeLocalBackup(options = {}) {
-  if (!canUseLocalBackend()) return;
+  if (!isLocalDevHost()) return;
   const response = await fetch("/api/backup", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -7791,7 +7791,7 @@ async function writeLocalBackup(options = {}) {
 }
 
 async function snapshotBeforeSharedStateReplacement(sharedState, providerLabel) {
-  if (!canUseLocalBackend() || !hasRecoverableUserState(state)) return;
+  if (!isLocalDevHost() || !hasRecoverableUserState(state)) return;
   if (recoverableStateSignature(state) === recoverableStateSignature(sharedState)) return;
   try {
     await writeLocalBackup({
@@ -7857,7 +7857,7 @@ function mealSlotsHaveEntries(slots) {
 }
 
 async function tryPreChangeBackup(actionLabel) {
-  if (!canUseLocalBackend()) return true;
+  if (!isLocalDevHost()) return true;
   window.clearTimeout(localBackupTimer);
   try {
     await writeLocalBackup();
@@ -7917,7 +7917,7 @@ async function loadStateFromLocalBackend() {
 }
 
 async function writeStateToLocalBackend() {
-  if (!canUseLocalBackend()) return;
+  if (!isLocalDevHost()) return;
   await fetch("/api/state", {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -8243,7 +8243,7 @@ function sharedStorageProviders() {
       load: loadStateFromSupabase,
       write: writeStateToSupabase
     });
-  } else if (canUseLocalBackend()) {
+  } else if (isLocalDevHost()) {
     providers.push({
       label: "Local file",
       load: loadStateFromLocalBackend,
@@ -8322,9 +8322,20 @@ function supabaseHeaders() {
   };
 }
 
+// True on localhost — and also in the iPhone app, whose origin is
+// capacitor://localhost. That's on purpose for the URL helpers: they return
+// "/api/<name>" here and native-bridge.js nativeApiPath maps it to the real
+// function. For anything that means "a developer's machine" use isLocalDevHost().
 function canUseLocalBackend() {
   const { hostname, port } = window.location;
   return ["localhost", "127.0.0.1"].includes(hostname) || port === "4174";
+}
+
+// A developer's machine running the local dev server — never the iPhone app
+// (ISSUES.md P2, 2026-10-03). Gates the local file backend, local backups, the
+// lock screen's "Continue in local dev mode" and dev-only console hooks.
+function isLocalDevHost() {
+  return canUseLocalBackend() && !isNativeApp();
 }
 
 function createId(prefix = "id") {
@@ -19280,7 +19291,7 @@ function closeRestoreDialog() {
 
 async function loadRestoreBackupList() {
   loadCloudBackupList();
-  if (!canUseLocalBackend()) {
+  if (!isLocalDevHost()) {
     elements.restoreBackupList.hidden = true;
     delete elements.restoreFileLabel.dataset.secondary;
     elements.restorePreview.textContent = "Choose a backup above or upload a JSON file to preview what will be restored.";
@@ -29488,7 +29499,7 @@ if (typeof window !== "undefined") window.LiveMedia = { api: mediaApi };
 // state/persist aren't otherwise console-reachable). Gated on canUseLocalBackend()
 // so it never exists in production. Lets you pick a voice and drop a ready-to-play
 // test article from the console:  LiveVoiceQA.use("bella");  LiveVoiceQA.addTestArticle();
-if (typeof window !== "undefined" && canUseLocalBackend()) {
+if (typeof window !== "undefined" && isLocalDevHost()) {
   window.LiveVoiceQA = {
     use(voiceId) {
       const cur = state.aiSettings?.voice || {};
