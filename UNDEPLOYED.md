@@ -10,5 +10,5 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-- **Exercise: new lift pictograms (Chest & Back, Arms & Shoulders, Legs)** · #PR · After deploy: open Exercise and check each Strength card shows its own picture (transparent background intact); other Strength cards still show the general weightlifting one. Web code only — the iPhone app needs a TestFlight build to show it.
+- **Exercise: new lift pictograms (Chest & Back, Arms & Shoulders, Legs)** · #180 · After deploy: open Exercise and check each Strength card shows its own picture (transparent background intact); other Strength cards still show the general weightlifting one. Web code only — the iPhone app needs a TestFlight build to show it.
 - **Explore: trip pictures; New trip leads each row** · #178 · After deploy: on the phone, open a trip → 🖼️ Add picture → choose one of the pictograms; check the card shows it (transparent background intact) and that Use row picture puts the default back. Then check each row starts with New trip showing its row picture. Web code only — the iPhone app needs a TestFlight build to show it.
