@@ -102,6 +102,12 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     Strict-Transport-Security = "max-age=31536000"
 
+# The build stamp an open web app compares with its own (build-info.js).
+[[headers]]
+  for = "/version.json"
+  [headers.values]
+    Cache-Control = "no-cache"
+
 [[redirects]]
   from = "/api/push-subscribe"
   to = "/.netlify/functions/push-subscribe"

@@ -1,5 +1,17 @@
 import { defineConfig } from 'vite';
-import { copyFileSync, readFileSync } from 'fs';
+import { copyFileSync, readFileSync, writeFileSync } from 'fs';
+import { execSync } from 'child_process';
+
+// The build stamp (build-info.js): Netlify sets COMMIT_REF, GitHub Actions GITHUB_SHA;
+// a local build asks git. Also published as /version.json for the reload prompt.
+function buildStamp() {
+  let commit = process.env.COMMIT_REF || process.env.GITHUB_SHA || '';
+  if (!commit) {
+    try { commit = execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { commit = ''; }
+  }
+  return { commit: commit || 'dev', builtAt: new Date().toISOString() };
+}
+const BUILD_STAMP = buildStamp();
 
 // Copies static files that must live at the site root but aren't processed
 // by Vite (service worker must be at /sw.js; favicon.svg referenced by both
@@ -9,6 +21,7 @@ function copyRootFilesPlugin() {
     name: 'copy-root-files',
     closeBundle() {
       copyFileSync('./sw.js', './dist/sw.js');
+      writeFileSync('./dist/version.json', JSON.stringify(BUILD_STAMP));
       copyFileSync('./favicon.svg', './dist/favicon.svg');
       copyFileSync('./manifest.json', './dist/manifest.json');
       copyFileSync('./icon-180.png', './dist/icon-180.png');
@@ -65,7 +78,9 @@ function serveRootStaticPlugin() {
 
 const API_PORT = process.env.API_PORT ? parseInt(process.env.API_PORT) : 4175;
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // Dev serves the source unstamped ("local dev"), so it never asks to reload.
+  define: { __LIVE_BUILD__: command === 'build' ? JSON.stringify(BUILD_STAMP) : 'null' },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -83,4 +98,4 @@ export default defineConfig({
     },
   },
   plugins: [copyRootFilesPlugin(), serveRootStaticPlugin()],
-});
+}));

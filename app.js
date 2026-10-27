@@ -58,6 +58,7 @@ import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './financ
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
+import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
 import { createNativeReminderScheduler } from './calendar/reminders-native.js';
@@ -3169,6 +3170,7 @@ async function initializeApp() {
   initMediaItemMenus();
   initTouchDragPolyfill();
   registerServiceWorker();
+  wireNewerBuildCheck();
   window.addEventListener("online", handleCameOnline);
   window.addEventListener("offline", () => updateSyncStatus("offline"));
   setupDiagnostics(); // dev-only window.__liveDiag + error ring buffer
@@ -7541,6 +7543,50 @@ function registerServiceWorker() {
   });
 }
 
+// Which build is running, and whether a newer one is live (build-info.js; ISSUES.md
+// P1 2026-10-06). The web app checks the static /version.json on open and when it
+// comes back to the foreground, at most every 30 minutes — never Supabase. The
+// iPhone app bundles its code, so it only shows its stamp (updates come by TestFlight).
+let lastVersionCheckAt = 0;
+let newerBuild = null;
+let newerBuildPrompted = "";
+
+function wireNewerBuildCheck() {
+  if (isNativeApp() || !/^https?:$/.test(window.location.protocol)) return;
+  setTimeout(checkForNewerBuild, 15000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") checkForNewerBuild();
+  });
+}
+
+async function checkForNewerBuild() {
+  if (!versionCheckDue(lastVersionCheckAt)) return;
+  lastVersionCheckAt = Date.now();
+  try {
+    const res = await fetch(`/version.json?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return;
+    const published = await res.json();
+    if (!isNewerBuild(published, BUILD)) return;
+    newerBuild = published;
+    if (newerBuildPrompted === published.commit) return;
+    newerBuildPrompted = published.commit;
+    showMailToast("A new version of the app is ready.", reloadForNewerBuild, { actionLabel: "Reload", durationMs: 15000 });
+  } catch {
+    // Offline or no version.json (local dev): try again next time.
+  }
+}
+
+function reloadForNewerBuild() {
+  window.location.reload();
+}
+
+function buildVersionLineHtml() {
+  const reload = newerBuild
+    ? ` <button type="button" class="text-btn settings-version-reload" data-context-settings-action="reload-app">Reload for the new version</button>`
+    : "";
+  return `<p class="settings-version">Version ${escapeHtml(formatBuild(BUILD))}${reload}</p>`;
+}
+
 // Flaky connections fire "online" repeatedly; each hydrate re-downloads every
 // section. At most one came-online hydrate per minute — in between, a ready
 // session just flushes its pending edits (merge-protected writes).
@@ -11532,7 +11578,7 @@ function removeMailRowWithUndo(row, threadId, verb, forward, undo) {
   });
 }
 
-function showMailToast(message, undo) {
+function showMailToast(message, undo, { actionLabel = "Undo", durationMs = 0 } = {}) {
   document.getElementById("mailToast")?.remove();
   const toast = document.createElement("div");
   toast.id = "mailToast";
@@ -11545,7 +11591,7 @@ function showMailToast(message, undo) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "mail-toast-undo";
-    btn.textContent = "Undo";
+    btn.textContent = actionLabel;
     btn.addEventListener("click", () => {
       clearTimeout(timer);
       toast.remove();
@@ -11554,7 +11600,7 @@ function showMailToast(message, undo) {
     toast.appendChild(btn);
   }
   document.body.appendChild(toast);
-  timer = setTimeout(() => toast.remove(), undo ? 6000 : 3000);
+  timer = setTimeout(() => toast.remove(), durationMs || (undo ? 6000 : 3000));
 }
 
 function updateMailBulkBar() {
@@ -17693,6 +17739,7 @@ function renderContextSettingsDialog(kind) {
           </div>
         </div>
       ` : ""}
+      ${buildVersionLineHtml()}
     `;
     return;
   }
@@ -18566,6 +18613,7 @@ function handleContextSettingsAction(event) {
     "voice": () => renderContextSettingsDialog("voice"),
     "restore-backup": () => openFromSettingsWithBack(elements.restoreDialog, openRestoreDialog),
     "export-data": () => closeAndRun(exportMyData),
+    "reload-app": () => reloadForNewerBuild(),
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
     "admin-users": () => openFromSettingsWithBack(elements.adminUsersDialog, openAdminUsersDialog),
     "admin-households": () => openFromSettingsWithBack(elements.adminHouseholdsDialog, openAdminHouseholdsDialog),

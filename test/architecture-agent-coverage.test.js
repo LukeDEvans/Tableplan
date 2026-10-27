@@ -34,6 +34,7 @@ const SHARED_FILES = {
   "app.js": "the shared shell; each agent owns only its domain's sections",
   "server.js": "local dev server",
   "sw.js": "service worker",
+  "build-info.js": "app-wide build stamp + newer-build check (Settings version line)",
   "theme.js": "display mode + themes — design tokens are shared infra (THEMES_DESIGN.md)",
   "vite.config.mjs": "build config",
   "vitest.config.mjs": "test config",

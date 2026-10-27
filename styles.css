@@ -2623,6 +2623,9 @@ select:focus {
 .page-access-name { font-weight: 600; color: var(--ink); }
 .page-access-note { font-size: 0.78rem; color: var(--muted); }
 .settings-panel-note { margin: 0 0 8px; font-size: 0.86rem; color: var(--muted); line-height: 1.4; }
+/* Settings list: which build is running (build-info.js). */
+.settings-version { margin: 14px 0 0; font-size: 0.8rem; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
+.settings-version-reload { font-size: inherit; }
 
 /* (i) beside a setting + the little window it opens (Settings › Mail AI). */
 .settings-info-btn { flex: 0 0 auto; display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1.5px solid currentColor; border-radius: 50%; background: none; color: var(--muted); font: italic 700 0.72rem/1 Georgia, "Times New Roman", serif; cursor: pointer; }
