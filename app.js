@@ -814,7 +814,6 @@ let readingLogPendingId = null;
 let readingLogRating = null;
 let inventoryDragItemId = null;
 let doTaskSwipeGesture = null;
-let workoutPoolSwipeGesture = null;
 let lastMealDragPoint = null;
 
 // ── Shared media playback speed (persisted across sessions & players) ─────────
@@ -14974,38 +14973,17 @@ function renderPlayPlanner() {
   });
 }
 
-// Wire workout cards (workoutPoolCardTemplate) inside `root`: tap → record,
-// right-click → Edit/Delete menu. `swipe` adds swipe-left-to-reveal Edit/Delete
-// (the Exercise grid only — in Recreate's horizontal row a sideways swipe scrolls,
-// so the row uses `longPress` instead: hold a card to get the same menu).
-function wireWorkoutPoolCards(root, { swipe = false, longPress = false } = {}) {
+// Wire workout cards (workoutPoolCardTemplate) inside `root`: tap → record;
+// hold (touch) or right-click → Edit/Delete menu. The cards sit in sideways-
+// scrolling rows, so there's no swipe gesture (removed 2026-10-26, Luke).
+function wireWorkoutPoolCards(root, { longPress = false } = {}) {
   root.querySelectorAll("[data-record-workout]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const wrap = btn.closest(".workout-pool-card-wrap");
-      if (wrap?.classList.contains("is-swiped")) { wrap.classList.remove("is-swiped"); return; }
-      openWorkoutRecordingDialog(btn.dataset.recordWorkout);
-    });
+    btn.addEventListener("click", () => openWorkoutRecordingDialog(btn.dataset.recordWorkout));
     btn.addEventListener("contextmenu", (event) => {
       if (btn.dataset.lpFired) { event.preventDefault(); return; } // the long-press already opened it
       openWorkoutPoolContextMenu(event, btn.dataset.recordWorkout);
     });
     if (longPress) wireWorkoutCardLongPress(btn);
-    const wrap = btn.closest(".workout-pool-card-wrap");
-    if (wrap && swipe) {
-      wrap.addEventListener("pointerdown", handleWorkoutPoolPointerDown);
-      wrap.addEventListener("pointermove", handleWorkoutPoolPointerMove);
-      wrap.addEventListener("pointerup", handleWorkoutPoolPointerEnd);
-      wrap.addEventListener("pointercancel", handleWorkoutPoolPointerEnd);
-    }
-  });
-  root.querySelectorAll("[data-swipe-edit-workout]").forEach((btn) => {
-    btn.addEventListener("click", () => openWorkoutDetail({ workoutId: btn.dataset.swipeEditWorkout }));
-  });
-  root.querySelectorAll("[data-swipe-delete-workout]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const workout = normalizeWorkouts(state.workouts).find((w) => w.id === btn.dataset.swipeDeleteWorkout);
-      if (workout && window.confirm(`Delete "${workout.title}"? All logs will be removed.`)) deleteWorkout(btn.dataset.swipeDeleteWorkout);
-    });
   });
 }
 
@@ -15056,35 +15034,6 @@ function openWorkoutPoolContextMenu(event, workoutId) {
   deleteBtn.addEventListener("pointerdown", doDelete);
   deleteBtn.addEventListener("mousedown", doDelete);
   deleteBtn.addEventListener("click", doDelete);
-}
-
-function handleWorkoutPoolPointerDown(event) {
-  if (event.pointerType !== "touch") return;
-  if (event.target.closest(".workout-pool-swipe-actions")) return;
-  const wrap = event.currentTarget;
-  document.querySelectorAll(".workout-pool-card-wrap.is-swiped").forEach((w) => {
-    if (w !== wrap) w.classList.remove("is-swiped");
-  });
-  workoutPoolSwipeGesture = { wrap, startX: event.clientX, startY: event.clientY, active: false };
-}
-
-function handleWorkoutPoolPointerMove(event) {
-  if (!workoutPoolSwipeGesture || workoutPoolSwipeGesture.wrap !== event.currentTarget) return;
-  const dx = event.clientX - workoutPoolSwipeGesture.startX;
-  const dy = event.clientY - workoutPoolSwipeGesture.startY;
-  if (Math.abs(dy) > 20 && Math.abs(dy) > Math.abs(dx)) { workoutPoolSwipeGesture = null; return; }
-  if (dx < -28) {
-    workoutPoolSwipeGesture.active = true;
-    event.currentTarget.classList.add("is-swiped");
-  } else if (dx > 18) {
-    event.currentTarget.classList.remove("is-swiped");
-  }
-}
-
-function handleWorkoutPoolPointerEnd(event) {
-  if (!workoutPoolSwipeGesture || workoutPoolSwipeGesture.wrap !== event.currentTarget) return;
-  if (!workoutPoolSwipeGesture.active) event.currentTarget.classList.remove("is-swiped");
-  workoutPoolSwipeGesture = null;
 }
 
 function lastWorkoutLog(workoutId) {
@@ -15140,10 +15089,6 @@ function workoutPoolCardTemplate(workout) {
         <span class="workout-pool-title">${escapeHtml(workout.title)}</span>
         <span class="workout-pool-last">${escapeHtml(summary)}</span>
       </button>
-      <div class="workout-pool-swipe-actions" aria-hidden="true">
-        <button class="workout-pool-swipe-btn workout-pool-swipe-edit" type="button" data-swipe-edit-workout="${escapeHtml(workout.id)}">Edit</button>
-        <button class="workout-pool-swipe-btn workout-pool-swipe-delete" type="button" data-swipe-delete-workout="${escapeHtml(workout.id)}">Delete</button>
-      </div>
     </div>
   `;
 }
