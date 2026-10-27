@@ -31,6 +31,7 @@ const ROOT_STATIC_FILE = /^\/[^/]+\.(?:png|svg|ico|webp|jpe?g|gif|json|webmanife
 
 function isCacheableRequest(url) {
   if (url.origin === self.location.origin) {
+    if (url.pathname === "/version.json") return false; // the build stamp must be live
     return url.pathname.startsWith("/assets/") || ROOT_STATIC_FILE.test(url.pathname);
   }
   return CACHEABLE_CROSS_ORIGIN_HOSTS.includes(url.hostname);

@@ -9,6 +9,7 @@ const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 // These cap how often a user can be swept and stop two sweeps overlapping.
 const SWEEP_MIN_INTERVAL_MS = 30_000;   // at most one sweep per user per 30s
 const SWEEP_STALE_MS = 5 * 60_000;      // an in-progress lock older than this is treated as dead
+const { userGroupQuery } = require("./_group-lookup.js");
 const { scanBookingFromEmailText } = require("../../booking-scan");
 const { claudeCall } = require("./_claude");
 const { recipeSourceForSender, extractRecipes, handleExtractedRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, enabledRecipeSources } = require("./_recipe-digest");
@@ -322,7 +323,7 @@ async function loadReceiptContext(serviceKey, userId, mailAi) {
   if (mailAi.receiptExtract === false) return null;
   try {
     const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" };
-    const gRes = await fetch(`${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`, { headers });
+    const gRes = await fetch(`${SUPABASE_URL}/rest/v1/${userGroupQuery(userId)}`, { headers });
     if (!gRes.ok) return null;
     const groupId = (await gRes.json())[0]?.group_id;
     if (!groupId) return null;

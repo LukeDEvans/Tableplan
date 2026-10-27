@@ -11,6 +11,7 @@
 // - The token is read-only by protocol: it can list balances/transactions,
 //   nothing else. Revocable any time at beta-bridge.simplefin.org.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+const { userGroupQuery } = require("./_group-lookup.js");
 const { ingestFeed, remapAccount, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } = require("./_finance-ingest.js");
 const { loadFinanceCategories } = require("./_finance-categories.js");
 const { personalScopeId, loadAccountViews, splitAccounts, accountsForMember, ownsAny } = require("./_finance-split.js");
@@ -390,7 +391,7 @@ async function getUserId(accessToken, serviceKey) {
 async function getGroupId(serviceKey, userId) {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`,
+      `${SUPABASE_URL}/rest/v1/${userGroupQuery(userId)}`,
       { headers: svc(serviceKey) }
     );
     if (!res.ok) return null;

@@ -4171,6 +4171,13 @@ function groceryCheckedKey(weekKeyValue, rowKey) {
   return `${weekKeyValue || "week"}|${rowKey}`;
 }
 
+// An item added from outside the Shop page (the assistant) is needed now, the same
+// as one typed in: drop any bought marks it still carries, or it would list as
+// "bought" and retire with that cycle (ISSUES.md P3, 2026-10-06).
+function markManualGroceryNeeded(item) {
+  resetBoughtMarks(state.checkedGroceries, state.groceryCleared, manualGroceryRow(item).key);
+}
+
 function addManualGroceryItem(event) {
   event.preventDefault();
   const item = elements.groceryInput.value.trim();
@@ -5717,6 +5724,7 @@ function renderShopReceipts() {
     setShopSpaceValue,
     toggleGroceryRangeMenu,
     unlistedGroceryItemsForWeek,
+    markManualGroceryNeeded,
     updateReceiptScanSelectionStatus,
   };
 }

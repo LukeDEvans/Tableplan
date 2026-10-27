@@ -2445,16 +2445,6 @@ select:focus {
   background: color-mix(in srgb, var(--accent-soft) 72%, #ffffff);
 }
 
-.settings-dock {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 30;
-  display: grid;
-  justify-items: end;
-  gap: 8px;
-}
-
 .settings-btn {
   width: 44px;
   height: 44px;
@@ -2623,6 +2613,9 @@ select:focus {
 .page-access-name { font-weight: 600; color: var(--ink); }
 .page-access-note { font-size: 0.78rem; color: var(--muted); }
 .settings-panel-note { margin: 0 0 8px; font-size: 0.86rem; color: var(--muted); line-height: 1.4; }
+/* Settings list: which build is running (build-info.js). */
+.settings-version { margin: 14px 0 0; font-size: 0.8rem; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
+.settings-version-reload { font-size: inherit; }
 
 /* (i) beside a setting + the little window it opens (Settings › Mail AI). */
 .settings-info-btn { flex: 0 0 auto; display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1.5px solid currentColor; border-radius: 50%; background: none; color: var(--muted); font: italic 700 0.72rem/1 Georgia, "Times New Roman", serif; cursor: pointer; }
@@ -9358,6 +9351,18 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px;
   }
 
+  /* Rows stack their fields here, so the column labels can't sit over columns
+     (and "Category" was cut off at the right edge). They wrap into a one-line
+     legend in the same order as the fields below. */
+  .receipt-line-row-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+  }
+  .receipt-line-row-head > span:empty {
+    display: none;
+  }
+
   .receipt-line-row > :nth-child(3),
   .receipt-line-row > :nth-child(4),
   .receipt-line-row > :nth-child(5),
@@ -12781,6 +12786,12 @@ body[data-theme="dark"] .watch-provider-link:hover {
 @media (max-width: 560px) {
   .std-form-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: 100dvh; }
   .std-form-dialog .recipe-form { min-height: var(--safe-screen-h); max-height: var(--safe-screen-h); border-radius: 0; border: 0; }
+}
+/* Add / Edit Calendar on a phone: keep Delete and Save on one row at the foot.
+   The phone rule that turns .dialog-actions into a one-column grid stretched the
+   Save button into a 120px block with Delete floating above it (ISSUES.md P3). */
+@media (max-width: 560px) {
+  .plan-cal-dialog .dialog-actions { display: flex; align-items: center; justify-content: space-between; }
 }
 /* Bare-X close pinned to the window's top-right corner — just the glyph. */
 .std-form-dialog .recipe-form-head { padding-right: 30px; }
@@ -22642,29 +22653,12 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   line-height: 18px;
   text-align: center;
 }
-.do-notif-panel {
-  position: absolute;
-  right: 0;
-  top: 46px;
-  width: min(360px, 88vw);
-  max-height: 60vh;
-  overflow-y: auto;
-  background: var(--window-bg);
-  border: 2px solid var(--window-border);
-  border-radius: 12px;
-  padding: 10px 12px;
-  z-index: 60;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
 .do-notif-head { font-size: 0.74rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 6px 0 4px; }
 .do-notif-empty { font-size: 0.8rem; color: var(--muted); padding: 6px 0; }
 .do-notif-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .do-notif-item { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; font-size: 0.85rem; cursor: pointer; }
 .do-notif-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .do-notif-jump { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 10px; min-height: 26px; }
-@media (max-width: 700px) {
-  .do-notif-panel { width: min(320px, 92vw); }
-}
 
 /* Suggested section on the Tasks page (Calendar 2.0 §29) — replaces the old
    in-page notifications bell; sits above Chores in the backlog panel. Reuses the
