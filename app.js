@@ -44,7 +44,7 @@ import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKe
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
-import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView } from './views.js';
+import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes } from './views.js';
 import * as ExploreScope from './explore-scope.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
@@ -303,6 +303,9 @@ const seedRecipes = [
 // has stale data — and gates the syncing overlay. Captured once, before any
 // write can repopulate storage.
 const bootedWithEmptyStorage = !localStorage.getItem(STORAGE_KEY);
+// The section scopes the mirror's data belongs to (views.js resolveBootScopes),
+// read by loadState() just below and applied when sectionScopes is set up.
+let mirrorSectionScopes = null;
 const state = loadState();
 // Signatures of every tracked setting as last loaded/merged/saved — persist()
 // stamps whatever differs from this (see settings-sync.js). Re-adopted after any
@@ -404,9 +407,18 @@ const SHADOW_KEY_V2 = "live-shadow-sections-v2"; // { section: { scope: data } }
 const BUSINESS_SPACE_KEY = "live-business-space-v1";
 const PERSONAL_FINANCE_KEY = "live-personal-finance-v1"; // does this person own personal finance accounts?
 
-// Active scope per toggleable section — sticky, defaults to personal.
+// Active scope per toggleable section — sticky, defaults to personal. The
+// scopes stamped on the local mirror win: they're what the data loaded into
+// `state` actually belongs to (views.js resolveBootScopes).
 let sectionScopes = (() => {
-  try { return JSON.parse(localStorage.getItem(SCOPE_PREFS_KEY)) || {}; } catch { return {}; }
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SCOPE_PREFS_KEY)) || {}; } catch { saved = {}; }
+  const resolved = resolveBootScopes(saved, mirrorSectionScopes);
+  if (JSON.stringify(resolved) !== JSON.stringify(saved)) {
+    console.warn("[scope] the device's saved scopes didn't match its data copy — using the data's", { saved, resolved });
+    try { localStorage.setItem(SCOPE_PREFS_KEY, JSON.stringify(resolved)); } catch { /* full */ }
+  }
+  return resolved;
 })();
 
 // The admin's business space (views.js; live_spaces), or null. Kept on the device
@@ -578,9 +590,23 @@ async function refreshActiveSectionFromServer(stateId, section, keys, { ifChange
   if (!res.ok) return;
   const rows = await res.json();
   if (!rows.length) return;
+  // The view may have switched while this was in flight: never merge a row into
+  // a scope it doesn't belong to (that copied Personal Listen into Household).
+  if (sectionRowId(stateId, section) !== rowId) { keepRowAsShadow(stateId, section, rows[0]); return; }
   mergeRemoteSectionRow(section, keys, rows[0]);
   mirrorStateToLocalStorage();
   render();
+}
+
+// A fetched section row whose scope is no longer on screen: keep it as that
+// scope's shadow (or drop it if it isn't one of this person's rows).
+function keepRowAsShadow(stateId, section, row) {
+  const ref = inactiveSectionRows(stateId, section).find((r) => r.id === row.id);
+  if (!ref) return;
+  const { stateUpdatedAt: _ts, schemaVersion: _sv, ...data } = row.state || {};
+  setShadowData(section, ref.scope, data);
+  lastSeenSectionStamp[row.id] = row.updated_at;
+  persistShadowSections();
 }
 
 // Key-level merge of one fetched section row ({id, state, updated_at}) into
@@ -4981,7 +5007,13 @@ function loadState() {
   if (!saved) return defaultState();
 
   try {
-    return normalizeState(JSON.parse(saved));
+    const parsed = JSON.parse(saved);
+    if (parsed && typeof parsed === "object") {
+      const stamp = parsed[MIRROR_SCOPES_FIELD];
+      mirrorSectionScopes = stamp && typeof stamp === "object" ? stamp : null;
+      delete parsed[MIRROR_SCOPES_FIELD];
+    }
+    return normalizeState(parsed);
   } catch {
     return defaultState();
   }
@@ -5025,6 +5057,15 @@ function mirrorStateToLocalStorage() {
   // boot still shows them.
   if (Array.isArray(base.savedArticles)) {
     base.savedArticles = base.savedArticles.map((a) => (a && a.text && a.bodyRef?.cloud ? { ...a, text: null } : a));
+  }
+  // Stamp the scopes this data belongs to, in the same write as the data, so a
+  // cold start can never read one scope's data as another's (views.js).
+  try {
+    base[MIRROR_SCOPES_FIELD] = mirrorScopeStamp(VIEW_TOGGLE_SECTIONS, sectionScope);
+  } catch {
+    // Called during script evaluation, before the scope state exists: the data
+    // is still what was loaded, so carry the loaded stamp forward.
+    try { if (mirrorSectionScopes) base[MIRROR_SCOPES_FIELD] = mirrorSectionScopes; } catch { /* not yet declared */ }
   }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
@@ -8185,6 +8226,12 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
   );
   if (!cur.ok) throw new Error(`Supabase section "${section}" conflict fetch failed: ${cur.status}`);
   const curRows = await cur.json();
+  // The view switched while this save was waiting: `state` now holds another
+  // scope's data, so merging this row into it would mix the two. Stop; the
+  // section is still dirty and the next save writes it to the right row.
+  if (sectionRowId(stateId, section) !== rowId) {
+    throw new Error(`Supabase section "${section}" changed view during save — will retry`);
+  }
   if (curRows.length) {
     const { stateUpdatedAt: remoteTs, schemaVersion: _rv, ...remoteData } = curRows[0].state || {};
     const localTs = state.stateUpdatedAt || "";

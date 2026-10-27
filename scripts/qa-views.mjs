@@ -406,6 +406,32 @@ try {
   check(!(await page.evaluate(() => document.getElementById("gameCardDialog")?.open)), "Close shuts it");
   while (await view() !== "personal") await go(1);
 
+  // Listen, 2026-10-27: a phone booted with Personal data in its mirror while its
+  // saved scope said Household, and the boot merge copied Personal into Household.
+  console.log("The data copy on the device carries its scopes");
+  const mirrorStamp = () => page.evaluate(() => { try { return JSON.parse(localStorage.getItem("tableplan-state-v1") || "{}").__sectionScopes || null; } catch { return null; } });
+  let stamp = await mirrorStamp();
+  check(stamp?.media === "personal", "in Personal the device copy is stamped Personal for Listen", JSON.stringify(stamp));
+  while (await view() !== "household") await go(1);
+  await page.waitForTimeout(400);
+  stamp = await mirrorStamp();
+  check(stamp?.media === "household", "after switching to Household it's stamped Household", JSON.stringify(stamp));
+  while (await view() !== "personal") await go(1);
+  await page.waitForTimeout(400);
+  // The scope key says Household but the copy is Personal's (a failed copy write).
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem("live-section-scopes-v1") || "{}");
+    localStorage.setItem("live-section-scopes-v1", JSON.stringify({ ...saved, media: "household" }));
+  });
+  const warnings = [];
+  const onConsole = (m) => { if (m.type() === "warning") warnings.push(m.text()); };
+  page.on("console", onConsole);
+  await boot("#personal");
+  page.off("console", onConsole);
+  check(warnings.some((w) => w.includes("saved scopes didn't match")), "at boot the copy's own scope wins over the mismatched key", warnings.join(" | ").slice(0, 160));
+  check((await page.evaluate(() => window.__liveQA.scopes())).media === "personal", "Listen stays Personal's after the reload");
+  check(await page.evaluate(() => JSON.parse(localStorage.getItem("live-section-scopes-v1") || "{}").media) === "personal", "the saved scope key is corrected");
+
   console.log("A household member");
   await page.evaluate(() => window.__liveQA.viewsAsRole("member"));
   await goHome();
