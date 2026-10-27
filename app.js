@@ -2043,6 +2043,7 @@ const {
   setShopSpaceValue,
   toggleGroceryRangeMenu,
   unlistedGroceryItemsForWeek,
+  markManualGroceryNeeded,
   updateReceiptScanSelectionStatus,
 } = _groceries;
 
@@ -2054,6 +2055,7 @@ const {
 // recipe-view close handler via the exposed onRecipeViewDialogClose.
 const _recipes = createRecipesModule({
   state, elements, persist, render, trashItemTemplate,
+  showMailToast: (...a) => showMailToast(...a),
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
   getSupabaseClient: () => supabaseClient,
@@ -11599,7 +11601,11 @@ function showMailToast(message, undo, { actionLabel = "Undo", durationMs = 0 } =
     });
     toast.appendChild(btn);
   }
-  document.body.appendChild(toast);
+  // A modal <dialog> sits in the top layer, above anything in <body>, so a toast
+  // fired while one is open goes inside it (ISSUES.md P3: the Recipe Box bell's
+  // "all caught up" was hidden under the Recipe Box).
+  const modals = [...document.querySelectorAll("dialog[open]")].filter((d) => { try { return d.matches(":modal"); } catch { return false; } });
+  (modals[modals.length - 1] || document.body).appendChild(toast);
   timer = setTimeout(() => toast.remove(), durationMs || (undo ? 6000 : 3000));
 }
 
@@ -32236,58 +32242,10 @@ function renderPodcastQueueEpisodes() {
   if (!listEl) return;
 
   // Podcasts-only here — the blended podcasts+articles list lives in the
-  // "All" tab. Ad-Block moved to Media settings.
-  const auto = getAutoPlaylist();
-  if (auto) {
-    listEl.innerHTML = `<div id="podcastAutoList"></div>`;
-    renderAutoPlaylist(document.getElementById("podcastAutoList"), auto);
-    return;
-  }
-
-  const queue = state.podcastQueue || [];
-
-  if (!queue.length) {
-    listEl.innerHTML = `<div class="article-empty"><p>Your queue is empty.</p><p>Tap the <strong>clock</strong> icon on any episode to add it here.</p></div>`;
-    return;
-  }
-
-  const episodes = [];
-  for (const episodeId of queue) {
-    const { episode, show } = findPodcastEpisode(episodeId);
-    if (episode && show) episodes.push({ ...episode, showId: show.id, showTitle: show.title, showArt: show.art });
-  }
-
-  const progress = state.podcastProgress || {};
-  listEl.innerHTML = episodes.map((e, i) => {
-    const ep = progress[e.id] || {};
-    const played = !!ep.played;
-    const dur = e.duration || ep.duration || 0;
-    const isOpen = e.id === openPodcastEpisodeId;
-    return `
-    <div class="article-row podcast-episode-row${played ? " article-row--read" : ""}${isOpen ? " article-row--active" : ""}" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
-      ${mediaRowArt(e.showArt, "🎧")}
-      <div class="article-row-main">
-        <div class="article-row-title">${escapeHtml(e.title)}</div>
-        <div class="article-row-meta">
-          <span class="article-row-pub">${escapeHtml(e.showTitle)}</span>
-          <span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>
-          ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
-        </div>
-      </div>
-      ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
-      <div class="article-row-actions">
-        <button class="article-row-action-btn" type="button" title="${played ? "Mark as unplayed" : "Mark as played"}" aria-label="${played ? "Mark as unplayed" : "Mark as played"}" data-episode-mark="${played ? "unmark" : "mark"}">
-          ${played
-            ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`
-            : `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>`}
-        </button>
-        <button class="article-row-action-btn" type="button" title="Remove from queue" aria-label="Remove from queue" data-episode-queue-remove="${escapeHtml(e.id)}">
-          <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-    </div>`;
-  }).join("");
-
+  // "All" tab. Ad-Block moved to Media settings. (getAutoPlaylist always
+  // returns a list; the old state.podcastQueue branch here was unreachable.)
+  listEl.innerHTML = `<div id="podcastAutoList"></div>`;
+  renderAutoPlaylist(document.getElementById("podcastAutoList"), getAutoPlaylist());
 }
 
 function renderAutoPlaylist(listEl, items) {
@@ -33229,7 +33187,7 @@ const MEDIA_KINDS = {
     onPlay: () => { updatePodcastPlayBtn(); updateMiniPlayerPlayBtn(); setMediaSessionPlaybackState("playing"); scheduleAdSkips(podcastCurrentChapters, mediaAudioEl); },
     onPause: () => { updatePodcastPlayBtn(); updateMiniPlayerPlayBtn(); setMediaSessionPlaybackState("paused"); clearAdSkipTimers(); },
     onEnded: () => onPodcastEnded(),
-    onError: () => showVoiceToast("Audio failed to load — check your connection and try again"),
+    onError: () => { showVoiceToast("Audio failed to load — check your connection and try again"); onPodcastLoadFailed(); },
     toggle: () => togglePodcastPlayPause(),
     skip: (sec) => skipPodcast(sec),
     open: () => goToOpenEpisode(),
@@ -33336,6 +33294,21 @@ function onPodcastEnded() {
   updatePodcastPlayBtn();
   updateMiniPlayerPlayBtn();
   advanceMediaAllQueue(podcastCurEpisode.id); // seamless hand-off when playing the All queue
+}
+
+// An episode whose audio never loaded (a dead link, a 404) used to leave the
+// queue stuck on it at 0:00 (ISSUES.md P3, 2026-10-06). If it hadn't started,
+// move the queue on, the way music skips a track it can't play. It isn't marked
+// played; advanceMediaAllQueue keeps a still-listed item from being picked again
+// this run. An error after playback had started (a network blip mid-episode)
+// leaves things as they are, so the listener can retry.
+function onPodcastLoadFailed() {
+  const ep = podcastCurEpisode;
+  if (!ep || (podcastAudio && podcastAudio.currentTime > 1)) return;
+  clearAdSkipTimers();
+  updatePodcastPlayBtn();
+  updateMiniPlayerPlayBtn();
+  advanceMediaAllQueue(ep.id);
 }
 
 function startPodcastPlayback(episode, show, { autoplay = true, advance = false, forceWeb = false } = {}) {
@@ -41335,12 +41308,13 @@ async function executeChatTool(name, input) {
         if (!item) return "No item name provided.";
         if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
         stampGroceryAdd(groceryListStamps(), item, new Date().toISOString());
+        markManualGroceryNeeded(item); // needed now, even if it was checked off earlier
         if (!state.persistentManualGroceries.some((e) => normalize(e) === normalize(item))) {
           state.persistentManualGroceries.push(item);
           state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
-          persist();
-          renderGroceries();
         }
+        persist();
+        renderGroceries();
         return `Added to grocery list: "${item}"`;
       }
 
@@ -47264,7 +47238,9 @@ function buildChatHealthContext() {
 
 function buildChatPodcastContext() {
   const shows = state.podcasts || [];
-  const queue = state.podcastQueue || [];
+  // The real Up Next list (state.podcastQueue is no longer what plays).
+  let queue = [];
+  try { queue = getAllListenList(); } catch { queue = []; }
   const saved = state.podcastSaved || [];
   if (!shows.length) return "No podcast data.";
   const lines = [`PODCASTS: ${shows.length} shows subscribed`];
@@ -47272,10 +47248,9 @@ function buildChatPodcastContext() {
   if (shows.length > 10) lines.push(`  … and ${shows.length - 10} more`);
 
   if (queue.length) {
-    lines.push(`\nQUEUE (${queue.length} episodes):`);
-    queue.slice(0, 8).forEach((id) => {
-      const { episode, show } = findPodcastEpisode(id);
-      if (episode) lines.push(`  - "${episode.title}" — ${show?.title || "unknown show"}`);
+    lines.push(`\nUP NEXT (${queue.length} items):`);
+    queue.slice(0, 8).forEach((item) => {
+      lines.push(`  - "${item.title || "Untitled"}" — ${item.showTitle || item.type || "unknown"}`);
     });
     if (queue.length > 8) lines.push(`  … and ${queue.length - 8} more`);
   }

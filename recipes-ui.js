@@ -389,7 +389,7 @@ export function normalizeNutritionEstimate(estimate) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createRecipesModule(deps) {
   const {
-    state, elements, persist, render, trashItemTemplate, getActiveAppArea, getAuthSession, getSupabaseClient, setRowStorageReady, getAmountOptions, getQuantityOptions, getPrepOptions, getPendingMealRecipeSelection, getPendingAutoRuleRecipeSelection, clearPendingMealRecipeSelection, clearPendingAutoRuleRecipeSelection, activateEatShell, allowScreenOff, applyScanImageAction, canUseCloudStorage, canUseLocalBackend, chooseRecipeForPendingAutoRule, chooseRecipeForPendingMeal, closeFloatingMenus, dailyDozenCategoryName, dailyDozenRecipeSuggestions, dateInputToIso, dateInputValue, deleteSupabaseRow, displayMealName, escapeHtml, fileToDataUrl, formatServingsLabel, imageElementFromFile, keepScreenOn, mealEntryValue, mirrorStateToLocalStorage, normalizeIngredientOptions, openDailyDozenPage, plannedServingsForEntry, prepareScanImage, recipeForSlot, recordDeletion, removeRecipeFromMealSlots, renderPlanner, renderScanImagePreviews, retainScanImageEdits, rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders, trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing, updateMealPlannedServingsFromContext, formatGroceryAmount, groceryAmountToNumber, grocerySuggestionItems, renderGroceries,
+    state, elements, persist, render, trashItemTemplate, showMailToast, getActiveAppArea, getAuthSession, getSupabaseClient, setRowStorageReady, getAmountOptions, getQuantityOptions, getPrepOptions, getPendingMealRecipeSelection, getPendingAutoRuleRecipeSelection, clearPendingMealRecipeSelection, clearPendingAutoRuleRecipeSelection, activateEatShell, allowScreenOff, applyScanImageAction, canUseCloudStorage, canUseLocalBackend, chooseRecipeForPendingAutoRule, chooseRecipeForPendingMeal, closeFloatingMenus, dailyDozenCategoryName, dailyDozenRecipeSuggestions, dateInputToIso, dateInputValue, deleteSupabaseRow, displayMealName, escapeHtml, fileToDataUrl, formatServingsLabel, imageElementFromFile, keepScreenOn, mealEntryValue, mirrorStateToLocalStorage, normalizeIngredientOptions, openDailyDozenPage, plannedServingsForEntry, prepareScanImage, recipeForSlot, recordDeletion, removeRecipeFromMealSlots, renderPlanner, renderScanImagePreviews, retainScanImageEdits, rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders, trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing, updateMealPlannedServingsFromContext, formatGroceryAmount, groceryAmountToNumber, grocerySuggestionItems, renderGroceries,
   } = deps;
 
   let activeCookingInterval = null;
@@ -1019,7 +1019,8 @@ function setRecipeReviewPanelOpen(open) {
 async function toggleRecipeReviewPanel() {
   if (recipeReviewPanelOpen) { setRecipeReviewPanelOpen(false); return; }
   if (!recipeReviewLoaded) await refreshRecipeReviewQueue();
-  if (!recipeReviewItems.length) return;
+  // Nothing to review: say so instead of opening an empty window (the bell standard).
+  if (!recipeReviewItems.length) { showMailToast("You're all caught up."); return; }
   setRecipeReviewPanelOpen(true);
 }
 

@@ -88,10 +88,6 @@ const server = http.createServer(async (request, response) => {
       await handleBookingScan(request, response);
       return;
     }
-    if (url.pathname === "/api/travel-map-url") {
-      await handleTravelMapUrl(request, response);
-      return;
-    }
     if (url.pathname === "/api/travel-time") {
       await handleTravelTime(url, response);
       return;
@@ -339,26 +335,6 @@ async function lookupTravelTimes(origin, destination, apiKey) {
     oneMode("walking"), oneMode("driving"), oneMode("transit"), oneMode("bicycling")
   ]);
   return { walk, drive, transit, bike };
-}
-
-async function handleTravelMapUrl(request, response) {
-  if (request.method !== "POST") { sendJson(response, 405, { error: "Method not allowed." }); return; }
-  const apiKey = String(process.env.GOOGLE_MAPS_API_KEY || process.env.Google_Maps || "").trim();
-  if (!apiKey) { sendJson(response, 503, { error: "Google Maps is not configured." }); return; }
-  let body;
-  try { body = JSON.parse(await readRequestBody(request)); } catch { sendJson(response, 400, { error: "Invalid JSON." }); return; }
-  const base = "https://www.google.com/maps/embed/v1/";
-  let mapUrl;
-  if (body.type === "directions" && body.origin && body.destination) {
-    const p = new URLSearchParams({ key: apiKey, origin: body.origin, destination: body.destination, mode: body.mode || "walking" });
-    if (Array.isArray(body.waypoints) && body.waypoints.length) p.set("waypoints", body.waypoints.join("|"));
-    mapUrl = base + "directions?" + p.toString();
-  } else if ((body.type === "place" || body.type === "search") && body.query) {
-    mapUrl = base + body.type + "?" + new URLSearchParams({ key: apiKey, q: body.query }).toString();
-  } else {
-    sendJson(response, 400, { error: "Invalid map params." }); return;
-  }
-  sendJson(response, 200, { url: mapUrl });
 }
 
 async function handleReceiptScan(request, response) {
