@@ -141,14 +141,29 @@ jobs:
           # straight to App Store Connect instead of writing an .ipa.
           cp ios/App/ExportOptions.plist "$RUNNER_TEMP/ExportOptions.plist"
           plutil -replace destination -string upload "$RUNNER_TEMP/ExportOptions.plist"
-          xcodebuild -exportArchive \
+          # On failure, Apple's own error lines (and the distribution log's) are
+          # re-posted as annotations: they're readable through the API, where a
+          # cloud session can't download the raw job log (PAPERCUTS 2026-10-26).
+          set -o pipefail
+          LOG="$RUNNER_TEMP/export.log"
+          if ! xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
             -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$ASC_KEY_PATH" \
             -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 | tee "$LOG"; then
+            grep -iE "error|failed|reason|ITMS-|NSLocalizedDescription|NSLocalizedFailureReason" "$LOG" \
+              | sed 's/%/%25/g' | tail -7 \
+              | while IFS= read -r line; do echo "::error title=export::${line:0:900}"; done || true
+            DIST=$(grep -oE "/[^ ]*IDEDistribution[^ ]*\.xcdistributionlogs" "$LOG" | head -1 || true)
+            if [ -n "$DIST" ] && [ -d "$DIST" ]; then
+              grep -rhiE "error|ITMS-|reason|failed" "$DIST" 2>/dev/null | sed 's/%/%25/g' | tail -3 \
+                | while IFS= read -r line; do echo "::error title=distribution-log::${line:0:900}"; done || true
+            fi
+            exit 70
+          fi
 
       - name: Summary
         run: |
