@@ -100,7 +100,7 @@ async function loadState(serviceKey) {
   // Ignore infrastructure/personal/backup rows when hunting the group id —
   // they update frequently and must not be mistaken for the household state
   const rows = allRows.filter(r => !/^(gmail_|mailsugg_|mailai_|u-|backup-)/.test(r.id) && r.id.includes(":"));
-  if (!rows.length) return null;
+  if (!rows.length) return { state: null, adminUid: null };
 
   const baseId = rows[0].id.split(":")[0];
 
@@ -129,7 +129,7 @@ async function loadState(serviceKey) {
       (typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
     if (!empty || !(k in assembled)) assembled[k] = v;
   }
-  return assembled;
+  return { state: assembled, adminUid };
 }
 
 async function getAdminUid(headers, groupId) {
@@ -144,9 +144,12 @@ async function getAdminUid(headers, groupId) {
   } catch { return null; }
 }
 
-async function loadSubscriptions(serviceKey) {
+// Only the briefing's owner's devices (ISSUES.md P1, 2026-10-13): the briefing is
+// built from the admin's data, so it must never reach anyone else's subscription.
+export async function loadSubscriptions(serviceKey, userId) {
+  if (!userId) return [];
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/live_push_subscriptions?select=subscription`,
+    `${SUPABASE_URL}/rest/v1/live_push_subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=subscription`,
     { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, Accept: "application/json" } }
   );
   if (!res.ok) return [];
@@ -438,10 +441,8 @@ export default async () => {
   webpush.setVapidDetails(`mailto:${vapidEmail || "admin@example.com"}`, vapidPublic, vapidPrivate);
 
   try {
-    const [state, subscriptions] = await Promise.all([
-      loadState(serviceKey),
-      loadSubscriptions(serviceKey)
-    ]);
+    const { state, adminUid } = await loadState(serviceKey);
+    const subscriptions = state ? await loadSubscriptions(serviceKey, adminUid) : [];
 
     if (!state) { console.log("[daily-briefing] No state found."); return; }
     if (!subscriptions.length) { console.log("[daily-briefing] No push subscriptions."); return; }
