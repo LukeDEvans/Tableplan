@@ -10,4 +10,4 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Nothing undeployed. (The 2026-10-26 deploy shipped #170–#177; their checks are in POST_DEPLOY_CHECKS.md.)_
+- **Explore: trip pictures; New trip leads each row** · #178 · After deploy: on the phone, open a trip → 🖼️ Add picture → choose one of the pictograms; check the card shows it (transparent background intact) and that Use row picture puts the default back. Then check each row starts with New trip showing its row picture. Web code only — the iPhone app needs a TestFlight build to show it.
