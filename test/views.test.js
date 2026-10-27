@@ -3,6 +3,7 @@ import {
   VIEW_ORDER, VIEW_PAGES, availableViews, startingView, stepView, swipeStep,
   viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView,
   cleanViewDisplayPrefs, displayPrefsForView,
+  MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes,
 } from "../views.js";
 import { PAGE_GROUPS } from "../page-groups.js";
 
@@ -200,5 +201,34 @@ describe("views: Finance follows the view once the person has personal accounts"
   });
   it("finance is one of the view-driven sections", () => {
     expect(VIEW_TOGGLE_SECTIONS).toContain("finance");
+  });
+});
+
+// Listen, 2026-10-27: an iPhone booted with Personal Listen data in its local
+// mirror while its saved scope said Household, and the boot merge wrote the
+// Personal list into the household row. The mirror now carries its own scopes.
+describe("views: the local mirror's scopes win at boot", () => {
+  it("stamps each section's scope", () => {
+    const scopes = { media: "personal", plan: "business", grocery: "household" };
+    expect(mirrorScopeStamp(["media", "plan", "grocery"], (s) => scopes[s]))
+      .toEqual({ media: "personal", plan: "business", grocery: "household" });
+  });
+  it("leaves out anything that isn't a scope", () => {
+    expect(mirrorScopeStamp(["media", "watch"], (s) => (s === "media" ? "nope" : undefined))).toEqual({});
+  });
+  it("the mirror's scope overrides a saved choice that disagrees", () => {
+    expect(resolveBootScopes({ media: "household", watch: "household" }, { media: "personal" }))
+      .toEqual({ media: "personal", watch: "household" });
+  });
+  it("a mirror written by an older build (no stamp) keeps the saved choices", () => {
+    expect(resolveBootScopes({ media: "household" }, null)).toEqual({ media: "household" });
+    expect(resolveBootScopes({ media: "household" }, undefined)).toEqual({ media: "household" });
+  });
+  it("ignores junk on either side", () => {
+    expect(resolveBootScopes(null, { media: "evil", do: "household" })).toEqual({ do: "household" });
+    expect(resolveBootScopes(["x"], "personal")).toEqual({});
+  });
+  it("uses a field name normalizeState would never keep", () => {
+    expect(MIRROR_SCOPES_FIELD.startsWith("__")).toBe(true);
   });
 });

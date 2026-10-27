@@ -227,6 +227,39 @@ export function upgradeShadowStore(v1, currentScope) {
   return out;
 }
 
+// The device's local mirror (the bootstrap copy of `state`) holds each
+// toggleable section's data as it was in the scope on screen when the mirror
+// was written. The scope choice itself was kept in a separate key, so if the
+// mirror write failed (iPhone's ~5 MB localStorage cap) while the scope key
+// was saved, the next cold start read Personal data as if it were Household's
+// — and the boot merge wrote it into the household row (Listen, 2026-10-27).
+// The fix: the mirror carries the scopes its data belongs to, written in the
+// same setItem as the data, and at boot those win over the separate key.
+export const MIRROR_SCOPES_FIELD = "__sectionScopes";
+const SCOPE_VALUES = new Set(["personal", "household", "business"]);
+
+// The stamp to store in the mirror: { section: scope } for each section.
+export function mirrorScopeStamp(sections, scopeOf) {
+  const out = {};
+  for (const section of sections || []) {
+    const scope = scopeOf(section);
+    if (SCOPE_VALUES.has(scope)) out[section] = scope;
+  }
+  return out;
+}
+
+// The section scopes to start with: the saved choices, overridden by the
+// scopes the mirror's data actually belongs to. A mirror without a stamp (an
+// older build wrote it) leaves the saved choices as they are.
+export function resolveBootScopes(saved, mirrorStamp) {
+  const out = saved && typeof saved === "object" && !Array.isArray(saved) ? { ...saved } : {};
+  if (!mirrorStamp || typeof mirrorStamp !== "object") return out;
+  for (const [section, scope] of Object.entries(mirrorStamp)) {
+    if (SCOPE_VALUES.has(scope)) out[section] = scope;
+  }
+  return out;
+}
+
 // Which other views' calendars the Personal calendar shows as layers (decision
 // 2–3: the person opts in; Household and Business never show Personal items).
 export function layerViewsFor(view, layers, { hasBusiness = false } = {}) {
