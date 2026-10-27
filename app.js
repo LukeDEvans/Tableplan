@@ -4954,7 +4954,7 @@ async function setGroupMemberRole(userId, newRole, selectEl = null) {
   if (!["admin", "member"].includes(newRole)) return;
   const member = groupMembers.find((gm) => gm.user_id === userId);
   const revert = () => { if (selectEl && member?.role) selectEl.value = member.role === "admin" ? "admin" : "member"; };
-  if (newRole === "admin" && !window.confirm(`Make ${member?.display_name || "this person"} an admin? Admins can change household settings and roles, see the admin tools, and switch between Personal, Household and Business.`)) {
+  if (newRole === "admin" && !window.confirm(`Make ${member?.display_name || "this person"} an admin? Admins can change household settings and other members' roles (never yours, as the household's creator), switch between Personal, Household and Business, and use the admin tools, which list every user's email and birthday.`)) {
     revert();
     return;
   }
@@ -12936,9 +12936,9 @@ function householdLayerTaskGroupHtml(dayId) {
 // if nobody changed it in between (updated_at match; retried twice). So this
 // device's possibly older copy of the household's tasks can never revert anyone
 // else's edits — the risk a whole-section write from Personal would carry.
-async function setHouseholdTaskDone(dayId, taskId, done, attempt = 0) {
+async function setHouseholdTaskDone(dayId, taskId, done, attempt = 0, before = shadowData("do", "household")) {
   const key = weekKey();
-  const local = shadowData("do", "household");
+  const local = before; // the household copy as it was before this tick (kept across retries for the rollback)
   const optimistic = setTaskDoneInDoData(local, key, dayId, taskId, done);
   if (optimistic && attempt === 0) {
     setShadowData("do", "household", optimistic);
@@ -12983,7 +12983,7 @@ async function setHouseholdTaskDone(dayId, taskId, done, attempt = 0) {
     const updRows = await upd.json();
     if (!updRows.length) {
       if (attempt >= 2) throw new Error("conflict");
-      return setHouseholdTaskDone(dayId, taskId, done, attempt + 1);
+      return setHouseholdTaskDone(dayId, taskId, done, attempt + 1, before);
     }
     lastSeenSectionStamp[rowId] = updRows[0].updated_at || now;
     const fresh = {};

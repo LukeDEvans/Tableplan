@@ -7,7 +7,9 @@
 //   - the target is someone else in that same household;
 //   - the new role is "admin" or "member";
 //   - the change never leaves the household without an admin (you can't change
-//     your own role here, and the last admin can't be demoted).
+//     your own role here, and the last admin can't be demoted);
+//   - the household's creator (live_groups.created_by — Luke's household) can't be
+//     changed by anyone, so a member promoted to admin can never demote them.
 // Nothing else on the row is written.
 
 const { userGroupQuery } = require("./_group-lookup.js");
@@ -17,12 +19,13 @@ const ROLES = ["admin", "member"];
 
 // Pure: whether this change is allowed, given the caller's membership and the
 // household's members ([{ user_id, role }]). Returns { ok } or { status, error }.
-function checkRoleChange({ caller, callerMembership, members, targetUserId, newRole }) {
+function checkRoleChange({ caller, callerMembership, members, targetUserId, newRole, ownerId }) {
   if (!caller?.id) return { status: 401, error: "Invalid session." };
   if (!callerMembership || callerMembership.role !== "admin") return { status: 403, error: "Only the household's admin can change roles." };
   if (!ROLES.includes(newRole)) return { status: 400, error: "Role must be admin or member." };
   if (!targetUserId || typeof targetUserId !== "string") return { status: 400, error: "Pick a member." };
   if (targetUserId === caller.id) return { status: 400, error: "You can't change your own role." };
+  if (ownerId && targetUserId === ownerId) return { status: 403, error: "The household's creator always stays an admin." };
   const list = Array.isArray(members) ? members : [];
   const target = list.find((m) => m.user_id === targetUserId);
   if (!target) return { status: 404, error: "That person isn't in your household." };
@@ -51,8 +54,10 @@ exports.handler = async (event) => {
   const callerMembership = await getGroupMembership(caller.id, serviceKey);
   const members = callerMembership ? await getGroupMembers(callerMembership.group_id, serviceKey) : [];
   if (callerMembership && members === null) return jsonResponse(502, { error: "Couldn't read the household." });
+  const ownerId = callerMembership ? await getGroupOwner(callerMembership.group_id, serviceKey) : null;
+  if (callerMembership && ownerId === undefined) return jsonResponse(502, { error: "Couldn't read the household." });
 
-  const verdict = checkRoleChange({ caller, callerMembership, members, targetUserId, newRole });
+  const verdict = checkRoleChange({ caller, callerMembership, members, targetUserId, newRole, ownerId });
   if (!verdict.ok) return jsonResponse(verdict.status, { error: verdict.error });
   if (verdict.unchanged) return jsonResponse(200, { ok: true, role: newRole });
 
@@ -98,6 +103,17 @@ async function getGroupMembers(groupId, serviceKey) {
     if (!res.ok) return null;
     return await res.json();
   } catch { return null; }
+}
+
+// The household's creator, or null if the group has none recorded; undefined when
+// the read failed (the caller then refuses rather than guess).
+async function getGroupOwner(groupId, serviceKey) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/live_groups?id=eq.${encodeURIComponent(groupId)}&select=created_by&limit=1`, { headers: serviceHeaders(serviceKey) });
+    if (!res.ok) return undefined;
+    const rows = await res.json();
+    return rows[0]?.created_by || null;
+  } catch { return undefined; }
 }
 
 function jsonResponse(statusCode, body) {

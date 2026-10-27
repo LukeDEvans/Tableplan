@@ -31,6 +31,12 @@ describe("checkRoleChange", () => {
     const stale = [{ user_id: "luke", role: "member" }, { user_id: "mj", role: "admin" }];
     expect(checkRoleChange({ ...base, members: stale, targetUserId: "mj", newRole: "member" }).status).toBe(400);
   });
+  it("never changes the household's creator", () => {
+    const two = [{ user_id: "luke", role: "admin" }, { user_id: "mj", role: "admin" }];
+    // MJ, promoted to admin, can't demote Luke, who created the household.
+    expect(checkRoleChange({ caller: { id: "mj" }, callerMembership: { group_id: "g1", role: "admin" }, members: two, targetUserId: "luke", newRole: "member", ownerId: "luke" }).status).toBe(403);
+    expect(checkRoleChange({ caller: admin, callerMembership: { group_id: "g1", role: "admin" }, members: two, targetUserId: "mj", newRole: "member", ownerId: "luke" })).toEqual({ ok: true });
+  });
   it("treats a no-op as done", () => {
     expect(checkRoleChange({ ...base, targetUserId: "mj", newRole: "member" })).toEqual({ ok: true, unchanged: true });
   });
@@ -48,6 +54,7 @@ describe("household-role handler", () => {
       if (url.endsWith("/auth/v1/user")) return { ok: Boolean(callerId), json: async () => ({ id: callerId }) };
       if (url.includes("live_group_members?user_id=eq.")) return { ok: true, json: async () => [{ group_id: "g1", role: callerRole }] };
       if (url.includes("live_group_members?group_id=eq.g1&select=")) return { ok: true, json: async () => groupMembers };
+      if (url.includes("live_groups?id=eq.g1")) return { ok: true, json: async () => [{ created_by: "luke" }] };
       if (opts.method === "PATCH") return { ok: patchOk, json: async () => ({}) };
       return { ok: false, json: async () => ({}) };
     }));
@@ -65,6 +72,13 @@ describe("household-role handler", () => {
 
   it("refuses a member and writes nothing", async () => {
     const calls = stubSupabase({ callerId: "mj", callerRole: "member" });
+    const res = await call({ userId: "luke", role: "member" });
+    expect(res.statusCode).toBe(403);
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("refuses to change the creator, even for another admin", async () => {
+    const calls = stubSupabase({ callerId: "mj", groupMembers: [{ user_id: "luke", role: "admin" }, { user_id: "mj", role: "admin" }] });
     const res = await call({ userId: "luke", role: "member" });
     expect(res.statusCode).toBe(403);
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
