@@ -73,6 +73,7 @@ const SHARED_FILES = {
   "document-scan.js": "shared document-extraction seam",
   "netlify/functions/_claude.js": "shared Claude API helper",
   "netlify/functions/_state-sections.js": "server-side state access",
+  "netlify/functions/_group-lookup.js": "server-side \"the user's group\" lookup, ordered like the client (auth/state)",
   "netlify/functions/_oauth-state.js": "signed OAuth state (Gmail + Google Calendar)",
   "netlify/functions/chat.js": "assistant",
   "netlify/functions/daily-briefing.js": "cross-domain push briefing",

@@ -8,6 +8,8 @@
 // those tools when they're on (CLAUDE.md "Mail AI features").
 
 import { ASSISTANT_CHAT_MODEL, toolSpecsForRequest } from "../../assistant-tools.js";
+import groupLookup from "./_group-lookup.js";
+const { userGroupQuery } = groupLookup;
 
 export const config = { path: "/api/chat" };
 
@@ -190,7 +192,7 @@ async function loadAssistantAccess(serviceKey, userId) {
   const off = { mail: false, finance: false };
   try {
     const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
-    const gRes = await fetch(`${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`, { headers });
+    const gRes = await fetch(`${SUPABASE_URL}/rest/v1/${userGroupQuery(userId)}`, { headers });
     if (!gRes.ok) return off;
     const groupId = (await gRes.json())?.[0]?.group_id;
     if (!groupId) return off;

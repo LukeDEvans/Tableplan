@@ -3,6 +3,7 @@
 // All writes go through an optimistic-locking loop (conditional PATCH on
 // updated_at), mirroring the client's writeSectionWithMerge — a server
 // function can therefore never clobber a concurrent client write.
+const { userGroupQuery } = require("./_group-lookup.js");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 function serviceHeaders(serviceKey) {
@@ -29,7 +30,7 @@ async function getUserIdFromToken(accessToken, serviceKey) {
 async function getUserGroupId(serviceKey, userId) {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`,
+      `${SUPABASE_URL}/rest/v1/${userGroupQuery(userId)}`,
       { headers: serviceHeaders(serviceKey) }
     );
     if (!res.ok) return null;

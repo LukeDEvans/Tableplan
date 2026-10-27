@@ -4,6 +4,7 @@
 // away. Conversion uses Claude so the article reads well aloud; hyperlinks in
 // the newsletter body are preserved as clickable <a> tags.
 // Files prefixed with _ are not deployed as individual functions.
+const { userGroupQuery } = require("./_group-lookup.js");
 const { claudeCallComplete } = require("./_claude");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
@@ -122,7 +123,7 @@ async function convertNewsEmailToArticle(anthropicKey, source, { subject, date, 
 // ── Saving into the media state section (optimistically locked) ──────────────
 
 async function getUserGroupId(serviceKey, userId) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`, {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${userGroupQuery(userId)}`, {
     headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
   });
   const rows = await res.json().catch(() => []);

@@ -50,6 +50,8 @@ async function userIdFromRequest(event) {
   } catch { return null; }
 }
 
+const { userGroupQuery } = require("./_group-lookup.js");
+
 // ── Signed OAuth state ───────────────────────────────────────────────────────
 // Same signed, expiring state as the Gmail flow (_oauth-state.js, SRV-1), under
 // its own purpose so a Gmail state can never complete a Calendar connection.
@@ -183,7 +185,7 @@ async function linksForAppIds(appIds) {
 }
 
 async function groupIdFor(userId) {
-  const rows = await sb(`live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`);
+  const rows = await sb(userGroupQuery(userId));
   return rows?.[0]?.group_id || null;
 }
 

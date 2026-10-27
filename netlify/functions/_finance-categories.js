@@ -2,6 +2,7 @@
 // line a budget category (scan-receipt for the one receipts list; simplefin's
 // scanReceipt/importReceipt for the split editor and the browser extension).
 // Keys are "cat:<groupId>:<categoryId>", the labels Finance splits use.
+const { userGroupQuery } = require("./_group-lookup.js");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 function svc(serviceKey) {
@@ -11,7 +12,7 @@ function svc(serviceKey) {
 async function getGroupIdForUser(serviceKey, userId) {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`,
+      `${SUPABASE_URL}/rest/v1/${userGroupQuery(userId)}`,
       { headers: svc(serviceKey) }
     );
     if (!res.ok) return null;

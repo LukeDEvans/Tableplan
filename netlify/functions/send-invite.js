@@ -1,3 +1,4 @@
+const { userGroupQuery } = require("./_group-lookup.js");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const DEFAULT_FROM_EMAIL = "Live App <onboarding@resend.dev>";
 
@@ -80,7 +81,7 @@ async function getCallerUser(accessToken, serviceKey) {
 }
 
 async function getGroupMembership(userId, serviceKey) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${userId}&select=group_id,role&limit=1`,
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${userGroupQuery(userId, "group_id,role")}`,
     { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } });
   if (!res.ok) return null;
   const rows = await res.json();
