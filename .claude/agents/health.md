@@ -37,6 +37,9 @@ changes to the Health / Nutrition / Exercise domain only.
   (`openNewWorkoutDialog(type)`). Hold a card (or right-click) for Edit / Delete
   (`wireWorkoutPoolCards` with `longPress`); the old swipe-to-edit was removed
   2026-10-26 (Luke) — don't bring it back, a sideways swipe scrolls the row.
+- **Lift pictograms by muscle group** (Luke, 2026-10-27): a Strength card's picture comes
+  from its title (`LIFT_PICTOGRAMS` in app.js) — legs, arms/shoulders, chest/back each have
+  their own `activity-lift-*.png`; any other Strength card keeps `activity-weightlifting.png`.
 
 ## Domain landmines (do NOT change without flagging)
 - **This domain overlaps with Recipes / Meal-Plan.** `daily-dozen.js`,
