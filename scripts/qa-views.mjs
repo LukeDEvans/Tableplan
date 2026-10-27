@@ -293,6 +293,10 @@ try {
   if (opened) {
     await page.click('[data-plan-event-id="ev-work"]');
     await page.waitForTimeout(300);
+    // On a phone the month grid is dots: tapping one selects its day and lists it
+    // below the month (#170); the listed row opens the event.
+    const listed = await page.$('.plan-month-daylist-rows [data-plan-event-id="ev-work"]');
+    if (listed) { await listed.click(); await page.waitForTimeout(300); }
     const btn = await page.$("[data-plan-detail-layer]");
     check(Boolean(btn), "a layered event's detail offers Open in Business");
     if (btn) { await btn.click(); await page.waitForTimeout(800); }
