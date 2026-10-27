@@ -4942,20 +4942,34 @@ async function setAdminDisabledPage(page, disabled) {
   updateSettingsMenuOptions();
 }
 
-async function setGroupMemberRole(userId, newRole) {
+// Settings › Household role picker (Luke, 2026-10-26). Roles can only change on the
+// server (household-role.js checks the caller is the admin, the person is in the
+// same household, and an admin always remains); RLS blocks it from the app.
+async function setGroupMemberRole(userId, newRole, selectEl = null) {
   if (!userGroup?.id || userGroup.role !== "admin") return;
-  if (!["hoh", "member"].includes(newRole)) return;
-  const res = await fetch(
-    `${supabaseBaseUrl()}/rest/v1/live_group_members?group_id=eq.${userGroup.id}&user_id=eq.${encodeURIComponent(userId)}`,
-    {
-      method: "PATCH",
-      headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
-      body: JSON.stringify({ role: newRole })
-    }
-  );
-  if (!res.ok) { console.warn("Could not update member role"); return; }
+  if (!["admin", "member"].includes(newRole)) return;
+  const member = groupMembers.find((gm) => gm.user_id === userId);
+  const revert = () => { if (selectEl && member?.role) selectEl.value = member.role === "admin" ? "admin" : "member"; };
+  if (newRole === "admin" && !window.confirm(`Make ${member?.display_name || "this person"} an admin? Admins can change household settings and roles, see the admin tools, and switch between Personal, Household and Business.`)) {
+    revert();
+    return;
+  }
+  try {
+    const res = await fetch("/.netlify/functions/household-role", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
+      body: JSON.stringify({ userId, role: newRole })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Couldn't change the role.");
+  } catch (error) {
+    revert();
+    showMailToast(error.message || "Couldn't change the role.");
+    return;
+  }
   await loadGroupMembers();
   renderContextSettingsDialog("family");
+  showMailToast(newRole === "admin" ? "Now an admin." : "Now a member.");
 }
 
 function loadState() {
@@ -18232,10 +18246,12 @@ function renderContextSettingsDialog(kind) {
       const isLinked = !!m.linkedUserId;
       const isCurrentUser = currentUserId && m.linkedUserId === currentUserId;
       const role = roleOf(m);
-      const roleControl = viewerIsAdmin && isLinked && !isCurrentUser && role && role !== "admin"
+      // The admin can change anyone else's role (your own stays, so the household
+      // always keeps an admin). Roles are Admin and Member (2026-10-26).
+      const roleControl = viewerIsAdmin && isLinked && !isCurrentUser && role
         ? `<select class="config-input household-role-select" data-member-role aria-label="Role">
-            <option value="hoh" ${role === "hoh" ? "selected" : ""}>HoH</option>
-            <option value="member" ${role === "member" ? "selected" : ""}>Member</option>
+            <option value="admin" ${role === "admin" ? "selected" : ""}>Admin</option>
+            <option value="member" ${role !== "admin" ? "selected" : ""}>Member</option>
           </select>`
         : (role ? `<span class="household-role household-role--${escapeHtml(role)}">${escapeHtml(roleLabel(role))}</span>` : "");
       return `
@@ -18543,7 +18559,7 @@ function handleContextSettingsChange(event) {
   if (memberRoleSelect) {
     const row = memberRoleSelect.closest("[data-member-row]");
     const userId = row?.dataset.memberLinkedUserId;
-    if (userId) setGroupMemberRole(userId, memberRoleSelect.value);
+    if (userId) setGroupMemberRole(userId, memberRoleSelect.value, memberRoleSelect);
   }
 }
 
