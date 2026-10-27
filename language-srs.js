@@ -286,3 +286,26 @@ export function deckCounts(cards, entries, now, { dayOf = localDay } = {}) {
   }
   return { due, fresh, known, learning, total: (entries || []).length };
 }
+
+// ── Problem words (§24) ─────────────────────────────────────────────────────
+// A card answered "Again" this many times after it was learned keeps eating
+// review time; it gets flagged so a note or memory trick can be added.
+export const LEECH_LAPSES = 4;
+
+// Entry ids whose recognize or produce card has lapsed LEECH_LAPSES+ times,
+// worst first.
+export function problemWordIds(cards) {
+  const worst = new Map();
+  for (const [k, t] of Object.entries(normalizeCards(cards))) {
+    const p = parseCardKey(k);
+    if (!p || p.dir === "s") continue;
+    const c = decodeCard(t);
+    if (c.lapses >= LEECH_LAPSES) worst.set(p.entryId, Math.max(worst.get(p.entryId) || 0, c.lapses));
+  }
+  return [...worst.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+}
+
+export function lapsesOf(cards, entryId) {
+  const all = normalizeCards(cards);
+  return Math.max(decodeCard(all[cardKey(entryId, "r")])?.lapses || 0, decodeCard(all[cardKey(entryId, "p")])?.lapses || 0);
+}

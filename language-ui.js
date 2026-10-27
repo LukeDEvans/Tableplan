@@ -39,6 +39,12 @@ import { deHetItems, plain } from "./language-drills.js";
 import { createFlashcards, createDeHet } from "./language-ui-cards.js";
 import { createListen, createSentences, createSpeak } from "./language-ui-drills.js";
 import { createAddWords, createWordList } from "./language-ui-words.js";
+import { createVerbs, createWordOrder, createCloze, createReader } from "./language-ui-more.js";
+import { verbsInEntries, commonVerbs } from "./language-verbs.js";
+import { clozeSources } from "./language-cloze.js";
+import { problemWordIds } from "./language-srs.js";
+import { addReadingWord, READ_LESSON_ID } from "./language-words.js";
+import { normalizeNotes, setNote as setNoteIn } from "./language-progress.js";
 
 const MISS_FLASH_MS = 450;
 const ALL_POOL_MIN = 12;
@@ -75,7 +81,16 @@ const PRACTICE = [
   ["listen", "Listen", "volumeHigh"],
   ["sentences", "Sentences", "wordTiles"],
   ["speak", "Speak", "mic"],
+  ["verbs", "Verbs", "verbs"],
+  ["order", "Word order", "sort"],
+  ["cloze", "Fill in", "cloze"],
 ];
+
+// Default device cache for the reader (lists and lookups); may throw.
+const LOCAL_STORAGE = {
+  get: (k) => globalThis.localStorage?.getItem(k) ?? null,
+  set: (k, v) => globalThis.localStorage?.setItem(k, v),
+};
 
 export function createLanguageModule(deps) {
   const {
@@ -91,6 +106,8 @@ export function createLanguageModule(deps) {
     course: baseCourse = DUTCH_COURSE,
     starterSentences = STARTER_SENTENCES,
     speech: speechDep = null,
+    callReader = async () => ({ error: "Reading isn't available here." }),
+    storage = LOCAL_STORAGE,
     rng,
     gameOptions = () => null, // overrides for local-dev QA (shorter games)
     onChange = () => {},
@@ -231,18 +248,78 @@ export function createLanguageModule(deps) {
     openLesson: (id) => openLesson(id),
     openAddWords: (lessonId) => openScreen("add", { lessonId }),
     isoNow: () => new Date(now()).toISOString(),
+    // Notes and problem words (§24)
+    noteFor: (id) => normalizeNotes(st().languageNotes)[id]?.text || "",
+    setNote: (id, text) => {
+      const s = st();
+      s.languageNotes = setNoteIn(s.languageNotes, id, text, new Date(now()).toISOString());
+      persist();
+    },
+    // Verbs (§20)
+    verbsFor: (entries, { common = false } = {}) => {
+      const mine = verbsInEntries(entries);
+      if (!common) return mine;
+      const seen = new Set(mine.map((v) => v.inf));
+      return [...mine, ...commonVerbs().filter((v) => !seen.has(v.inf))];
+    },
+    // Reading (§23)
+    callReader: (body) => callReader(body),
+    storage,
+    addReadingWord: (word) => {
+      const s = st();
+      const out = addReadingWord(s.languageUserWords, word, { at: new Date(now()).toISOString(), rng: random, now: now() });
+      if (!out.existed && out.id) {
+        s.languageUserWords = out.words;
+        memo.key = "";
+        if (accountKey() === sessionAccount) persist();
+        onChange();
+      }
+      return out;
+    },
+    wordStatus: (text) => wordStatus(text),
   };
   // Answers only save to the account the screen was opened in.
   let sessionAccount = "";
 
   // A sentence from the same lesson that uses the word (for the back of a card).
   function examplesFor(e) {
+    if (e.ex) return [{ text: e.ex, en: "", src: e.src || "" }];
     const word = plain(String(e.text || "").replace(/^(de|het|een)\s+/i, ""));
     if (!word || word.includes(" ") && word.split(" ").length > 2) return [];
     const re = new RegExp(`(^|\\s)${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`);
     const all = course().sentences || [];
     const same = all.filter((x) => x.lesson === e.lesson && re.test(plain(x.text)));
     return same.length ? same : all.filter((x) => re.test(plain(x.text))).slice(0, 1);
+  }
+
+  // How a Dutch word in an article stands with you: known / learning (it has a
+  // flashcard) / saved (in your words, not started) / "". Matched on the word
+  // as written and on the noun without its article.
+  let statusMemo = { key: "", map: null };
+  function wordStatus(text) {
+    const cs = cards();
+    const k = `${memo.key}|${Object.keys(cs).length}|${JSON.stringify(cs).length}`;
+    if (statusMemo.key !== k || !statusMemo.map) {
+      const map = new Map();
+      const rank = { known: 3, learning: 2, saved: 1 };
+      const put = (w, v) => { if (w && (rank[v] || 0) > (rank[map.get(w)] || 0)) map.set(w, v); };
+      for (const e of course().entries) {
+        const r = cs[cardKey(e.id, "r")];
+        const v = r ? (isKnown(r) ? "known" : "learning") : e.user ? "saved" : "";
+        if (!v) continue;
+        const t = plain(e.text);
+        put(t, v);
+        put(t.replace(/^(de|het|een)\s+/, ""), v);
+        if (e.w) put(plain(e.w), v);
+      }
+      statusMemo = { key: k, map };
+    }
+    const t = plain(text);
+    return statusMemo.map.get(t) || "";
+  }
+
+  function problemEntries() {
+    return problemWordIds(cards()).map((id) => entryById(id)).filter(Boolean);
   }
 
   // ── Data for the Leisure row (rendered by app.js) ──────────────────────────
@@ -481,7 +558,7 @@ export function createLanguageModule(deps) {
     if (sc === "summary" && game) { root.innerHTML = summaryHtml(); return; }
     if (sc === "start" && view.scope) { root.innerHTML = startHtml(); return; }
     if (sc === "lesson" && findLesson(course(), view.lessonId)) { root.innerHTML = lessonHtml(); return; }
-    if (["cards", "dehet", "listen", "sentences", "speak", "add", "words"].includes(sc)) { mountScreen(sc); return; }
+    if (["cards", "problems", "dehet", "listen", "sentences", "speak", "verbs", "order", "cloze", "read", "add", "words"].includes(sc)) { mountScreen(sc); return; }
     view = { screen: "hub", scope: null };
     root.innerHTML = hubHtml();
   }
@@ -497,6 +574,24 @@ export function createLanguageModule(deps) {
     if (name === "cards") {
       s = createFlashcards(ctx);
       s.mount(el, { entries: scope?.kind === "all" || scope?.kind === "due" ? orderedEntries() : entriesFor(scope), label: scope?.kind === "all" ? "Today" : label });
+    } else if (name === "problems") {
+      s = createFlashcards(ctx);
+      s.mount(el, { entries: problemEntries(), label: "Problem words", cram: true });
+    } else if (name === "verbs") {
+      s = createVerbs(ctx);
+      const all = !scope || scope.kind === "all" || scope.kind === "due";
+      s.mount(el, { entries: all ? orderedEntries() : entriesFor(scope), label: all ? "Verbs" : label, common: all });
+    } else if (name === "order") {
+      s = createWordOrder(ctx);
+      s.mount(el, { label: "Word order" });
+    } else if (name === "cloze") {
+      s = createCloze(ctx);
+      const all = !scope || scope.kind === "all" || scope.kind === "due";
+      const entries = all ? orderedEntries() : entriesFor(scope);
+      s.mount(el, { sources: clozeSources(sentencesFor(all ? { kind: "all" } : scope), entries), entries: all ? course().entries : entries, label: all ? "Everything" : label });
+    } else if (name === "read") {
+      s = createReader(ctx);
+      s.mount(el, { label: "Reading" });
     } else if (name === "dehet") {
       s = createDeHet(ctx);
       s.mount(el, { entries: scope?.kind === "all" ? orderedEntries() : entriesFor(scope), label });
@@ -528,6 +623,7 @@ export function createLanguageModule(deps) {
     const plan = buildSession(cards(), orderedEntries(), now(), { newLimit: p.newPerDay });
     const { due, fresh } = plan.counts;
     const total = deckCounts(cards(), orderedEntries(), now());
+    const problems = problemWordIds(cards()).filter((id) => entryById(id)).length;
     const today = due || fresh
       ? `<p class="lang-today-counts"><strong>${due}</strong> to review · <strong>${fresh}</strong> new</p>
          <button class="primary-btn lang-go" type="button" data-lang-today>${ico("play", 16)} Start</button>`
@@ -543,7 +639,12 @@ export function createLanguageModule(deps) {
           <p class="lang-kicker">Today</p>
           ${today}
           <p class="lang-today-known">${total.known} known · ${total.learning} learning · ${total.fresh} not started</p>
+          ${problems ? `<button class="lang-linkbtn" type="button" data-lang-practice="problems">${ico("warning", 14)} ${problems} problem ${problems === 1 ? "word" : "words"} — practice ${problems === 1 ? "it" : "them"}</button>` : ""}
         </section>
+        <button class="lang-read-card" type="button" data-lang-practice="read">
+          ${ico("article", 26)}
+          <span><span class="lang-read-title">Read the news</span><span class="lang-read-sub">Easy Dutch from the NOS Jeugdjournaal. Tap a word for its meaning and save it.</span></span>
+        </button>
         <section aria-label="Practice">
           <h3 class="lang-level-title">Practice</h3>
           <div class="lang-practice-grid">${practiceBtns}</div>
@@ -633,7 +734,10 @@ export function createLanguageModule(deps) {
     const lesson = findLesson(c, view.lessonId);
     const unit = findUnit(c, lesson.unitId);
     const n = lessonCounts(lesson.id);
-    const nouns = deHetItems(resolveScope(c, { kind: "lesson", id: lesson.id })).length;
+    const lessonEntries = resolveScope(c, { kind: "lesson", id: lesson.id });
+    const nouns = deHetItems(lessonEntries).length;
+    const verbCount = verbsInEntries(lessonEntries).length;
+    const clozeCount = clozeSources(sentencesFor({ kind: "lesson", id: lesson.id }), lessonEntries).length;
     const scope = `data-lang-scope="lesson" data-lang-id="${escapeHtml(lesson.id)}"`;
     const btn = (kind, label, ic, enabled = true, why = "") => `
       <button class="lang-practice-btn" type="button" data-lang-practice="${kind}" ${scope} ${enabled ? "" : "disabled"} ${why ? `title="${escapeHtml(why)}"` : ""}>
@@ -657,10 +761,12 @@ export function createLanguageModule(deps) {
           ${btn("listen", "Listen", "volumeHigh", n.total > 0)}
           ${btn("sentences", "Sentences", "wordTiles", n.sentences > 0, "No sentences in this lesson")}
           ${btn("speak", "Speak", "mic", n.total + n.sentences > 0)}
+          ${btn("verbs", "Verbs", "verbs", verbCount > 0, "No verbs in this lesson")}
+          ${btn("cloze", "Fill in", "cloze", clozeCount > 0, "No sentences in this lesson")}
         </div>
         <div class="lang-actions">
           ${unit ? `<button class="secondary-btn compact-btn" type="button" data-lang-practice="match" data-lang-scope="unit" data-lang-id="${escapeHtml(unit.id)}">Match the whole unit</button>` : ""}
-          ${lesson.user ? `<button class="secondary-btn compact-btn" type="button" data-lang-add data-lang-id="${escapeHtml(lesson.id)}">${ico("add", 16)} Add words</button>` : ""}
+          ${lesson.user && lesson.id !== READ_LESSON_ID ? `<button class="secondary-btn compact-btn" type="button" data-lang-add data-lang-id="${escapeHtml(lesson.id)}">${ico("add", 16)} Add words</button>` : ""}
           <button class="secondary-btn compact-btn" type="button" data-lang-words data-lang-id="${escapeHtml(lesson.id)}">${lesson.user ? "Edit words" : "Word list"}</button>
         </div>
       </div>`;
@@ -949,6 +1055,7 @@ export function createLanguageModule(deps) {
     openToday: () => practice("cards", { kind: "all" }),
     openLesson,
     openAddWords: () => openScreen("add", {}),
+    openReader: () => practice("read", { kind: "all" }),
     rowSummary,
     rowLessons,
     reviewAvailable,

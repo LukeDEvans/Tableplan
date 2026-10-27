@@ -241,6 +241,8 @@ const EXTRA_PATHS = {
   home: '<path d="M4 11 12 4l8 7"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5h4v5"/>',
   birthday: '<rect x="4" y="12" width="16" height="8" rx="2"/><path d="M4 16c2 1.2 4 1.2 5.3 0 1.4-1.2 4-1.2 5.4 0 1.3 1.2 3.3 1.2 5.3 0"/><line x1="12" y1="12" x2="12" y2="8"/><path d="M12 4.5c.9 1 .9 2 0 2.6-.9-.6-.9-1.6 0-2.6z"/>',
   // Dutch practice (language-ui.js)
+  verbs: '<line x1="4" y1="5" x2="14" y2="5"/><polyline points="6 5 6 19 9 19"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="12" y1="19" x2="20" y2="19"/><line x1="6" y1="12" x2="9" y2="12"/>',
+  cloze: '<path d="M3 12h4"/><rect x="9" y="9" width="6" height="6" rx="1" stroke-dasharray="2 2"/><path d="M17 12h4"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/>',
   flashcards: '<rect x="3" y="7" width="14" height="12" rx="2"/><path d="M7 4h12a2 2 0 0 1 2 2v10"/>',
   wordTiles: '<rect x="3" y="5" width="7" height="5" rx="1.5"/><rect x="12" y="5" width="9" height="5" rx="1.5"/><rect x="3" y="14" width="10" height="5" rx="1.5"/><line x1="16" y1="16.5" x2="20" y2="16.5"/>',

@@ -26,7 +26,7 @@ import { matchProviderId } from './media-availability.js';
 import { createStreamLinksCache, linksForProvider } from './media-stream-links.js';
 import { createLanguageModule } from './language-ui.js';
 import { createSpeech } from './language-speech.js';
-import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions, normalizeLanguagePrefs } from './language-progress.js';
+import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions, normalizeLanguagePrefs, normalizeNotes as normalizeLanguageNotes, mergeNotes as mergeLanguageNotes } from './language-progress.js';
 import { normalizeCards as normalizeLanguageCards, mergeCards as mergeLanguageCards } from './language-srs.js';
 import { normalizeUserLessons, normalizeUserWords, mergeUserLessons, mergeUserWords } from './language-words.js';
 import { createNewsTickerModule } from './news-ticker.js';
@@ -349,7 +349,7 @@ const STATE_SECTIONS = {
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "languageWords", "languageSessions", "languageCards", "languageUserLessons", "languageUserWords", "languagePrefs", "recreateHobbies", "sportsPrefs", "displayPrefs", "viewDisplayPrefs", "viewLayers", "recreateSettingStamps"],
+  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "languageWords", "languageSessions", "languageCards", "languageUserLessons", "languageUserWords", "languagePrefs", "languageNotes", "recreateHobbies", "sportsPrefs", "displayPrefs", "viewDisplayPrefs", "viewLayers", "recreateSettingStamps"],
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
@@ -3951,7 +3951,7 @@ function setupDiagnostics() {
     },
     // Dutch practice (scripts/qa-language.mjs): stored progress, and a shorter game
     // so a browser run doesn't take two minutes. Local dev only.
-    languageForQa: () => (localDevMode ? { words: state.languageWords, sessions: state.languageSessions, cards: state.languageCards, userLessons: state.languageUserLessons, userWords: state.languageUserWords, prefs: state.languagePrefs } : null),
+    languageForQa: () => (localDevMode ? { words: state.languageWords, sessions: state.languageSessions, cards: state.languageCards, userLessons: state.languageUserLessons, userWords: state.languageUserWords, prefs: state.languagePrefs, notes: state.languageNotes } : null),
     languageGameForQa: (opts) => { if (!localDevMode) return null; languageQaGameOptions = opts || null; return true; },
     // Puts flashcard schedules in place (e.g. a card answered yesterday, so its
     // produce card unlocks). Local dev only.
@@ -5322,6 +5322,7 @@ function defaultState() {
     languageUserLessons: {},
     languageUserWords: {},
     languagePrefs: {},
+    languageNotes: {}, // a note or memory trick per word (problem words)
     recreateHobbies: { sailing: true, piano: true },
     // Scores (News → Sports): this person's favorite teams and league choices.
     // In `recreate` because that section is always per user (SPORTS_SCORES_DESIGN.md §5).
@@ -5521,6 +5522,7 @@ function normalizeState(parsed) {
     languageUserLessons: normalizeUserLessons(parsed?.languageUserLessons),
     languageUserWords: normalizeUserWords(parsed?.languageUserWords),
     languagePrefs: normalizeLanguagePrefs(parsed?.languagePrefs),
+    languageNotes: normalizeLanguageNotes(parsed?.languageNotes),
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
     sportsPrefs: normalizeSportsPrefs(parsed?.sportsPrefs),
     displayPrefs: cleanDisplayPrefs(parsed?.displayPrefs),
@@ -7112,6 +7114,7 @@ function mergeStates(newer, older) {
   merged.languageCards = mergeLanguageCards(newer.languageCards, older.languageCards);
   merged.languageUserLessons = mergeUserLessons(newer.languageUserLessons, older.languageUserLessons);
   merged.languageUserWords = mergeUserWords(newer.languageUserWords, older.languageUserWords);
+  merged.languageNotes = mergeLanguageNotes(newer.languageNotes, older.languageNotes); // per word, later note wins
   merged.languagePrefs = { ...(older.languagePrefs || {}), ...(newer.languagePrefs || {}) }; // each field then goes by its own stamp
   merged.articleSync = { ...(older.articleSync || {}), ...(newer.articleSync || {}) };
   merged.groceryPricingSettings = { ...(older.groceryPricingSettings || {}), ...(newer.groceryPricingSettings || {}) };
@@ -23518,6 +23521,9 @@ const languageModule = createLanguageModule({
   accountKey: () => authSession?.user?.id || (localDevMode ? "local" : ""),
   deviceId: () => languageDeviceId(),
   isShowing: () => activeAppArea === "recreate" && activeRecreateHobby === "dutch" && !elements.recreateMainPage?.hidden,
+  // The news reader (netlify/functions/dutch-reader.js): feed list, article text,
+  // word lookups and sentence translation.
+  callReader: (body) => callNetlifyFunction("dutch-reader", body, { timeoutMs: 20000 }),
   onChange: () => {},
 });
 
@@ -23689,6 +23695,7 @@ function renderLeisureRows() {
         today.due ? `${today.due} to review` : today.fresh ? `${today.fresh} new today` : "All caught up");
       cards += languageModule.rowLessons().slice(0, RECREATE_ROW_MAX).map((l) => recreateCardTemplate(
         `data-leisure-lesson="${escapeHtml(l.id)}"`, `<span class="lang-hobby-icon is-small">${ldeIcon("book", { size: 28 })}</span>`, l.title, l.sub)).join("");
+      cards += recreateCardTemplate("data-leisure-read", `<span class="lang-hobby-icon is-small">${ldeIcon("article", { size: 28 })}</span>`, "Read the news", "Easy Dutch");
       cards += recreateAddCardTemplate("data-leisure-add-words", "Add words", "From Rosetta Stone");
     }
     rows.push(recreateSectionTemplate(h.key, h.label, cards));
@@ -23727,6 +23734,11 @@ function renderRecreatePage() {
     });
     grid.querySelector("[data-leisure-review]")?.addEventListener("click", () => {
       languageModule.openToday();
+      activeRecreateHobby = "dutch";
+      renderRecreatePage();
+    });
+    grid.querySelector("[data-leisure-read]")?.addEventListener("click", () => {
+      languageModule.openReader();
       activeRecreateHobby = "dutch";
       renderRecreatePage();
     });

@@ -13,7 +13,19 @@
 // app build that drops these keys can't erase anything.
 
 export const USER_LEVEL_ID = "nl-user";
+// Words saved from the news reader live in one fixed lesson of their own.
+export const READ_LEVEL_ID = "nl-reading";
+export const READ_UNIT_ID = "nl-read-u";
+export const READ_LESSON_ID = "nl-read";
 export const USER_SOURCE_ID = "rosetta-user";
+export const READ_SOURCE_ID = "reading-user";
+export const READ_SOURCE = Object.freeze({
+  kind: "reading",
+  title: "Words you saved while reading Dutch news (meanings looked up by AI)",
+  retrieved: "",
+  confidence: "AI dictionary lookup in context; check unusual ones",
+  curriculumVersion: null,
+});
 export const USER_SOURCE = Object.freeze({
   kind: "rosetta-stone",
   title: "Your Rosetta Stone Dutch course, copied in by you",
@@ -145,6 +157,14 @@ function cleanWord(w) {
   if (alsoEn.length) out.alsoEn = alsoEn;
   const note = clean(w.note).slice(0, 200);
   if (note) out.note = note;
+  // Saved while reading (§23): the sentence it appeared in, the form it had
+  // there, and the article's title.
+  const ex = clean(w.ex).slice(0, 300);
+  if (ex) out.ex = ex;
+  const form = clean(w.w).slice(0, 40);
+  if (form) out.w = form;
+  const src = clean(w.src).slice(0, 120);
+  if (src) out.src = src;
   if (w.del) out.del = true;
   // A live word needs both sides; a tombstone may have neither.
   if (!out.del && (!text || !en)) return null;
@@ -278,27 +298,36 @@ export function buildCourse(base, userLessons, userWords, { showStarter = true, 
   const userEntries = [];
   const userSentences = [];
   // Insertion order within a lesson is the paste order (ids carry the time).
+  const readEntries = [];
   for (const [id, w] of words.sort((a, b) => a[0].localeCompare(b[0]))) {
-    if (!liveLessonIds.has(w.lesson)) continue;
+    const reading = w.lesson === READ_LESSON_ID;
+    if (!reading && !liveLessonIds.has(w.lesson)) continue;
     const e = {
       id, lang: base.lang, text: w.text, en: w.en,
-      level: USER_LEVEL_ID, unit: unitOf.get(w.lesson), lesson: w.lesson,
-      source: USER_SOURCE_ID, verification: "verified", user: true,
+      level: reading ? READ_LEVEL_ID : USER_LEVEL_ID, unit: reading ? READ_UNIT_ID : unitOf.get(w.lesson), lesson: w.lesson,
+      source: reading ? READ_SOURCE_ID : USER_SOURCE_ID, verification: reading ? "provisional" : "verified", user: true,
       ...(w.alsoEn ? { alsoEn: w.alsoEn } : {}),
       ...(w.note ? { note: w.note } : {}),
+      ...(w.ex ? { ex: w.ex } : {}),
+      ...(w.w ? { w: w.w } : {}),
+      ...(w.src ? { src: w.src } : {}),
     };
-    (w.kind === "sentence" ? userSentences : userEntries).push(e);
+    if (reading) readEntries.push(e);
+    else (w.kind === "sentence" ? userSentences : userEntries).push(e);
   }
 
   const levels = [];
   if (userUnits.length) levels.push({ id: USER_LEVEL_ID, title: "Your course", user: true, units: userUnits });
+  if (readEntries.length) {
+    levels.push({ id: READ_LEVEL_ID, title: "From your reading", user: true, reading: true, units: [{ id: READ_UNIT_ID, title: "Saved while reading", lessons: [{ id: READ_LESSON_ID, title: "Words from the news", user: true, reading: true }] }] });
+  }
   if (showStarter || !userUnits.length) levels.push(...(base.levels || []));
   const starterOn = showStarter || !userUnits.length;
   return {
     ...base,
-    sources: { ...(base.sources || {}), [USER_SOURCE_ID]: USER_SOURCE },
+    sources: { ...(base.sources || {}), [USER_SOURCE_ID]: USER_SOURCE, [READ_SOURCE_ID]: READ_SOURCE },
     levels,
-    entries: [...userEntries, ...(starterOn ? base.entries || [] : [])],
+    entries: [...userEntries, ...readEntries, ...(starterOn ? base.entries || [] : [])],
     sentences: [...userSentences, ...(starterOn ? starterSentences : [])],
     hasUserCourse: userUnits.length > 0,
   };
@@ -315,4 +344,21 @@ export function entriesInCourseOrder(course) {
     .filter(({ e }) => order.has(e.lesson))
     .sort((a, b) => order.get(a.e.lesson) - order.get(b.e.lesson) || a.k - b.k)
     .map(({ e }) => e);
+}
+
+// Save a word met while reading. Matches an existing live word by its Dutch
+// (in any of your lessons) instead of adding a second copy.
+export function addReadingWord(words, { text, en, ex = "", w = "", src = "" }, { at, rng = Math.random, now = Date.now() } = {}) {
+  const all = normalizeUserWords(words);
+  const k = key(text);
+  for (const [id, v] of Object.entries(all)) {
+    if (!v.del && key(v.text) === k) return { words: all, id, existed: true };
+  }
+  let id = newWordId(rng, now);
+  let n = 1;
+  while (all[id]) id = newWordId(rng, now + n++);
+  const clean_ = cleanWord({ kind: "word", text, en, ex, w, src, lesson: READ_LESSON_ID, at });
+  if (!clean_) return { words: all, id: "", existed: false };
+  all[id] = clean_;
+  return { words: all, id, existed: false };
 }
