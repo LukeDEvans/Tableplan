@@ -8,6 +8,8 @@
 // Pure: places come in already looked up ({ lat, lng, country, state }); the
 // lookup and its device cache live in app.js. Nothing here touches the network.
 
+import { recipePhotoPublicUrl } from "./recipe-photos.js";
+
 export const EXPLORE_SCOPES = [
   { key: "local",   label: "Local",    icon: "./explore-local.png" },
   { key: "state",   label: "Regional", icon: "./explore-regional.png" },
@@ -76,4 +78,32 @@ export function placeFromNominatim(hit) {
     country: String(a.country_code || "").toLowerCase(),
     state: a.state || a.province || a.region || a["ISO3166-2-lvl4"] || "",
   };
+}
+
+// Trip pictures (Luke, 2026-10-27): a trip may carry its own picture in
+// `trip.image` — a storage path in the public recipe-photos bucket
+// ("<user>/trips/<trip>/trip-<ts>.png"), never image bytes. The path changes on
+// every upload, so the service worker can cache it forever. A trip without one
+// shows its row's default picture (as does each row's "New trip" card).
+export function scopeIconUrl(scopeKey) {
+  return EXPLORE_SCOPES.find((s) => s.key === scopeKey)?.icon || "";
+}
+
+export function tripImagePath(trip) {
+  const v = String(trip?.image || "").trim().replace(/^\/+/, "");
+  if (!v || /^[a-z][a-z0-9+.-]*:/i.test(v) || v.includes("..")) return "";
+  return v;
+}
+
+// What a trip card's <img> loads: the trip's own picture, else its row's default,
+// else "" (a trip not sorted yet keeps the plain travel icon).
+export function tripCardImageUrl(trip, scopeKey, supabaseUrl) {
+  const path = tripImagePath(trip);
+  if (path && supabaseUrl) return recipePhotoPublicUrl(path, supabaseUrl);
+  return scopeIconUrl(scopeKey);
+}
+
+export function tripImageStoragePath(userId, tripId, now = Date.now()) {
+  const safe = (x) => String(x || "").replace(/[^a-z0-9-]/gi, "-") || "x";
+  return `${safe(userId)}/trips/${safe(tripId)}/trip-${now}.png`;
 }

@@ -42259,11 +42259,29 @@ function showExploreTrips(tripId) {
   else showExploreLanding();
 }
 
-// A trip card carries its row's picture (Luke, 2026-10-22); trips not sorted yet
-// keep the plain travel icon.
-function exploreScopeIcon(scopeKey) {
-  const sc = ExploreScope.EXPLORE_SCOPES.find((s) => s.key === scopeKey);
-  return sc ? `<img class="workout-pool-img explore-scope-img" src="${sc.icon}" alt="" width="52" height="52" draggable="false" />` : RECREATE_TRAVEL_ICON;
+// A trip card shows the trip's own picture (Luke, 2026-10-27), else its row's
+// picture (2026-10-22); trips not sorted yet keep the plain travel icon.
+function exploreSupabaseUrl() {
+  try { return supabaseBaseUrl(); } catch { return ""; }
+}
+
+function exploreTripImageHtml(trip, scopeKey) {
+  const src = ExploreScope.tripCardImageUrl(trip, scopeKey, exploreSupabaseUrl());
+  return src ? `<img class="workout-pool-img explore-scope-img" src="${escapeHtml(src)}" alt="" width="104" height="60" draggable="false" />` : RECREATE_TRAVEL_ICON;
+}
+
+// Each row starts with its "New trip" card, which shows the row's picture with a
+// "+" on it (Luke, 2026-10-27).
+function exploreAddCardTemplate(scopeKey, sub = "") {
+  const src = ExploreScope.scopeIconUrl(scopeKey);
+  return `
+    <div class="workout-pool-card-wrap">
+      <button class="workout-pool-card explore-add-card" type="button" data-explore-add="${escapeHtml(scopeKey)}" aria-label="New trip">
+        <span class="workout-pool-icon explore-add-icon" aria-hidden="true"><img class="workout-pool-img explore-scope-img" src="${escapeHtml(src)}" alt="" width="104" height="60" draggable="false" /><span class="explore-add-badge">+</span></span>
+        <span class="workout-pool-title">New trip</span>
+        <span class="workout-pool-last">${escapeHtml(sub)}</span>
+      </button>
+    </div>`;
 }
 
 function exploreTripCardTemplate(trip, scopeKey) {
@@ -42272,7 +42290,7 @@ function exploreTripCardTemplate(trip, scopeKey) {
   const statusLabel = { idea: "Idea", planning: "Planning", booked: "Booked", traveling: "Traveling", completed: "Done" }[status] || "";
   const when = trip.startDate ? new Date(trip.startDate + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
   const sub = [trip.destination && trip.destination !== trip.name ? trip.destination : "", when || statusLabel].filter(Boolean).join(" · ");
-  return recreateCardTemplate(`data-explore-card="${escapeHtml(trip.id)}"`, exploreScopeIcon(scopeKey), trip.name || trip.destination || "Trip", sub);
+  return recreateCardTemplate(`data-explore-card="${escapeHtml(trip.id)}"`, exploreTripImageHtml(trip, scopeKey), trip.name || trip.destination || "Trip", sub);
 }
 
 function renderExploreLanding() {
@@ -42292,8 +42310,8 @@ function renderExploreLanding() {
   const groups = ExploreScope.groupTrips(trips, { home, placeOf: explorePlaceOf });
   const count = pageNotifCounts.explore || 0;
   const rows = ExploreScope.EXPLORE_SCOPES.map((sc) => recreateSectionTemplate(sc.key, sc.label, `
-    ${groups[sc.key].map((t) => exploreTripCardTemplate(t, sc.key)).join("")}
-    ${recreateAddCardTemplate(`data-explore-add="${sc.key}"`, "New trip", groups[sc.key].length ? "" : "No trips yet")}`));
+    ${exploreAddCardTemplate(sc.key, groups[sc.key].length ? "" : "No trips yet")}
+    ${groups[sc.key].map((t) => exploreTripCardTemplate(t, sc.key)).join("")}`));
   if (groups.unsorted.length) {
     rows.push(recreateSectionTemplate("unsorted", "Not sorted yet", groups.unsorted.map((t) => exploreTripCardTemplate(t, null)).join("")));
   }
@@ -42355,6 +42373,7 @@ function openExploreScopeMenu(event, tripId) {
     ${ExploreScope.EXPLORE_SCOPES.map((sc) => `<button type="button" role="menuitem" data-explore-move="${sc.key}"${current === sc.key ? ' aria-checked="true"' : ""}>Move to ${escapeHtml(sc.label)}</button>`).join("")}
     ${current ? `<button type="button" role="menuitem" data-explore-move="">Sort by distance</button>` : ""}
     <button type="button" role="menuitem" data-explore-edit>Edit trip</button>
+    <button type="button" role="menuitem" data-explore-picture>${trip.image ? "Change picture" : "Add picture"}</button>
     <button type="button" role="menuitem" class="danger" data-explore-delete>Delete trip</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
@@ -42371,11 +42390,114 @@ function openExploreScopeMenu(event, tripId) {
     closeFolderMenu();
     showTravelEditTripDialog(tripId);
   });
+  menu.querySelector("[data-explore-picture]")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeFolderMenu();
+    showExploreTripPictureDialog(tripId);
+  });
   menu.querySelector("[data-explore-delete]")?.addEventListener("click", (e) => {
     e.stopPropagation();
     closeFolderMenu();
     deleteExploreTrip(tripId);
   });
+}
+
+// ── Trip pictures (Luke, 2026-10-27) ──
+// A trip's own picture replaces its row's default on its card. Stored as a path
+// in the public recipe-photos bucket (cached forever by the service worker — a
+// new upload gets a new name); only the path goes into state. Kept as PNG so a
+// transparent pictogram stays transparent on the card.
+const TRIP_PICTURE_MAX_W = 720;
+const TRIP_PICTURE_MAX_H = 360;
+
+async function tripPictureBlob(file) {
+  const image = await imageElementFromFile(file);
+  try {
+    const scale = Math.min(1, TRIP_PICTURE_MAX_W / image.naturalWidth, TRIP_PICTURE_MAX_H / image.naturalHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+    return await new Promise((resolve, reject) => canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("Could not prepare that picture."))), "image/png"));
+  } finally {
+    URL.revokeObjectURL(image.src);
+  }
+}
+
+async function uploadTripPicture(file, tripId) {
+  const session = authSession;
+  if (!supabaseClient || !session?.access_token) throw new Error("Sign in to add a picture.");
+  const blob = await tripPictureBlob(file);
+  const path = ExploreScope.tripImageStoragePath(session.user?.id || "household", tripId);
+  const { error } = await supabaseClient.storage.from("recipe-photos")
+    .upload(path, blob, { contentType: "image/png", cacheControl: "31536000", upsert: false });
+  if (error) throw new Error(error.message || "Upload failed.");
+  return path;
+}
+
+// Best effort: the old file is unreachable once the trip points elsewhere.
+function removeTripPictureFile(path) {
+  if (!path || !path.includes("/trips/") || !supabaseClient) return;
+  supabaseClient.storage.from("recipe-photos").remove([path]).catch(() => {});
+}
+
+function setTripPicture(tripId, path) {
+  const trip = travelTrips().find((t) => t.id === tripId);
+  if (!trip) return;
+  const old = ExploreScope.tripImagePath(trip);
+  if (path) trip.image = path; else delete trip.image;
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (old && old !== path) removeTripPictureFile(old);
+  refreshExploreTrips(exploreOpenTripId);
+}
+
+function showExploreTripPictureDialog(tripId) {
+  const trip = travelTrips().find((t) => t.id === tripId);
+  if (!trip) return;
+  const scopeKey = ExploreScope.tripScope(trip, { home: exploreHomePlace(), placeOf: explorePlaceOf });
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog explore-picture-dialog";
+  const draw = () => {
+    const src = ExploreScope.tripCardImageUrl(trip, scopeKey, exploreSupabaseUrl());
+    d.innerHTML = `
+      <div class="recipe-form">
+        <h3 style="margin:0 0 6px">Trip picture</h3>
+        <p class="explore-picture-note">${trip.image ? "This trip's own picture." : "Using the row's picture. Choose one to replace it on this trip's card."}</p>
+        <div class="explore-picture-preview">${src ? `<img src="${escapeHtml(src)}" alt="" />` : ""}</div>
+        <input type="file" accept="image/*" id="tripPictureFile" hidden />
+        <div class="explore-picture-actions">
+          ${trip.image ? `<button type="button" class="secondary-btn" id="tripPictureReset">Use row picture</button>` : ""}
+          <button type="button" class="secondary-btn" id="tripPictureClose">Done</button>
+          <button type="button" class="primary-btn" id="tripPictureChoose">${trip.image ? "Replace" : "Choose picture"}</button>
+        </div>
+      </div>`;
+    const input = d.querySelector("#tripPictureFile");
+    const choose = d.querySelector("#tripPictureChoose");
+    choose.addEventListener("click", () => input.click());
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      choose.disabled = true;
+      choose.textContent = "Uploading…";
+      try {
+        const path = await uploadTripPicture(file, trip.id);
+        setTripPicture(trip.id, path);
+        draw();
+      } catch (err) {
+        showMailToast(`Couldn't add the picture: ${err.message}`);
+        choose.disabled = false;
+        choose.textContent = trip.image ? "Replace" : "Choose picture";
+      }
+    });
+    d.querySelector("#tripPictureReset")?.addEventListener("click", () => { setTripPicture(trip.id, ""); draw(); });
+    d.querySelector("#tripPictureClose").addEventListener("click", () => d.close());
+  };
+  draw();
+  d.addEventListener("close", () => d.remove());
+  document.body.append(d);
+  d.showModal();
 }
 
 // "" clears the user's choice, so the trip is sorted by distance again.
@@ -42470,6 +42592,7 @@ function openExploreTrip(tripId) {
     `<span class="travel-meta-chip" id="exploreEditDatesBtn" title="Edit dates">📅 ${escapeHtml(dateStr)}${nightsStr}</span>` +
     `<span class="travel-meta-chip" id="exploreEditPartyBtn" title="Edit party">👥 ${escapeHtml(partyStr)}</span>` +
     destChip +
+    `<span class="travel-meta-chip" id="exploreEditPictureBtn" title="Trip picture">🖼️ ${trip.image ? "Picture" : "Add picture"}</span>` +
     travelModeBtn +
     `<button class="travel-ai-btn" id="exploreAskAiBtn" type="button" title="Plan with AI">✨ Ask AI</button>`;
   document.getElementById("exploreTravelModeBtn")?.addEventListener("click", () => enterTravelMode(trip.id));
@@ -42477,6 +42600,7 @@ function openExploreTrip(tripId) {
   document.getElementById("exploreEditDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
   document.getElementById("exploreEditPartyBtn")?.addEventListener("click", () => showTravelEditPartyDialog(trip));
   document.getElementById("exploreEditDestBtn")?.addEventListener("click", () => showTravelEditDestDialog(trip));
+  document.getElementById("exploreEditPictureBtn")?.addEventListener("click", () => showExploreTripPictureDialog(trip.id));
   document.getElementById("exploreAskAiBtn")?.addEventListener("click", () => {
     openAiPanel();
     const dest = trip.destination ? " to " + trip.destination : "";

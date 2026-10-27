@@ -180,7 +180,11 @@ try {
   })), "each row's cards show that row's picture");
   check(await page.evaluate(() => !document.querySelector("[data-explore-all]") && ![...document.querySelectorAll("#exploreLanding button")].some((b) => /all trips/i.test(b.textContent))), "no All trips button");
   check(rows.local?.join() === "t-still" && rows.state?.join() === "t-dul" && rows.country?.join() === "t-chi" && rows.world?.join() === "t-ams" && rows.unsorted?.join() === "t-mys", "trips sorted by distance from home", JSON.stringify(rows));
-  check(await page.evaluate(() => ["local", "state", "country", "world"].every((k) => document.querySelector(`[data-recreate-section="${k}"] .recreate-row > :last-child [data-explore-add="${k}"]`))), "each of the four rows ends with +");
+  check(await page.evaluate(() => ["local", "state", "country", "world"].every((k) => document.querySelector(`[data-recreate-section="${k}"] .recreate-row > :first-child [data-explore-add="${k}"]`))), "each of the four rows starts with New trip");
+  check(await page.evaluate(() => [["local", "local"], ["state", "regional"], ["country", "national"], ["world", "global"]].every(([k, n]) => {
+    const im = document.querySelector(`[data-explore-add="${k}"] img`);
+    return im && im.getAttribute("src") === `./explore-${n}.png` && im.complete && im.naturalWidth > 0;
+  })), "each New trip card shows its row's picture");
   check(await fits(), "Explore fits the phone width");
   await shot("explore");
   await page.click('[data-explore-card="t-chi"]');
@@ -189,9 +193,17 @@ try {
   check(await page.evaluate(() => !document.querySelector("#exploreMainPage .article-sidebar, #exploreTripList, #exploreSidebarToggle, #exploreSearchInput")), "the trip has no trips list or search beside it");
   check(await fits(), "an open trip fits the phone width");
   await shot("explore-trip");
+  await page.click("#exploreEditPictureBtn");
+  await page.waitForTimeout(200);
+  check(await page.isVisible(".explore-picture-dialog") && await page.evaluate(() => document.querySelector(".explore-picture-preview img")?.getAttribute("src") === "./explore-national.png"), "Add picture opens the trip picture window on the row's picture");
+  await shot("explore-picture");
+  await page.click("#tripPictureClose");
   await page.click("#exploreBackBtn");
   await page.waitForTimeout(200);
   check(await page.isVisible("#exploreLanding"), "back returns to the rows");
+  // New trip leads each row now, so a card may sit off to the right: scroll first.
+  await page.locator('[data-explore-card="t-chi"]').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
   await page.click('[data-explore-card="t-chi"]', { button: "right" });
   await page.click('[data-explore-move="world"]');
   await page.waitForTimeout(200);
