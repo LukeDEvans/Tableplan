@@ -1997,18 +1997,24 @@ function renderFinanceReviewDeck() {
               ${financeTxnLabelOptionsHtml("")}
             </select>
           </label>
-          <label class="fin-review-field">Name
-            <input type="text" class="fin-review-input" data-review-name value="${escapeHtml(nameVal)}" placeholder="${escapeHtml(t.description || "Merchant")}" aria-label="Merchant display name" />
-          </label>
-          <label class="fin-review-field">Note
-            <input type="text" class="fin-review-input" data-review-note value="${escapeHtml(noteVal)}" placeholder="Add a note (optional)" maxlength="60" aria-label="Purchase note" />
-          </label>
           <div class="fin-review-quick">${financeReviewQuickChipsHtml(t)}</div>
-          <div class="fin-review-actions">
-            <button class="fin-review-approve" type="button" data-fin-review-approve>✓ Approve</button>
-            <button class="fin-review-secondary" type="button" data-fin-review-more>Edit details…</button>
-            <button class="fin-review-secondary" type="button" data-fin-review-skip title="Remove from notifications; keeps a red dot on the transaction until you confirm it">Skip</button>
+          <!-- Name and note sit behind "Edit details…" (Luke, 2026-10-26) unless a
+               note is already set; the first tap shows them, the next opens the
+               full transaction. -->
+          <div class="fin-review-extra" data-review-extra${noteVal ? "" : " hidden"}>
+            <label class="fin-review-field">Name
+              <input type="text" class="fin-review-input" data-review-name value="${escapeHtml(nameVal)}" placeholder="${escapeHtml(t.description || "Merchant")}" aria-label="Merchant display name" />
+            </label>
+            <label class="fin-review-field">Note
+              <input type="text" class="fin-review-input" data-review-note value="${escapeHtml(noteVal)}" placeholder="Add a note (optional)" maxlength="60" aria-label="Purchase note" />
+            </label>
           </div>
+          <button class="fin-review-secondary fin-review-more" type="button" data-fin-review-more>${noteVal ? "More details…" : "Edit details…"}</button>
+        </div>
+        <!-- Pinned: always in the same place on every card, whatever scrolls above. -->
+        <div class="fin-review-actions fin-review-footer">
+          <button class="fin-review-secondary" type="button" data-fin-review-skip title="Remove from notifications; keeps a red dot on the transaction until you confirm it">Skip</button>
+          <button class="fin-review-approve" type="button" data-fin-review-approve>✓ Approve</button>
         </div>
         <div class="fin-review-hint" aria-hidden="true"><span>← skip</span><span>↑ ↓ browse</span><span>approve →</span></div>
       </div>
@@ -2200,7 +2206,19 @@ function wireFinanceReviewDeck(overlay) {
     const card = e.target.closest(".fin-review-card");
     if (e.target.closest("[data-fin-review-approve]")) { approveFinanceReviewCard(card); return; }
     if (e.target.closest("[data-fin-review-skip]")) { skipFinanceReviewCard(card); return; }
-    if (e.target.closest("[data-fin-review-more]")) { openFinanceTxnDetailFromReview(card); return; }
+    const moreBtn = e.target.closest("[data-fin-review-more]");
+    if (moreBtn) {
+      // First tap shows the card's name and note; the next opens the full transaction.
+      const extra = card?.querySelector("[data-review-extra]");
+      if (extra?.hidden) {
+        extra.hidden = false;
+        moreBtn.textContent = "More details…";
+        extra.querySelector("[data-review-name]")?.focus({ preventScroll: true });
+        return;
+      }
+      openFinanceTxnDetailFromReview(card);
+      return;
+    }
     if (e.target.closest("[data-fin-review-flip]")) { flipFinanceReviewCardSign(card); return; }
     if (e.target.closest("[data-fin-review-split]")) { handoffFinanceReviewCard(card, "split"); return; }
     if (e.target.closest("[data-fin-review-receipt]")) { handoffFinanceReviewCard(card, "receipt"); return; }

@@ -22401,6 +22401,20 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-field { max-width: 360px; width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); text-align: left; margin-top: 4px; }
 .fin-review-label, .fin-review-input { width: 100%; font-size: 1rem; padding: 11px 13px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); border-radius: 9px; background: var(--input-bg, var(--window-bg)); color: var(--ink); font-family: inherit; text-transform: none; letter-spacing: normal; }
 .fin-review-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 360px; width: 100%; margin-top: 14px; }
+/* Approve / Skip pinned at the foot of every review card (Luke, 2026-10-26): the
+   details scroll above; these never move or fall below the fold. */
+.fin-review-footer { flex: 0 0 auto; flex-wrap: nowrap; align-self: center; margin-top: 0; padding: 10px 24px 4px; box-sizing: border-box; max-width: 408px; border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.fin-review-footer .fin-review-approve { flex: 2 1 0; }
+.fin-review-footer .fin-review-secondary { flex: 1 1 0; }
+.fin-review-extra { display: contents; }
+.fin-review-extra[hidden] { display: none; }
+.fin-review-more { flex: 0 0 auto; margin-top: 6px; }
+@media (max-width: 560px) {
+  .fin-review-body { gap: 8px; padding: 16px 18px 12px; }
+  .fin-review-amount { font-size: 1.9rem; }
+  .fin-review-merchant { font-size: 1.1rem; }
+  .fin-review-quick { margin-top: 6px; }
+}
 .fin-review-approve { flex: 1 1 100%; padding: 13px 16px; font-size: 1rem; font-weight: 800; color: var(--on-accent); background: var(--accent); border: none; border-radius: 10px; cursor: pointer; }
 .fin-review-approve:hover { background: var(--accent-dark); }
 .fin-review-secondary { flex: 1 1 40%; padding: 10px 12px; font-size: 0.85rem; font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, transparent); border: none; border-radius: 9px; cursor: pointer; }
