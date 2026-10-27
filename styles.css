@@ -18,8 +18,10 @@
   --ink: #21201d;
   --muted: #6f6a60;
   --line: #ded7cb;
-  --accent: #32b496;
-  --accent-dark: #237f69;
+  /* Classic, deeper for legibility (preview, 2026-10-26): text and white-on-teal
+     buttons reach 4.5:1 (was #32b496, 2.6:1 on white). */
+  --accent: #1b7560;
+  --accent-dark: #145a4a;
   --accent-soft: #d9f4ed;
   --tomato: #c94d32;
   --tomato-soft: #f6ded7;
