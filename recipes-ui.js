@@ -149,6 +149,14 @@ export function normalizeCookLog(log) {
 // Recently deleted (SETTINGS_AUDIT.md; Luke, 2026-10-14): a deleted recipe is kept
 // for TRASH_RETENTION_DAYS, then purged for good. Pure, so it's testable.
 export const TRASH_RETENTION_DAYS = 30;
+// Recipes whose row content differs from what's stored (remoteKeys: id → stored key).
+// Without the stored keys, every recipe counts as changed.
+export function recipesNeedingRowWrite(recipes, remoteKeys, keyOf) {
+  const list = Array.isArray(recipes) ? recipes : [];
+  if (!(remoteKeys instanceof Map)) return list.slice();
+  return list.filter((recipe) => remoteKeys.get(recipe?.id) !== keyOf(recipe));
+}
+
 export function isTrashExpired(item, now = Date.now(), days = TRASH_RETENTION_DAYS) {
   const at = Date.parse(item?.deletedAt || "");
   if (!Number.isFinite(at)) return false; // no usable date: keep it rather than lose it
@@ -513,12 +521,16 @@ async function hydrateRecipeRowsFromSupabase() {
     ]);
 
     if (folders.length || recipes.length) {
+      lastUpsertedFolderKey = folderRowsKey(folders);
       state.folders = folders;
       state.recipes = recipes;
       migrateRecipeFoldersToTags(state);
       mirrorStateToLocalStorage();
       setRowStorageReady(true);
-      await writeAllRecipeRowsToSupabase();
+      // Write back only the recipes whose row would actually change (a local edit that
+      // didn't reach the row, a folder→tag migration). Re-upserting all of them on every
+      // open bumped every updated_at and let a stale device overwrite newer fields.
+      await writeChangedRecipeRowsToSupabase(recipes);
       render();
       scheduleLocalBackup();
       scheduleWebsitePhotoBackfill();
@@ -576,11 +588,33 @@ async function loadRecipeRowsFromSupabase() {
   }
   if (!response.ok) throw new Error(`Recipe row load failed with status ${response.status}`);
   const rows = await response.json();
-  return rows.map(recipeFromRow).map(normalizeRecipe);
+  const recipes = rows.map((row) => normalizeRecipe(recipeFromRow(row)));
+  // What each row holds on its own (no local values mixed in), so hydration can tell
+  // which recipes need writing back.
+  const remoteKeys = new Map(rows.map((row) => [row.id, recipeRowKey(normalizeRecipe(recipeFromRow(row, { ignoreLocal: true })))]));
+  Object.defineProperty(recipes, "remoteKeys", { value: remoteKeys, enumerable: false });
+  return recipes;
 }
 
-function recipeFromRow(row) {
-  const localRecipe = state.recipes?.find((recipe) => recipe.id === row.id);
+// A recipe's row content, minus the write time, for comparing with what's stored.
+function recipeRowKey(recipe) {
+  const { updated_at, ...row } = recipeToRow(recipe);
+  return JSON.stringify(row);
+}
+
+async function writeChangedRecipeRowsToSupabase(loaded) {
+  if (!rowStorageCanWrite()) return;
+  const remoteKeys = loaded?.remoteKeys;
+  const changed = recipesNeedingRowWrite(activeRecipes(), remoteKeys, recipeRowKey);
+  const folders = normalizedFolders();
+  await Promise.all([
+    folderRowsKey(folders) !== lastUpsertedFolderKey ? upsertFolderRows(folders) : Promise.resolve(),
+    upsertRecipeRows(changed)
+  ]);
+}
+
+function recipeFromRow(row, { ignoreLocal = false } = {}) {
+  const localRecipe = ignoreLocal ? null : state.recipes?.find((recipe) => recipe.id === row.id);
   // If local recipe was updated more recently than the stored row (e.g. a row write failed),
   // prefer local values for fields that might be stale in row storage.
   const localIsNewer = Boolean(localRecipe?.updatedAt && (!row.updated_at || localRecipe.updatedAt > row.updated_at));
