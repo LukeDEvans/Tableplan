@@ -34,8 +34,9 @@ changes to the Health / Nutrition / Exercise domain only.
   `#exercise`). Since 2026-10-17 (Luke) it has the Recreate look: a row per kind —
   **Strength** (reps), **Cardio** (timed), **Games** — of sideways-scrolling workout cards,
   each row ending in a **+** that starts a workout of that kind
-  (`openNewWorkoutDialog(type)`). Hold a card for Edit / Delete (`wireWorkoutPoolCards`
-  with `longPress`).
+  (`openNewWorkoutDialog(type)`). Hold a card (or right-click) for Edit / Delete
+  (`wireWorkoutPoolCards` with `longPress`); the old swipe-to-edit was removed
+  2026-10-26 (Luke) — don't bring it back, a sideways swipe scrolls the row.
 
 ## Domain landmines (do NOT change without flagging)
 - **This domain overlaps with Recipes / Meal-Plan.** `daily-dozen.js`,

@@ -60,7 +60,10 @@ try {
     check(!(await card.locator("[data-meal-note]").isVisible()), "an empty note box stays hidden");
     if (SHOT) await page.screenshot({ path: `${SHOT}-${width}-card.png` });
 
-    // + → Note
+    // + → Note. Bring the card into view first: a click that has to scroll the
+    // day carousel fires a scroll event, and any scroll closes open menus.
+    await add.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(400);
     await add.click();
     const menu = page.locator(".meal-context-add-menu");
     check(await menu.isVisible() && (await menu.locator("button").allTextContents()).map((t) => t.trim()).join(",") === "Event,Note", "the + opens a menu: Event, Note");

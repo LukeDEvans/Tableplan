@@ -111,7 +111,7 @@ async function loadState(serviceKey) {
 }
 async function getAdminUid(headers, groupId) {
   try {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/live_group_members?group_id=eq.${encodeURIComponent(groupId)}&role=eq.admin&select=user_id&limit=1`, { headers });
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/live_group_members?group_id=eq.${encodeURIComponent(groupId)}&role=eq.admin&select=user_id&order=joined_at.asc,user_id.asc&limit=1`, { headers });
     if (!r.ok) return null;
     return (await r.json())[0]?.user_id || null;
   } catch { return null; }

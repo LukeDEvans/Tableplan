@@ -51,7 +51,7 @@ import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.
 import { normalizeExternalEvent } from './calendar/normalize.js';
 import { buildSharedSnapshot, mealPlanDisplayEvents, mealPlanEventsFromScope, mergeMealPlanSharedEvents, normalizeMealPlanCalendarFlags, normalizeMealPlanSharedEvents } from './calendar/meal-plan-share.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
-import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
+import { taskIsScheduled, dedupeRecurringTaskInstances, setTaskDoneInDoData } from './calendar/tasks-project.js';
 import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googleReminderMinutes, googleEventStart } from './calendar/google.js';
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
@@ -814,7 +814,6 @@ let readingLogPendingId = null;
 let readingLogRating = null;
 let inventoryDragItemId = null;
 let doTaskSwipeGesture = null;
-let workoutPoolSwipeGesture = null;
 let lastMealDragPoint = null;
 
 // ── Shared media playback speed (persisted across sessions & players) ─────────
@@ -1923,7 +1922,7 @@ const _groceries = createGroceriesModule({
   getPendingAutoRuleIngredientSelection: () => pendingAutoRuleIngredientSelection,
   clearPendingMealIngredientSelection: () => { pendingMealIngredientSelection = null; },
   clearPendingAutoRuleIngredientSelection: () => { pendingAutoRuleIngredientSelection = null; },
-  activeRecipes: (...a) => activeRecipes(...a), applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule: (...a) => chooseIngredientForPendingAutoRule(...a),
+  activeRecipes: (...a) => activeRecipes(...a), applyScanImageAction, canUseLocalBackend, isLocalDevHost: () => isLocalDevHost(), chooseIngredientForPendingAutoRule: (...a) => chooseIngredientForPendingAutoRule(...a),
   chooseIngredientForPendingMeal: (...a) => chooseIngredientForPendingMeal(...a), closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu: (...a) => closeFolderMenu(...a),
   closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey,
   dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent,
@@ -2494,7 +2493,7 @@ function bindEvents() {
   document.getElementById("lockSignInBtn")?.addEventListener("click", () => elements.authDialog.showModal());
   // Local-dev escape hatch on the gate — only shown on localhost.
   const lockDevBtn = document.getElementById("lockDevSignInBtn");
-  if (lockDevBtn && canUseLocalBackend()) {
+  if (lockDevBtn && isLocalDevHost()) {
     lockDevBtn.hidden = false;
     lockDevBtn.addEventListener("click", signInLocalDev);
   }
@@ -3079,7 +3078,7 @@ function bindEvents() {
     if (sharedStorageReady && activeSharedStorageProvider) {
       writeStateToSharedStorage().catch(() => {});
     }
-    if (canUseLocalBackend()) {
+    if (isLocalDevHost()) {
       writeLocalBackup().catch(() => {});
     }
   });
@@ -3179,7 +3178,7 @@ async function initializeApp() {
   handleInviteUrlParameter();
   // Localhost dev mode persists across reloads via the live_local_dev flag; when
   // set, skip Supabase entirely and boot straight against the local backend.
-  if (canUseLocalBackend() && localStorage.getItem("live_local_dev") === "1") {
+  if (isLocalDevHost() && localStorage.getItem("live_local_dev") === "1") {
     await signInLocalDev();
   } else {
     await initializeSupabaseAuth();
@@ -3413,7 +3412,7 @@ function updateAppLockState() {
 // state from the local file backend (server.js), no Supabase. Persists a flag so
 // reloads stay in dev mode until the user logs out. Localhost-only.
 async function signInLocalDev() {
-  if (!canUseLocalBackend()) return;
+  if (!isLocalDevHost()) return;
   // When auto-entered on boot (via the live_local_dev flag) this runs during
   // module evaluation. Yield once so the rest of the module finishes evaluating
   // first — otherwise touching any module-level `let` declared below here throws
@@ -3975,6 +3974,10 @@ function setupDiagnostics() {
     planSeedForQa: (events) => { if (!localDevMode) return null; state.planEvents = events; planRangeCache.clear(); persist(); return true; },
     planEventsInRangeForQa: (a, b) => (localDevMode ? getPlanEventsForRange(a, b).map((e) => ({ id: e.id, title: e.title, source: e.source, layerView: e.layerView || null })) : null),
     setLayerForQa: (view, on) => { if (!localDevMode) return null; setPlanLayer(view, on); return true; },
+    // Household tasks in Personal's Tasks list (qa-views): put a household "do" copy on
+    // the device and read it back. Local dev only.
+    openTasksForQa: () => { if (!localDevMode) return null; showDoApp(); renderDoPlanner(); return true; },
+    householdTasksForQa: (data) => { if (!localDevMode) return null; if (data !== undefined) { setShadowData("do", "household", data); persistShadowSections(); planRangeCache.clear(); } return { data: shadowData("do", "household"), weekKey: weekKey(), dayId: activePlannerDayId }; },
     personalFinanceForQa: (on) => { if (!localDevMode) return null; setPersonalFinanceFlag(on); return true; },
     shadowOnDeviceForQa: () => (localDevMode ? Object.keys(JSON.parse(localStorage.getItem("live-shadow-sections-v2") || "{}")) : null),
     tickerGameForQa: (dateKey, id) => { if (!localDevMode) return null; openTickerGameCard(dateKey, id); return true; },
@@ -4943,20 +4946,34 @@ async function setAdminDisabledPage(page, disabled) {
   updateSettingsMenuOptions();
 }
 
-async function setGroupMemberRole(userId, newRole) {
+// Settings › Household role picker (Luke, 2026-10-26). Roles can only change on the
+// server (household-role.js checks the caller is the admin, the person is in the
+// same household, and an admin always remains); RLS blocks it from the app.
+async function setGroupMemberRole(userId, newRole, selectEl = null) {
   if (!userGroup?.id || userGroup.role !== "admin") return;
-  if (!["hoh", "member"].includes(newRole)) return;
-  const res = await fetch(
-    `${supabaseBaseUrl()}/rest/v1/live_group_members?group_id=eq.${userGroup.id}&user_id=eq.${encodeURIComponent(userId)}`,
-    {
-      method: "PATCH",
-      headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
-      body: JSON.stringify({ role: newRole })
-    }
-  );
-  if (!res.ok) { console.warn("Could not update member role"); return; }
+  if (!["admin", "member"].includes(newRole)) return;
+  const member = groupMembers.find((gm) => gm.user_id === userId);
+  const revert = () => { if (selectEl && member?.role) selectEl.value = member.role === "admin" ? "admin" : "member"; };
+  if (newRole === "admin" && !window.confirm(`Make ${member?.display_name || "this person"} an admin? Admins can change household settings and other members' roles (never yours, as the household's creator), switch between Personal, Household and Business, and use the admin tools, which list every user's email and birthday.`)) {
+    revert();
+    return;
+  }
+  try {
+    const res = await fetch("/.netlify/functions/household-role", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
+      body: JSON.stringify({ userId, role: newRole })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Couldn't change the role.");
+  } catch (error) {
+    revert();
+    showMailToast(error.message || "Couldn't change the role.");
+    return;
+  }
   await loadGroupMembers();
   renderContextSettingsDialog("family");
+  showMailToast(newRole === "admin" ? "Now an admin." : "Now a member.");
 }
 
 function loadState() {
@@ -5241,7 +5258,7 @@ async function persistImmediately(label = "saving") {
   if (sharedStorageReady && activeSharedStorageProvider) {
     writes.push(writeStateToSharedStorage());
   }
-  if (canUseLocalBackend()) {
+  if (isLocalDevHost()) {
     writes.push(writeLocalBackup());
   }
   if (!writes.length) return;
@@ -5704,6 +5721,10 @@ function normalizeState(parsed) {
     podcastTierCount: deriveMediaTierCount(parsed?.podcastTierCount, parsed?.podcastShowTiers, parsed?.publicationTiers),
     podcastPrioritySort: parsed?.podcastPrioritySort === "newest" ? "newest" : "oldest"
   };
+  // Queue windows longer than a month no longer exist (see RECENT_WINDOW_OPTIONS).
+  for (const key of ["podcastPlaylistWindow", "podcastRecentWindow"]) {
+    if (normalized[key] === "2months" || normalized[key] === "3months") normalized[key] = "month";
+  }
   ensureGroceryCatalog(normalized);
   ensureDailyDozenSeedTags(normalized);
   normalized.personChecklistSettings = LiveFoodHealth.normalizePersonSettings(
@@ -7745,7 +7766,7 @@ function updateSyncStatus(status) {
 }
 
 function scheduleLocalBackup() {
-  if (!canUseLocalBackend()) return;
+  if (!isLocalDevHost()) return;
   window.clearTimeout(localBackupTimer);
   localBackupTimer = window.setTimeout(() => {
     writeLocalBackup().catch((error) => console.warn("Local backup failed.", error));
@@ -7753,7 +7774,7 @@ function scheduleLocalBackup() {
 }
 
 async function writeLocalBackup(options = {}) {
-  if (!canUseLocalBackend()) return;
+  if (!isLocalDevHost()) return;
   const response = await fetch("/api/backup", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -7770,7 +7791,7 @@ async function writeLocalBackup(options = {}) {
 }
 
 async function snapshotBeforeSharedStateReplacement(sharedState, providerLabel) {
-  if (!canUseLocalBackend() || !hasRecoverableUserState(state)) return;
+  if (!isLocalDevHost() || !hasRecoverableUserState(state)) return;
   if (recoverableStateSignature(state) === recoverableStateSignature(sharedState)) return;
   try {
     await writeLocalBackup({
@@ -7836,7 +7857,7 @@ function mealSlotsHaveEntries(slots) {
 }
 
 async function tryPreChangeBackup(actionLabel) {
-  if (!canUseLocalBackend()) return true;
+  if (!isLocalDevHost()) return true;
   window.clearTimeout(localBackupTimer);
   try {
     await writeLocalBackup();
@@ -7896,7 +7917,7 @@ async function loadStateFromLocalBackend() {
 }
 
 async function writeStateToLocalBackend() {
-  if (!canUseLocalBackend()) return;
+  if (!isLocalDevHost()) return;
   await fetch("/api/state", {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -8222,7 +8243,7 @@ function sharedStorageProviders() {
       load: loadStateFromSupabase,
       write: writeStateToSupabase
     });
-  } else if (canUseLocalBackend()) {
+  } else if (isLocalDevHost()) {
     providers.push({
       label: "Local file",
       load: loadStateFromLocalBackend,
@@ -8301,9 +8322,20 @@ function supabaseHeaders() {
   };
 }
 
+// True on localhost — and also in the iPhone app, whose origin is
+// capacitor://localhost. That's on purpose for the URL helpers: they return
+// "/api/<name>" here and native-bridge.js nativeApiPath maps it to the real
+// function. For anything that means "a developer's machine" use isLocalDevHost().
 function canUseLocalBackend() {
   const { hostname, port } = window.location;
   return ["localhost", "127.0.0.1"].includes(hostname) || port === "4174";
+}
+
+// A developer's machine running the local dev server — never the iPhone app
+// (ISSUES.md P2, 2026-10-03). Gates the local file backend, local backups, the
+// lock screen's "Continue in local dev mode" and dev-only console hooks.
+function isLocalDevHost() {
+  return canUseLocalBackend() && !isNativeApp();
 }
 
 function createId(prefix = "id") {
@@ -12682,6 +12714,7 @@ function initDoPlannerDelegation() {
     const dayTab = e.target.closest("[data-do-day-tab]");
     if (dayTab) { selectPlannerDay(dayTab.dataset.doDayTab); return; }
     if (e.target.closest("[data-open-add-task]")) { openAddTaskDialog(); return; }
+    if (e.target.closest("[data-household-task-open]")) { openTasksInView("household"); return; }
     const detail = e.target.closest("[data-do-task-detail]");
     if (detail) { openDoTaskDetail(detail.dataset.doDay, detail.dataset.doTaskDetail); return; }
     const del = e.target.closest("[data-do-task-delete]");
@@ -12694,6 +12727,8 @@ function initDoPlannerDelegation() {
   });
 
   grid.addEventListener("change", (e) => {
+    const householdToggle = e.target.closest("[data-household-task-toggle]");
+    if (householdToggle) { setHouseholdTaskDone(householdToggle.dataset.householdTaskDay, householdToggle.dataset.householdTaskToggle, householdToggle.checked); return; }
     const toggle = e.target.closest("[data-do-task-toggle]");
     if (toggle) { toggleDoTask(toggle.dataset.doDay, toggle.dataset.doTaskToggle, toggle.checked); return; }
     // Suggested section: checking an item marks that task done for the week.
@@ -12811,6 +12846,7 @@ function renderDoPlanner() {
           <div class="do-task-list" data-do-task-drop-day="${activeDay.id}">
             ${doTaskListTemplate(activeDay.id)}
           </div>
+          ${householdLayerTaskGroupHtml(activeDay.id)}
         </div>
       </section>
       <section class="day-column planner-day-panel do-backlog-panel" aria-label="Chores">
@@ -12827,6 +12863,7 @@ function renderDoPlanner() {
           <div class="do-task-list" data-do-backlog-drop>
             ${doBacklogListTemplate()}
           </div>
+          ${householdLayerTaskGroupHtml("backlog")}
         </div>
       </section>
     </div>
@@ -12850,6 +12887,115 @@ function doDayTabTemplate(day, isActive) {
       <strong class="day-tab-date day-tab-date-short">${escapeHtml(shortDateLabel)}</strong>
     </button>
   `;
+}
+
+// ── Household tasks in Personal's Tasks list (Luke, 2026-10-26) ─────────────
+// With the Household layer on in the Personal calendar, Personal's Tasks list
+// shows the household's tasks for the same day (and its chores) in their own
+// "Household" group. Ticking one writes just that task to the household's row
+// (setHouseholdTaskDone); tapping its title opens Tasks in Household.
+function householdLayerTasksOn() {
+  return currentViewKey() === "personal" && sectionScope("do") === "personal" && planLayerViews().includes("household");
+}
+
+function householdLayerTasks(dayId) {
+  if (!householdLayerTasksOn()) return [];
+  const data = shadowData("do", "household");
+  if (!data) return [];
+  if (dayId === "backlog") {
+    const key = weekKey();
+    return normalizeDoTasks(data.doBacklog).filter((t) => !t.done || !t.weekKey || t.weekKey === key);
+  }
+  return normalizeDoTasks(data.doPlans?.[weekKey()]?.[dayId]);
+}
+
+function householdLayerTaskGroupHtml(dayId) {
+  const tasks = sortDoTasksForDisplay(householdLayerTasks(dayId));
+  if (!tasks.length) return "";
+  return `
+    <div class="do-layer-group" aria-label="Household tasks">
+      <div class="do-layer-head">${escapeHtml(VIEW_LABELS.household || "Household")}</div>
+      ${tasks.map((task) => {
+        const timeLabel = formatTaskTime(task.time);
+        return `
+        <article class="do-task-item do-layer-task ${task.done ? "is-done" : ""}">
+          <div class="do-task-main">
+            <input type="checkbox" class="do-task-check" data-household-task-toggle="${escapeHtml(task.id)}" data-household-task-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} done (Household)" />
+            <button type="button" class="do-task-title" data-household-task-open title="Open in Household">
+              <span class="do-task-title-text">${escapeHtml(task.title)}</span>
+              ${timeLabel ? `<span class="do-task-time">${escapeHtml(timeLabel)}</span>` : ""}
+            </button>
+          </div>
+        </article>`;
+      }).join("")}
+    </div>`;
+}
+
+// Writes ONE household task's done flag. The household row is read fresh, the
+// tick applied to that copy (setTaskDoneInDoData), and the row written back only
+// if nobody changed it in between (updated_at match; retried twice). So this
+// device's possibly older copy of the household's tasks can never revert anyone
+// else's edits — the risk a whole-section write from Personal would carry.
+async function setHouseholdTaskDone(dayId, taskId, done, attempt = 0, before = shadowData("do", "household")) {
+  const key = weekKey();
+  const local = before; // the household copy as it was before this tick (kept across retries for the rollback)
+  const optimistic = setTaskDoneInDoData(local, key, dayId, taskId, done);
+  if (optimistic && attempt === 0) {
+    setShadowData("do", "household", optimistic);
+    persistShadowSections();
+    planRangeCache.clear();
+    renderDoPlanner();
+  }
+  if (localDevMode || !canUseCloudStorage() || !authSession?.access_token) return;
+  const stateId = supabaseConfig().stateId;
+  const rowId = rowIdForScope(scopeRowIds(stateId), "do", "household");
+  const keys = STATE_SECTIONS.do || [];
+  const failed = (message) => {
+    if (local) setShadowData("do", "household", local); // put the household copy back as it was
+    persistShadowSections();
+    planRangeCache.clear();
+    renderDoPlanner();
+    showMailToast(message);
+  };
+  try {
+    const res = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`, { headers: supabaseHeaders(), cache: "no-store" });
+    if (!res.ok) throw new Error(String(res.status));
+    const row = (await res.json())[0];
+    if (!row) { failed("Couldn't find the household's tasks."); return; }
+    const { stateUpdatedAt, ...remote } = row.state || {};
+    const next = setTaskDoneInDoData(remote, key, dayId, taskId, done);
+    if (!next) { // removed or moved on another device: show the household's copy as it is now
+      const fresh = {};
+      for (const k of keys) if (remote[k] !== undefined) fresh[k] = remote[k];
+      setShadowData("do", "household", fresh);
+      persistShadowSections();
+      planRangeCache.clear();
+      renderDoPlanner();
+      showMailToast("That task changed in Household. The list is up to date now.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const upd = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(row.updated_at)}&select=updated_at`,
+      { method: "PATCH", headers: { ...supabaseHeaders(), Prefer: "return=representation" }, body: JSON.stringify({ state: { ...next, stateUpdatedAt: now }, updated_at: now }) }
+    );
+    if (!upd.ok) throw new Error(String(upd.status));
+    const updRows = await upd.json();
+    if (!updRows.length) {
+      if (attempt >= 2) throw new Error("conflict");
+      return setHouseholdTaskDone(dayId, taskId, done, attempt + 1, before);
+    }
+    lastSeenSectionStamp[rowId] = updRows[0].updated_at || now;
+    const fresh = {};
+    for (const k of keys) if (next[k] !== undefined) fresh[k] = next[k];
+    setShadowData("do", "household", fresh);
+    persistShadowSections();
+    planRangeCache.clear();
+    renderDoPlanner();
+  } catch (error) {
+    console.warn("[household task] tick failed:", error?.message);
+    failed("Couldn't update the household task. Check your connection and try again.");
+  }
 }
 
 function renderTasksPage() {
@@ -14974,38 +15120,17 @@ function renderPlayPlanner() {
   });
 }
 
-// Wire workout cards (workoutPoolCardTemplate) inside `root`: tap → record,
-// right-click → Edit/Delete menu. `swipe` adds swipe-left-to-reveal Edit/Delete
-// (the Exercise grid only — in Recreate's horizontal row a sideways swipe scrolls,
-// so the row uses `longPress` instead: hold a card to get the same menu).
-function wireWorkoutPoolCards(root, { swipe = false, longPress = false } = {}) {
+// Wire workout cards (workoutPoolCardTemplate) inside `root`: tap → record;
+// hold (touch) or right-click → Edit/Delete menu. The cards sit in sideways-
+// scrolling rows, so there's no swipe gesture (removed 2026-10-26, Luke).
+function wireWorkoutPoolCards(root, { longPress = false } = {}) {
   root.querySelectorAll("[data-record-workout]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const wrap = btn.closest(".workout-pool-card-wrap");
-      if (wrap?.classList.contains("is-swiped")) { wrap.classList.remove("is-swiped"); return; }
-      openWorkoutRecordingDialog(btn.dataset.recordWorkout);
-    });
+    btn.addEventListener("click", () => openWorkoutRecordingDialog(btn.dataset.recordWorkout));
     btn.addEventListener("contextmenu", (event) => {
       if (btn.dataset.lpFired) { event.preventDefault(); return; } // the long-press already opened it
       openWorkoutPoolContextMenu(event, btn.dataset.recordWorkout);
     });
     if (longPress) wireWorkoutCardLongPress(btn);
-    const wrap = btn.closest(".workout-pool-card-wrap");
-    if (wrap && swipe) {
-      wrap.addEventListener("pointerdown", handleWorkoutPoolPointerDown);
-      wrap.addEventListener("pointermove", handleWorkoutPoolPointerMove);
-      wrap.addEventListener("pointerup", handleWorkoutPoolPointerEnd);
-      wrap.addEventListener("pointercancel", handleWorkoutPoolPointerEnd);
-    }
-  });
-  root.querySelectorAll("[data-swipe-edit-workout]").forEach((btn) => {
-    btn.addEventListener("click", () => openWorkoutDetail({ workoutId: btn.dataset.swipeEditWorkout }));
-  });
-  root.querySelectorAll("[data-swipe-delete-workout]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const workout = normalizeWorkouts(state.workouts).find((w) => w.id === btn.dataset.swipeDeleteWorkout);
-      if (workout && window.confirm(`Delete "${workout.title}"? All logs will be removed.`)) deleteWorkout(btn.dataset.swipeDeleteWorkout);
-    });
   });
 }
 
@@ -15056,35 +15181,6 @@ function openWorkoutPoolContextMenu(event, workoutId) {
   deleteBtn.addEventListener("pointerdown", doDelete);
   deleteBtn.addEventListener("mousedown", doDelete);
   deleteBtn.addEventListener("click", doDelete);
-}
-
-function handleWorkoutPoolPointerDown(event) {
-  if (event.pointerType !== "touch") return;
-  if (event.target.closest(".workout-pool-swipe-actions")) return;
-  const wrap = event.currentTarget;
-  document.querySelectorAll(".workout-pool-card-wrap.is-swiped").forEach((w) => {
-    if (w !== wrap) w.classList.remove("is-swiped");
-  });
-  workoutPoolSwipeGesture = { wrap, startX: event.clientX, startY: event.clientY, active: false };
-}
-
-function handleWorkoutPoolPointerMove(event) {
-  if (!workoutPoolSwipeGesture || workoutPoolSwipeGesture.wrap !== event.currentTarget) return;
-  const dx = event.clientX - workoutPoolSwipeGesture.startX;
-  const dy = event.clientY - workoutPoolSwipeGesture.startY;
-  if (Math.abs(dy) > 20 && Math.abs(dy) > Math.abs(dx)) { workoutPoolSwipeGesture = null; return; }
-  if (dx < -28) {
-    workoutPoolSwipeGesture.active = true;
-    event.currentTarget.classList.add("is-swiped");
-  } else if (dx > 18) {
-    event.currentTarget.classList.remove("is-swiped");
-  }
-}
-
-function handleWorkoutPoolPointerEnd(event) {
-  if (!workoutPoolSwipeGesture || workoutPoolSwipeGesture.wrap !== event.currentTarget) return;
-  if (!workoutPoolSwipeGesture.active) event.currentTarget.classList.remove("is-swiped");
-  workoutPoolSwipeGesture = null;
 }
 
 function lastWorkoutLog(workoutId) {
@@ -15140,10 +15236,6 @@ function workoutPoolCardTemplate(workout) {
         <span class="workout-pool-title">${escapeHtml(workout.title)}</span>
         <span class="workout-pool-last">${escapeHtml(summary)}</span>
       </button>
-      <div class="workout-pool-swipe-actions" aria-hidden="true">
-        <button class="workout-pool-swipe-btn workout-pool-swipe-edit" type="button" data-swipe-edit-workout="${escapeHtml(workout.id)}">Edit</button>
-        <button class="workout-pool-swipe-btn workout-pool-swipe-delete" type="button" data-swipe-delete-workout="${escapeHtml(workout.id)}">Delete</button>
-      </div>
     </div>
   `;
 }
@@ -18287,10 +18379,12 @@ function renderContextSettingsDialog(kind) {
       const isLinked = !!m.linkedUserId;
       const isCurrentUser = currentUserId && m.linkedUserId === currentUserId;
       const role = roleOf(m);
-      const roleControl = viewerIsAdmin && isLinked && !isCurrentUser && role && role !== "admin"
+      // The admin can change anyone else's role (your own stays, so the household
+      // always keeps an admin). Roles are Admin and Member (2026-10-26).
+      const roleControl = viewerIsAdmin && isLinked && !isCurrentUser && role
         ? `<select class="config-input household-role-select" data-member-role aria-label="Role">
-            <option value="hoh" ${role === "hoh" ? "selected" : ""}>HoH</option>
-            <option value="member" ${role === "member" ? "selected" : ""}>Member</option>
+            <option value="admin" ${role === "admin" ? "selected" : ""}>Admin</option>
+            <option value="member" ${role !== "admin" ? "selected" : ""}>Member</option>
           </select>`
         : (role ? `<span class="household-role household-role--${escapeHtml(role)}">${escapeHtml(roleLabel(role))}</span>` : "");
       return `
@@ -18598,7 +18692,7 @@ function handleContextSettingsChange(event) {
   if (memberRoleSelect) {
     const row = memberRoleSelect.closest("[data-member-row]");
     const userId = row?.dataset.memberLinkedUserId;
-    if (userId) setGroupMemberRole(userId, memberRoleSelect.value);
+    if (userId) setGroupMemberRole(userId, memberRoleSelect.value, memberRoleSelect);
   }
 }
 
@@ -19197,7 +19291,7 @@ function closeRestoreDialog() {
 
 async function loadRestoreBackupList() {
   loadCloudBackupList();
-  if (!canUseLocalBackend()) {
+  if (!isLocalDevHost()) {
     elements.restoreBackupList.hidden = true;
     delete elements.restoreFileLabel.dataset.secondary;
     elements.restorePreview.textContent = "Choose a backup above or upload a JSON file to preview what will be restored.";
@@ -29405,7 +29499,7 @@ if (typeof window !== "undefined") window.LiveMedia = { api: mediaApi };
 // state/persist aren't otherwise console-reachable). Gated on canUseLocalBackend()
 // so it never exists in production. Lets you pick a voice and drop a ready-to-play
 // test article from the console:  LiveVoiceQA.use("bella");  LiveVoiceQA.addTestArticle();
-if (typeof window !== "undefined" && canUseLocalBackend()) {
+if (typeof window !== "undefined" && isLocalDevHost()) {
   window.LiveVoiceQA = {
     use(voiceId) {
       const cur = state.aiSettings?.voice || {};
@@ -32943,8 +33037,9 @@ const RECENT_WINDOW_OPTIONS = [
   { value: "2weeks",   label: "Past 2 weeks",  ms: 14 * 24 * 60 * 60 * 1000 },
   { value: "3weeks",   label: "Past 3 weeks",  ms: 21 * 24 * 60 * 60 * 1000 },
   { value: "month",    label: "Past month",    ms: 30 * 24 * 60 * 60 * 1000 },
-  { value: "2months",  label: "Past 2 months", ms: 60 * 24 * 60 * 60 * 1000 },
-  { value: "3months",  label: "Past 3 months", ms: 90 * 24 * 60 * 60 * 1000 },
+  // No "Past 2/3 months" (removed 2026-10-26, Luke): stored subscription episodes
+  // only go back 30 days (podcast-retention.js), so longer windows showed more only
+  // until the next cold start. normalizeState moves anyone on them to "month".
 ];
 
 function renderRecentEpisodes() {

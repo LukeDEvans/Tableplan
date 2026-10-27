@@ -30,6 +30,10 @@ all your work is there. Make focused changes to the Finance domain only.
   (`uploadReceiptImage`/`startScanReceiptForTxn`/… — finance-owned), budget / accounts
   / income / scenarios, insights, tabs/menus/grid, and `renderFinancePage`. The pure
   normalizers/helpers are exported top-level in the same file.
+  Review card layout (Luke, 2026-10-26): **Approve and Skip are pinned in a footer**
+  (`.fin-review-footer`) on every card; on phones the card is slimmer, and name + note
+  sit behind "Edit details…" (first tap reveals them, the next opens the full
+  transaction). Keep Approve reachable at 360×640.
 - **Pure logic modules (tested — extend with tests, don't rewrite):**
   `finance-actuals.js`, `finance-csv.js`, `finance-review-gesture.js`, and
   `finance-sync.js` (⚠️ sync — see landmines). `receipt-domain.js` / `receipt-scan.js`

@@ -25,4 +25,16 @@ describe("server group lookup", () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  it("background jobs pick the household's first admin, not an arbitrary one", () => {
+    const offenders = [];
+    for (const name of readdirSync(dir)) {
+      if (!/\.(m?js)$/.test(name)) continue;
+      const src = readFileSync(new URL(name, dir), "utf8");
+      for (const m of src.matchAll(/live_group_members\?[^`"']*role=eq\.admin[^`"']*/g)) {
+        if (/limit=1/.test(m[0]) && !/order=/.test(m[0])) offenders.push(`${name}: ${m[0]}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });

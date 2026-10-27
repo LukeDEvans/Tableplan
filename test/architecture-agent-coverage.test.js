@@ -80,6 +80,7 @@ const SHARED_FILES = {
   "netlify/functions/push-subscribe.js": "notifications/push",
   "netlify/functions/accept-invite.js": "household invites (auth)",
   "netlify/functions/send-invite.js": "household invites (auth)",
+  "netlify/functions/household-role.js": "household roles (auth): admin-checked role change",
   "netlify/functions/admin-data.js": "admin",
 };
 
