@@ -1,6 +1,6 @@
 # News ranking ("For you") — design & plan
 
-Status: **PROPOSED (2026-10-27), not approved.** Follows NEWS_PAGE_DESIGN.md §10, which named a personalized feed as the next step. Read from code on `main` @ `a0c5547` and the live database (read-only counts, 2026-10-27). Nothing is built.
+Status: **PROPOSED (2026-10-27); partly decided (Luke, 2026-10-27, §7).** Follows NEWS_PAGE_DESIGN.md §10, which named a personalized feed as the next step. Read from code on `main` @ `a0c5547` and the live database (read-only counts, 2026-10-27). Nothing is built.
 
 Goal: News learns which stories Luke reads and shows those first, in a **For you** view, without hiding the papers' own front pages and without new Supabase egress trouble.
 
@@ -138,11 +138,23 @@ Haiku 5.5: $0.10 per million input tokens and $0.50 per million output tokens (p
 
 ---
 
+### 3.6 The Athletic: favorite teams only (Luke, 2026-10-27)
+
+The Athletic is half of all stories, and most are about teams Luke doesn't follow. Its stories that aren't about a favorite team are **left out of every News view** (For you, Sports, the Athletic paper filter, search), not only down-ranked.
+
+- **Favorites** are the person's Scores favorites (`state.sportsPrefs`). The client sends the team list (name, short name, scope) to `news_interest.teams` when favorites change, so the feed job never reads `tableplan_states`.
+- **"About a team"** means the story's `topics` carry `team:<key>`, from the AI tags (§4, which also catch stories that name only a player or coach) or, if tagging failed, from matching team names and nicknames in the headline and subtitle.
+- **Rows are still stored**; the filter is applied when a view is read (`feedQuery`: Athletic rows must have a favorite `team:` topic). So changing favorites takes effect at once for the last 3 days, and nothing is lost by a tagging miss. Storage cost is unchanged (rows are small and pruned after 5 days).
+- **Per person:** the filter uses that person's own favorites. Someone with no favorites sees all Athletic stories, as today.
+- **Other papers' sports stories** (NYT, Star Tribune) are not filtered; they're ranked like any other story.
+- *Open:* league-wide Athletic stories that name no team (power rankings, trade-deadline roundups, the draft), §7.
+
+---
+
 ## 5. Build order
 
-1. **Feedback + features + For you, no AI.** Migration (gated): `news_articles.topics`, `news_articles.rank_score`, the index, `news_interest`. Keyword and team features in the hourly job and mail sweep; `updateNews` decisions; the For you view; ⋯ menu items; seeding from Scores favorites. Netlify deploy (asks first) + TestFlight for the ⋯ menu.
+1. **Features, AI tags, the Athletic filter and For you.** Migration (gated): `news_articles.topics`, `news_articles.rank_score`, the index, `news_interest`. Keyword and team features plus Haiku 5.5 tagging in the hourly job and mail sweep (decided with step 1, Luke 2026-10-27); the Athletic filter (§3.6); `updateNews` decisions; the For you view; ⋯ menu items; seeding from Scores favorites. Netlify deploy (asks first) + TestFlight for the ⋯ menu.
 2. **What News has learned** screen, Reset, the "Why" line.
-3. **AI tagging (§4)**, only if For you still feels off after a few weeks of use. Needs `ANTHROPIC_API_KEY` (already set for the briefing conversion) and a deploy.
 
 ## 6. Tests
 
@@ -156,7 +168,9 @@ Haiku 5.5: $0.10 per million input tokens and $0.50 per million output tokens (p
 1. Should For you become the **default** view when News opens, or stay one tap away beside Front page?
 2. Should For you include **The Athletic** (filtered to his teams), given the Front page leaves it out?
 3. The day-one **"What do you like?"** sheet: yes, or learn quietly from use and favorites only?
-4. AI tagging: build it with step 1, or wait and see how keywords do?
+4. ~~AI tagging: now or later?~~ **Decided (Luke, 2026-10-27): build it with step 1.**
+5. ~~The Athletic: rank or filter?~~ **Decided (Luke, 2026-10-27): filter to favorite teams, everywhere (§3.6).**
+6. League-wide Athletic stories with no team: keep them, or filter them out too?
 
 ## 8. Noted in passing
 
