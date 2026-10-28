@@ -15,6 +15,9 @@
 -- at 16 entries; it is selected only by the For you query, never by other views.
 alter table public.news_articles add column if not exists topics text[];
 alter table public.news_articles add column if not exists rank_score real;
+-- Times the story was shown in For you and scrolled past without being opened
+-- (one per visit). At 3 it counts once as "not for me" and leaves For you.
+alter table public.news_articles add column if not exists skips smallint not null default 0;
 
 -- For you: the person's unread, unhidden stories by rank.
 create index if not exists news_articles_user_rank_idx

@@ -5,6 +5,8 @@
 //   - the ⋯ menu has More like this / Less like this / Mute topic
 //   - Less like this and Mute topic take the story out of For you
 //   - without For you on the server, none of it shows
+//   - stories left on screen and not opened are reported as skips on leaving For you
+//   - "What News has learned": likes / less / muted lists, remove a row, two-tap Reset
 //   - no sideways scroll at 390 and 360 px, the menu fits, no console errors
 // Usage: node scripts/qa-news-for-you.mjs [url] [screenshotDir]
 import { chromium } from "playwright";
@@ -25,6 +27,12 @@ let failures = 0;
 const check = (ok, msg) => { console.log(`  ${ok ? "✓" : "✗"} ${msg}`); if (!ok) failures++; };
 
 const ago = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
+const LEARNED = {
+  likes: [{ feature: "t:ai", label: "AI", kind: "t", weight: 5 }, { feature: "team:nfl:minnesota-vikings", label: "Vikings", kind: "team", weight: 4 }, { feature: "e:federal-reserve-board-of-governors-chair", label: "Federal Reserve Board of Governors chair", kind: "e", weight: 1 }],
+  dislikes: [{ feature: "t:crime", label: "Crime", kind: "t", weight: -3 }],
+  muted: [{ feature: "t:golf", label: "Golf", kind: "t" }],
+  teams: ["Vikings", "Wild", "Ajax"]
+};
 const STORIES = [
   { id: "s1", url: "https://www.nytimes.com/2026/10/28/technology/ai-model.html", title: "OpenAI ships a model that plans its own experiments", paper: "nyt", section: "business", publishedAt: ago(2), why: "AI" },
   { id: "s2", url: "https://www.nytimes.com/athletic/7731000/2026/10/28/jefferson/", title: "Justin Jefferson questionable for Sunday against the Packers", paper: "athletic", section: "sports", publishedAt: ago(5), why: "Vikings" },
@@ -48,7 +56,7 @@ async function run(browser, { width, height, forYou }) {
   await page.waitForTimeout(600);
   await page.evaluate(() => document.getElementById("homeNewsBtn")?.click());
   await page.waitForSelector("#newsMainPage:not([hidden])", { timeout: 10000 });
-  await page.evaluate(([list, fy]) => window.__liveQA.newsSetFeed(list, { nyt: { status: "signed-in" } }, { forYou: fy }), [STORIES, forYou]);
+  await page.evaluate(([list, fy, learned]) => window.__liveQA.newsSetFeed(list, { nyt: { status: "signed-in" } }, { forYou: fy, learned }), [STORIES, forYou, LEARNED]);
   await page.waitForTimeout(300);
 
   const tab = await page.$('[data-news-view="foryou"]');
@@ -98,6 +106,42 @@ async function run(browser, { width, height, forYou }) {
   await page.waitForTimeout(200);
   left = await page.$$eval("#newsContent [data-news-id]", (els) => els.map((e) => e.dataset.newsId));
   check(left.includes("s1"), "More like this keeps the story");
+
+  // Skips: s1 and s5 have been on screen (unopened) well over 1.5 s; s2 is saved.
+  await page.click('[data-news-id="s2"] [data-news-dots]');
+  await page.click('.news-menu [data-news-act="send"]');
+  await page.waitForTimeout(1800);
+
+  // What News has learned
+  await page.click("[data-news-learned]");
+  await page.waitForTimeout(200);
+  const lt = await page.textContent(".news-title");
+  check(lt.trim() === "What News has learned", `learned view opens (${lt.trim()})`);
+  const sent = await page.evaluate(() => window.__liveQA.newsDecisions());
+  const skips = sent.filter((d) => d.decision === "skip").map((d) => d.id);
+  check(skips.includes("s1") && !skips.includes("s2") && !skips.includes("s3"), `skips reported on leaving For you: on screen, not saved or removed (${skips.join(",")})`);
+  check(sent.some((d) => d.id === "s2" && d.decision === "send"), "the saved story was reported saved");
+  const labels = await page.$$eval(".news-learned-label", (els) => els.map((e) => e.textContent.trim()));
+  check(labels.join("|") === "AI|Vikings|Federal Reserve Board of Governors chair|Crime|Golf", `likes, less, muted listed (${labels.join("|")})`);
+  if (OUT) await page.screenshot({ path: `${OUT}/learned-${width}.png`, fullPage: false });
+  await page.click('[data-news-forget="t:crime"]');
+  await page.waitForTimeout(150);
+  check(!(await page.$('[data-news-forget="t:crime"]')), "removing a row takes it off the list");
+  await page.click('[data-news-unmute="t:golf"]');
+  await page.waitForTimeout(150);
+  check(!(await page.$('[data-news-unmute="t:golf"]')), "unmuting takes it off the list");
+  await page.click("[data-news-reset]");
+  const armed = await page.textContent("[data-news-reset]");
+  check(/Tap again/.test(armed), `Reset asks for a second tap (${armed.trim()})`);
+  check((await page.$$(".news-learned-label")).length === 3, "one tap resets nothing");
+  await page.click("[data-news-reset]");
+  await page.waitForTimeout(150);
+  check((await page.$$(".news-learned-label")).length === 0, "second tap resets");
+  const lOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  check(lOverflow <= 0, `learned view: no sideways scroll (${lOverflow}px)`);
+  await page.click("[data-news-back-foryou]");
+  await page.waitForTimeout(150);
+  check((await page.textContent(".news-title")).trim() === "For you", "back arrow returns to For you");
 
   // Front page still has no Athletic stories and keeps newest-first.
   if (width < 700) await page.evaluate(() => document.getElementById("newsSidebar")?.classList.add("is-expanded"));

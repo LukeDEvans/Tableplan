@@ -130,13 +130,30 @@ exports.handler = async (event) => {
   if (action === "updateNews") {
     const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 500) : [];
     // listen / more / less / mute come from For you builds; older builds send only the first four.
-    const DECISIONS = ["read", "unread", "send", "hide", "listen", "more", "less", "mute"];
+    const DECISIONS = ["read", "unread", "send", "hide", "listen", "more", "less", "mute", "skip"];
     if (!decisions.length || decisions.some((d) => !d?.id || !DECISIONS.includes(d.decision))) {
       return json(400, { error: `decisions: [{ id, decision: ${DECISIONS.join("|")} }] required` });
     }
     const learn = await NewsStore.forYouReady(serviceKey).catch(() => false);
     const { learned } = await NewsStore.applyDecisions(serviceKey, userId, decisions, { saveToMedia, learn });
     return json(200, { ok: true, counts: await NewsStore.loadCounts(serviceKey, userId), ...(learned?.length ? { learned } : {}) });
+  }
+
+  // "What News has learned" (NEWS_RANKING_DESIGN.md step 2): the person's
+  // strongest likes / dislikes and mutes, named. Read only when the screen opens.
+  if (action === "newsInterest") {
+    if (!(await NewsStore.forYouReady(serviceKey).catch(() => false))) return json(200, { ok: false, reason: "not-ready" });
+    const interest = await NewsStore.loadInterest(serviceKey, userId);
+    return json(200, { ok: true, ...NewsRank.learnedSummary(interest) });
+  }
+  // Edits from that screen. body: { forget?: [feature], unmute?: [feature], reset?: true }
+  if (action === "newsInterestEdit") {
+    if (!(await NewsStore.forYouReady(serviceKey).catch(() => false))) return json(200, { ok: false, reason: "not-ready" });
+    const list = (v) => (Array.isArray(v) ? v.filter((f) => typeof f === "string" && f.length <= 80).slice(0, 50) : []);
+    const interest = await NewsStore.loadInterest(serviceKey, userId);
+    const next = NewsRank.editInterest(interest, { forget: list(body.forget), unmute: list(body.unmute), reset: body.reset === true });
+    await NewsStore.saveInterest(serviceKey, userId, next);
+    return json(200, { ok: true, ...NewsRank.learnedSummary({ ...interest, ...next }) });
   }
 
   // The app's Scores favourites, sent when they differ from the stored teamsSig

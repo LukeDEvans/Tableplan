@@ -22,7 +22,10 @@
 // then also offers More like this / Less like this / Mute topic, and Listen is
 // reported as its own (stronger) signal. The person's Scores favourites are sent
 // to the server when they differ from what it has (`teamsSig`), so the hourly
-// job can follow those teams on The Athletic.
+// job can follow those teams on The Athletic. "What News has learned" (a view
+// reached from For you) lists the strongest likes, dislikes and mutes, each
+// removable, with a Reset. Stories that sit on screen in For you and aren't opened
+// are reported as skipped when you leave it, once per story per app session.
 
 const REFRESH_MS = 60_000;
 const FLUSH_MS = 1500;
@@ -266,6 +269,20 @@ export function teamsForServer(teams) {
   return (Array.isArray(teams) ? teams : []).filter((t) => t?.key).slice(0, 20)
     .map((t) => ({ key: t.key, scope: t.scope || "", name: t.name || "", short: t.short || "", league: t.league || "" }));
 }
+// For you stories seen on screen but not opened → the skip decisions to send
+// (at most `max`, never one already reported this session).
+export function skipsToSend(seenIds, cards, reported, max = 30) {
+  const byId = new Map((cards || []).map((a) => [a.id, a]));
+  const out = [];
+  for (const id of seenIds || []) {
+    const a = byId.get(id);
+    if (!a || a.readAt || a.sentAt || reported.has(id)) continue;
+    out.push(id);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 // The server's `learned` reply → one toast line.
 export function learnedToast(learned) {
   const l = (learned || []).filter((x) => x && x.label).pop();
@@ -341,6 +358,7 @@ export function createNewsModule(deps) {
   let loadingKey = null;
   let loadError = "";
   let seeded = null;       // local-dev seed (window.__liveQA.newsSetFeed)
+  const seededLog = [];    // decisions a seeded page would have sent (QA)
   let searchTimer = null;
   let view = { kind: "front" };
   let query = "";
@@ -349,6 +367,13 @@ export function createNewsModule(deps) {
   let verifying = false;
   let forYouAvailable = false;  // the server has the For you migration (newsFeed `forYou`)
   let teamsSentSig = null;      // favourites signature sent this session
+  let learned = null;           // "What News has learned": { likes, dislikes, muted, teams }
+  let learnedState = "";        // "" | "loading" | "error"
+  let resetArmedUntil = 0;      // Reset asks for a second tap within a few seconds
+  const forYouSeen = new Set();     // For you stories that sat on screen this visit
+  const skipsReported = new Set();  // skips already sent this app session
+  let seenObserver = null;
+  const seenTimers = new Map();
   // Sports opens on Scores; the choice between Scores and Stories is remembered.
   let sportsTab = "scores";
   try { if (localStorage.getItem(SPORTS_TAB_KEY) === "stories") sportsTab = "stories"; } catch { /* private mode */ }
@@ -378,7 +403,7 @@ export function createNewsModule(deps) {
     const decisions = queue;
     queue = [];
     inflight = [...inflight, ...decisions];
-    if (seeded) { inflight = []; return; } // local dev: nothing to send
+    if (seeded) { inflight = []; seededLog.push(...decisions); return; } // local dev: nothing to send
     callGmailApi({ action: "updateNews", decisions }).then((d) => {
       inflight = inflight.filter((x) => !decisions.includes(x));
       if (d?.ok) {
@@ -402,6 +427,7 @@ export function createNewsModule(deps) {
   // Load (or refresh) the current view's first page, or with `more` its next page.
   async function load(force = false, { more = false } = {}) {
     if (view.kind === "saved") { render(); return; }
+    if (view.kind === "learned") { loadLearned(force); return; }
     const key = viewKey();
     const page = pages.get(key);
     if (seeded) {
@@ -448,6 +474,62 @@ export function createNewsModule(deps) {
     // day old — at most once per DEVICE_AUTO_CHECK_MS per app run, so a server
     // that doesn't record the report can't make every feed load start a check.
     else if (d.signIns && deviceSignIn()?.needsCheck?.(signIns) && Date.now() - lastDeviceCheckAt > DEVICE_AUTO_CHECK_MS) verifySignIns();
+  }
+
+  // ── What News has learned ──
+  async function loadLearned(force = false) {
+    if (seeded) { learned = learned || { likes: [], dislikes: [], muted: [], teams: [] }; render(); return; }
+    if (learnedState === "loading" || (learned && !force)) { render(); return; }
+    learnedState = "loading";
+    render();
+    const d = await callGmailApi({ action: "newsInterest" });
+    learnedState = d?.ok ? "" : "error";
+    if (d?.ok) learned = { likes: d.likes || [], dislikes: d.dislikes || [], muted: d.muted || [], teams: d.teams || [] };
+    if (isActive() && view.kind === "learned") render();
+  }
+  async function editLearned(change) {
+    // Optimistic: drop the row now; the server's reply is the new list.
+    if (learned) {
+      const drop = new Set([...(change.forget || []), ...(change.unmute || [])]);
+      learned = change.reset ? { ...learned, likes: [], dislikes: [], muted: [] }
+        : { ...learned, likes: learned.likes.filter((r) => !drop.has(r.feature)), dislikes: learned.dislikes.filter((r) => !drop.has(r.feature)), muted: learned.muted.filter((r) => !drop.has(r.feature)) };
+    }
+    for (const [k, p] of pages) if (k.startsWith("foryou:")) p.loadedAt = 0; // For you re-ranks on next visit
+    render();
+    if (seeded) return;
+    const d = await callGmailApi({ action: "newsInterestEdit", ...change });
+    if (d?.ok) {
+      learned = { likes: d.likes || [], dislikes: d.dislikes || [], muted: d.muted || [], teams: d.teams || [] };
+      if (change.reset) showToast?.("For you starts fresh.");
+    } else showToast?.("Couldn't save that. Try again.");
+    if (isActive() && view.kind === "learned") render();
+  }
+
+  // ── Skipped stories (For you) ──
+  // A story counts as seen when at least 60% of it is on screen for 1.5 s.
+  function observeForYou() {
+    seenObserver?.disconnect();
+    for (const t of seenTimers.values()) clearTimeout(t);
+    seenTimers.clear();
+    if (view.kind !== "foryou" || !forYouAvailable || typeof IntersectionObserver !== "function") return;
+    const root = $("newsContent")?.querySelector(".news-scroll") || null;
+    seenObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        const id = e.target.dataset.newsId;
+        if (e.isIntersecting && e.intersectionRatio >= 0.6) {
+          if (!seenTimers.has(id)) seenTimers.set(id, setTimeout(() => forYouSeen.add(id), 1500));
+        } else { clearTimeout(seenTimers.get(id)); seenTimers.delete(id); }
+      }
+    }, { root, threshold: [0, 0.6] });
+    for (const el of $("newsContent")?.querySelectorAll("[data-news-id]") || []) seenObserver.observe(el);
+  }
+  function reportSkips() {
+    if (!forYouSeen.size) return;
+    const page = pages.get(viewKey({ kind: "foryou" }, ""));
+    const ids = skipsToSend([...forYouSeen], page?.articles || [], skipsReported);
+    forYouSeen.clear();
+    if (!ids.length || !forYouAvailable) return;
+    for (const id of ids) { skipsReported.add(id); enqueue(id, "skip"); }
   }
 
   // Send the Scores favourites when the server's copy differs (once per signature
@@ -692,6 +774,31 @@ export function createNewsModule(deps) {
     </article>`;
   }
 
+  // "What News has learned": likes, dislikes and mutes, each removable; Reset.
+  function learnedHtml() {
+    const KIND = { t: "Topic", team: "Team", e: "Name", k: "Word" };
+    const chip = (r, attr) => `<li class="news-learned-chip"><span><span class="news-learned-label">${esc(r.label)}</span><small>${esc(KIND[r.kind] || "")}</small></span>
+      <button type="button" class="news-learned-x" ${attr}="${esc(r.feature)}" aria-label="Remove ${esc(r.label)}">×</button></li>`;
+    const group = (title, note, rows, attr) => `<section class="news-learned-group"><h3>${esc(title)}</h3><p class="news-learned-note">${esc(note)}</p>
+      ${rows.length ? `<ul class="news-learned-list">${rows.map((r) => chip(r, attr)).join("")}</ul>` : `<p class="news-empty">Nothing yet.</p>`}</section>`;
+    let body;
+    if (!learned && learnedState === "loading") body = `<p class="news-empty">Loading…</p>`;
+    else if (!learned) body = `<p class="news-empty">${learnedState === "error" ? "Couldn't load this. Pull down to try again." : "Loading…"}</p>`;
+    else {
+      const armed = Date.now() < resetArmedUntil;
+      body = `${learned.teams?.length ? `<p class="news-learned-note">Your teams, from Scores: ${esc(learned.teams.join(", "))}.</p>` : ""}
+        ${group("More of", "From what you open, listen to, save and mark More like this.", learned.likes, "data-news-forget")}
+        ${group("Less of", "From Less like this, Hide, and stories you scroll past.", learned.dislikes, "data-news-forget")}
+        ${group("Muted", "Never shown in For you.", learned.muted, "data-news-unmute")}
+        <button type="button" class="news-more news-learned-reset${armed ? " is-armed" : ""}" data-news-reset>${armed ? "Tap again to reset" : "Reset what News has learned"}</button>`;
+    }
+    return `<div class="news-scroll">
+      <div class="news-head"><button type="button" class="news-back" data-news-back-foryou aria-label="Back to For you">‹</button><h2 class="news-title">What News has learned</h2></div>
+      <div class="news-head-sub">Remove anything that's off. Your favorite teams come from Scores.</div>
+      ${body}
+    </div>`;
+  }
+
   function signInBanner() {
     const kind = signInBannerKind(signIns, { loaded: signInsLoaded, verifying });
     if (kind === "expired") {
@@ -739,6 +846,7 @@ export function createNewsModule(deps) {
       return;
     }
     saved?.unmount();
+    if (view.kind === "learned") { el.innerHTML = learnedHtml(); return; }
     const page = currentPage();
     if (!page) {
       el.innerHTML = `<div class="news-scroll"><p class="news-empty">${esc(loadError || "Loading News…")}</p></div>`;
@@ -759,7 +867,7 @@ export function createNewsModule(deps) {
       : view.kind === "front" ? c.all : list.filter((a) => !a.readAt).length;
     const forYouView = view.kind === "foryou";
     const shown = `${list.length}${page.nextBefore ? "+" : ""} ${list.length === 1 && !page.nextBefore ? "story" : "stories"}`;
-    body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : forYouView ? "Ranked by what you read. Use ⋯ to tune it." : `${shown} · ${unread} unread`}</div>`;
+    body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : forYouView ? `Ranked by what you read. Use ⋯ to tune it. <button class="news-link-btn" type="button" data-news-learned>What News has learned</button>` : `${shown} · ${unread} unread`}</div>`;
     if (!list.length) {
       body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing saved yet. Use ⋯ → Save on any story." : forYouView ? "You're all caught up. New stories arrive every hour." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
     } else {
@@ -779,6 +887,7 @@ export function createNewsModule(deps) {
       ${body}
     </div>`;
     placeOpenMenu();
+    observeForYou();
   }
 
   // An open ⋯ menu near the bottom of the list opens upward when that fits better.
@@ -798,6 +907,7 @@ export function createNewsModule(deps) {
   }
 
   function setView(next) {
+    if (view.kind === "foryou" && next?.kind !== "foryou") { reportSkips(); flush(); }
     // The old "Sent" view folded into Saved; the old Briefings view is gone
     // (briefings live in Listen), so a stale link to it opens the Front page.
     view = next?.kind === "sent" && saved ? { kind: "saved" }
@@ -852,6 +962,17 @@ export function createNewsModule(deps) {
       }
       if (e.target.closest("#newsScoresMount")) return; // the Scores view handles its own taps
       if (e.target.closest("[data-news-signin]")) { openSignInSettings?.(); return; }
+      if (e.target.closest("[data-news-learned]")) { setView({ kind: "learned" }); return; }
+      if (e.target.closest("[data-news-back-foryou]")) { setView({ kind: "foryou" }); return; }
+      const forget = e.target.closest("[data-news-forget]");
+      if (forget) { editLearned({ forget: [forget.dataset.newsForget] }); return; }
+      const unmute = e.target.closest("[data-news-unmute]");
+      if (unmute) { editLearned({ unmute: [unmute.dataset.newsUnmute] }); return; }
+      if (e.target.closest("[data-news-reset]")) {
+        if (Date.now() < resetArmedUntil) { resetArmedUntil = 0; editLearned({ reset: true }); }
+        else { resetArmedUntil = Date.now() + 4000; renderContent(); setTimeout(() => { if (isActive() && view.kind === "learned") renderContent(); }, 4100); }
+        return;
+      }
       if (e.target.closest("[data-news-more]")) { load(false, { more: true }); renderContent(); return; }
       const item = e.target.closest("[data-news-id]");
       if (!item) return;
@@ -886,7 +1007,11 @@ export function createNewsModule(deps) {
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && openMenuId) { openMenuId = null; renderContent(); }
     });
-    document.addEventListener("visibilitychange", () => { if (document.hidden) flush(); });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) return;
+      if (isActive() && view.kind === "foryou") reportSkips();
+      flush();
+    });
   }
 
   // Page entry (showNewsApp).
@@ -900,6 +1025,7 @@ export function createNewsModule(deps) {
   function seed(list, status, opts = {}) {
     seeded = Array.isArray(list) ? list : [];
     forYouAvailable = !!opts?.forYou;
+    learned = opts?.learned || null;
     signIns = status || {};
     signInsLoaded = true;
     counts = countsFor(seeded);
@@ -911,6 +1037,7 @@ export function createNewsModule(deps) {
 
   // Leaving the page: send queued decisions and stop the Scores view's refresh.
   function leave() {
+    if (view.kind === "foryou") reportSkips();
     flush();
     scores?.unmount();
   }
@@ -975,6 +1102,7 @@ export function createNewsModule(deps) {
 
   return {
     enter, leave, load, verifySignIns, render, seed, setDeviceTrail, showView, showScores, tickerLeads, openStory,
+    qaDecisions: () => seededLog.slice(),
     deviceStatus: () => lastDeviceStatus,
     signInStatus: () => (signInsLoaded ? signIns : null)
   };

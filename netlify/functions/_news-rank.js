@@ -39,7 +39,10 @@ const TOPICS = Object.freeze({
 });
 
 // How much a decision moves the weights of the story's features.
-const DECISION_DELTA = Object.freeze({ read: 1, listen: 2, send: 3, more: 3, less: -3, hide: -1 });
+const DECISION_DELTA = Object.freeze({ read: 1, listen: 2, send: 3, more: 3, less: -3, hide: -1, skip: -0.5 });
+// A story shown in For you and scrolled past this many visits (never opened) counts
+// as a mild "not for me" once, and then leaves the For you pool.
+const SKIP_LIMIT = 3;
 
 // Per-feature-kind multiplier on a decision (a whole paper or section moves slowly)
 // and per-kind cap on its share of a score (six keywords can't drown a topic).
@@ -325,6 +328,33 @@ function athleticForUser(cards, teams) {
     || match(`${c.title || ""} ${c.subtitle || ""}`).length > 0);
 }
 
+// "What News has learned": the strongest likes and dislikes and the mutes, named.
+// Papers and sections are left out (they move slowly and read oddly as interests).
+function learnedSummary(interest, { nowMs = Date.now(), likes = 20, dislikes = 10 } = {}) {
+  const rows = Object.keys(interest?.weights || {})
+    .filter((f) => ["t", "e", "team", "k"].includes(kindOf(f)))
+    .map((f) => ({ feature: f, weight: Math.round(weightOf(interest.weights, f, nowMs) * 10) / 10 }))
+    .filter((r) => Math.abs(r.weight) >= 0.3);
+  const named = (r) => ({ ...r, label: featureLabel(r.feature, interest), kind: kindOf(r.feature) });
+  return {
+    likes: rows.filter((r) => r.weight > 0).sort((a, b) => b.weight - a.weight).slice(0, likes).map(named),
+    dislikes: rows.filter((r) => r.weight < 0).sort((a, b) => a.weight - b.weight).slice(0, dislikes).map(named),
+    muted: Object.entries(interest?.muted || {}).sort((a, b) => b[1] - a[1]).map(([f]) => ({ feature: f, label: featureLabel(f, interest), kind: kindOf(f) })),
+    teams: (interest?.teams || []).map((t) => t.short || t.name)
+  };
+}
+
+// Edits from that screen: forget some learned features, unmute some, or reset
+// everything learned (favourite teams stay; they come from Scores).
+function editInterest(interest, { forget = [], unmute = [], reset = false } = {}, nowMs = Date.now()) {
+  if (reset) return { weights: {}, muted: {} };
+  const weights = { ...(interest?.weights || {}) };
+  for (const f of forget) delete weights[f];
+  const muted = { ...(interest?.muted || {}) };
+  for (const f of unmute) delete muted[f];
+  return { weights: compactWeights(weights, nowMs), muted };
+}
+
 // Favourite teams → a stable signature (the app compares it with its own to know
 // whether to send its favourites again). Same function in news-ui.js.
 function teamsSignature(teams) {
@@ -341,5 +371,5 @@ module.exports = {
   keywordFeatures, teamAliases, teamMatcher, storyFeatures,
   weightOf, normalizeInterest, applyFeedback, primaryFeature, addMute,
   scoreStory, interestScore, whyLabel, featureLabel, arrangeForYou,
-  teamsSignature, cleanTeams, kindOf, athleticForUser
+  teamsSignature, cleanTeams, kindOf, athleticForUser, learnedSummary, editInterest, SKIP_LIMIT
 };

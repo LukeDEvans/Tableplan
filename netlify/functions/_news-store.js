@@ -247,6 +247,7 @@ function forYouQuery(userId, { nowMs = Date.now() } = {}) {
   return [
     `select=${COLUMNS},topics,rank_score`, `user_id=eq.${enc(userId)}`,
     "hidden_at=is.null", "read_at=is.null", "sent_at=is.null", `published_at=gte.${enc(since)}`,
+    `skips=lt.${Rank.SKIP_LIMIT}`,
     `and=${enc(`(${ATHLETIC_TAGGED_FILTER})`)}`,
     "order=rank_score.desc.nullslast,published_at.desc", `limit=${FORYOU_POOL}`
   ].join("&");
@@ -279,7 +280,7 @@ async function loadForYou(serviceKey, userId, interest, { fetchImpl = fetch, now
     getRows(serviceKey, forYouQuery(userId, { nowMs }), { fetchImpl }),
     getRows(serviceKey, [
       `select=${COLUMNS},topics,rank_score`, `user_id=eq.${enc(userId)}`, "hidden_at=is.null", "read_at=is.null", "sent_at=is.null",
-      `lead_at=gte.${enc(since)}`, "order=lead_at.desc", "limit=12"
+      `skips=lt.${Rank.SKIP_LIMIT}`, `lead_at=gte.${enc(since)}`, "order=lead_at.desc", "limit=12"
     ].join("&"), { fetchImpl })
   ]);
   return { articles: arrangeForYouRows([...pool, ...leads], interest, { nowMs, rng }), nextBefore: null };
@@ -369,22 +370,36 @@ async function applyDecisions(serviceKey, userId, decisions, { saveToMedia, fetc
 // Feedback → the person's weights and mutes. Reads the decided stories' topics
 // (or works them out from the headline for stories stored without), applies the
 // deltas, saves once. Returns [{ id, decision, label }] for the app's toasts.
-const LEARNING = new Set(["read", "listen", "send", "hide", "more", "less", "mute"]);
+const LEARNING = new Set(["read", "listen", "send", "hide", "more", "less", "mute", "skip"]);
 async function learnFromDecisions(serviceKey, userId, decisions, { fetchImpl = fetch, nowMs = Date.now() } = {}) {
   const items = (decisions || []).filter((d) => d?.id && LEARNING.has(d.decision));
   if (!items.length) return [];
   const ids = [...new Set(items.map((d) => d.id))];
   const [rows, interest] = await Promise.all([
-    getRows(serviceKey, `select=id,title,subtitle,paper,section,topics&user_id=eq.${enc(userId)}&id=${enc(inList(ids))}`, { fetchImpl }),
+    getRows(serviceKey, `select=id,title,subtitle,paper,section,topics,skips&user_id=eq.${enc(userId)}&id=${enc(inList(ids))}`, { fetchImpl }),
     loadInterest(serviceKey, userId, { fetchImpl })
   ]);
   const featuresOf = new Map(rows.map((r) => [r.id, Array.isArray(r.topics) && r.topics.length ? r.topics : Rank.storyFeatures(cardFromRow(r))]));
+  const skipsOf = new Map(rows.map((r) => [r.id, Number(r.skips) || 0]));
   const feedback = [];
   let muted = interest.muted;
   const learned = [];
+  const skipped = new Map(); // new skip count → [ids]
+  const skipSeen = new Set();
   for (const d of items) {
     const features = featuresOf.get(d.id);
     if (!features) continue;
+    if (d.decision === "skip") {
+      // Counted once per visit (the app sends at most one skip per story per
+      // visit); teaches only on reaching the limit, when the story also leaves For you.
+      if (skipSeen.has(d.id)) continue;
+      skipSeen.add(d.id);
+      const next = (skipsOf.get(d.id) || 0) + 1;
+      skipsOf.set(d.id, next);
+      skipped.set(next, [...(skipped.get(next) || []), d.id]);
+      if (next === Rank.SKIP_LIMIT) feedback.push({ decision: "skip", features });
+      continue;
+    }
     if (d.decision === "mute") {
       const f = Rank.primaryFeature(features);
       if (f) { muted = Rank.addMute(muted, f, nowMs); learned.push({ id: d.id, decision: "mute", label: Rank.featureLabel(f, interest) }); }
@@ -396,8 +411,11 @@ async function learnFromDecisions(serviceKey, userId, decisions, { fetchImpl = f
       learned.push({ id: d.id, decision: d.decision, label: f ? Rank.featureLabel(f, interest) : "" });
     }
   }
-  const weights = Rank.applyFeedback(interest.weights, feedback, nowMs);
-  await saveInterest(serviceKey, userId, { weights, muted }, { fetchImpl });
+  for (const [count, ids] of skipped) await patchRows(serviceKey, userId, ids, { skips: Math.min(count, 99) }, "", { fetchImpl });
+  if (feedback.length || muted !== interest.muted) {
+    const weights = Rank.applyFeedback(interest.weights, feedback, nowMs);
+    await saveInterest(serviceKey, userId, { weights, muted }, { fetchImpl });
+  }
   return learned;
 }
 

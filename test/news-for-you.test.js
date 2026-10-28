@@ -4,7 +4,7 @@
 // the email path (_news-links.js) and the app's helpers (news-ui.js).
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { createRequire } from "module";
-import { teamsSignature as uiSig, teamsForServer, learnedToast, applyLocalDecisions, articlesForView } from "../news-ui.js";
+import { teamsSignature as uiSig, teamsForServer, learnedToast, applyLocalDecisions, articlesForView, skipsToSend } from "../news-ui.js";
 const require = createRequire(import.meta.url);
 const R = require("../netlify/functions/_news-rank.js");
 const T = require("../netlify/functions/_news-tags.js");
@@ -376,5 +376,67 @@ describe("app helpers", () => {
     expect(learnedToast([{ decision: "less", label: "Crime" }])).toBe("You'll see less about Crime.");
     expect(learnedToast([{ decision: "mute", label: "Golf" }])).toBe("Golf muted in For you.");
     expect(learnedToast([])).toBe("");
+  });
+});
+
+describe("step 2: what News has learned, skips", () => {
+  beforeEach(() => S.resetSchemaProbe());
+  it("summary: named likes and dislikes, strongest first, no papers or sections; mutes; teams", () => {
+    const interest = {
+      weights: { "t:ai": [5, NOW], "k:openai": [1, NOW], "t:crime": [-3, NOW], "p:nyt": [4, NOW], "s:tech": [2, NOW], "k:tiny": [0.1, NOW], "team:nfl:minnesota-vikings": [2, NOW] },
+      muted: { "t:golf": NOW - 10, "k:kardashian": NOW }, teams: TEAMS
+    };
+    const s = R.learnedSummary(interest, { nowMs: NOW });
+    expect(s.likes.map((r) => r.label)).toEqual(["AI", "Vikings", "openai"]);
+    expect(s.dislikes).toEqual([{ feature: "t:crime", weight: -3, label: "Crime", kind: "t" }]);
+    expect(s.muted.map((r) => r.feature)).toEqual(["k:kardashian", "t:golf"]);
+    expect(s.teams).toEqual(["Vikings", "Wild", "Minnesota United", "Ajax"]);
+  });
+  it("edits: forget, unmute, reset (teams untouched)", () => {
+    const interest = { weights: { "t:ai": [5, NOW], "t:crime": [-3, NOW] }, muted: { "t:golf": NOW }, teams: TEAMS };
+    const e = R.editInterest(interest, { forget: ["t:crime"], unmute: ["t:golf"] }, NOW);
+    expect(Object.keys(e.weights)).toEqual(["t:ai"]);
+    expect(e.muted).toEqual({});
+    expect(e.teams).toBeUndefined();
+    expect(R.editInterest(interest, { reset: true }, NOW)).toEqual({ weights: {}, muted: {} });
+  });
+  it("skips: counted once per story per batch, teach only at the limit, stories at the limit leave For you", async () => {
+    const calls = [];
+    const fetchImpl = async (u, opts = {}) => {
+      const url = String(u);
+      calls.push({ url, method: opts.method || "GET", body: opts.body ? JSON.parse(opts.body) : null });
+      if (url.includes("/news_articles?select=id,title")) return { ok: true, json: async () => [
+        { id: "a", title: "a", paper: "nyt", section: "us", topics: ["t:crime"], skips: 2 },
+        { id: "b", title: "b", paper: "nyt", section: "us", topics: ["t:golf"], skips: 0 }] };
+      if (url.includes("/news_interest?select=")) return { ok: true, json: async () => [{ weights: {}, muted: {}, teams: [] }] };
+      return { ok: true, json: async () => [] };
+    };
+    await S.learnFromDecisions("svc", "u", [{ id: "a", decision: "skip" }, { id: "a", decision: "skip" }, { id: "b", decision: "skip" }], { fetchImpl, nowMs: NOW });
+    const patches = calls.filter((c) => c.method === "PATCH");
+    expect(patches.map((p) => [decodeURIComponent(p.url).match(/id=in\.\((.*?)\)/)[1], p.body.skips])).toEqual([['"a"', 3], ['"b"', 1]]);
+    const write = calls.find((c) => c.method === "POST" && c.url.includes("/news_interest"));
+    expect(R.weightOf(write.body.weights, "t:crime", NOW)).toBeCloseTo(-0.5);
+    expect(write.body.weights["t:golf"]).toBeUndefined();
+    // Only skips below the limit come back into the pool.
+    expect(decodeURIComponent(S.forYouQuery("u", { nowMs: NOW }))).toContain("skips=lt.3");
+  });
+  it("skips alone below the limit don't rewrite the interest row", async () => {
+    const calls = [];
+    const fetchImpl = async (u, opts = {}) => {
+      const url = String(u);
+      calls.push({ url, method: opts.method || "GET" });
+      if (url.includes("/news_articles?select=id,title")) return { ok: true, json: async () => [{ id: "b", title: "b", paper: "nyt", section: "us", topics: ["t:golf"], skips: 0 }] };
+      if (url.includes("/news_interest?select=")) return { ok: true, json: async () => [{}] };
+      return { ok: true, json: async () => [] };
+    };
+    await S.learnFromDecisions("svc", "u", [{ id: "b", decision: "skip" }], { fetchImpl, nowMs: NOW });
+    expect(calls.some((c) => c.method === "POST" && c.url.includes("/news_interest"))).toBe(false);
+  });
+  it("the app reports seen-but-unopened stories once per session, at most 30", () => {
+    const cards = [{ id: "a" }, { id: "b", readAt: "x" }, { id: "c", sentAt: "x" }, { id: "d" }];
+    const reported = new Set(["d"]);
+    expect(skipsToSend(["a", "b", "c", "d", "gone"], cards, reported)).toEqual(["a"]);
+    const many = Array.from({ length: 50 }, (_, i) => ({ id: `s${i}` }));
+    expect(skipsToSend(many.map((c) => c.id), many, new Set())).toHaveLength(30);
   });
 });

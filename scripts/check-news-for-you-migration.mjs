@@ -40,8 +40,8 @@ await db.exec(MIG);
 await db.exec(MIG);
 check(true, "applies twice");
 
-const old = (await db.query("select topics, rank_score from public.news_articles where id = 'a1'")).rows[0];
-check(old && old.topics === null && old.rank_score === null, "existing stories keep working (new columns are null)", JSON.stringify(old));
+const old = (await db.query("select topics, rank_score, skips from public.news_articles where id = 'a1'")).rows[0];
+check(old && old.topics === null && old.rank_score === null && old.skips === 0, "existing stories keep working (topics/rank null, skips 0)", JSON.stringify(old));
 await db.exec(`insert into public.news_articles (user_id, id, url, title, paper, published_at, topics, rank_score)
   values ('${LUKE}', 'a2', 'https://x/2', 'New story', 'athletic', now(), array['team:nfl:minnesota-vikings','t:nfl'], 4.5)`);
 const ranked = (await db.query(`select id from public.news_articles where user_id = '${LUKE}' and hidden_at is null and read_at is null order by rank_score desc nulls last`)).rows.map((r) => r.id);

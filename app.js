@@ -4250,6 +4250,8 @@ function setupDiagnostics() {
       if (!localDevMode) return null;
       return seedNewsFeed(articles, signIns, opts);
     },
+    // What the seeded News page would have sent to updateNews (read, skip, more…).
+    newsDecisions: () => (localDevMode ? _news.qaDecisions() : null),
     // The Scores view (scores-ui.js) — normally the scores function; seeds a day's
     // games directly so the view can be exercised locally.
     scoresSetBoard: (board) => {

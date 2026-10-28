@@ -1,6 +1,6 @@
 # News ranking ("For you") — design & plan
 
-Status: **APPROVED (Luke, 2026-10-27). Step 1 built on branch `claude/news-for-you` (§9); not merged or deployed; its migration is not applied.** Follows NEWS_PAGE_DESIGN.md §10, which named a personalized feed as the next step. Read from code on `main` @ `a0c5547` and the live database (read-only counts, 2026-10-27).
+Status: **APPROVED (Luke, 2026-10-27). Steps 1–2 and the skip signal built on branch `claude/news-for-you` (§9, §10); not merged or deployed; the migration is not applied.** Follows NEWS_PAGE_DESIGN.md §10, which named a personalized feed as the next step. Read from code on `main` @ `a0c5547` and the live database (read-only counts, 2026-10-27).
 
 Goal: News learns which stories Luke reads and shows those first, in a **For you** view, without hiding the papers' own front pages and without new Supabase egress trouble.
 
@@ -193,8 +193,14 @@ Defaults taken for the open questions (Luke said to build with what's here; each
 - **Learning** (`updateNews`): new decisions `listen`, `more`, `less`, `mute` (older builds send only the first four kinds). One read of the decided stories' topics + the interest row, one write. The reply's `learned` names what changed, for the toast ("You'll see less about Crime.").
 - **Favourites** (`newsTeams`): the app sends its Scores favourites when their signature differs from the server's; it never sends an empty list (ISSUES.md).
 - **App** (`news-ui.js`): For you tab, server order kept, the reason first in each card's meta line, ⋯ → More like this / Less like this / Mute topic (Less and Mute take the story out of For you at once), Listen reported as `listen`; the ⋯ menu now opens upward near the bottom of the list.
-- **Not built (later steps):** the "What News has learned" screen and Reset (step 2); the scrolled-past "skip" signal (§3.1) — it needs per-story state to avoid counting the same story every visit.
+- **Not built in step 1:** the "What News has learned" screen and the skip signal — both added the same night (§10).
 - **Checks:** `test/news-for-you.test.js` (28: features, weights, scoring, arrangement, tags incl. Haiku 5.5 request shape and failures, team feeds, the hourly job before and after the migration, store queries, learning, the schema probe, the email path, app helpers); `npm run qa:news-for-you` (45 checks at 390, 360 and 1280 px, and with a server without For you); `qa:ticker`; boot check; full suite.
 - **Not verified:** a real Haiku 5.5 reply (no API key in the build sandbox) and the Athletic team-feed slugs (ISSUES.md); against the real database.
 - **Deploy steps (Luke):** apply the migration (`execute_sql`, then a `schema_migrations` row); `[deploy]` (Netlify: functions + web app); open News once on each device so the favourites reach the server; after the next hourly run, read `newsfeeds_status` for team feeds that 404 and the tagging token counts. No new env vars. A TestFlight build only matters for the iPhone app's copy of the web code if it isn't served live.
+
+## 10. As built: step 2 and the skip signal (same branch, 2026-10-28)
+
+- **What News has learned:** a "What News has learned" link under For you's heading opens a view (back arrow to For you) with **More of** (the 20 strongest likes), **Less of** (10 strongest dislikes) and **Muted**, each a chip with ×, plus the favorite teams from Scores. Papers and sections aren't listed. **Reset** asks for a second tap within 4 seconds and clears what was learned (favorites stay). Server: `gmail.js` `newsInterest` (read when the view opens) and `newsInterestEdit { forget, unmute, reset }`, both `_news-rank.js` `learnedSummary` / `editInterest`. An edit marks For you to re-rank on the next visit.
+- **Skip signal** (§3.1, changed): a story counts as seen when 60% of it is on screen in For you for 1.5 s. On leaving For you (another view, leaving News, the app going to the background) seen stories that weren't opened, saved or removed are sent as `skip`, **once per story per app session**, at most 30. The server keeps a per-story count (`news_articles.skips`, added to the same migration): at the **third** skip the story's features take a −0.5 nudge once, and the story leaves For you (`skips=lt.3` in the pool). Below that a skip only bumps the count (no interest write).
+- **Checks:** 5 more unit tests (33 in `test/news-for-you.test.js`); `qa:news-for-you` adds skips reported on leaving For you, the learned lists, removing and unmuting, two-tap Reset, back arrow, no sideways scroll; migration check covers `skips`.
 
