@@ -88,6 +88,7 @@ function simplifyNewsletterHtml(html) {
 }
 
 // Claude turns the simplified newsletter into clean article HTML.
+const NEWSLETTER_MODEL = "claude-haiku-5-5";
 async function convertNewsEmailToArticle(anthropicKey, source, { subject, date, html }) {
   const text = simplifyNewsletterHtml(html);
   if (text.length < 400) throw new Error("Newsletter body too short after simplification");
@@ -108,12 +109,18 @@ async function convertNewsEmailToArticle(anthropicKey, source, { subject, date, 
   // every trigger (a runaway spend loop). Haiku is cheap and fast, so the
   // sweep finishes and records the message as processed. maxRounds:1 (Haiku
   // supports prefill continuation, but we cap the spend to a single pass).
+  // Haiku 5.5 (2026-10-28; a tenth of Haiku 4.5's price): the same text counts as
+  // ~30% more tokens and its thinking counts toward max_tokens, so the cap rises
+  // from 12k to 16k; effort "low" keeps the thinking short for a mechanical copy.
+  // No prefill and no sampling parameters (both rejected); a refusal throws, which
+  // leaves the email for retry until the mail-jobs attempt cap quarantines it.
   const out = await claudeCallComplete(anthropicKey, {
     system,
     user: `Newsletter subject: ${subject}\nDate: ${date}\n\n${text}`,
-    maxTokens: 12000,
+    maxTokens: 16000,
     maxRounds: 1,
-    model: "claude-haiku-4-5-20251001"
+    model: NEWSLETTER_MODEL,
+    outputConfig: { effort: "low" }
   });
   const cleaned = out.replace(/^```html?\s*/i, "").replace(/```\s*$/i, "").trim();
   if (cleaned.length < 400) throw new Error("Conversion produced too little content");
@@ -145,4 +152,4 @@ async function saveArticleToMediaSection(serviceKey, userId, article) {
   return { ok: true, duplicate };
 }
 
-module.exports = { NEWS_SOURCES, newsSourceForMessage, conversionSourceFor, conversionTooShort, simplifyNewsletterHtml, convertNewsEmailToArticle, saveArticleToMediaSection };
+module.exports = { NEWSLETTER_MODEL, NEWS_SOURCES, newsSourceForMessage, conversionSourceFor, conversionTooShort, simplifyNewsletterHtml, convertNewsEmailToArticle, saveArticleToMediaSection };

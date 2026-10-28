@@ -77,6 +77,10 @@ Scores. Scores has no menu entry of its own.
   Scores themselves are never stored.
 
 ## Luke's decisions (keep them)
+- **Newsletter briefings run on Claude Haiku 5.5 (2026-10-28):** `_news-articles.js`
+  `NEWSLETTER_MODEL`, one pass, effort low, 16k token cap. Haiku 5.5 rejects prefill and
+  sampling parameters (`_claude.js` skips continuation for it) and can refuse; a refusal
+  fails the conversion so the mail-jobs attempt cap bounds retries.
 - **Watch buttons on games (Luke, 2026-10-26; STREAMING_HANDOFF_DESIGN.md §4.3):** a
   game that's live or starts within the hour shows "Watch" buttons in Scores' expanded
   game and the dock's game card. `sports-watch.js` maps the scoreboard's broadcaster
