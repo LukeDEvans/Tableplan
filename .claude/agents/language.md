@@ -21,6 +21,8 @@ single-page, vanilla-ESM web app. Dutch practice is self-contained in the
 Also yours (not checked by CI): `ios/App/App/LiveLanguagePlugin.swift` (registered in
 `MainViewController.swift`), `nativeLanguage()` in `native-bridge.js`, the Dutch block in
 `styles.css`, and the `mic` / `flashcards` / `wordTiles` / `pairs` icons in `live-icons.js`.
+The Leisure row's Dutch hobby card shows `activity-dutch.png` (windmill scene, Luke 2026-10-28;
+copied to `dist` in `vite.config.mjs`, listed in `RECREATE_HOBBY_ICONS` in app.js).
 
 ## Your scope (Part 2, 2026-10-26 — LANGUAGE_PRACTICE.md §8–19)
 - **`language-words.js`** — paste parser, Luke's lessons/words (`languageUserLessons`,

@@ -10,4 +10,4 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Nothing undeployed._
+- **Dutch card picture** — the Leisure page's Dutch hobby card shows the windmill picture (`activity-dutch.png`) instead of the translate icon · PR (this one) · none; web only, and the iPhone picks it up with the next TestFlight build.
