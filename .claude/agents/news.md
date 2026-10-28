@@ -34,7 +34,7 @@ Scores. Scores has no menu entry of its own.
   the page shell (top bar, sidebar directory: For you · Front page · Saved ·
   sections · papers), story lists and the story ⋯ menu (**Save, Open, Listen, Share,
   More like this, Less like this, Mute topic, Hide** — the middle three only once the
-  server has For you), Sync Settings for paper sign-ins, and the mount for the injected `saved`
+  server has For you), For you's "What News has learned" view, Sync Settings for paper sign-ins, and the mount for the injected `saved`
   interface. Pure helpers are exported top-level (`articlesForView`,
   `arrangeFront`, `isNewsletterBriefing`, `paperStatus`, `applyLocalDecisions`, …) and tested
   in `test/news-ui.test.js`.
@@ -88,6 +88,10 @@ Scores. Scores has no menu entry of its own.
   only), never in synced state. **AI tags are on** (Haiku 5.5, headlines + subtitles of
   new stories only, kill switch `NEWS_AI_TAGS_DISABLED=1`); everything works without
   them. Before the migration is applied the code behaves as before (`forYouReady`).
+  "What News has learned" lists likes, dislikes and mutes, each removable, with a
+  two-tap Reset. Stories left on screen in For you and not opened count as skipped
+  (once per story per app session); the third skip nudges their topics down once and
+  takes the story out of For you.
 - **The Athletic: favourite teams only, without AI (Luke, 2026-10-27):** the hourly job
   reads each Scores favourite's Athletic **team feed** (`/athletic/rss/<league>/<slug>/`)
   plus their leagues' feeds for name matching, and keeps only stories from a
