@@ -46,7 +46,7 @@ const ATHLETIC_LEAGUE = { nfl: "nfl", nba: "nba", wnba: "wnba", nhl: "nhl", mlb:
 const ATHLETIC_SCOPE_LEAGUE = { nfl: "nfl", nba: "nba", wnba: "wnba", nhl: "nhl", mlb: "mlb", college: "college-football", soccer: "football", "soccer-w": "football" };
 // Seen in public feed directories (feedspot, feeder): rss/nba/timberwolves/,
 // rss/football/atlunited/, rss/mlb/braves/; team pages nhl/team/wild/, mlb/team/twins/.
-const ATHLETIC_KNOWN_SLUGS = { "nba:minnesota-timberwolves": "timberwolves", "nhl:minnesota-wild": "wild", "mlb:minnesota-twins": "twins", "soccer:atlanta-united-fc": "atlunited", "mlb:atlanta-braves": "braves" };
+const ATHLETIC_KNOWN_SLUGS = { "nba:minnesota-timberwolves": "timberwolves", "nhl:minnesota-wild": "wild", "mlb:minnesota-twins": "twins", "soccer:atlanta-united-fc": "atlunited", "mlb:atlanta-braves": "braves", "soccer:ajax-amsterdam": "ajax", "soccer:afc-ajax": "ajax" };
 const GENERIC = new Set(["fc", "afc", "sc", "cf", "united", "city", "state", "university", "club"]);
 const slugWord = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 

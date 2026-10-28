@@ -440,3 +440,33 @@ describe("step 2: what News has learned, skips", () => {
     expect(skipsToSend(many.map((c) => c.id), many, new Set())).toHaveLength(30);
   });
 });
+
+describe("team names with Luke's real favorites (2026-10-28)", () => {
+  // The favorites as the app sent them on the first day (news_interest.teams).
+  const REAL = [
+    { key: "nfl:minnesota-vikings", name: "Minnesota Vikings", scope: "nfl", short: "Vikings", league: "nfl" },
+    { key: "college:minnesota-golden-gophers", name: "Minnesota Golden Gophers", scope: "college", short: "Minnesota", league: "ncaaf" },
+    { key: "college:minnesota-morris-cougars", name: "Minnesota Morris Cougars", scope: "college", short: "Minn Morris", league: "ncaaf" },
+    { key: "soccer:minnesota-united-fc", name: "Minnesota United FC", scope: "soccer", short: "Minnesota", league: "mls" },
+    { key: "soccer:ajax-amsterdam", name: "Ajax Amsterdam", scope: "soccer", short: "Ajax", league: "eredivisie" },
+    { key: "soccer:netherlands", name: "Netherlands", scope: "soccer", short: "Netherlands", league: "nations-league" },
+    { key: "soccer:united-states", name: "United States", scope: "soccer", short: "USA", league: "world-cup" }
+  ];
+  const m = R.teamMatcher(REAL);
+  it("uses the short name a club goes by, never its city", () => {
+    expect(m("Ajax sack their coach")).toEqual(["soccer:ajax-amsterdam"]);
+    expect(m("Amsterdam marathon results")).toEqual([]);
+  });
+  it("a place shared by several favorites is never a team on its own", () => {
+    expect([...R.placeWords(REAL)]).toEqual(["minnesota"]);
+    expect(m("Minnesota legislature passes budget")).toEqual([]);
+    expect(m("Gophers beat Iowa")).toEqual(["college:minnesota-golden-gophers"]);
+  });
+  it("a common college nickname only counts with the school's name", () => {
+    expect(m("BYU Cougars stun Utah")).toEqual([]);
+    expect(m("Morris Cougars win the UMAC")).toEqual(["college:minnesota-morris-cougars"]);
+  });
+  it("Ajax's Athletic feed is tried as /football/ajax/ first", () => {
+    expect(F.athleticSlugCandidates(REAL[4])[0]).toBe("ajax");
+  });
+});
