@@ -82,6 +82,10 @@ Scores. Scores has no menu entry of its own.
   Scores themselves are never stored.
 
 ## Luke's decisions (keep them)
+- **Newsletter briefings run on Claude Haiku 5.5 (2026-10-28):** `_news-articles.js`
+  `NEWSLETTER_MODEL`, one pass, effort low, 16k token cap. Haiku 5.5 rejects prefill and
+  sampling parameters (`_claude.js` skips continuation for it) and can refuse; a refusal
+  fails the conversion so the mail-jobs attempt cap bounds retries.
 - **For you (Luke, 2026-10-27; NEWS_RANKING_DESIGN.md):** a view ranked per person by
   content (paper, section, AI topics, entities, teams, keywords), learning from Open,
   Listen, Save, Hide and the ⋯ menu's More / Less like this and Mute topic; weights
