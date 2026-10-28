@@ -45,7 +45,7 @@ import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKe
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
-import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes } from './views.js';
+import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes, ROW_RESET_SECTIONS, applyRowReset } from './views.js';
 import * as ExploreScope from './explore-scope.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
@@ -349,8 +349,8 @@ const STATE_SECTIONS = {
   grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders", "grocerySettingStamps"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
-  watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "mediaQueueAdded", "mediaQueueRemoved", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps"],
+  watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData", "watchRowReset"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "mediaQueueAdded", "mediaQueueRemoved", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps", "mediaRowReset"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -620,7 +620,8 @@ function mergeRemoteSectionRow(section, keys, row) {
     && lastWrittenSections[section] !== JSON.stringify(extractSectionData(keys));
   lastSeenSectionStamp[row.id] = row.updated_at;
   const { stateUpdatedAt: remoteTs, ...remoteData } = row.state || {};
-  const localFrag = { ...extractSectionData(keys), tombstones: state.tombstones, stateUpdatedAt: state.stateUpdatedAt || "" };
+  // A reset row (views.js applyRowReset) replaces this device's stale copy.
+  const localFrag = { ...applyRowReset(section, keys, extractSectionData(keys), remoteData), tombstones: state.tombstones, stateUpdatedAt: state.stateUpdatedAt || "" };
   const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
   const merged = (state.stateUpdatedAt || "") >= (remoteTs || "")
     ? mergeStates(localFrag, remoteFrag)
@@ -7502,9 +7503,16 @@ async function runHydrateStateFromSharedStorage() {
         // locally (not in the cloud state) so they don't merge in.
         const signedOutAt = localStorage.getItem("live_signed_out_explicitly") || "";
         const hasAnonymousChanges = !!(signedOutAt && localTs && localTs > signedOutAt);
-        const stateForMerge = (hasAnonymousChanges)
+        let stateForMerge = (hasAnonymousChanges)
           ? stripAnonymousChanges(state, sharedState)
           : state;
+        // A reset row (views.js applyRowReset) replaces this device's stale copy
+        // of it instead of being merged with it. sharedState holds the rows on
+        // screen, so only the scope this device shows is checked here; the
+        // other scopes' copies were just replaced from the server (shadows).
+        for (const section of ROW_RESET_SECTIONS) {
+          stateForMerge = applyRowReset(section, STATE_SECTIONS[section], stateForMerge, sharedState);
+        }
         if (hasAnonymousChanges) {
           console.info("[sync] Stripping anonymous changes made after explicit sign-out.");
           localStorage.removeItem("live_signed_out_explicitly");
@@ -8263,7 +8271,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
   if (curRows.length) {
     const { stateUpdatedAt: remoteTs, schemaVersion: _rv, ...remoteData } = curRows[0].state || {};
     const localTs = state.stateUpdatedAt || "";
-    const localFrag  = { ...extractSectionData(keys), tombstones: state.tombstones, stateUpdatedAt: localTs };
+    const localFrag  = { ...applyRowReset(section, keys, extractSectionData(keys), remoteData), tombstones: state.tombstones, stateUpdatedAt: localTs };
     const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
     const merged = localTs >= (remoteTs || "")
       ? mergeStates(localFrag, remoteFrag)
@@ -30700,7 +30708,7 @@ async function writeInactiveSection(section, scope, attempt = 0) {
   }
 
   const { stateUpdatedAt: remoteTs, ...remoteData } = rows[0].state || {};
-  const localFrag = { ...data, tombstones: state.tombstones, stateUpdatedAt: now };
+  const localFrag = { ...applyRowReset(section, keys, data, remoteData), tombstones: state.tombstones, stateUpdatedAt: now };
   const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
   const merged = mergeStates(localFrag, remoteFrag);
   const mergedFrag = {};
