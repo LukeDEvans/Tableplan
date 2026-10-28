@@ -23902,6 +23902,20 @@ body[data-theme="dark"] .news-card { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
 .news-menu svg { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .news-menu .news-menu-primary { color: var(--accent-dark, var(--accent)); font-weight: 700; }
 .news-menu-divider { height: 1px; margin: 4px 2px; background: var(--line); }
+/* Opens upward when there isn't room below it in the list (placeOpenMenu, news-ui.js). */
+.news-menu.is-up { top: auto; bottom: 42px; }
+/* For you → What News has learned */
+.news-link-btn { border: 0; background: none; padding: 0; color: var(--accent-dark, var(--accent)); font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.news-back { border: 0; background: none; color: var(--ink); font-size: 1.6rem; line-height: 1; padding: 0 6px 0 0; cursor: pointer; }
+.news-learned-group h3 { margin: 4px 0 2px; font-size: 1rem; }
+.news-learned-note { margin: 0 0 8px; color: var(--muted); font-size: 0.82rem; }
+.news-learned-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.news-learned-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 6px 6px 12px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); }
+.news-learned-chip > span { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+.news-learned-label { font-weight: 700; font-size: 0.88rem; overflow-wrap: anywhere; }
+.news-learned-chip small { color: var(--muted); font-size: 0.72rem; }
+.news-learned-x { flex-shrink: 0; width: 26px; height: 26px; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); font-size: 1rem; line-height: 1; cursor: pointer; }
+.news-learned-reset.is-armed { border-color: var(--tomato); color: var(--tomato); }
 
 /* Sports: Scores | Stories tabs */
 .news-tabs { display: flex; gap: 6px; }
@@ -24872,3 +24886,33 @@ body[data-theme="dark"] .lang-read-card svg { color: var(--accent); }
 .lang-rd-in { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85rem; font-weight: 700; color: var(--accent-dark); }
 body[data-theme="dark"] .lang-rd-in { color: var(--accent); }
 .lang-rd-article a.secondary-btn { text-decoration: none; }
+
+/* ── Out links (APP_LINKS_DESIGN.md): buttons that open another app ─────────
+   Banks, bills, stores, papers, maps and travel. Opened by the app-wide
+   "Link out" listener ([data-link-out]); the arrow says "opens elsewhere". */
+.out-link-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; min-width: 0; }
+.out-link-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  min-height: 32px; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-dark) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+  color: var(--accent-dark); font: inherit; font-size: 0.84rem; font-weight: 650;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+}
+.out-link-chip:hover { background: var(--accent-soft); }
+.out-link-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.out-link-chip--small { min-height: 26px; padding: 2px 8px; font-size: 0.76rem; flex: 0 0 auto; }
+.out-link-arrow { width: 0.9em; height: 0.9em; flex: 0 0 auto; }
+body[data-theme="dark"] .out-link-chip { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.fin-bill-row .out-link-chip--small { align-self: center; }
+.travel-meta-chip--link { border: 0; background: none; font: inherit; color: inherit; }
+.travel-meta-chip--link .out-link-arrow { opacity: 0.6; }
+.item-detail-links { margin: 10px 0 0; }
+.plan-detail-links { margin: 10px 0 2px; }
+.contact-phone-actions { display: inline-flex; gap: 2px; margin-left: 6px; vertical-align: middle; }
+.contact-phone-act { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; color: var(--accent-dark); background: color-mix(in srgb, var(--accent-soft) 55%, transparent); }
+.contact-phone-act svg { width: 15px; height: 15px; }
+body[data-theme="dark"] .contact-phone-act { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.grocery-store-app { flex: 0 0 auto; color: var(--accent-dark); }
+.grocery-store-app .out-link-arrow { width: 18px; height: 18px; }
+body[data-theme="dark"] .grocery-store-app { color: var(--accent); }

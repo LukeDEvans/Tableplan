@@ -7,6 +7,8 @@ import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotW
 import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn-store.js';
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
 import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
+import { linkOutAttrs } from './link-out.js';
+import { banksForAccounts, billerForBill, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
 // commits (see FINANCE_EXTRACTION.md). This is COMMIT 1: the pure normalizers,
@@ -2986,6 +2988,7 @@ function renderFinanceAccountsPanel() {
   }).join("");
 
   return `
+    ${financeBankLinksHtml(liveById)}
     ${linkBlock}
     ${ownerBlocks}
     ${unlinkedLive.length ? `
@@ -3002,6 +3005,32 @@ function renderFinanceAccountsPanel() {
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-account">Add</button>
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-label">+ Label</button>
     </div>`;
+}
+
+// Shortcuts to the banks behind the accounts on screen (APP_LINKS_DESIGN.md):
+// one button per bank, opened through the app-wide "Link out" listener, so the
+// iPhone opens the bank's app and the web app its website. The bank is
+// recognised from SimpleFIN's institution name or the account's own name;
+// nothing is stored. Only the accounts this view shows count, so a Personal
+// account's bank never appears in Household.
+function financeBankLinksHtml(liveById) {
+  const banks = banksForAccounts((state.financeAccounts || []).map((a) => ({
+    name: a.name,
+    org: a.linkedId ? liveById.get(a.linkedId)?.org || "" : "",
+  })));
+  if (!banks.length) return "";
+  return `
+    <div class="fin-subhead">Your banks</div>
+    <div class="out-link-row fin-bank-links">
+      ${banks.map((b) => `<button type="button" class="out-link-chip" ${linkOutAttrs(placeHandoff(b.id), escapeHtml)} aria-label="Open ${escapeHtml(b.label)}">${escapeHtml(b.label)}${OUT_LINK_ARROW}</button>`).join("")}
+    </div>`;
+}
+
+// A bill's "Pay" button when its merchant is a known biller, bank or card.
+function financeBillPayHtml(name) {
+  const m = billerForBill(name);
+  if (!m) return "";
+  return `<button type="button" class="out-link-chip out-link-chip--small" ${linkOutAttrs(placeHandoff(m.id), escapeHtml)} aria-label="Pay at ${escapeHtml(m.label)}" title="${escapeHtml(m.label)}">Pay${OUT_LINK_ARROW}</button>`;
 }
 
 // Live-filter the budget categories by name without a full re-render (so the
@@ -4054,6 +4083,7 @@ function renderFinancePage() {
             <span class="fin-bill-day">${b.overdue ? "Due now" : `Day ${b.dueDay}`}</span>
             <span class="fin-bill-name">${escapeHtml(b.name)}</span>
             <span class="fin-bill-amt">${formatFinMoney(-Math.abs(b.amount))}</span>
+            ${financeBillPayHtml(b.name)}
           </div>`).join("")}
         <div class="fin-bill-total"><span>Total upcoming</span><span>${formatFinMoney(-upcoming.total)}</span></div>
         ${safeToSpend != null ? `

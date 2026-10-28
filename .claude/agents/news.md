@@ -1,6 +1,6 @@
 ---
 name: news
-description: Use for changes scoped to the News page — paper stories and sections, the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), Scores (News → Sports → Scores; back in News since 2026-10-20), and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" and "scores" areas of app.js.
+description: Use for changes scoped to the News page — paper stories and sections, the For you ranking (NEWS_RANKING_DESIGN.md), the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), Scores (News → Sports → Scores; back in News since 2026-10-20), and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" and "scores" areas of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -22,6 +22,8 @@ Scores. Scores has no menu entry of its own.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+**App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** ⋯ → **Open in <paper> app** opens the story's own link (the paper's app claims it) and counts as reading it; offered only when the link is on the paper's own domain (`out-catalog.js` `paperHandoff`), never for a newsletter's click tracker. `handOff` is injected from app.js.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
@@ -31,9 +33,10 @@ Scores. Scores has no menu entry of its own.
 
 ## Your scope (edit these)
 - **`news-ui.js`** — `createNewsModule(deps)` (instantiated in app.js as `_news`):
-  the page shell (top bar, sidebar directory: Front page · Saved ·
+  the page shell (top bar, sidebar directory: For you · Front page · Saved ·
   sections · papers), story lists and the story ⋯ menu (**Save, Open, Listen, Share,
-  Hide**), Sync Settings for paper sign-ins, and the mount for the injected `saved`
+  More like this, Less like this, Mute topic, Hide** — the middle three only once the
+  server has For you), For you's "What News has learned" view, Sync Settings for paper sign-ins, and the mount for the injected `saved`
   interface. Pure helpers are exported top-level (`articlesForView`,
   `arrangeFront`, `isNewsletterBriefing`, `paperStatus`, `applyLocalDecisions`, …) and tested
   in `test/news-ui.test.js`.
@@ -62,7 +65,9 @@ Scores. Scores has no menu entry of its own.
 - **Server:** `gmail.js` actions `newsFeed` / `updateNews` / `verifyNewsSignIns`;
   `_news-store.js` (the relational `news_articles` table, service role only),
   `_news-links.js` (links from newspaper emails, shared redirect cache),
-  `_news-feeds.js` + `news-feeds.js` (hourly RSS intake), `_news-articles.js`
+  `_news-feeds.js` + `news-feeds.js` (hourly RSS intake, The Athletic's team feeds),
+  `_news-rank.js` (pure For you ranking: features, weights, scoring, arrangement),
+  `_news-tags.js` (Haiku 5.5 topic tags for new stories), `_news-articles.js`
   (newsletter → listenable article), and the article intake/fetch functions
   `fetch-article.js`, `save-article.js`, `save-page-articles.js`, `scan-article.js`,
   `save-sync-cookie.js`, `sync-saved-articles.js`.
@@ -81,6 +86,24 @@ Scores. Scores has no menu entry of its own.
   `NEWSLETTER_MODEL`, one pass, effort low, 16k token cap. Haiku 5.5 rejects prefill and
   sampling parameters (`_claude.js` skips continuation for it) and can refuse; a refusal
   fails the conversion so the mail-jobs attempt cap bounds retries.
+- **For you (Luke, 2026-10-27; NEWS_RANKING_DESIGN.md):** a view ranked per person by
+  content (paper, section, AI topics, entities, teams, keywords), learning from Open,
+  Listen, Save, Hide and the ⋯ menu's More / Less like this and Mute topic; weights
+  fade over ~3 weeks; diversity rules and an exploration slot every 8th story. It sits
+  beside Front page, not instead of it. Interests live in `news_interest` (service role
+  only), never in synced state. **AI tags are on** (Haiku 5.5, headlines + subtitles of
+  new stories only, kill switch `NEWS_AI_TAGS_DISABLED=1`); everything works without
+  them. Before the migration is applied the code behaves as before (`forYouReady`).
+  "What News has learned" lists likes, dislikes and mutes, each removable, with a
+  two-tap Reset. Stories left on screen in For you and not opened count as skipped
+  (once per story per app session); the third skip nudges their topics down once and
+  takes the story out of For you.
+- **The Athletic: favourite teams only, without AI (Luke, 2026-10-27):** the hourly job
+  reads each Scores favourite's Athletic **team feed** (`/athletic/rss/<league>/<slug>/`)
+  plus their leagues' feeds for name matching, and keeps only stories from a
+  favourite's feed or naming one. Someone with no favourites gets every Athletic story.
+  The app sends its favourites (`newsTeams`) when they differ from the server's
+  `teamsSig`; the job never reads `tableplan_states` for them.
 - **Watch buttons on games (Luke, 2026-10-26; STREAMING_HANDOFF_DESIGN.md §4.3):** a
   game that's live or starts within the hour shows "Watch" buttons in Scores' expanded
   game and the dock's game card. `sports-watch.js` maps the scoreboard's broadcaster

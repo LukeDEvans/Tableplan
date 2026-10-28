@@ -23,6 +23,10 @@
 import { makeSortable } from './sortable.js';
 import { saveFile } from './save-file.js';
 import { usableViewportBottom } from './dock-space.js';
+import { phoneLinks } from './out-catalog.js';
+
+const CONTACT_TEXT_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>`;
+const CONTACT_VIDEO_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="2"/><path d="m15 10 7-4v12l-7-4z"/></svg>`;
 
 // "YYYY-MM-DD" (with year), so the birthday calendar can show an age.
 const CONTACT_DATE_RE = /^(\d{4}-)?(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -527,7 +531,13 @@ function contactDetailRowsHtml(c, { copy = false } = {}) {
   const rows = [];
   if (c.birthday) rows.push(line("🎂", escapeHtml(formatContactBirthday(c.birthday))));
   (c.dates || []).forEach((d) => rows.push(line("🎉", `${tag(d.label)}${escapeHtml(formatContactBirthday(d.value))}`)));
-  (c.phones || []).forEach((p) => rows.push(line("📞", `${tag(p.label)}<a href="tel:${escapeHtml(p.value.replace(/[^+\d]/g, ""))}">${escapeHtml(p.value)}</a>${copyBtn(p.value)}`)));
+  // Call (the number), Text and FaceTime (APP_LINKS_DESIGN.md): plain links the
+  // phone hands to Phone, Messages and FaceTime; on a Mac they open there too.
+  (c.phones || []).forEach((p) => {
+    const l = phoneLinks(p.value);
+    if (!l) { rows.push(line("📞", `${tag(p.label)}${escapeHtml(p.value)}${copyBtn(p.value)}`)); return; }
+    rows.push(line("📞", `${tag(p.label)}<a href="${escapeHtml(l.call)}">${escapeHtml(p.value)}</a>${copyBtn(p.value)}<span class="contact-phone-actions"><a class="contact-phone-act" href="${escapeHtml(l.text)}" aria-label="Text ${escapeHtml(p.value)}" title="Text">${CONTACT_TEXT_SVG}</a><a class="contact-phone-act" href="${escapeHtml(l.facetime)}" aria-label="FaceTime ${escapeHtml(p.value)}" title="FaceTime">${CONTACT_VIDEO_SVG}</a></span>`));
+  });
   (c.emails || []).forEach((e) => rows.push(line("✉️", `${tag(e.label)}<a href="mailto:${escapeHtml(e.value)}">${escapeHtml(e.value)}</a>${copyBtn(e.value)}`)));
   (c.addresses || []).forEach((a) => rows.push(line("📍", `${tag(a.label)}<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.value)}" target="_blank" rel="noopener">${escapeHtml(a.value)}</a>`)));
   if (c.notes) rows.push(`<div class="contact-card-notes">${escapeHtml(c.notes)}</div>`);

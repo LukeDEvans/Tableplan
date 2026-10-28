@@ -239,7 +239,9 @@ async function listGoogleCalendars(token) {
 // reminders + defaultReminders feed the app's own event reminders
 // (IOS_NOTIFICATIONS_DESIGN.md §4): Google's per-user reminder settings for the
 // token owner. Google → Netlify → device only; nothing reaches Supabase.
-const LIVE_FIELDS = "items(id,status,summary,start,end,recurringEventId,updated,reminders),defaultReminders,nextPageToken";
+// location, htmlLink and the meeting's video link let the event detail open Maps,
+// Google Calendar and Meet/Zoom (APP_LINKS_DESIGN.md). Device cache only.
+const LIVE_FIELDS = "items(id,status,summary,location,htmlLink,hangoutLink,conferenceData(entryPoints(entryPointType,uri)),start,end,recurringEventId,updated,reminders),defaultReminders,nextPageToken";
 const MASTER_FIELDS = "items(id,status,summary,description,location,start,end,recurrence,recurringEventId,originalStartTime,created,updated,reminders,extendedProperties,attendees(self),hangoutLink,conferenceData(conferenceId),attachments(title)),nextPageToken";
 
 // mode "live": expanded occurrences in [timeMin, timeMax), optionally only those
