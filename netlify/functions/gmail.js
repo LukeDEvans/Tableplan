@@ -93,7 +93,8 @@ exports.handler = async (event) => {
   }
 
   // ── News (NEWS_PAGE_DESIGN.md §10 — the news_articles table, via _news-store) ──
-  const VIEW_KINDS = ["front", "section", "paper", "sent"];
+  const VIEW_KINDS = ["front", "foryou", "section", "paper", "sent"];
+  const NewsRank = require("./_news-rank");
   const saveToMedia = (record) => saveArticleToMediaSection(serviceKey, userId, record);
 
   // One page of a view + the sidebar counts + which papers Luke is signed in to.
@@ -106,23 +107,63 @@ exports.handler = async (event) => {
     // Counts and sign-ins only feed the sidebar: skip them when paging further or
     // searching (search re-runs per keystroke pause).
     const light = !!before || !!NewsStore.searchTerm(q);
+    // For you (NEWS_RANKING_DESIGN.md) once its migration is in: the view itself,
+    // the Athletic favourite-team filter on the other views, and `teamsSig` so the
+    // app knows whether to send its Scores favourites.
+    const forYou = await NewsStore.forYouReady(serviceKey).catch(() => false);
+    if (view.kind === "foryou" && !forYou) view.kind = "front";
+    const wantsWeights = forYou && view.kind === "foryou" && !q;
+    const interest = forYou ? await NewsStore.loadInterest(serviceKey, userId, { cols: wantsWeights ? "all" : "teams" }).catch(() => null) : null;
+    const pageP = wantsWeights && interest
+      ? NewsStore.loadForYou(serviceKey, userId, interest)
+      : NewsStore.loadFeedPage(serviceKey, userId, { view: view.kind === "foryou" ? { kind: "front" } : view, before, q, limit: body.limit, athleticTagged: forYou });
     const [page, counts, signIns] = await Promise.all([
-      NewsStore.loadFeedPage(serviceKey, userId, { view, before, q, limit: body.limit }),
+      pageP,
       light ? Promise.resolve(null) : NewsStore.loadCounts(serviceKey, userId),
       light ? Promise.resolve(null) : NewsLinks.loadNewsSignIns(serviceKey, userId).catch(() => ({}))
     ]);
-    return json(200, { ...page, counts, signIns });
+    return json(200, { ...page, counts, signIns, ...(forYou ? { forYou: true, teamsSig: interest?.teamsSig ?? "" } : {}) });
   }
 
   // Batched read / unread / send / hide. Send saves to Media → Publications first.
   // Returns the fresh counts (one small RPC) so the sidebar stays right.
   if (action === "updateNews") {
     const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 500) : [];
-    if (!decisions.length || decisions.some((d) => !d?.id || !["read", "unread", "send", "hide"].includes(d.decision))) {
-      return json(400, { error: "decisions: [{ id, decision: read|unread|send|hide }] required" });
+    // listen / more / less / mute come from For you builds; older builds send only the first four.
+    const DECISIONS = ["read", "unread", "send", "hide", "listen", "more", "less", "mute", "skip"];
+    if (!decisions.length || decisions.some((d) => !d?.id || !DECISIONS.includes(d.decision))) {
+      return json(400, { error: `decisions: [{ id, decision: ${DECISIONS.join("|")} }] required` });
     }
-    await NewsStore.applyDecisions(serviceKey, userId, decisions, { saveToMedia });
-    return json(200, { ok: true, counts: await NewsStore.loadCounts(serviceKey, userId) });
+    const learn = await NewsStore.forYouReady(serviceKey).catch(() => false);
+    const { learned } = await NewsStore.applyDecisions(serviceKey, userId, decisions, { saveToMedia, learn });
+    return json(200, { ok: true, counts: await NewsStore.loadCounts(serviceKey, userId), ...(learned?.length ? { learned } : {}) });
+  }
+
+  // "What News has learned" (NEWS_RANKING_DESIGN.md step 2): the person's
+  // strongest likes / dislikes and mutes, named. Read only when the screen opens.
+  if (action === "newsInterest") {
+    if (!(await NewsStore.forYouReady(serviceKey).catch(() => false))) return json(200, { ok: false, reason: "not-ready" });
+    const interest = await NewsStore.loadInterest(serviceKey, userId);
+    return json(200, { ok: true, ...NewsRank.learnedSummary(interest) });
+  }
+  // Edits from that screen. body: { forget?: [feature], unmute?: [feature], reset?: true }
+  if (action === "newsInterestEdit") {
+    if (!(await NewsStore.forYouReady(serviceKey).catch(() => false))) return json(200, { ok: false, reason: "not-ready" });
+    const list = (v) => (Array.isArray(v) ? v.filter((f) => typeof f === "string" && f.length <= 80).slice(0, 50) : []);
+    const interest = await NewsStore.loadInterest(serviceKey, userId);
+    const next = NewsRank.editInterest(interest, { forget: list(body.forget), unmute: list(body.unmute), reset: body.reset === true });
+    await NewsStore.saveInterest(serviceKey, userId, next);
+    return json(200, { ok: true, ...NewsRank.learnedSummary({ ...interest, ...next }) });
+  }
+
+  // The app's Scores favourites, sent when they differ from the stored teamsSig
+  // (so the hourly job can follow those teams on The Athletic without reading
+  // synced state). body: { teams: [{ key, scope, name, short, league }] }
+  if (action === "newsTeams") {
+    if (!(await NewsStore.forYouReady(serviceKey).catch(() => false))) return json(200, { ok: false, reason: "not-ready" });
+    const teams = NewsRank.cleanTeams(body.teams);
+    await NewsStore.saveInterest(serviceKey, userId, { teams });
+    return json(200, { ok: true, teamsSig: NewsRank.teamsSignature(teams) });
   }
 
   // The old Media bell deck (installed builds that predate the News page): the

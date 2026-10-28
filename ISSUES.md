@@ -218,6 +218,13 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 
 
 ## P2
+- [ ] **[P2] News sidebar counts still include old Athletic stories after For you goes live** (news · `news_counts` RPC vs `_news-store.js` ATHLETIC_TAGGED_FILTER · 2026-10-28)
+      Once the For you migration is in, Athletic stories stored before it (no `topics`) are hidden from every view, but `news_counts` still counts them, so Sports / The Athletic show unread numbers with no stories behind them until those rows age out (≤ 5 days). → Either let it age out (no change), or add the same filter to `news_counts` in a later migration. Verdict: KNOWN GAP, self-healing.
+- [ ] **[P3] Removing every Scores favourite doesn't reach the server** (news · news-ui.js syncTeams · 2026-10-28)
+      The app never sends an empty favourites list (before synced state arrives every device reads as "no favourites", which would wipe the server's copy), so after removing all favourites The Athletic keeps following the last ones. → If it matters, send an empty list only once `sportsPrefs` carries a sync stamp. Verdict: DELIBERATE TRADE-OFF.
+- [ ] **[P2] The Athletic team-feed slugs are unverified** (news · `_news-feeds.js` ATHLETIC_KNOWN_SLUGS / athleticSlugCandidates · 2026-10-28)
+      Only `nba/timberwolves` is confirmed as a feed (feedspot); `nhl/wild` and `mlb/twins` are confirmed team pages; Vikings, Lynx, Gophers, Ajax and Minnesota United are derived guesses (the build sandbox can't reach nytimes.com). A wrong slug is a 404, and the favourite then relies on name matching in its league feed. → After the first deploy, read `newsfeeds_status` (`feeds[]` entries with `team`) and fix any 404 slug in `ATHLETIC_KNOWN_SLUGS`. Verdict: CHECK AFTER DEPLOY.
+
 - [x] **[P2] Two admins in a household make the server's "the admin" pick arbitrary** (notifications/listen · netlify/functions/daily-briefing.js:138, presynth-tts-background.mjs:114, tts-cache-cleanup.js:138 · 2026-10-26)
       `getAdminUid` reads `role=eq.admin&limit=1` with no ordering. Before 9032176 a household had one admin; now a second is one tap away. → With two admins the daily briefing may be built from, and sent to, the other admin instead of Luke; presynth/cleanup overlay the wrong person's personal `media` row (cleanup, if `TTS_CLEANUP_DELETE=1`, would delete Luke's cached audio; regenerable). Suggest ordering by `joined_at` or keying off `live_groups.created_by`. Verdict: CONFIRMED (code read; not run).
       → Fixed 2026-10-26: the three lookups order by `joined_at` (the first admin, i.e. Luke); test/architecture-group-lookup.test.js guards it.

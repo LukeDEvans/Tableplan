@@ -194,7 +194,8 @@ Each phase: `npm test`, `npm run check:boot`, browser check. Deploy gated on Luk
 News is now a major part of the app, so it takes **every section of all four papers**,
 not only articles linked in emails. Email intake keeps running alongside (it supplies
 newsletter leads and briefings). A personalized feed (ranking by your interests) is
-the next step; this section only widens the intake.
+the next step ([NEWS_RANKING_DESIGN.md](NEWS_RANKING_DESIGN.md), proposed 2026-10-27);
+this section only widens the intake.
 
 **Storage moved to a table** — `news_articles` (`migrations/2026-10-06-news-articles.sql`,
 service-role only, PK `user_id, id`). Kept in the old `mailnews_<user>` JSONB row,
