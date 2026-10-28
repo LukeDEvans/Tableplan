@@ -19,6 +19,8 @@ import { makeSortable } from './sortable.js';
 import { stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, groceryKey } from './grocery-list-stamps.js';
 import { boughtCyclesByKey, manualItemCarry, resetBoughtMarks } from './grocery-bought.js';
 import { usableViewportBottom } from './dock-space.js';
+import { linkOutAttrs } from './link-out.js';
+import { storeFor, storeSearchHandoff, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 
 // Module-scope copies of two tiny standalone helpers (identical to app.js) so the pure
 // exports and the factory share one definition without threading them through as deps.
@@ -450,7 +452,7 @@ export function baseGroceryItemKey(item) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createGroceriesModule(deps) {
   const {
-    state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, isLocalDevHost, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp, getHomeLocation, getFreshAccessToken, recognizeReceiptText, isStateReady,
+    state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, isLocalDevHost, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp, getHomeLocation, getFreshAccessToken, recognizeReceiptText, isStateReady, handOff,
   } = deps;
   _appState = state; // wire the module-scope live-state ref used by pure exports
 
@@ -2951,6 +2953,7 @@ function renderGroceries() {
                 <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
               </a>
             ` : ""}
+            ${storeAppBtn(store, name)}
             ${broomBtn}
           </div>
         ` : `<div class="grocery-store-solo-actions">${boughtToggleBtn(storeId, boughtRows)}${broomBtn}</div>`}
@@ -3475,6 +3478,31 @@ function groceryItemTemplate(row) {
   `;
 }
 
+// Open a store's own app or website from its heading (APP_LINKS_DESIGN.md).
+// The store is recognised by name (out-catalog.js); unknown stores get no button.
+function storeAppBtn(store, name) {
+  const m = store ? storeFor(store.name || name) : null;
+  if (!m) return "";
+  return `<button class="icon-btn grocery-store-app" type="button" ${linkOutAttrs(placeHandoff(m.id), escapeHtml)} title="Open ${escapeHtml(m.label)}" aria-label="Open ${escapeHtml(m.label)}">${OUT_LINK_ARROW}</button>`;
+}
+
+// "Find at <store>" for an item: the household's stores whose site can search,
+// in the household's store order, at most four.
+function groceryFindAtStores(query) {
+  const seen = new Set();
+  const out = [];
+  for (const s of groceryStores()) {
+    const m = storeFor(s.name);
+    if (!m || seen.has(m.id)) continue;
+    const spec = storeSearchHandoff(m.id, query);
+    if (!spec) continue;
+    seen.add(m.id);
+    out.push(spec);
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
 function openGroceryItemMenu(event) {
   event.preventDefault();
   event.stopPropagation();
@@ -3482,6 +3510,7 @@ function openGroceryItemMenu(event) {
   const key = event.currentTarget.dataset.groceryWrapKey;
   const row = displayedGroceryRow(key);
   if (!row) return;
+  const findAt = groceryFindAtStores(row.displayName || row.item || "");
   const menu = document.createElement("div");
   menu.className = "folder-context-menu grocery-library-context-menu";
   menu.setAttribute("role", "menu");
@@ -3490,8 +3519,14 @@ function openGroceryItemMenu(event) {
     <button type="button" role="menuitem" data-edit-grocery-item>Edit</button>
     <button type="button" role="menuitem" data-store-rank-grocery-item>Preferred stores</button>
     <button type="button" role="menuitem" data-delete-grocery-item>Delete</button>
+    ${findAt.map((spec, i) => `<button type="button" role="menuitem" data-find-at-store="${i}">Find at ${escapeHtml(spec.label)}</button>`).join("")}
   `;
   document.body.append(menu);
+  menu.querySelectorAll("[data-find-at-store]").forEach((btn) => btn.addEventListener("click", () => {
+    closeFolderMenu();
+    const spec = findAt[Number(btn.dataset.findAtStore)];
+    if (spec && typeof handOff === "function") handOff(spec);
+  }));
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
   const y = Math.min(event.clientY || 10, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;

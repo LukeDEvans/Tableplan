@@ -3,7 +3,8 @@ import Capacitor
 
 // Hands a title or a game off to the service's own app, exposed as the "LinkOut"
 // plugin (native-bridge.js → nativeLinkOut(); link-out.js decides what to open).
-// STREAMING_HANDOFF_DESIGN.md §4.1.
+// STREAMING_HANDOFF_DESIGN.md §4.1; banks, stores, billers, papers, travel
+// and maps use it too (APP_LINKS_DESIGN.md).
 //   • open({ appUrls: [String], webUrl }) → { opened: "app" | "web" | "none", index }
 //       Each appUrl is tried in order until one opens:
 //         https://…  → opened ONLY as a universal link, i.e. only when an
@@ -26,7 +27,9 @@ public class LinkOutPlugin: CAPPlugin, CAPBridgedPlugin {
     private static let allowedSchemes: Set<String> = [
         "sportscenter", "xfinitystream", "nflx", "disneyplus", "hulu", "aiv",
         "pplus", "peacock", "videos", "gametime", "youtube", "fubotv", "hbomax",
-        "foxone", "nflmobile", "nhl", "mlbatbat", "fsapp"
+        "foxone", "nflmobile", "nhl", "mlbatbat", "fsapp",
+        // Banks, stores and maps (APP_LINKS_DESIGN.md, out-catalog.js)
+        "sofi", "chase", "bofa", "target", "shoebox", "comgooglemaps"
     ]
 
     private static func url(_ raw: String?) -> URL? {

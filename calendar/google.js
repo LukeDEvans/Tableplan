@@ -138,6 +138,21 @@ export function proposeGoogleLinks(googleCalendars, links, linkedCalendars) {
 
 const MAX_ALL_DAY_SPAN = 62; // days; guards a mis-entered year-long event
 
+// Where a Google event can be opened (APP_LINKS_DESIGN.md): its place, its page
+// in Google Calendar and its video meeting. https links only, and only Google's
+// own page for htmlLink, so a stray value can't become a button.
+export function googleEventLinks(raw) {
+  const out = {};
+  const loc = String(raw?.location || "").trim();
+  if (loc) out.location = loc.slice(0, 300);
+  const html = String(raw?.htmlLink || "");
+  if (/^https:\/\/(www\.)?google\.com\/calendar\//i.test(html)) out.htmlLink = html;
+  const video = (raw?.conferenceData?.entryPoints || []).find((e) => e?.entryPointType === "video" && /^https:\/\//i.test(String(e?.uri || "")));
+  const meet = video ? String(video.uri) : (/^https:\/\//i.test(String(raw?.hangoutLink || "")) ? String(raw.hangoutLink) : "");
+  if (meet) out.meetUrl = meet;
+  return out;
+}
+
 // One compact Google event → zero or more linked-cache entries (one per day for a
 // multi-day all-day event, matching how syncedCalendarEventsForDate matches by
 // `date`). Cancelled events produce none.
@@ -158,7 +173,8 @@ export function googleEventToCacheEntries(raw, cal) {
     source: "google-api",
     calendarId: cal?.id || "",
     calendarName: cal?.name || "",
-    calendarColor: cal?.color || ""
+    calendarColor: cal?.color || "",
+    ...googleEventLinks(raw)
   };
   if (start.allDay) {
     // Google's all-day end date is EXCLUSIVE.
