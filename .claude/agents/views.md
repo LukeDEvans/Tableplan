@@ -79,6 +79,12 @@ scoping**, so it is still shared infrastructure: every change here is flagged to
 - **Tombstones are one list for every row** (`config.tombstones`): deleting an id in one
   view removes it from any other row holding the same id. Don't reuse ids across rows,
   and don't "fix" this by changing `mergeStates` tombstone semantics — that's gated on Luke.
+- **Emptying a row on the server doesn't stick** — merges are unions, so any device's old
+  copy puts it back. Use a one-time row reset (`views.js` `applyRowReset`, 2026-10-28,
+  Household Listen and Watch): write the row with a new `<section>RowReset` id and every
+  key spelled out; a device whose copy lacks that id takes the row as it is. Only sections
+  in `ROW_RESET_SECTIONS` carry the key (it's in their `STATE_SECTIONS`). Write the reset
+  only after the code is deployed and old tabs reloaded.
 - No new hot keys in existing `tableplan_states` rows, no `STATE_SCHEMA_VERSION` bump,
   no new polling; a view switch costs a stamp check, not a re-download.
 

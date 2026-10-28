@@ -270,3 +270,37 @@ export function layerViewsFor(view, layers, { hasBusiness = false } = {}) {
   if (on.business && hasBusiness) out.push("business");
   return out;
 }
+
+// ── One-time row resets (Household Listen and Watch, 2026-10-28) ──────────────
+// Section merges are unions, so emptying a row on the server doesn't stick:
+// the next device that still holds the old copy merges it straight back. A
+// reset therefore puts a marker in the row ("<section>RowReset": an id). A
+// device whose own copy of that row doesn't carry the same id takes the row as
+// it is — its stale copy is dropped, not merged — and from then on carries the
+// id itself, so ordinary merging resumes. Rows without a marker are untouched.
+// Only the sections listed here have a marker key (it's in their STATE_SECTIONS
+// list, so every save keeps it in the row).
+export const ROW_RESET_SECTIONS = Object.freeze(["media", "watch"]);
+
+export function rowResetKey(section) {
+  return `${section}RowReset`;
+}
+
+// `local` and `remote` are plain objects holding (at least) the section's keys.
+// Returns `local` itself when nothing changes, else a copy whose section keys
+// are exactly the remote's (a key the remote lacks is removed).
+export function applyRowReset(section, keys, local, remote) {
+  if (!ROW_RESET_SECTIONS.includes(section)) return local;
+  const key = rowResetKey(section);
+  const id = remote && typeof remote === "object" ? remote[key] : null;
+  if (typeof id !== "string" || !id) return local;
+  const base = local && typeof local === "object" ? local : {};
+  if (base[key] === id) return local;
+  const out = { ...base };
+  for (const k of keys || []) {
+    if (k in remote) out[k] = remote[k];
+    else delete out[k];
+  }
+  out[key] = id;
+  return out;
+}

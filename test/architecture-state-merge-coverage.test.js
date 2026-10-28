@@ -38,6 +38,8 @@ const MERGE_NEWER_WINS_KEYS = {
   groceryCatalogVersion: "scalar version stamp",
   dailyDozenTagSeedVersion: "scalar version stamp",
   foodHealthVersion: "scalar version stamp",
+  mediaRowReset: "scalar version stamp (one-time row reset marker, views.js applyRowReset)",
+  watchRowReset: "scalar version stamp (one-time row reset marker, views.js applyRowReset)",
   articleSortOrder: "scalar preference",
   podcastTierCount: "scalar preference",
   podcastPrioritySort: "scalar preference",
