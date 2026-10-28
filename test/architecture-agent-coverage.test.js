@@ -35,7 +35,6 @@ const SHARED_FILES = {
   "server.js": "local dev server",
   "sw.js": "service worker",
   "build-info.js": "app-wide build stamp + newer-build check (Settings version line)",
-  "theme.js": "display mode + themes — design tokens are shared infra (THEMES_DESIGN.md)",
   "vite.config.mjs": "build config",
   "vitest.config.mjs": "test config",
   "supabase-config.js": "Supabase client config",
@@ -47,8 +46,6 @@ const SHARED_FILES = {
   "dock-space.js": "bottom-dock sizing for every page",
   "status-tap-scroll.js": "app-wide status-bar tap",
   "input-clear.js": "app-wide text-box clear button (CLAUDE.md UI conventions)",
-  "page-groups.js": "global nav — the landing links and page-title menu groups",
-  "views.js": "global nav — the Personal / Household / Business views (VIEWS_DESIGN.md)",
   "sortable.js": "shared drag/sort",
   "sortable-core.js": "shared drag/sort",
   "swipe-deck.js": "shared card-deck gesture",
@@ -76,7 +73,7 @@ const SHARED_FILES = {
   "netlify/functions/_group-lookup.js": "server-side \"the user's group\" lookup, ordered like the client (auth/state)",
   "netlify/functions/_oauth-state.js": "signed OAuth state (Gmail + Google Calendar)",
   "netlify/functions/chat.js": "assistant",
-  "netlify/functions/daily-briefing.js": "cross-domain push briefing",
+  "netlify/functions/daily-briefing.js": "daily maintenance (TTS cleanup, finance snapshot) + the briefing push until notifications Phase 2 retires it",
   "netlify/functions/push-subscribe.js": "notifications/push",
   "netlify/functions/accept-invite.js": "household invites (auth)",
   "netlify/functions/send-invite.js": "household invites (auth)",
@@ -88,19 +85,11 @@ const SHARED_FILES = {
 const SHARED_STATE = {
   tombstones: "sync",
   familyMembers: "household profile, read by every domain",
-  themeMode: "app setting (legacy household display mode; displayPrefs replaces it per person)",
-  displayPrefs: "app setting (per-person display mode + theme, theme.js)",
-  viewDisplayPrefs: "app setting (per-person display for the Household and Business views, views.js)",
-  viewLayers: "app setting (per-person layers on the Personal calendar, views.js)",
   collapsedSections: "app setting",
   apiUsage: "app-wide usage tracking",
   aiSettings: "assistant",
   configSettingStamps: "config section stamps",
-  "sailing*": "Recreate (no agent yet)",
-  "piano*": "Recreate (no agent yet)",
-  recreateHobbies: "Recreate (no agent yet)",
-  recreateSettingStamps: "Recreate (no agent yet)",
-  "cadence*": "music/ piano practice (Cadence, no agent yet)",
+  recreateSettingStamps: "stamps for the whole recreate section (language, leisure, display, views)",
 };
 
 const globRe = (g) => new RegExp("^" + g.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*") + "$");
@@ -110,7 +99,7 @@ function listFiles(dir, re) {
   return readdirSync(join(root, dir)).filter((f) => re.test(f) && statSync(join(root, dir, f)).isFile()).map((f) => (dir === "." ? f : `${dir}/${f}`));
 }
 const CODE = /\.(js|mjs)$/;
-const candidateFiles = [...listFiles(".", CODE), ...listFiles("calendar", CODE), ...listFiles("netlify/functions", CODE)];
+const candidateFiles = [...listFiles(".", CODE), ...listFiles("calendar", CODE), ...listFiles("music", CODE), ...listFiles("netlify/functions", CODE)];
 
 function stateKeys() {
   const src = readFileSync(join(root, "app.js"), "utf8");
