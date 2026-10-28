@@ -22,6 +22,7 @@ import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule, isNewsletterBriefing } from './news-ui.js';
 import { createScoresModule, gameCardHtml } from './scores-ui.js';
 import { OUT_TARGETS, openOutLink, titleHandoff, targetHandoff, linkOutAttrs, linkOutFromElement } from './link-out.js';
+import { PLACES, placeHandoff, billerForBill, mapsHandoffs, travelPlaceFor, storeSearchHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 import { matchProviderId } from './media-availability.js';
 import { createStreamLinksCache, linksForProvider } from './media-stream-links.js';
 import { createLanguageModule } from './language-ui.js';
@@ -1818,6 +1819,7 @@ const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed
 // they don't save the story. The saved-articles list is News's "Saved" view.
 const _news = createNewsModule({
   escapeHtml: (...a) => escapeHtml(...a),
+  handOff: (...a) => handOff(...a),
   callGmailApi: (...a) => callGmailApi(...a),
   showToast: (...a) => showMailToast(...a),
   isSignedIn: () => !!authSession?.access_token,
@@ -1941,6 +1943,7 @@ const {
 // record (Decision #2b) — the live list is state.persistentManualGroceries.
 const _groceries = createGroceriesModule({
   state, elements, persist, meals, prepDays,
+  handOff: (...a) => handOff(...a),
   getHomeLocation: () => homeLocation(),
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
@@ -4046,6 +4049,28 @@ function setupDiagnostics() {
       return _groceries.groceryRowInfoLines({ sources: ["mealplan"], sourceRecipeIds: ids, ...row });
     },
     // Finance QA: one manual account in memory so the savings cards render (local dev only).
+    // App links (scripts/qa-app-links.mjs, APP_LINKS_DESIGN.md): accounts, bills,
+    // stores and an item, a contact, events and a trip whose names the catalog
+    // knows, plus the trip-item detail markup. Local dev only.
+    appLinksSeedForQa: ({ accounts, bills, stores, groceries, locations, contacts, events, trips } = {}) => {
+      if (!localDevMode) return null;
+      if (accounts) state.financeAccounts = normalizeFinanceAccounts(accounts, createId);
+      if (bills) state.financeRecurring = bills;
+      if (stores) state.groceryStores = stores;
+      if (groceries) state.persistentManualGroceries = groceries;
+      if (locations) state.groceryItemLocations = locations;
+      if (contacts) state.contacts = contacts;
+      if (events) state.planEvents = events;
+      if (trips) state.trips = trips.map((t) => ({ ...defaultTrip(t), ...t }));
+      planAppDataIndex = null;
+      planRangeCache.clear();
+      persist();
+      return true;
+    },
+    itemDetailHtmlForQa: (type, item) => (localDevMode ? itemDetailContent(type, item).bodyHtml : null),
+    openPlanEventForQa: (id, dateKey) => { if (!localDevMode) return null; showPlanApp(); openPlanEventDetail(id, dateKey); return true; },
+    openTripForQa: (id) => { if (!localDevMode) return null; openExploreTrip(id); return true; },
+    openPageForQa: (name) => { if (!localDevMode) return null; ({ finance: showFinanceApp, shop: showShopApp, contacts: showContactsApp, news: showNewsApp })[name]?.(); return activeAppArea; },
     financeSeedAccount: () => {
       if (!localDevMode) return null;
       state.financeAccounts = normalizeFinanceAccounts([{ id: "qa-acct", owner: "Joint", name: "QA Savings", kind: "cash", manualBalance: 5000 }], createId);
@@ -17750,6 +17775,31 @@ const LINK_TEST_KEY = "live-link-test-v1";
 function readLinkTest() {
   try { return JSON.parse(localStorage.getItem(LINK_TEST_KEY) || "{}") || {}; } catch { return {}; }
 }
+// What Link Test lists: the streaming services and networks, then every app
+// out-catalog.js tries to open (banks, stores with a search, billers, travel,
+// maps). Places with no app link are left out: they only ever open a website.
+// Ids of places carry a "p:" prefix; a store's search test is "s:<id>".
+function linkTestGroups() {
+  const kinds = [["bank", "Banks & cards"], ["store", "Stores"], ["biller", "Bills"], ["airline", "Airlines"], ["hotel", "Hotels"], ["car", "Rental cars"]];
+  const groups = [{ title: "Streaming & sports", rows: Object.entries(OUT_TARGETS).map(([id, t]) => ({ id, label: t.label })) }];
+  for (const [kind, title] of kinds) {
+    const rows = [];
+    for (const [id, p] of Object.entries(PLACES)) {
+      if (p.kind !== kind) continue;
+      if (p.app.length) rows.push({ id: `p:${id}`, label: p.label });
+      if (p.search) rows.push({ id: `s:${id}`, label: `${p.label} · search “milk”` });
+    }
+    if (rows.length) groups.push({ title, rows });
+  }
+  groups.push({ title: "Maps", rows: [{ id: "m:apple", label: "Apple Maps" }, { id: "m:google", label: "Google Maps" }] });
+  return groups;
+}
+function linkTestSpec(id) {
+  if (id.startsWith("p:")) return placeHandoff(id.slice(2));
+  if (id.startsWith("s:")) return storeSearchHandoff(id.slice(2), "milk");
+  if (id.startsWith("m:")) return mapsHandoffs("Minnehaha Falls, Minneapolis")[id === "m:apple" ? 0 : 1];
+  return targetHandoff(id);
+}
 function renderLinkTestPanel() {
   const results = readLinkTest();
   const native = Boolean(nativeLinkOut());
@@ -17758,14 +17808,16 @@ function renderLinkTestPanel() {
     <p class="settings-panel-note">${native
       ? "Tap each one. “App opened” means the app is installed and took the link; “Website” means it went to Safari."
       : "This is a check for the iPhone app. Here, every link opens the website."}</p>
+    ${linkTestGroups().map((g) => `
+    <div class="fin-subhead">${escapeHtml(g.title)}</div>
     <div class="link-test-list">
-      ${Object.entries(OUT_TARGETS).map(([id, t]) => `
+      ${g.rows.map(({ id, label }) => `
         <div class="link-test-row">
-          <span class="link-test-name">${escapeHtml(t.label)}</span>
+          <span class="link-test-name">${escapeHtml(label)}</span>
           <span class="link-test-result${results[id] ? ` is-${escapeHtml(results[id])}` : ""}">${escapeHtml(word[results[id]] || "")}</span>
           <button type="button" class="secondary-btn compact-btn" data-link-test="${escapeHtml(id)}">Open</button>
         </div>`).join("")}
-    </div>
+    </div>`).join("")}
     <div class="settings-action-grid">
       <button type="button" data-link-test-copy>Copy results</button>
       <button type="button" data-link-test-clear>Clear</button>
@@ -17773,14 +17825,14 @@ function renderLinkTestPanel() {
   const body = elements.contextSettingsBody;
   body.querySelectorAll("[data-link-test]").forEach((btn) => btn.addEventListener("click", async () => {
     const id = btn.dataset.linkTest;
-    const opened = await handOff(targetHandoff(id));
+    const opened = await handOff(linkTestSpec(id));
     const next = { ...readLinkTest(), [id]: opened };
     try { localStorage.setItem(LINK_TEST_KEY, JSON.stringify(next)); } catch { /* noop */ }
     if (contextSettingsKind === "link-test") renderLinkTestPanel();
   }));
   body.querySelector("[data-link-test-copy]")?.addEventListener("click", async () => {
     const r = readLinkTest();
-    const text = Object.entries(OUT_TARGETS).map(([id, t]) => `${t.label}: ${word[r[id]] || "not tried"}`).join("\n");
+    const text = linkTestGroups().map((g) => `${g.title}\n` + g.rows.map(({ id, label }) => `${label}: ${word[r[id]] || "not tried"}`).join("\n")).join("\n\n");
     try { await navigator.clipboard.writeText(text); showMailToast("Copied."); } catch { showMailToast("Couldn't copy."); }
   });
   body.querySelector("[data-link-test-clear]")?.addEventListener("click", () => {
@@ -26692,7 +26744,7 @@ function getPlanEventsForRange(startKey, endKey) {
         if (excludedExternalIds.has(id)) return; // §16 locally hidden
         const ov = externalTitleOverrides.get(id); // §15 local rename
         const timed = ev.source === "google-api" && !ev.allDay && ev.startTime;
-        events.push({ id, title: ov || ev.summary, ...(ov ? { _sourceTitle: ev.summary, _overridden: true } : {}), date: dk, allDay: !timed, startTime: timed ? ev.startTime : null, endTime: timed ? (ev.endTime || null) : null, color: ev.calendarColor || PLAN_COLORS[0], source: "ical", readOnly: true, provider: "google", calendarId: ev.calendarId, calendarName: ev.calendarName, ...(ev.gid ? { externalId: ev.gid } : {}) });
+        events.push({ id, title: ov || ev.summary, ...(ov ? { _sourceTitle: ev.summary, _overridden: true } : {}), date: dk, allDay: !timed, startTime: timed ? ev.startTime : null, endTime: timed ? (ev.endTime || null) : null, color: ev.calendarColor || PLAN_COLORS[0], source: "ical", readOnly: true, provider: "google", calendarId: ev.calendarId, calendarName: ev.calendarName, ...(ev.gid ? { externalId: ev.gid } : {}), ...(ev.location ? { location: ev.location } : {}), ...(ev.htmlLink ? { htmlLink: ev.htmlLink } : {}), ...(ev.meetUrl ? { meetUrl: ev.meetUrl } : {}) });
       });
       gCur.setDate(gCur.getDate() + 1);
     }
@@ -26759,7 +26811,7 @@ function buildPlanAppDataIndex() {
       for (const r of recBills) {
         const day = Math.min(Math.max(1, r.expectedDay || 1), dim);
         const key = `${y}-${mm}-${String(day).padStart(2, "0")}`;
-        push(key, { id: `finbill-${r.id}-${key}`, title: `${r.name} · ${formatFinMoney(r.lastAmount || 0)}`, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.finance, source: "finance", calendarName: "Bills", readOnly: true });
+        push(key, { id: `finbill-${r.id}-${key}`, title: `${r.name} · ${formatFinMoney(r.lastAmount || 0)}`, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.finance, source: "finance", calendarName: "Bills", readOnly: true, billName: r.name });
       }
     }
   }
@@ -27419,7 +27471,8 @@ function renderPlanEventDetail(ev) {
     googleRem ? `<div class="plan-detail-row plan-detail-reminder"><span class="plan-detail-row-icon" aria-hidden="true">🔔</span><div class="plan-detail-row-text"><span class="plan-detail-row-label">Remind me</span>${googleReminderSelectHtml(googleRem)}</div></div>` : "",
     chores.length ? planEventDetailRow("✔", "Linked tasks", chores.join("\n")) : "",
     planEventDetailRow("🔗", "Source", sourceText),
-    ev._overridden ? planEventDetailRow("✎", "Renamed", `Originally “${ev._sourceTitle || ""}”`) : ""
+    ev._overridden ? planEventDetailRow("✎", "Renamed", `Originally “${ev._sourceTitle || ""}”`) : "",
+    planEventOutLinksHtml(ev, locText)
   ].join("");
 
   const personal = !ev.source || ev.source === "personal";
@@ -27433,6 +27486,27 @@ function renderPlanEventDetail(ev) {
       // rename (§15, survives re-sync) or hide (§16). Both persist across syncs.
       ? `<button type="button" class="secondary-btn" data-plan-detail-rename>Rename</button>${ev._overridden ? `<button type="button" class="secondary-btn" data-plan-detail-reset>Reset</button>` : ""}<button type="button" class="secondary-btn" data-plan-detail-hide>Hide</button>`
       : "");
+}
+
+// Buttons that open the event somewhere else (APP_LINKS_DESIGN.md): its place in
+// Apple Maps / Google Maps, its video meeting, its page in Google Calendar, and,
+// for a bill, the biller's app. Opened by the app-wide "Link out" listener.
+function planEventOutLinksHtml(ev, locText) {
+  const chips = [];
+  const chip = (spec, text, aria) => spec ? `<button type="button" class="out-link-chip" ${linkOutAttrs(spec, escapeHtml)} aria-label="${escapeHtml(aria || text)}">${escapeHtml(text)}${OUT_LINK_ARROW}</button>` : "";
+  if (ev.meetUrl) {
+    const zoom = /zoom\.us\//i.test(ev.meetUrl);
+    chips.push(chip({ appUrls: [ev.meetUrl], webUrl: ev.meetUrl, label: zoom ? "Zoom" : "Meet", exact: true }, zoom ? "Join Zoom" : "Join meeting"));
+  }
+  if (locText && !/^https?:\/\//i.test(locText)) {
+    for (const m of mapsHandoffs(locText, { directions: true })) chips.push(chip(m, m.label, `Directions in ${m.label}`));
+  }
+  if (ev.htmlLink) chips.push(chip({ appUrls: [ev.htmlLink], webUrl: ev.htmlLink, label: "Google Calendar", exact: true }, "Google Calendar", "Open in Google Calendar"));
+  if (ev.source === "finance" && ev.billName) {
+    const m = billerForBill(ev.billName);
+    if (m) chips.push(chip(placeHandoff(m.id), `Pay at ${m.label}`));
+  }
+  return chips.length ? `<div class="out-link-row plan-detail-links">${chips.join("")}</div>` : "";
 }
 
 function openPlanEventDetail(id, dateKey) {
@@ -42636,8 +42710,10 @@ function openExploreTrip(tripId) {
     : null;
   const partyStr = (trip.party || []).join(", ") || "Solo";
   const nightsStr = nights ? ` (${nights} night${nights === 1 ? "" : "s"})` : "";
+  // The destination opens in Maps (APP_LINKS_DESIGN.md): Apple Maps on the iPhone,
+  // Google Maps on the web app.
   const destChip = trip.destination
-    ? `<span class="travel-meta-chip">📍 ${escapeHtml(trip.destination)}</span>`
+    ? `<button type="button" class="travel-meta-chip travel-meta-chip--link" ${linkOutAttrs(mapsHandoffs(trip.destination)[isNativeApp() ? 0 : 1], escapeHtml)} aria-label="Show ${escapeHtml(trip.destination)} in Maps">📍 ${escapeHtml(trip.destination)}${OUT_LINK_ARROW}</button>`
     : `<span class="travel-meta-chip" id="exploreEditDestBtn" title="Edit destination">📍 Add destination</span>`;
 
   // Travel Mode is offered as the trip nears/enters its dates.
@@ -43060,6 +43136,11 @@ function itemDetailContent(type, item) {
     if (item.address) rows.push(row("Address", item.address, "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(mapsQ)));
     if (item.notes) rows.push(row("Notes", item.notes));
     bodyHtml = rows.join("");
+  }
+  // The airline, hotel or rental company's app for this booking (APP_LINKS_DESIGN.md).
+  const place = travelPlaceFor(type, item);
+  if (place) {
+    bodyHtml += `<div class="out-link-row item-detail-links"><button type="button" class="out-link-chip" ${linkOutAttrs(placeHandoff(place.id), escapeHtml)} aria-label="Open ${escapeHtml(place.label)}">Open ${escapeHtml(place.label)}${OUT_LINK_ARROW}</button></div>`;
   }
   return { icon, title, subtitle, bodyHtml };
 }

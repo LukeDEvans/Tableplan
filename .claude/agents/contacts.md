@@ -16,6 +16,8 @@ Contacts domain only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+**App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** each phone number has **Text** (`sms:`) and **FaceTime** (`facetime:`) links beside it; the number itself still calls (`tel:`). Plain links: iOS hands them to Messages / FaceTime (`out-catalog.js` `phoneLinks`).
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

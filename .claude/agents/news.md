@@ -22,6 +22,8 @@ Scores. Scores has no menu entry of its own.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+**App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** ⋯ → **Open in <paper> app** opens the story's own link (the paper's app claims it) and counts as reading it; offered only when the link is on the paper's own domain (`out-catalog.js` `paperHandoff`), never for a newsletter's click tracker. `handOff` is injected from app.js.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

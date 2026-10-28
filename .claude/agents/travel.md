@@ -16,6 +16,8 @@ changes to the Travel domain only. (In the UI this domain is surfaced as
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+**App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** the trip's destination chip opens Maps (Apple Maps on the iPhone, Google Maps on the web); a flight, stay or rental's detail offers **Open <airline / hotel / rental company>**, recognised from the flight number prefix or the name (`out-catalog.js` `travelPlaceFor`).
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

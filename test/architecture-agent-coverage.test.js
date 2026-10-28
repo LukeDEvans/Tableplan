@@ -42,6 +42,7 @@ const SHARED_FILES = {
   "settings-sync.js": "synced-settings stamps",
   "native-bridge.js": "Capacitor bridge",
   "link-out.js": "the one hand-off to streaming apps, used by Watch and Scores (STREAMING_HANDOFF_DESIGN.md)",
+  "out-catalog.js": "banks, stores, billers, papers, travel and maps opened through link-out.js, used by Finance, Shop, News, Calendar, Contacts and Explore (APP_LINKS_DESIGN.md)",
   "platform-capabilities.js": "platform detection",
   "dock-space.js": "bottom-dock sizing for every page",
   "status-tap-scroll.js": "app-wide status-bar tap",

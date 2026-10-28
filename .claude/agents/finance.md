@@ -15,6 +15,8 @@ all your work is there. Make focused changes to the Finance domain only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you actually verified.
 
+**App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** the Accounts card starts with **Your banks** — one button per bank behind the accounts this view shows (SimpleFIN's institution name, else the account name), and each upcoming bill gets **Pay** when its merchant is a known biller, bank or card. Recognised from names by `out-catalog.js`; nothing stored, so no `financeRecurring` field and no schema bump.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

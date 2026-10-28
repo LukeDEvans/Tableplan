@@ -16,6 +16,8 @@ almost all your work is there. Make focused changes to the Groceries domain only
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — this domain has **zero UI test coverage** (below).
 
+**App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** a known store's heading has an open-app button, and an item's long-press menu has **Find at <store>** (the store's product search) for up to four of the household's stores. Stores are recognised by name in `out-catalog.js`; `handOff` is injected from app.js.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
