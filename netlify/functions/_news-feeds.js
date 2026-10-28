@@ -10,6 +10,8 @@
 // fatal. Check that row after the first deploy and prune dead URLs here.
 const { XMLParser } = require("fast-xml-parser");
 const Links = require("./_news-links.js");
+const Rank = require("./_news-rank.js");
+const Tags = require("./_news-tags.js");
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15";
@@ -31,7 +33,60 @@ const strib = (slug, label) => [
   { paper: "startribune", url: `https://www.startribune.com/arc/outboundfeeds/rss/category/${slug}/?outputType=xml`, label },
   { paper: "startribune", url: `https://www.startribune.com/${slug}/index.rss2`, label }
 ];
-const athletic = (path) => ({ paper: "athletic", url: `https://www.nytimes.com/athletic/rss/${path}/`, label: "sports" });
+const athletic = (path) => ({ paper: "athletic", url: `https://www.nytimes.com/athletic/rss/${path}/`, label: "sports", athleticLeague: path });
+
+// ── The Athletic: favourite teams only (NEWS_RANKING_DESIGN.md §3.6) ─────────
+// The Athletic publishes a feed per team at /athletic/rss/<league>/<slug>/, and
+// its editors tag each story with its teams, so a team feed catches stories that
+// name only a player. Slugs aren't predictable for every team, so each favourite
+// gets up to three candidate feeds (known slugs first); whichever answer are used
+// and the status row shows which did. League feeds are still read for the
+// favourites' leagues, and their stories kept only when they name a favourite.
+const ATHLETIC_LEAGUE = { nfl: "nfl", nba: "nba", wnba: "wnba", nhl: "nhl", mlb: "mlb", ncaaf: "college-football", ncaam: "college-basketball", ncaaw: "womens-college-basketball" };
+const ATHLETIC_SCOPE_LEAGUE = { nfl: "nfl", nba: "nba", wnba: "wnba", nhl: "nhl", mlb: "mlb", college: "college-football", soccer: "football", "soccer-w": "football" };
+// Seen in public feed directories (feedspot, feeder): rss/nba/timberwolves/,
+// rss/football/atlunited/, rss/mlb/braves/; team pages nhl/team/wild/, mlb/team/twins/.
+const ATHLETIC_KNOWN_SLUGS = { "nba:minnesota-timberwolves": "timberwolves", "nhl:minnesota-wild": "wild", "mlb:minnesota-twins": "twins", "soccer:atlanta-united-fc": "atlunited", "mlb:atlanta-braves": "braves" };
+const GENERIC = new Set(["fc", "afc", "sc", "cf", "united", "city", "state", "university", "club"]);
+const slugWord = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+function athleticLeagueFor(team) {
+  return ATHLETIC_LEAGUE[team?.league] || ATHLETIC_SCOPE_LEAGUE[team?.scope] || "";
+}
+function athleticSlugCandidates(team) {
+  const out = [];
+  const add = (x) => { const v = slugWord(x); if (v && v.length >= 3 && !out.includes(v)) out.push(v); };
+  add(ATHLETIC_KNOWN_SLUGS[team?.key]);
+  const words = slugWord(team?.name).split("-").filter(Boolean);
+  const named = words.filter((w) => !GENERIC.has(w));
+  if (team?.scope === "soccer" || team?.scope === "soccer-w") {
+    const club = words.filter((w) => !["fc", "afc", "sc", "cf"].includes(w)); // "afc ajax" → [ajax]; "minnesota united fc" → [minnesota, united]
+    add(club.join("-"));  // ajax, minnesota-united
+    add(club.join(""));   // minnesotaunited
+  } else if (team?.scope === "college") {
+    add(named[0]);                                        // minnesota
+    add(named.join("-"));                                 // minnesota-golden-gophers
+  } else {
+    add(named[named.length - 1]);                         // vikings, lynx
+  }
+  return out.slice(0, 3);
+}
+// Favourite teams → their candidate team feeds, plus the league feeds for those
+// leagues (and The Athletic's general news feed) for name matching.
+function athleticFeedsFor(teams) {
+  const feeds = [];
+  const leagues = new Set(["news"]);
+  for (const t of teams || []) {
+    const league = athleticLeagueFor(t);
+    if (!league) continue;
+    leagues.add(league);
+    for (const slug of athleticSlugCandidates(t)) {
+      feeds.push({ paper: "athletic", url: `https://www.nytimes.com/athletic/rss/${league}/${slug}/`, label: "sports", team: t.key });
+    }
+  }
+  const seen = new Set();
+  return [...feeds, ...[...leagues].map(athletic)].filter((f) => !seen.has(f.url) && seen.add(f.url));
+}
 
 const FEEDS = [
   nyt("HomePage"), nyt("World"), nyt("US"), nyt("Politics"), nyt("NYRegion"), nyt("Upshot"),
@@ -171,10 +226,12 @@ async function collectFeedCards(papers, { fetchImpl = fetch, nowMs = Date.now(),
       if (!card) continue;
       cards++;
       const cur = byId.get(card.id);
+      const teamKeys = [...new Set([...(cur?.teamKeys || []), ...(f.team ? [f.team] : [])])];
       // Prefer the copy with a real section (a section feed over HomePage).
-      if (!cur || (cur.section === "more" && card.section !== "more")) byId.set(card.id, card);
+      const keep = !cur || (cur.section === "more" && card.section !== "more") ? card : cur;
+      byId.set(card.id, teamKeys.length ? { ...keep, teamKeys } : keep);
     }
-    return { url: f.url, paper: f.paper, ok: r.status >= 200 && r.status < 300 && r.items.length > 0, status: r.status, items: r.items.length, cards, ...(r.error ? { error: r.error } : {}) };
+    return { url: f.url, paper: f.paper, ok: r.status >= 200 && r.status < 300 && r.items.length > 0, status: r.status, items: r.items.length, cards, ...(f.team ? { team: f.team } : {}), ...(r.error ? { error: r.error } : {}) };
   });
   return { cards: [...byId.values()], status };
 }
@@ -195,17 +252,66 @@ async function loadSignedInUsers(serviceKey, { fetchImpl = fetch } = {}) {
   }).filter((u) => /^[0-9a-f-]{36}$/i.test(u.userId) && u.papers.size);
 }
 
-async function runFeedIntake(serviceKey, { fetchImpl = fetch, nowMs = Date.now(), store = require("./_news-store.js") } = {}) {
+// The feed list for this run: the papers someone is signed in to; for The
+// Athletic, every league feed if anyone signed in to it has no favourites,
+// otherwise only the favourites' team and league feeds.
+function feedsForRun(users, interests) {
+  const athleticUsers = users.filter((u) => u.papers.has("athletic"));
+  const allHaveFavorites = athleticUsers.length > 0 && athleticUsers.every((u) => interests.get(u.userId)?.teams?.length);
+  if (!allHaveFavorites) return FEEDS;
+  const teams = [];
+  for (const u of athleticUsers) for (const t of interests.get(u.userId).teams) if (!teams.some((x) => x.key === t.key)) teams.push(t);
+  return [...FEEDS.filter((f) => f.paper !== "athletic"), ...athleticFeedsFor(teams)];
+}
+
+// Hourly: fetch, filter, insert; then, once the For you migration is in, tag the
+// stories that were actually new (one AI call for everyone's new stories) and
+// store each person's topics + rank for them.
+const RUN_BUDGET_MS = 26_000; // scheduled functions get ~30 s
+
+async function runFeedIntake(serviceKey, { fetchImpl = fetch, nowMs = Date.now(), store = require("./_news-store.js"), tagStories = Tags.tagStories, startedAt = Date.now() } = {}) {
   const users = await loadSignedInUsers(serviceKey, { fetchImpl });
+  const forYou = users.length ? await store.forYouReady(serviceKey, { fetchImpl }) : false;
+  const interests = forYou ? await store.loadInterests(serviceKey, users.map((u) => u.userId), { fetchImpl }).catch(() => new Map()) : new Map();
   const papers = new Set(users.flatMap((u) => [...u.papers]));
-  const { cards, status } = papers.size ? await collectFeedCards(papers, { fetchImpl, nowMs }) : { cards: [], status: [] };
+  const feeds = feedsForRun(users, interests);
+  const { cards, status } = papers.size ? await collectFeedCards(papers, { fetchImpl, nowMs, feeds }) : { cards: [], status: [] };
   const inserted = {};
+  const fresh = new Map(); // userId → [cards actually inserted]
   for (const u of users) {
-    const mine = cards.filter((c) => u.papers.has(c.paper));
-    inserted[u.userId] = await store.insertArticles(serviceKey, u.userId, mine, "rss", { fetchImpl });
+    const teams = interests.get(u.userId)?.teams || [];
+    const mine = Rank.athleticForUser(cards.filter((c) => u.papers.has(c.paper)), teams);
+    const ids = await store.insertArticles(serviceKey, u.userId, mine, "rss", { fetchImpl, returnIds: forYou });
+    if (forYou) {
+      const set = new Set(ids);
+      fresh.set(u.userId, mine.filter((c) => set.has(c.id)));
+      inserted[u.userId] = ids.length;
+    } else inserted[u.userId] = ids;
+  }
+  let tagging = null;
+  if (forYou) {
+    const newCards = new Map();
+    for (const list of fresh.values()) for (const c of list) newCards.set(c.id, c);
+    const left = RUN_BUDGET_MS - (Date.now() - startedAt);
+    const { byId, stats } = newCards.size && left > 6000
+      ? await tagStories([...newCards.values()], { fetchImpl, deadlineMs: Date.now() + left - 4000 })
+      : { byId: new Map(), stats: { requested: 0, tagged: 0, errors: newCards.size ? ["no time left"] : [] } };
+    tagging = stats;
+    for (const u of users) {
+      const list = fresh.get(u.userId) || [];
+      if (!list.length) continue;
+      const interest = interests.get(u.userId) || Rank.normalizeInterest({});
+      const matchTeams = interest.teams.length ? Rank.teamMatcher(interest.teams) : null;
+      const ranked = list.map((c) => {
+        const topics = Rank.storyFeatures(c, { ai: byId.get(c.id) || null, matchTeams, teamKeys: c.teamKeys || [] });
+        const rankScore = Rank.scoreStory(topics, interest, { nowMs, publishedAt: c.publishedAt, leadAt: c.lead });
+        return { ...c, topics, rankScore: rankScore == null ? -100 : rankScore };
+      });
+      await store.setTopics(serviceKey, u.userId, ranked, "rss", { fetchImpl }).catch((e) => { tagging.errors.push(String(e.message).slice(0, 80)); });
+    }
   }
   await store.pruneArticles(serviceKey, { fetchImpl, nowMs });
-  const summary = { runAt: new Date(nowMs).toISOString(), users: users.length, cards: cards.length, inserted, feeds: status };
+  const summary = { runAt: new Date(nowMs).toISOString(), users: users.length, cards: cards.length, inserted, forYou, ...(tagging ? { tagging } : {}), feeds: status };
   // One small status row per run (no read): which feeds answered and how many items.
   await fetchImpl(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
     method: "POST",
@@ -215,4 +321,7 @@ async function runFeedIntake(serviceKey, { fetchImpl = fetch, nowMs = Date.now()
   return summary;
 }
 
-module.exports = { FEEDS, parseFeed, cardFromItem, collectFeedCards, loadSignedInUsers, runFeedIntake };
+module.exports = {
+  FEEDS, parseFeed, cardFromItem, collectFeedCards, loadSignedInUsers, runFeedIntake,
+  athleticLeagueFor, athleticSlugCandidates, athleticFeedsFor, feedsForRun
+};

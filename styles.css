@@ -23902,6 +23902,8 @@ body[data-theme="dark"] .news-card { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
 .news-menu svg { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .news-menu .news-menu-primary { color: var(--accent-dark, var(--accent)); font-weight: 700; }
 .news-menu-divider { height: 1px; margin: 4px 2px; background: var(--line); }
+/* Opens upward when there isn't room below it in the list (placeOpenMenu, news-ui.js). */
+.news-menu.is-up { top: auto; bottom: 42px; }
 
 /* Sports: Scores | Stories tabs */
 .news-tabs { display: flex; gap: 6px; }

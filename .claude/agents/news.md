@@ -1,6 +1,6 @@
 ---
 name: news
-description: Use for changes scoped to the News page — paper stories and sections, the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), Scores (News → Sports → Scores; back in News since 2026-10-20), and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" and "scores" areas of app.js.
+description: Use for changes scoped to the News page — paper stories and sections, the For you ranking (NEWS_RANKING_DESIGN.md), the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), Scores (News → Sports → Scores; back in News since 2026-10-20), and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" and "scores" areas of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -31,9 +31,10 @@ Scores. Scores has no menu entry of its own.
 
 ## Your scope (edit these)
 - **`news-ui.js`** — `createNewsModule(deps)` (instantiated in app.js as `_news`):
-  the page shell (top bar, sidebar directory: Front page · Saved ·
+  the page shell (top bar, sidebar directory: For you · Front page · Saved ·
   sections · papers), story lists and the story ⋯ menu (**Save, Open, Listen, Share,
-  Hide**), Sync Settings for paper sign-ins, and the mount for the injected `saved`
+  More like this, Less like this, Mute topic, Hide** — the middle three only once the
+  server has For you), Sync Settings for paper sign-ins, and the mount for the injected `saved`
   interface. Pure helpers are exported top-level (`articlesForView`,
   `arrangeFront`, `isNewsletterBriefing`, `paperStatus`, `applyLocalDecisions`, …) and tested
   in `test/news-ui.test.js`.
@@ -62,7 +63,9 @@ Scores. Scores has no menu entry of its own.
 - **Server:** `gmail.js` actions `newsFeed` / `updateNews` / `verifyNewsSignIns`;
   `_news-store.js` (the relational `news_articles` table, service role only),
   `_news-links.js` (links from newspaper emails, shared redirect cache),
-  `_news-feeds.js` + `news-feeds.js` (hourly RSS intake), `_news-articles.js`
+  `_news-feeds.js` + `news-feeds.js` (hourly RSS intake, The Athletic's team feeds),
+  `_news-rank.js` (pure For you ranking: features, weights, scoring, arrangement),
+  `_news-tags.js` (Haiku 5.5 topic tags for new stories), `_news-articles.js`
   (newsletter → listenable article), and the article intake/fetch functions
   `fetch-article.js`, `save-article.js`, `save-page-articles.js`, `scan-article.js`,
   `save-sync-cookie.js`, `sync-saved-articles.js`.
@@ -77,6 +80,20 @@ Scores. Scores has no menu entry of its own.
   Scores themselves are never stored.
 
 ## Luke's decisions (keep them)
+- **For you (Luke, 2026-10-27; NEWS_RANKING_DESIGN.md):** a view ranked per person by
+  content (paper, section, AI topics, entities, teams, keywords), learning from Open,
+  Listen, Save, Hide and the ⋯ menu's More / Less like this and Mute topic; weights
+  fade over ~3 weeks; diversity rules and an exploration slot every 8th story. It sits
+  beside Front page, not instead of it. Interests live in `news_interest` (service role
+  only), never in synced state. **AI tags are on** (Haiku 5.5, headlines + subtitles of
+  new stories only, kill switch `NEWS_AI_TAGS_DISABLED=1`); everything works without
+  them. Before the migration is applied the code behaves as before (`forYouReady`).
+- **The Athletic: favourite teams only, without AI (Luke, 2026-10-27):** the hourly job
+  reads each Scores favourite's Athletic **team feed** (`/athletic/rss/<league>/<slug>/`)
+  plus their leagues' feeds for name matching, and keeps only stories from a
+  favourite's feed or naming one. Someone with no favourites gets every Athletic story.
+  The app sends its favourites (`newsTeams`) when they differ from the server's
+  `teamsSig`; the job never reads `tableplan_states` for them.
 - **Watch buttons on games (Luke, 2026-10-26; STREAMING_HANDOFF_DESIGN.md §4.3):** a
   game that's live or starts within the hour shows "Watch" buttons in Scores' expanded
   game and the dock's game card. `sports-watch.js` maps the scoreboard's broadcaster

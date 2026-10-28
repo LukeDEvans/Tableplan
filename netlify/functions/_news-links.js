@@ -619,8 +619,25 @@ function cleanSignInTrail(raw, nowMs = Date.now()) {
 // source emails only after this succeeds.
 async function saveNewsBatch(serviceKey, userId, results, nowMs = Date.now()) {
   const Store = require("./_news-store.js");
-  const cards = (results || []).flatMap((r) => r.cards || []);
-  const added = await Store.insertArticles(serviceKey, userId, cards, "email");
+  let cards = (results || []).flatMap((r) => r.cards || []);
+  // For you (NEWS_RANKING_DESIGN.md), once its migration is in: The Athletic only
+  // for favourite teams, and every story stored with its keyword / team topics and
+  // a rank from favourites + freshness (no AI here; the hourly job tags RSS).
+  let withTopics = false;
+  if (cards.length && await Store.forYouReady(serviceKey).catch(() => false)) {
+    const interest = await Store.loadInterest(serviceKey, userId, { cols: "teams" }).catch(() => null);
+    if (interest) {
+      const Rank = require("./_news-rank.js");
+      const matchTeams = interest.teams.length ? Rank.teamMatcher(interest.teams) : null;
+      cards = Rank.athleticForUser(cards, interest.teams).map((c) => {
+        const topics = Rank.storyFeatures(c, { matchTeams });
+        const rankScore = Rank.scoreStory(topics, interest, { nowMs, publishedAt: c.publishedAt, leadAt: c.lead });
+        return { ...c, topics, rankScore: rankScore == null ? -100 : rankScore };
+      });
+      withTopics = true;
+    }
+  }
+  const added = await Store.insertArticles(serviceKey, userId, cards, "email", { withTopics });
   const leadIds = (results || []).map((r) => r.leadId).filter(Boolean);
   if (leadIds.length) await Store.markLeads(serviceKey, userId, leadIds, new Date(nowMs).toISOString());
   const seenState = await loadRowState(serviceKey, `mailnewsseen_${userId}`);

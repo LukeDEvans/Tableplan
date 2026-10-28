@@ -16,6 +16,13 @@
 //
 // Sports has two tabs: Scores (scores-ui.js, mounted here through the injected
 // `scores` interface) and Stories (the section's articles, as everywhere else).
+//
+// For you (NEWS_RANKING_DESIGN.md): a view ranked by the person's interests,
+// shown once the server says it can (`forYou` in the newsFeed reply). The ⋯ menu
+// then also offers More like this / Less like this / Mute topic, and Listen is
+// reported as its own (stronger) signal. The person's Scores favourites are sent
+// to the server when they differ from what it has (`teamsSig`), so the hourly
+// job can follow those teams on The Athletic.
 
 const REFRESH_MS = 60_000;
 const FLUSH_MS = 1500;
@@ -59,6 +66,11 @@ export function articlesForView(articles, view, query = "") {
   let list = (articles || []).filter((a) => a && a.id && a.url);
   // Front page: no Athletic stories (Luke, 2026-10-15; the server leaves them out
   // too). They still show in Sports and under Papers.
+  // For you: the server's order is the point; only search narrows it.
+  if (view?.kind === "foryou") {
+    const q = String(query || "").trim().toLowerCase();
+    return q ? list.filter((a) => `${a.title} ${a.subtitle || ""} ${a.source || ""}`.toLowerCase().includes(q)) : list;
+  }
   if (!view?.kind || view.kind === "front") list = list.filter((a) => a.paper !== "athletic");
   if (view?.kind === "section") list = list.filter((a) => sectionOf(a) === view.key);
   else if (view?.kind === "paper") list = list.filter((a) => a.paper === view.key);
@@ -230,7 +242,8 @@ export function applyLocalDecisions(list, decisions) {
   for (const d of decisions || []) {
     if (d.decision === "hide") hide.add(d.id);
     else if (d.decision === "send") sent.add(d.id);
-    else read.set(d.id, d.decision === "read");
+    else if (d.decision === "read" || d.decision === "listen") read.set(d.id, true);
+    else if (d.decision === "unread") read.set(d.id, false);
   }
   const now = new Date().toISOString();
   return (list || []).filter((a) => !hide.has(a.id)).map((a) => {
@@ -241,6 +254,26 @@ export function applyLocalDecisions(list, decisions) {
     if (read.get(a.id) === false) delete next.readAt;
     return next;
   });
+}
+
+// Favourite teams → the signature the server keeps (same as _news-rank.js
+// teamsSignature), so the app sends its favourites only when they changed.
+export function teamsSignature(teams) {
+  return (Array.isArray(teams) ? teams : []).map((t) => String(t?.key || "")).filter(Boolean).sort().join("|");
+}
+// What a favourite looks like on the wire (_news-rank.js cleanTeams).
+export function teamsForServer(teams) {
+  return (Array.isArray(teams) ? teams : []).filter((t) => t?.key).slice(0, 20)
+    .map((t) => ({ key: t.key, scope: t.scope || "", name: t.name || "", short: t.short || "", league: t.league || "" }));
+}
+// The server's `learned` reply → one toast line.
+export function learnedToast(learned) {
+  const l = (learned || []).filter((x) => x && x.label).pop();
+  if (!l) return "";
+  if (l.decision === "more") return `You'll see more about ${l.label}.`;
+  if (l.decision === "less") return `You'll see less about ${l.label}.`;
+  if (l.decision === "mute") return `${l.label} muted in For you.`;
+  return "";
 }
 
 // Append a further page to a view's list, de-duplicated by id (the server's
@@ -270,7 +303,11 @@ const ICONS = {
   listen: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3z"/><path d="M3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>',
   share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>',
   hide: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>',
-  media: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>'
+  media: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  foryou: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/></svg>',
+  more: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v11"/><path d="M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.4 21H7V10l4.4-7.1A1.9 1.9 0 0 1 15 5.9z"/></svg>',
+  less: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 14V3"/><path d="M9 18.1 10 14H4.2a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5.6 3H17v11l-4.4 7.1A1.9 1.9 0 0 1 9 18.1z"/></svg>',
+  mute: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>'
 };
 
 export function createNewsModule(deps) {
@@ -310,6 +347,8 @@ export function createNewsModule(deps) {
   let openMenuId = null;
   let wired = false;
   let verifying = false;
+  let forYouAvailable = false;  // the server has the For you migration (newsFeed `forYou`)
+  let teamsSentSig = null;      // favourites signature sent this session
   // Sports opens on Scores; the choice between Scores and Stories is remembered.
   let sportsTab = "scores";
   try { if (localStorage.getItem(SPORTS_TAB_KEY) === "stories") sportsTab = "stories"; } catch { /* private mode */ }
@@ -344,6 +383,8 @@ export function createNewsModule(deps) {
       inflight = inflight.filter((x) => !decisions.includes(x));
       if (d?.ok) {
         if (d.counts) counts = d.counts;
+        const msg = learnedToast(d.learned);
+        if (msg) showToast?.(msg);
         updateDot();
         if (isActive()) renderSidebar();
         return;
@@ -396,6 +437,8 @@ export function createNewsModule(deps) {
     });
     if (d.counts) counts = d.counts;
     if (d.signIns) { signIns = d.signIns; signInsLoaded = true; }
+    if (d.forYou === true && !forYouAvailable) forYouAvailable = true;
+    if (typeof d.teamsSig === "string") syncTeams(d.teamsSig);
     updateDot();
     if (isActive()) { if (viewKey() === key) render(); else renderSidebar(); }
     // Auto-recheck only from a device that has sign-ins saved: one whose synced
@@ -405,6 +448,19 @@ export function createNewsModule(deps) {
     // day old — at most once per DEVICE_AUTO_CHECK_MS per app run, so a server
     // that doesn't record the report can't make every feed load start a check.
     else if (d.signIns && deviceSignIn()?.needsCheck?.(signIns) && Date.now() - lastDeviceCheckAt > DEVICE_AUTO_CHECK_MS) verifySignIns();
+  }
+
+  // Send the Scores favourites when the server's copy differs (once per signature
+  // per session, so a failed send can't turn every load into another request).
+  function syncTeams(serverSig) {
+    const teams = teamsForServer(getState?.()?.sportsPrefs?.teams);
+    const sig = teamsSignature(teams);
+    // Never send an empty list: before synced state arrives every device reads as
+    // "no favourites", which would wipe the server's copy (ISSUES.md: removing every
+    // favourite therefore doesn't reach the server).
+    if (!teams.length || sig === serverSig || sig === teamsSentSig) return;
+    teamsSentSig = sig;
+    callGmailApi({ action: "newsTeams", teams });
   }
 
   function hasSavedSignIn() {
@@ -468,12 +524,25 @@ export function createNewsModule(deps) {
     counts.paper[a.paper] = Math.max(0, (counts.paper[a.paper] || 0) + delta);
   }
 
-  function markRead(id) {
+  // `how` is "listen" for Listen; an older server only knows "read".
+  function markRead(id, how = "read") {
     const a = cardFor(id);
-    if (!a || a.readAt) return;
-    patch(id, (x) => ({ ...x, readAt: new Date().toISOString() }));
-    bumpUnread(a, -1);
-    enqueue(id, "read");
+    if (!a) return;
+    if (!a.readAt) {
+      patch(id, (x) => ({ ...x, readAt: new Date().toISOString() }));
+      bumpUnread(a, -1);
+    } else if (how !== "listen") return;
+    enqueue(id, how === "listen" && forYouAvailable ? "listen" : "read");
+  }
+  // More / Less like this, Mute topic (For you servers only). Less and Mute also
+  // take the story out of For you here; the server's reply names what it learned.
+  function feedback(id, decision) {
+    if (!forYouAvailable || !cardFor(id)) return;
+    enqueue(id, decision);
+    if (decision !== "more") {
+      for (const [k, p] of pages) if (k.startsWith("foryou:")) p.articles = p.articles.filter((x) => x.id !== id);
+    }
+    flush();
   }
   function sendToMedia(id, { quiet = false } = {}) {
     const a = cardFor(id);
@@ -531,7 +600,7 @@ export function createNewsModule(deps) {
   }
   function listen(id) {
     const record = readerRecord(id);
-    markRead(id);
+    markRead(id, "listen");
     flush();
     if (record) listenInMedia?.(record.id);
   }
@@ -550,7 +619,8 @@ export function createNewsModule(deps) {
     if (!el) return;
     const c = counts || { all: 0, sent: 0, section: {}, paper: {}, sections: [] };
     const present = new Set(c.sections || []);
-    let h = sideTab("front", null, `${ICONS.front}<span>Front page</span>`, c.all);
+    let h = forYouAvailable ? sideTab("foryou", null, `${ICONS.foryou}<span>For you</span>`) : "";
+    h += sideTab("front", null, `${ICONS.front}<span>Front page</span>`, c.all);
     // One Saved view (MEDIA_SPLIT_DESIGN.md): stories saved here land in the same
     // list as newsletters, scans and links, so there is no separate "Sent" view.
     if (saved) h += sideTab("saved", null, `${ICONS.saved}<span>Saved</span>`, saved.count?.() || 0);
@@ -578,6 +648,10 @@ export function createNewsModule(deps) {
       <button type="button" role="menuitem" data-news-act="open">${ICONS.open}Open</button>
       <button type="button" role="menuitem" data-news-act="listen">${ICONS.listen}Listen</button>
       <button type="button" role="menuitem" data-news-act="share">${ICONS.share}Share</button>
+      ${forYouAvailable ? `<div class="news-menu-divider"></div>
+      <button type="button" role="menuitem" data-news-act="more">${ICONS.more}More like this</button>
+      <button type="button" role="menuitem" data-news-act="less">${ICONS.less}Less like this</button>
+      <button type="button" role="menuitem" data-news-act="mute">${ICONS.mute}Mute topic</button>` : ""}
       <div class="news-menu-divider"></div>
       <button type="button" role="menuitem" data-news-act="hide">${ICONS.hide}Hide</button>
     </div>`;
@@ -586,7 +660,8 @@ export function createNewsModule(deps) {
 
   function metaLine(a) {
     const paper = PAPER[a.paper]?.label || a.source || "";
-    return [paper, timeAgo(a.publishedAt || a.discoveredAt), a.sentAt ? "In Media ✓" : ""].filter(Boolean).map(esc).join(" · ");
+    const why = view.kind === "foryou" && a.why ? a.why : "";
+    return [why, paper, timeAgo(a.publishedAt || a.discoveredAt), a.sentAt ? "In Media ✓" : ""].filter(Boolean).map(esc).join(" · ");
   }
 
   function leadHtml(a, kicker) {
@@ -671,7 +746,8 @@ export function createNewsModule(deps) {
     }
     const nowMs = Date.now();
     let title = "Front page";
-    if (view.kind === "section") title = SECTION_LABEL[view.key] || "Section";
+    if (view.kind === "foryou") title = "For you";
+    else if (view.kind === "section") title = SECTION_LABEL[view.key] || "Section";
     else if (view.kind === "paper") title = PAPER[view.key]?.label || "Paper";
     else if (view.kind === "sent") title = "Saved";
 
@@ -681,13 +757,15 @@ export function createNewsModule(deps) {
     const unread = view.kind === "section" ? c.section[view.key] || 0
       : view.kind === "paper" ? c.paper[view.key] || 0
       : view.kind === "front" ? c.all : list.filter((a) => !a.readAt).length;
+    const forYouView = view.kind === "foryou";
     const shown = `${list.length}${page.nextBefore ? "+" : ""} ${list.length === 1 && !page.nextBefore ? "story" : "stories"}`;
-    body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : `${shown} · ${unread} unread`}</div>`;
+    body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : forYouView ? "Ranked by what you read. Use ⋯ to tune it." : `${shown} · ${unread} unread`}</div>`;
     if (!list.length) {
-      body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing saved yet. Use ⋯ → Save on any story." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
+      body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing saved yet. Use ⋯ → Save on any story." : forYouView ? "You're all caught up. New stories arrive every hour." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
     } else {
-      const { lead, rest } = arrangeFront(list, nowMs);
-      const kicker = view.kind === "front"
+      const { lead, rest } = forYouView ? { lead: list[0], rest: list.slice(1) } : arrangeFront(list, nowMs);
+      const kicker = forYouView ? `Top for you · ${SECTION_LABEL[sectionOf(lead)]}`
+        : view.kind === "front"
         ? (lead.lead && nowMs - ms(lead.lead) <= LEAD_WINDOW_MS ? `Lead story · ${SECTION_LABEL[sectionOf(lead)]}` : `Latest · ${SECTION_LABEL[sectionOf(lead)]}`)
         : `Top in ${title}`;
       body += leadHtml(lead, kicker);
@@ -700,6 +778,17 @@ export function createNewsModule(deps) {
       ${view.kind === "section" && view.key === "sports" ? sportsTabsHtml() : ""}
       ${body}
     </div>`;
+    placeOpenMenu();
+  }
+
+  // An open ⋯ menu near the bottom of the list opens upward when that fits better.
+  function placeOpenMenu() {
+    const menu = $("newsContent")?.querySelector(".news-menu");
+    const scroller = menu?.closest(".news-scroll");
+    if (!menu || !scroller) return;
+    const m = menu.getBoundingClientRect(), box = scroller.getBoundingClientRect();
+    const below = box.bottom - m.top, above = m.top - 42 - box.top;
+    if (m.bottom > box.bottom && above > below) menu.classList.add("is-up");
   }
 
   function render() {
@@ -780,6 +869,7 @@ export function createNewsModule(deps) {
         else if (act === "listen") listen(id);
         else if (act === "share") share(id);
         else if (act === "hide") hide(id);
+        else if (act === "more" || act === "less" || act === "mute") feedback(id, act);
         updateDot();
         if (isActive()) render();
         return;
@@ -807,8 +897,9 @@ export function createNewsModule(deps) {
   }
 
   // Local-dev only (window.__liveQA.newsSetFeed): fill the feed without a server.
-  function seed(list, status) {
+  function seed(list, status, opts = {}) {
     seeded = Array.isArray(list) ? list : [];
+    forYouAvailable = !!opts?.forYou;
     signIns = status || {};
     signInsLoaded = true;
     counts = countsFor(seeded);

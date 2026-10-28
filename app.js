@@ -4245,9 +4245,10 @@ function setupDiagnostics() {
     // takes for a picked recipe.
     // The News page feed (news-ui.js) — normally gmail.js "newsFeed"; seeds it
     // directly so the page can be exercised locally.
-    newsSetFeed: (articles, signIns) => {
+    // opts.forYou: show the For you view and its ⋯ items, in the seed's order.
+    newsSetFeed: (articles, signIns, opts) => {
       if (!localDevMode) return null;
-      return seedNewsFeed(articles, signIns);
+      return seedNewsFeed(articles, signIns, opts);
     },
     // The Scores view (scores-ui.js) — normally the scores function; seeds a day's
     // games directly so the view can be exercised locally.
