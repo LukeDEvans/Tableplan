@@ -46,7 +46,21 @@ const ATHLETIC_LEAGUE = { nfl: "nfl", nba: "nba", wnba: "wnba", nhl: "nhl", mlb:
 const ATHLETIC_SCOPE_LEAGUE = { nfl: "nfl", nba: "nba", wnba: "wnba", nhl: "nhl", mlb: "mlb", college: "college-football", soccer: "football", "soccer-w": "football" };
 // Seen in public feed directories (feedspot, feeder): rss/nba/timberwolves/,
 // rss/football/atlunited/, rss/mlb/braves/; team pages nhl/team/wild/, mlb/team/twins/.
-const ATHLETIC_KNOWN_SLUGS = { "nba:minnesota-timberwolves": "timberwolves", "nhl:minnesota-wild": "wild", "mlb:minnesota-twins": "twins", "soccer:atlanta-united-fc": "atlunited", "mlb:atlanta-braves": "braves", "soccer:ajax-amsterdam": "ajax", "soccer:afc-ajax": "ajax" };
+// Checked live 2026-10-28 (newsfeeds_status): nfl/vikings, nba/timberwolves, nhl/wild,
+// mlb/twins, wnba/lynx, football/netherlands, football/united-states answer; these
+// 404'd: college-football/minnesota, college-football/minnesota-golden-gophers,
+// football/minnesota-united, football/minnesotaunited, football/ajax-amsterdam. A value
+// may be a list (tried in order, at most three feeds per team). `null` = no team
+// feed to try (a small school The Athletic doesn't cover): name matching only.
+const ATHLETIC_KNOWN_SLUGS = {
+  "nba:minnesota-timberwolves": "timberwolves", "nhl:minnesota-wild": "wild", "mlb:minnesota-twins": "twins",
+  "soccer:atlanta-united-fc": "atlunited", "mlb:atlanta-braves": "braves", "soccer:united-states": "united-states",
+  "soccer:ajax-amsterdam": ["ajax", "afc-ajax"], "soccer:afc-ajax": ["ajax", "afc-ajax"],
+  // Unverified guesses after the first 404s (the status row shows which answer).
+  "college:minnesota-golden-gophers": ["gophers", "minnesota-gophers", "minnesota-golden-gophers-football"],
+  "soccer:minnesota-united-fc": ["mnufc", "minnesota-united-fc", "minnesota-utd"],
+  "college:minnesota-morris-cougars": null
+};
 const GENERIC = new Set(["fc", "afc", "sc", "cf", "united", "city", "state", "university", "club"]);
 const slugWord = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
@@ -56,7 +70,10 @@ function athleticLeagueFor(team) {
 function athleticSlugCandidates(team) {
   const out = [];
   const add = (x) => { const v = slugWord(x); if (v && v.length >= 3 && !out.includes(v)) out.push(v); };
-  add(ATHLETIC_KNOWN_SLUGS[team?.key]);
+  const known = ATHLETIC_KNOWN_SLUGS[team?.key];
+  if (known === null) return [];
+  for (const k of [].concat(known || [])) add(k);
+  if (known) return out.slice(0, 3);
   const words = slugWord(team?.name).split("-").filter(Boolean);
   const named = words.filter((w) => !GENERIC.has(w));
   if (team?.scope === "soccer" || team?.scope === "soccer-w") {
