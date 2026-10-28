@@ -131,6 +131,7 @@ Haiku 5.5: $0.10 per million input tokens and $0.50 per million output tokens (p
 | Output: ~35 tokens per story (tag ids + entities, compact JSON) | ~12k tokens → $0.006 |
 | **Total** | **~$0.009 a day ≈ $0.28 a month** |
 
+- With The Athletic cut to favorite teams (§3.6), volume falls to ~190 stories a day: **~$0.15 a month**.
 - If volume doubles (another paper, more feeds): ~$0.55 a month.
 - Tagging full article text instead of headlines: not planned; it would need the article fetch and multiply input ~20×, to roughly $1.50 a month.
 - The same job on Sonnet 5.5 ($2 / $10) would be ~$5.40 a month, with no clear gain for tagging.
@@ -138,22 +139,24 @@ Haiku 5.5: $0.10 per million input tokens and $0.50 per million output tokens (p
 
 ---
 
-### 3.6 The Athletic: favorite teams only (Luke, 2026-10-27)
+### 3.6 The Athletic: favorite teams only, from team feeds (Luke, 2026-10-27)
 
-The Athletic is half of all stories, and most are about teams Luke doesn't follow. Its stories that aren't about a favorite team are **left out of every News view** (For you, Sports, the Athletic paper filter, search), not only down-ranked.
+The Athletic is half of all stories, and most are about teams Luke doesn't follow. Only stories about a favorite team appear, and **no AI is involved**: instead of the league feeds, the job reads The Athletic's **per-team feeds**.
 
-- **Favorites** are the person's Scores favorites (`state.sportsPrefs`). The client sends the team list (name, short name, scope) to `news_interest.teams` when favorites change, so the feed job never reads `tableplan_states`.
-- **"About a team"** means the story's `topics` carry `team:<key>`, from the AI tags (§4, which also catch stories that name only a player or coach) or, if tagging failed, from matching team names and nicknames in the headline and subtitle.
-- **Rows are still stored**; the filter is applied when a view is read (`feedQuery`: Athletic rows must have a favorite `team:` topic). So changing favorites takes effect at once for the last 3 days, and nothing is lost by a tagging miss. Storage cost is unchanged (rows are small and pruned after 5 days).
-- **Per person:** the filter uses that person's own favorites. Someone with no favorites sees all Athletic stories, as today.
-- **Other papers' sports stories** (NYT, Star Tribune) are not filtered; they're ranked like any other story.
-- *Open:* league-wide Athletic stories that name no team (power rankings, trade-deadline roundups, the draft), §7.
+- The Athletic publishes one RSS feed per team at `nytimes.com/athletic/rss/<league>/<team-slug>/` (seen in public feed directories, e.g. `…/rss/mlb/braves/`, `…/rss/football/atlunited/`). Its editors tag each story with its teams, so a feed catches stories that name only a player. Example from the live data: "Anthony Edwards to undergo arthroscopic procedure on right knee" never says "Timberwolves", and headline matching would miss it.
+- **Which feeds:** the union of every News user's Scores favorites. The client sends its favorites (team key, name, scope) to `news_interest.teams` when they change, so the job never reads `tableplan_states`.
+- **Slugs** aren't predictable (`atlunited`, not `atlanta-united`), so `_news-feeds.js` keeps a small table from a sports-model team to its Athletic league + slug. Luke's favorites (Vikings, Timberwolves, Lynx, Wild, Twins, Gophers, Ajax, Minnesota United) are filled in first; the existing `newsfeeds_status` row shows each feed's HTTP status after the first deploy, and a dead slug is fixed there. **Unverified:** the build sandbox can't reach nytimes.com, so none of the slugs has been fetched yet.
+- **A favorite with no known slug:** its league feed is read and stories are kept only if the headline or subtitle names the team (name, short name or nickname). A fallback, less complete than a team feed.
+- **Per person:** a row is inserted for a user only if the story came from one of *their* favorites' feeds. Someone with no favorites gets nothing from The Athletic (today they get everything; Marijane doesn't use News).
+- **League-wide stories** (power rankings, the draft) don't come in unless The Athletic tags them with a favorite team.
+- **Side effects:** about 160 fewer stories a day stored, fewer feeds fetched each hour (8 small team feeds instead of 7 big league feeds), and The Athletic no longer needs filtering in `feedQuery`.
+- Other papers' sports stories (NYT, Star Tribune) are not filtered; they're ranked like any other story.
 
 ---
 
 ## 5. Build order
 
-1. **Features, AI tags, the Athletic filter and For you.** Migration (gated): `news_articles.topics`, `news_articles.rank_score`, the index, `news_interest`. Keyword and team features plus Haiku 5.5 tagging in the hourly job and mail sweep (decided with step 1, Luke 2026-10-27); the Athletic filter (§3.6); `updateNews` decisions; the For you view; ⋯ menu items; seeding from Scores favorites. Netlify deploy (asks first) + TestFlight for the ⋯ menu.
+1. **Features, AI tags, The Athletic team feeds and For you.** Migration (gated): `news_articles.topics`, `news_articles.rank_score`, the index, `news_interest`. Keyword and team features plus Haiku 5.5 tagging in the hourly job and mail sweep (decided with step 1, Luke 2026-10-27); The Athletic team feeds (§3.6); `updateNews` decisions; the For you view; ⋯ menu items; seeding from Scores favorites. Netlify deploy (asks first) + TestFlight for the ⋯ menu.
 2. **What News has learned** screen, Reset, the "Why" line.
 
 ## 6. Tests
@@ -169,8 +172,7 @@ The Athletic is half of all stories, and most are about teams Luke doesn't follo
 2. Should For you include **The Athletic** (filtered to his teams), given the Front page leaves it out?
 3. The day-one **"What do you like?"** sheet: yes, or learn quietly from use and favorites only?
 4. ~~AI tagging: now or later?~~ **Decided (Luke, 2026-10-27): build it with step 1.**
-5. ~~The Athletic: rank or filter?~~ **Decided (Luke, 2026-10-27): filter to favorite teams, everywhere (§3.6).**
-6. League-wide Athletic stories with no team: keep them, or filter them out too?
+5. ~~The Athletic: rank or filter?~~ **Decided (Luke, 2026-10-27): only favorite teams, without AI, from per-team feeds (§3.6).**
 
 ## 8. Noted in passing
 
