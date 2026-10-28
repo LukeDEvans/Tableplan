@@ -1,6 +1,6 @@
 # News ranking ("For you") — design & plan
 
-Status: **APPROVED (Luke, 2026-10-27). Steps 1–2 and the skip signal built on branch `claude/news-for-you` (§9, §10); not merged or deployed; the migration is not applied.** Follows NEWS_PAGE_DESIGN.md §10, which named a personalized feed as the next step. Read from code on `main` @ `a0c5547` and the live database (read-only counts, 2026-10-27).
+Status: **APPROVED (Luke, 2026-10-27). Steps 1–2 and the skip signal built on branch `claude/news-for-you` (§9, §10); not deployed. **The migration was applied 2026-10-28 with Luke's OK.** Follows NEWS_PAGE_DESIGN.md §10, which named a personalized feed as the next step. Read from code on `main` @ `a0c5547` and the live database (read-only counts, 2026-10-27).
 
 Goal: News learns which stories Luke reads and shows those first, in a **For you** view, without hiding the papers' own front pages and without new Supabase egress trouble.
 
