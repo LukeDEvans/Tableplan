@@ -19,38 +19,55 @@ fix them and you do **not** halt the main line of work.
   what's already logged (don't duplicate).
 - The design doc for the area, when one exists (e.g. GOOGLE_CALENDAR_SYNC_DESIGN.md,
   MEDIA_SPLIT_DESIGN.md, NEWS_PAGE_DESIGN.md, SPORTS_SCORES_DESIGN.md,
-  CALENDAR_AUTHORITY_FLIP.md) — a change that drifts from a recorded decision is a finding.
+  CALENDAR_AUTHORITY_FLIP.md, VIEWS_DESIGN.md, FINANCE_SPLIT_DESIGN.md, SETTINGS_AUDIT.md,
+  THEMES_DESIGN.md, STREAMING_HANDOFF_DESIGN.md) — a change that drifts from a recorded
+  decision is a finding.
 
 ## What to look for (in priority order)
 1. **Correctness / regressions** — logic that's wrong, an edge case dropped, a
    boot-order or TDZ hazard (see the boot-safety guards + `npm run check:boot`), a
    bundle-masked free variable (only fails on the unbundled dev server), a sync/merge
    or tombstone mistake, a place where "tests pass" ≠ "behaves correctly."
-2. **Silent behavior change** — especially anything touching state shape, sync,
+2. **Data crossing views** — a page that reads a different row per view (Personal /
+   Household / Business) must never write one view's data into another's row. Check any
+   change to `SECTION_SCOPE`, `scopeForView`, `alignScopesToView`, the shadow store, the
+   localStorage mirror, boot, or a refresh/conflict merge: is the section in
+   `VIEW_TOGGLE_SECTIONS` (`test/architecture-view-scopes.test.js`), does every merge
+   check that its row is still on screen, does a cross-view write use a fresh read plus a
+   conditional PATCH? Remember tombstones are one list for every row, so a delete in one
+   view can remove the same id from another. Personal Listen and Watch were copied into
+   the household rows this way (2026-10-27). A leak is a **P0**. See `.claude/agents/views.md`.
+3. **Silent behavior change** — especially anything touching state shape, sync,
    auth/session, or WHEN/how often something fetches or persists (the class most
    likely to cause a user-visible regression without failing a test).
-3. **Scope / safety** — an edit that reaches outside its domain's sections of
+4. **Scope / safety** — an edit that reaches outside its domain's sections of
    `app.js`, a shared-infra change made silently, a data-authority or schema-version
    implication that should have been flagged for the user.
-4. **Tests & evidence** — is the verification claim actually supported? Is there a
+5. **Tests & evidence** — is the verification claim actually supported? Is there a
    cheaper/more faithful check that was skipped? Is a new test meaningful or vacuous?
-5. **House rules** — the ones CLAUDE.md records because they broke before: a new synced
+6. **House rules** — the ones CLAUDE.md records because they broke before: a new synced
    key without a merge rule / `MERGE_NEWER_WINS_KEYS` entry; a synced setting missing
    from `TRACKED_SETTINGS`; a `STATE_SCHEMA_VERSION` bump nobody asked Luke about; a
    notifications window that can open empty or doesn't close on its last item; a new
    toggle that isn't `live-toggle`; a fixed window that ignores `dock-space.js`; a page
    that scrolls sideways at ~360px; a Mail AI feature without its Settings toggle; a
-   vendor URL or key outside a Netlify function (or, for Scores, outside its adapter).
-6. **Shipping claims** — does the `UNDEPLOYED.md` entry match what changed, and does it
+   vendor URL or key outside a Netlify function (or, for Scores, outside its adapter); a
+   setting added, moved or removed without the settings agent's placement rules (a
+   control nothing opens, a removed panel coming back — `.claude/agents/settings.md`);
+   new CSS with literal colors instead of tokens, or a new theme missing from the
+   contrast test.
+7. **Shipping claims** — does the `UNDEPLOYED.md` entry match what changed, and does it
    say correctly whether the change needs a Netlify deploy (anything under `netlify/`),
    a TestFlight build (client or native `ios/` changes Luke needs on his phone), or
    both? Are its post-deploy steps things Luke can actually do?
-7. **Agents kept current** — if the change touched a domain, did its agent in
+8. **Agents kept current** — if the change touched a domain, did its agent in
    `.claude/agents/` change with it? Mechanical drift fails
    `test/architecture-agent-coverage.test.js`; you check what the test can't: a new
    decision by Luke, a removed or moved feature, or a `description:` line that no longer
-   matches the domain. A missing agent update is a **P2**.
-8. **Simplification** — materially simpler or clearer approaches, dead code left behind.
+   matches the domain. A missing agent update is a **P2**. The views, settings and
+   leisure agents count too: a change to the view rules, the settings structure or
+   Display, or the Leisure page / `music/` updates its agent.
+9. **Simplification** — materially simpler or clearer approaches, dead code left behind.
 
 Prefer a few high-signal, concrete findings over a long list of nits. A finding you
 can't tie to a real failure scenario is a nit — mark it as such or drop it.
