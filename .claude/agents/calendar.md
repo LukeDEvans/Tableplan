@@ -19,6 +19,8 @@ changes to the Calendar (and its sibling Tasks) domain only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+**App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** the event detail offers Apple Maps / Google Maps directions for an event with a place, **Join meeting** and **Google Calendar** for Google events (`googleEventLinks` in `calendar/google.js`; `_gcal.js` `LIVE_FIELDS` now asks for `location,htmlLink,hangoutLink,conferenceData`, device cache only), and **Pay at …** on a Bills event (its `billName`).
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

@@ -27,6 +27,8 @@
 // removable, with a Reset. Stories that sit on screen in For you and aren't opened
 // are reported as skipped when you leave it, once per story per app session.
 
+import { paperHandoff } from './out-catalog.js';
+
 const REFRESH_MS = 60_000;
 const FLUSH_MS = 1500;
 const DAY_MS = 86_400_000;
@@ -316,6 +318,7 @@ const ICONS = {
   front: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 4h13a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H4z"/><path d="M19 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="8" x2="14" y2="8"/><line x1="7" y1="12" x2="14" y2="12"/><line x1="7" y1="16" x2="11" y2="16"/></svg>',
   sent: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
   saved: '<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+  app: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>',
   open: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>',
   listen: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3z"/><path d="M3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>',
   share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>',
@@ -338,6 +341,9 @@ export function createNewsModule(deps) {
     // startribune? }>, needsCheck(signIns): boolean } — the phone's own in-app
     // newspaper sign-ins (news-device-signin.js) — or null in a browser.
     getDeviceSignIn,
+    // Hand a story to its paper's own app (APP_LINKS_DESIGN.md): app.js handOff(),
+    // which opens the app on the iPhone and the website elsewhere. Optional.
+    handOff,
     // The Scores view (scores-ui.js, SPORTS_SCORES_DESIGN.md), shown as a tab of the
     // Sports section: { mount(el), unmount(), refresh() }. Optional.
     scores,
@@ -680,6 +686,16 @@ export function createNewsModule(deps) {
     flush();
     if (record) openInMedia?.(record.id);
   }
+  // ⋯ → Open in the paper's app: the story's own link, which the paper's app
+  // claims; the website if the app isn't installed. Counts as reading it.
+  function openInPaperApp(id) {
+    const a = cardFor(id);
+    const spec = a ? paperHandoff(a.paper, a.url) : null;
+    if (!spec || typeof handOff !== "function") return;
+    markRead(id);
+    flush();
+    handOff(spec);
+  }
   function listen(id) {
     const record = readerRecord(id);
     markRead(id, "listen");
@@ -728,6 +744,7 @@ export function createNewsModule(deps) {
     return `<div class="news-menu" role="menu">
       <button type="button" role="menuitem" class="news-menu-primary" data-news-act="send">${ICONS.saved.replace(' class="article-sidebar-icon"', "")}${a.sentAt ? "Saved ✓" : "Save"}</button>
       <button type="button" role="menuitem" data-news-act="open">${ICONS.open}Open</button>
+      ${handOff && paperHandoff(a.paper, a.url) ? `<button type="button" role="menuitem" data-news-act="app">${ICONS.app}Open in ${esc(paperHandoff(a.paper, a.url).label)} app</button>` : ""}
       <button type="button" role="menuitem" data-news-act="listen">${ICONS.listen}Listen</button>
       <button type="button" role="menuitem" data-news-act="share">${ICONS.share}Share</button>
       ${forYouAvailable ? `<div class="news-menu-divider"></div>
@@ -987,6 +1004,7 @@ export function createNewsModule(deps) {
         openMenuId = null;
         if (act === "send") sendToMedia(id);
         else if (act === "open") open(id);
+        else if (act === "app") openInPaperApp(id);
         else if (act === "listen") listen(id);
         else if (act === "share") share(id);
         else if (act === "hide") hide(id);

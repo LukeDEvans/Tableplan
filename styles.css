@@ -24886,3 +24886,33 @@ body[data-theme="dark"] .lang-read-card svg { color: var(--accent); }
 .lang-rd-in { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85rem; font-weight: 700; color: var(--accent-dark); }
 body[data-theme="dark"] .lang-rd-in { color: var(--accent); }
 .lang-rd-article a.secondary-btn { text-decoration: none; }
+
+/* ── Out links (APP_LINKS_DESIGN.md): buttons that open another app ─────────
+   Banks, bills, stores, papers, maps and travel. Opened by the app-wide
+   "Link out" listener ([data-link-out]); the arrow says "opens elsewhere". */
+.out-link-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; min-width: 0; }
+.out-link-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  min-height: 32px; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-dark) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+  color: var(--accent-dark); font: inherit; font-size: 0.84rem; font-weight: 650;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+}
+.out-link-chip:hover { background: var(--accent-soft); }
+.out-link-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.out-link-chip--small { min-height: 26px; padding: 2px 8px; font-size: 0.76rem; flex: 0 0 auto; }
+.out-link-arrow { width: 0.9em; height: 0.9em; flex: 0 0 auto; }
+body[data-theme="dark"] .out-link-chip { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.fin-bill-row .out-link-chip--small { align-self: center; }
+.travel-meta-chip--link { border: 0; background: none; font: inherit; color: inherit; }
+.travel-meta-chip--link .out-link-arrow { opacity: 0.6; }
+.item-detail-links { margin: 10px 0 0; }
+.plan-detail-links { margin: 10px 0 2px; }
+.contact-phone-actions { display: inline-flex; gap: 2px; margin-left: 6px; vertical-align: middle; }
+.contact-phone-act { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; color: var(--accent-dark); background: color-mix(in srgb, var(--accent-soft) 55%, transparent); }
+.contact-phone-act svg { width: 15px; height: 15px; }
+body[data-theme="dark"] .contact-phone-act { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.grocery-store-app { flex: 0 0 auto; color: var(--accent-dark); }
+.grocery-store-app .out-link-arrow { width: 18px; height: 18px; }
+body[data-theme="dark"] .grocery-store-app { color: var(--accent); }
