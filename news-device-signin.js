@@ -81,16 +81,21 @@ export function pageLooksSignedOut(page) {
 //   marked       the reader has completed this paper's sign-in sheet on this phone
 // Returns "signed-in" | "unverified" | "none", or undefined when nothing could be
 // learned (the server then keeps what it had).
+//
+// The subscriber page decides when it gives an answer: a session cookie can
+// outlive the session (Luke, 2026-10-28: Economist showed "Signed in" while its
+// articles came back cut off). The cookie counts only when the page can't tell.
 export function statusFromSignals(paper, { cookieNames = null, page = null, marked = false } = {}) {
   if (!paper) return undefined;
   const names = Array.isArray(cookieNames) ? cookieNames : null;
-  if (names && paper.cookies.some((c) => names.includes(c))) return "signed-in";
+  const hasCookie = !!names && paper.cookies.some((c) => names.includes(c));
   if (paper.checkUrl) {
     const out = pageLooksSignedOut(page);
     if (out === true) return "none";
     if (out === false) return "signed-in";
-    return undefined; // page didn't load: no answer
+    return hasCookie ? "signed-in" : undefined; // page didn't load: fall back to the cookie
   }
+  if (hasCookie) return "signed-in";
   // No way to check this paper (Star Tribune).
   if (!names) return undefined;
   return marked && names.length ? "unverified" : "none";
@@ -118,8 +123,9 @@ export async function checkDeviceSignIns(reader, { isMarked = () => false, paper
       if (Array.isArray(res?.names)) cookieNames = res.names.map(String);
     } catch { /* an older build, or the store couldn't be read */ }
     let page = null;
-    const hasCookie = cookieNames && paper.cookies.some((c) => cookieNames.includes(c));
-    if (!hasCookie && paper.checkUrl && typeof reader.extract === "function") {
+    // Always load the subscriber page when there is one: a leftover cookie
+    // isn't proof of a live session (statusFromSignals).
+    if (paper.checkUrl && typeof reader.extract === "function") {
       try {
         const res = await reader.extract({ url: paper.checkUrl, script: signInPageProbeSource(paper), minChars: 1, timeoutMs: 15000 });
         let data = null;

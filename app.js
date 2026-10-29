@@ -37944,6 +37944,7 @@ function fetchArticleBodyLive(article) {
         }));
       } catch (e) { nativeError = e?.message || ""; }
       if (nativeRes && !looksLikeTeaser(nativeRes.text)) return nativeRes;
+      if (nativeRes) notePaperTeaser(paper);
     }
     let serverRes = null;
     try { serverRes = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication }); } catch { serverRes = null; }
@@ -37990,11 +37991,32 @@ function markPaperSignIn(key, on) {
   } catch { /* storage unavailable: the paper just stays unchecked */ }
 }
 
+// How to sign in to a paper inside the app: Google's sign-in refuses embedded
+// browsers, so its page never verifies (Luke, 2026-10-28). Shown in the reader,
+// Sync Settings and (newer app builds) the sign-in sheet's own header.
+const PAPER_SIGNIN_HINT = "Use your email and password (or Apple). Google sign-in doesn't work in the app.";
+const PAPER_SIGNIN_SHEET_HINT = "Use email and password, not Google"; // one line in the sheet's header
+
+// A phone-side read of a subscriber article came back cut off. If the phone
+// thinks it's signed in, its session has probably lapsed: check again (once per
+// paper per session), so Sync Settings stops saying "Signed in".
+const paperTeaserSeen = new Set();
+function notePaperTeaser(paper) {
+  if (!paper || paperTeaserSeen.has(paper.key)) return;
+  paperTeaserSeen.add(paper.key);
+  const st = paperSignInStateOnPhone(paper.key);
+  if (st !== "signed-in" && st !== "unverified") return;
+  verifyNewsSignIns().catch(() => null).finally(() => {
+    if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
+  });
+}
+
 async function signInToArticlePaper(paper) {
   const reader = nativeArticleReader();
   if (!reader || !paper) return;
   let res = null;
-  try { res = await reader.login({ url: paper.loginUrl, title: paper.name }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); return; }
+  paperTeaserSeen.delete(paper.key);
+  try { res = await reader.login({ url: paper.loginUrl, title: paper.name, hint: PAPER_SIGNIN_SHEET_HINT }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); return; }
   // The sheet has closed. Tell News what this phone now finds for each paper (a
   // status only — the sign-in cookies stay on the phone), and say how it went.
   // The sheet's steps (host + path only) go along so a stalled sign-in can be
@@ -38024,8 +38046,12 @@ async function reportPaperSignInsToNews(paper) {
 function articlePaperLoginActionsHtml(article, { teaser }) {
   const paper = subscriberPaperFor(article);
   if (!paper || !nativeArticleReader()) return "";
-  const lead = teaser ? `<p class="article-fetch-hint">Looks cut off? Sign in to ${escapeHtml(paper.name)} once in the app, then reload.</p>` : "";
-  return `${lead}<div class="article-paper-login-actions"><button class="secondary-btn" type="button" data-article-paper-login="${escapeHtml(paper.key)}">Sign in to ${escapeHtml(paper.name)}</button><button class="primary-btn" type="button" data-article-paper-reload="${escapeHtml(article.id)}">Reload full article</button></div>`;
+  const st = paperSignInStateOnPhone(paper.key);
+  const lapsed = teaser && paperTeaserSeen.has(paper.key) && (st === "signed-in" || st === "unverified");
+  const lead = !teaser ? ""
+    : lapsed ? `<p class="article-fetch-hint">Looks cut off: your ${escapeHtml(paper.name)} sign-in on this phone may have expired. Sign in again, then reload.</p>`
+    : `<p class="article-fetch-hint">Looks cut off? Sign in to ${escapeHtml(paper.name)} once in the app, then reload.</p>`;
+  return `${lead}<p class="article-fetch-hint article-paper-signin-note">${escapeHtml(PAPER_SIGNIN_HINT)}</p><div class="article-paper-login-actions"><button class="secondary-btn" type="button" data-article-paper-login="${escapeHtml(paper.key)}">Sign in to ${escapeHtml(paper.name)}</button><button class="primary-btn" type="button" data-article-paper-reload="${escapeHtml(article.id)}">Reload full article</button></div>`;
 }
 
 // Whether this phone is signed in to a paper: what its last check found, else the
@@ -38071,6 +38097,7 @@ function articlePaperLoginsSettingsHtml() {
           <p class="sync-context-label">Newspaper sign-ins on this device</p>
           ${settingsInfoButton("paper-signins", "newspaper sign-ins")}
         </div>
+        <p class="settings-panel-note">${escapeHtml(PAPER_SIGNIN_HINT)}</p>
         ${settingsInfoPanel("paper-signins", "Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with Apple or with email and password: Google sign-in doesn't work inside apps.")}${rows}`;
 }
 
