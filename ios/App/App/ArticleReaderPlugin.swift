@@ -140,6 +140,14 @@ public class ArticleReaderPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 }
 
+// How both web views identify themselves: as Safari. A bare WKWebView user agent
+// has no "Version/… Safari/…"; sign-in pages treat it as an embedded browser, and
+// bot checks (NYT's) block a page whose user agent differs from the one the
+// session was made with — so the hidden reader must match the sign-in sheet.
+enum ArticleWebIdentity {
+    static let applicationName = "Version/18.0 Mobile/15E148 Safari/604.1"
+}
+
 // One invisible page load + extraction. Main thread only.
 final class ArticleExtractJob: NSObject, WKNavigationDelegate {
     private let script: String
@@ -164,6 +172,7 @@ final class ArticleExtractJob: NSObject, WKNavigationDelegate {
         config.websiteDataStore = .default() // shares the login sheet's cookies
         config.mediaTypesRequiringUserActionForPlayback = .all
         config.allowsInlineMediaPlayback = false
+        config.applicationNameForUserAgent = ArticleWebIdentity.applicationName
         // A phone-sized frame so the site renders its normal mobile layout.
         let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: config)
         wv.navigationDelegate = self
@@ -294,7 +303,7 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
         // Identify as Safari. A bare WKWebView user agent has no "Version/… Safari/…",
         // and sign-in pages (Apple's included) treat it as an embedded browser and
         // can take a path that never finishes.
-        config.applicationNameForUserAgent = "Version/18.0 Mobile/15E148 Safari/604.1"
+        config.applicationNameForUserAgent = ArticleWebIdentity.applicationName
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
