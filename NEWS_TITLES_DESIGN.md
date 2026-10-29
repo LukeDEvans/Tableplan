@@ -45,4 +45,4 @@ The dock ticker shows the newsletter **leads**, which all come from email, so it
 
 ## 5. Checks
 
-`test/news-titles.test.js` (26, fixtures from the real stored titles): weak/strong titles, slug titles, anchor splitting, email title choice, feed parsing with inline markup and CDATA, live-blog titles, the repair plan (each source, stability on re-run), page-read selection and the capped repair run. Full suite passes.
+`test/news-titles.test.js` (25, fixtures from the real stored titles): weak/strong titles, slug titles, anchor splitting, email title choice, feed parsing with inline markup and CDATA, live-blog titles, the repair plan (each source, stability on re-run), page-read selection and the capped repair run. Full suite passes.
