@@ -11,9 +11,15 @@ const paper = (key) => DEVICE_SIGNIN_PAPERS.find((p) => p.key === key);
 const NOW = Date.parse("2026-10-08T12:00:00Z");
 
 describe("statusFromSignals", () => {
-  it("a session cookie means signed in, without loading any page", () => {
+  it("a session cookie counts only when the subscriber page can't tell", () => {
     expect(statusFromSignals(paper("nyt"), { cookieNames: ["nyt-a", "NYT-S"] })).toBe("signed-in");
-    expect(statusFromSignals(paper("economist"), { cookieNames: ["blaize_session"] })).toBe("signed-in");
+    expect(statusFromSignals(paper("economist"), { cookieNames: ["blaize_session"], page: { loaded: false, finalUrl: "https://www.economist.com/for-you/bookmarks" } })).toBe("signed-in");
+  });
+  it("a leftover session cookie doesn't beat a signed-out page", () => {
+    const eco = paper("economist");
+    expect(statusFromSignals(eco, { cookieNames: ["blaize_session"], page: { loaded: true, url: "https://www.economist.com/for-you/bookmarks", signedOut: true } })).toBe("none");
+    expect(statusFromSignals(eco, { cookieNames: ["blaize_session"], page: { loaded: false, finalUrl: "https://myaccount.economist.com/s/login/" } })).toBe("none");
+    expect(statusFromSignals(eco, { cookieNames: ["blaize_session"], page: { loaded: true, url: "https://www.economist.com/for-you/bookmarks", signedOut: false } })).toBe("signed-in");
   });
   it("no session cookie: the subscriber page decides", () => {
     const nyt = paper("nyt");
@@ -76,7 +82,7 @@ describe("deviceSignInsNeedCheck", () => {
 });
 
 describe("checkDeviceSignIns", () => {
-  it("asks for cookie names, loads the subscriber page only without a session cookie, and returns statuses only", async () => {
+  it("asks for cookie names, loads every subscriber page (even with a session cookie), and returns statuses only", async () => {
     const calls = [];
     const reader = {
       cookieNames: async ({ domain }) => {
@@ -87,12 +93,13 @@ describe("checkDeviceSignIns", () => {
         calls.push(["extract", url]);
         expect(minChars).toBe(1);
         expect(script).toContain("loggedIn");
+        if (url.includes("nytimes.com")) return { json: JSON.stringify({ url, signedOut: false }), finalUrl: url };
         return { json: JSON.stringify({ url: "https://myaccount.economist.com/s/login/", signedOut: false }), finalUrl: "https://myaccount.economist.com/s/login/" };
       }
     };
     const out = await checkDeviceSignIns(reader, { isMarked: (k) => k === "startribune" });
     expect(out).toEqual({ nyt: "signed-in", economist: "none", startribune: "unverified" });
-    expect(calls.filter((c) => c[0] === "extract")).toEqual([["extract", "https://www.economist.com/for-you/bookmarks"]]);
+    expect(calls.filter((c) => c[0] === "extract").map((c) => c[1]).sort()).toEqual(["https://www.economist.com/for-you/bookmarks", "https://www.nytimes.com/saved"]);
   });
   it("leaves a paper out when the phone couldn't find out", async () => {
     const reader = {

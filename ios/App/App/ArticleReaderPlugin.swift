@@ -10,7 +10,8 @@ import Capacitor
 // Why native: the server fetch reads pages anonymously from a cloud IP, so the
 // papers return a teaser or block it. Here the page loads on the phone itself,
 // signed in as Luke, in a real WebKit view:
-//   • login({ url, title }) — shows the paper's site in an in-app browser sheet.
+//   • login({ url, title, hint }) — shows the paper's site in an in-app browser
+//     sheet, with `hint` (optional) as one line over the page.
 //     Luke signs in once; the cookies stay in the app's default website data
 //     store (on the phone only — nothing is sent to our server). Resolves when the
 //     sheet closes, with `trail`: the pages the sheet went through (host + path
@@ -48,12 +49,13 @@ public class ArticleReaderPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let title = call.getString("title") ?? ""
+        let hint = call.getString("hint") ?? ""
         DispatchQueue.main.async { [weak self] in
             guard let presenter = self?.bridge?.viewController else {
                 call.reject("No view to present from.")
                 return
             }
-            let browser = ArticleLoginViewController(url: url, titleText: title) { trail in
+            let browser = ArticleLoginViewController(url: url, titleText: title, hintText: hint) { trail in
                 call.resolve(["closed": true, "trail": trail])
             }
             let nav = UINavigationController(rootViewController: browser)
@@ -250,6 +252,8 @@ final class ArticleExtractJob: NSObject, WKNavigationDelegate {
 final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     private let startUrl: URL
     private let titleText: String
+    // One line over the page, e.g. how to sign in ("Google sign-in doesn't work here").
+    private let hintText: String
     private let onClose: ([String]) -> Void
     private var reported = false
     // Steps the sheet went through ("main"/"popup" + event + host/path), capped.
@@ -261,9 +265,10 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
     private let progress = UIProgressView(progressViewStyle: .bar)
     private var progressObservation: NSKeyValueObservation?
 
-    init(url: URL, titleText: String, onClose: @escaping ([String]) -> Void) {
+    init(url: URL, titleText: String, hintText: String = "", onClose: @escaping ([String]) -> Void) {
         self.startUrl = url
         self.titleText = titleText
+        self.hintText = hintText
         self.onClose = onClose
         super.init(nibName: nil, bundle: nil)
     }
@@ -274,6 +279,7 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         title = titleText.isEmpty ? "Sign in" : titleText
+        if !hintText.isEmpty { navigationItem.prompt = hintText }
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(done))
         navigationItem.leftBarButtonItems = [
             UIBarButtonItem(image: UIImage(systemName: "chevron.backward"), style: .plain, target: self, action: #selector(goBack)),
