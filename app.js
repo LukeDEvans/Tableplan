@@ -65,7 +65,7 @@ import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
 import { createNativeReminderScheduler } from './calendar/reminders-native.js';
-import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
+import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, nativeExtractBlockReason, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
 import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_TEXT_PREVIEW_MAX, attachmentViewKind, attachmentBlobType, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
@@ -37988,11 +37988,14 @@ function fetchArticleBodyLive(article) {
     const reader = paper ? nativeArticleReader() : null;
     let nativeRes = null;
     let nativeError = "";
+    let blocked = "";
     if (reader) {
       try {
-        nativeRes = parseNativeExtractResult(await reader.extract({
+        const raw = await reader.extract({
           url: article.url, script: ARTICLE_DOM_EXTRACTOR_SOURCE, minChars: TEASER_MAX_CHARS, timeoutMs: 25000
-        }));
+        });
+        nativeRes = parseNativeExtractResult(raw);
+        blocked = nativeRes ? "" : nativeExtractBlockReason(raw);
       } catch (e) { nativeError = e?.message || ""; }
       if (nativeRes && !looksLikeTeaser(nativeRes.text)) return nativeRes;
       if (nativeRes) notePaperTeaser(paper);
@@ -38001,6 +38004,11 @@ function fetchArticleBodyLive(article) {
     try { serverRes = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication }); } catch { serverRes = null; }
     const best = chooseLongerResult(nativeRes, serverRes?.text ? serverRes : null);
     if (best) return best;
+    // The phone's answer explains more than the server's: the papers always
+    // refuse the server (an "HTTP 403" said nothing about the phone).
+    if (blocked === "challenge") return { error: `${paper.name} asked this phone to confirm it's a person. Open the article in the app, finish the check there, then reload.`, blocked };
+    if (blocked === "paywall") return { error: `${paper.name} showed its sign-in wall: this phone isn't signed in. Sign in, then reload.`, blocked };
+    if (reader) return { error: `Couldn't load the article on this phone${nativeError ? ` (${nativeError})` : ""}. Open it in the app, then reload.` };
     return { error: serverRes?.error || nativeError || "Could not extract article text." };
   })();
   articleLiveFetches.set(article.id, p);
@@ -38102,7 +38110,8 @@ function articlePaperLoginActionsHtml(article, { teaser }) {
   const lead = !teaser ? ""
     : lapsed ? `<p class="article-fetch-hint">Looks cut off: your ${escapeHtml(paper.name)} sign-in on this phone may have expired. Sign in again, then reload.</p>`
     : `<p class="article-fetch-hint">Looks cut off? Sign in to ${escapeHtml(paper.name)} once in the app, then reload.</p>`;
-  return `${lead}<p class="article-fetch-hint article-paper-signin-note">${escapeHtml(PAPER_SIGNIN_HINT)}</p><div class="article-paper-login-actions"><button class="secondary-btn" type="button" data-article-paper-login="${escapeHtml(paper.key)}">Sign in to ${escapeHtml(paper.name)}</button><button class="primary-btn" type="button" data-article-paper-reload="${escapeHtml(article.id)}">Reload full article</button></div>`;
+  const openHere = teaser ? "" : `<button class="secondary-btn" type="button" data-article-paper-open="${escapeHtml(article.id)}">Open article in the app</button>`;
+  return `${lead}<p class="article-fetch-hint article-paper-signin-note">${escapeHtml(PAPER_SIGNIN_HINT)}</p><div class="article-paper-login-actions">${openHere}<button class="secondary-btn" type="button" data-article-paper-login="${escapeHtml(paper.key)}">Sign in to ${escapeHtml(paper.name)}</button><button class="primary-btn" type="button" data-article-paper-reload="${escapeHtml(article.id)}">Reload full article</button></div>`;
 }
 
 // Whether this phone is signed in to a paper: what its last check found, else the
@@ -38156,6 +38165,20 @@ function bindArticlePaperLoginActions(root, article) {
   const paper = subscriberPaperFor(article);
   root.querySelector("[data-article-paper-login]")?.addEventListener("click", () => signInToArticlePaper(paper));
   root.querySelector("[data-article-paper-reload]")?.addEventListener("click", () => refetchArticleWithLogin(article.id));
+  root.querySelector("[data-article-paper-open]")?.addEventListener("click", () => openArticleInPaperSheet(article));
+}
+
+// Open the article itself in the in-app browser sheet. It shares the hidden
+// reader's cookies, so passing a paper's bot check (or signing in) there lets
+// the reader load it; the article can also just be read in the sheet. Reloads
+// once the sheet closes.
+async function openArticleInPaperSheet(article) {
+  const reader = nativeArticleReader();
+  const paper = subscriberPaperFor(article);
+  if (!reader || !paper || !article?.url) return;
+  try { await reader.login({ url: article.url, title: paper.name, hint: "Finish any check, then tap Done" }); }
+  catch (e) { showMailToast(e?.message || "Couldn't open the article."); return; }
+  refetchArticleWithLogin(article.id);
 }
 
 async function fetchArticleText(id) {

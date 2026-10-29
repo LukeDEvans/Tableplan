@@ -10,6 +10,8 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **NYT articles blocked on the phone** — the hidden article reader now identifies as Safari like the sign-in sheet (NYT's bot check blocks a page whose identity differs from the one the session was made with); the reader names the real cause (bot check / sign-in wall / phone error) instead of the server's "HTTP 403", and adds "Open article in the app" (the article in the in-app browser, same cookies, then reload) · PR (this one) · **TestFlight build** (native change). Then open an NYT article: it should load; if NYT shows its check, use "Open article in the app".
+
 - **Newspaper sign-in: hint + honest status** — Sync Settings, the reader and the in-app sign-in sheet say to use email and password (Google sign-in doesn't work in the app); the phone's sign-in check now loads each paper's subscriber page even when a session cookie is there, so a leftover cookie no longer shows "Signed in"; a cut-off article while "Signed in" re-checks and says the sign-in may have expired · PR (this one) · **TestFlight build** (the sheet's hint is native; the rest is in the bundled web code). After it: News › Sync Settings on the phone should show The Economist's real state.
 
 - **Dutch card picture** — the Leisure page's Dutch hobby card shows the windmill picture (`activity-dutch.png`) instead of the translate icon · PR (this one) · none; web only, and the iPhone picks it up with the next TestFlight build.
