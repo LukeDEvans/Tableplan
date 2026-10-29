@@ -20,6 +20,8 @@ import { DIET_OPTIONS, ALLERGEN_OPTIONS, normalizeMemberDiets, normalizeDietEntr
 import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, loadAvatar, resizeImageToAvatar, uploadAvatar, removeAvatar } from './profile.js';
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule, isNewsletterBriefing } from './news-ui.js';
+import { createMusicShowsModule } from './media-music-show-ui.js';
+import { isMusicShow } from './media-music-show.js';
 import { createScoresModule, gameCardHtml } from './scores-ui.js';
 import { OUT_TARGETS, openOutLink, titleHandoff, targetHandoff, linkOutAttrs, linkOutFromElement } from './link-out.js';
 import { PLACES, placeHandoff, billerForBill, mapsHandoffs, travelPlaceFor, storeSearchHandoff, OUT_LINK_ARROW } from './out-catalog.js';
@@ -1781,6 +1783,31 @@ const {
   copyContactValue, addContactRow, handleContactPhotoFile, openContactPhotoMenu,
   exportContactsVcf, importContactsVcf, editViewedContact, deleteViewedContact,
 } = _contacts;
+
+// ── Music shows (media-music-show-ui.js, AMPLIFIER_DESIGN.md) ─────────
+// The Listen bell's playlist shows (NYT's The Amplifier): the native player reads
+// the write-ups and plays each song from Apple Music. Above render() (it updates
+// the bell's badge); every dep is a thunk, so nothing runs at instantiation.
+const _musicShows = createMusicShowsModule({
+  getState: () => state,
+  persist: (...a) => persist(...a),
+  markArticleRead: (...a) => markArticleRead(...a),
+  openArticle: (id) => openArticleFrom(id),
+  escapeHtml: (...a) => escapeHtml(...a),
+  showToast: (...a) => showVoiceToast(...a),
+  nativeTts: () => nativeTts(),
+  nativeAppleMusic: () => nativeAppleMusic(),
+  nativeVoiceId: () => nativeVoiceIdPref(),
+  voiceSpeed: () => articleVoiceSpeed(),
+  playbackRate: () => mediaPlaybackSpeed || 1,
+  stopOtherPlayback: () => { stopPodcastAudio(); stopListen(); stopMusicPlayback(); stopRadio(); },
+  setMiniPlayer: (...a) => { clearWebMediaSession(); setMiniPlayer(...a); },
+  onPlaybackChange: () => { updateMiniPlayerPlayBtn(); if (!nowPlayingKind()) hideMiniPlayer(); },
+  setPageNotifCount: (...a) => setPageNotifCount(...a),
+  showListen: () => showMediaApp(),
+  callGmailApi: (...a) => callGmailApi(...a),
+});
+const musicShows = _musicShows;
 
 // ── Weather domain (extracted to weather-ui.js) ────────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showWeatherApp stays
@@ -3997,6 +4024,9 @@ function setupDiagnostics() {
     scopes: () => (localDevMode ? Object.fromEntries(VIEW_TOGGLE_SECTIONS.map((s) => [s, sectionScope(s)])) : null),
     businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
     watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); persist(); return true; },
+    // Listen bell music shows (scripts/qa-music-shows.mjs): saved articles carrying a
+    // musicShow, as the inbox sweep writes them. Local dev only.
+    musicShowsSeedForQa: (articles) => { if (!localDevMode) return null; state.savedArticles = [...(state.savedArticles || []).filter((a) => !articles.some((b) => b.id === a.id)), ...articles]; persist(); musicShows.updateBadge(); return true; },
     showScoresForQa: () => { if (!localDevMode) return null; showScoresApp(); return true; },
     mediaServicesForQa: (ids) => { if (!localDevMode) return null; state.mediaServices = ids.map(String); resetMediaHub(); return true; },
     settingsForQa: (kind) => { if (!localDevMode) return null; openContextSettingsDialog(kind); return true; },
@@ -4071,7 +4101,7 @@ function setupDiagnostics() {
     itemDetailHtmlForQa: (type, item) => (localDevMode ? itemDetailContent(type, item).bodyHtml : null),
     openPlanEventForQa: (id, dateKey) => { if (!localDevMode) return null; showPlanApp(); openPlanEventDetail(id, dateKey); return true; },
     openTripForQa: (id) => { if (!localDevMode) return null; openExploreTrip(id); return true; },
-    openPageForQa: (name) => { if (!localDevMode) return null; ({ finance: showFinanceApp, shop: showShopApp, contacts: showContactsApp, news: showNewsApp })[name]?.(); return activeAppArea; },
+    openPageForQa: (name) => { if (!localDevMode) return null; ({ finance: showFinanceApp, shop: showShopApp, contacts: showContactsApp, news: showNewsApp, media: showMediaApp })[name]?.(); return activeAppArea; },
     financeSeedAccount: () => {
       if (!localDevMode) return null;
       state.financeAccounts = normalizeFinanceAccounts([{ id: "qa-acct", owner: "Joint", name: "QA Savings", kind: "cash", manualBalance: 5000 }], createId);
@@ -8551,6 +8581,7 @@ function render() {
   if (homeLogo) homeLogo.alt = name;
   document.title = name;
   updatePageVisibility();
+  musicShows.updateBadge(); // the Listen bell (synced shows arrive through here)
   const week = weekState();
   const weekTools = elements.weekLabel.closest(".week-tools");
   // Finance shows the viewed month here (set by setWeekToolsMode("finance")) and
@@ -8962,6 +8993,8 @@ function showMediaApp(event, { keepView = false } = {}) {
   setPageHash("media");
   if (keepView && mediaTabsWired) renderActiveMediaView();
   else initMediaPage();
+  musicShows.updateBadge();
+  musicShows.importRecentOnce(); // once per device: issues from before the Listen bell had shows
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -17572,6 +17605,13 @@ const MAIL_AI_FEATURES = [
     defaultOn: true,
     label: "“The world in brief” → article",
     desc: "Same for The Economist's daily briefing — saved as an article in Listen, email filed away."
+  },
+  {
+    // Checked server-side by netlify/functions/_music-show.js (sweep + importMusicShows).
+    key: "amplifierToListen",
+    defaultOn: true,
+    label: "“The Amplifier” → Listen bell",
+    desc: "Turns NYT's playlist newsletter into a show under the Listen bell: the intro and each song's write-up are read aloud, and each song plays from Apple Music after its write-up (iPhone app). No AI is used. Off, it's converted like any other NYT newsletter."
   },
   {
     key: "nytNewsLinks",
@@ -29280,11 +29320,8 @@ function wireMediaTabs() {
     if (mediaSearchQuery) renderMediaSearchResults();
     else exitMediaSearch();
   });
-  // Media bell: a placeholder again — news articles moved to the News page
-  // (NEWS_PAGE_DESIGN.md).
-  document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => {
-    showMailToast("Listen notifications are coming soon.");
-  });
+  // Listen bell: music shows (AMPLIFIER_DESIGN.md).
+  document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => musicShows.openPanel());
 
   // (Reset-order moved into the Playlist settings modal.)
 
@@ -31459,7 +31496,7 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
   if (forceIncludeArticles) {
     const readIds = new Set(state.readArticleIds || []);
     const articleItems = (state.savedArticles || [])
-      .filter(a => !readIds.has(a.id) && articleHasListenableBody(a))
+      .filter(a => !readIds.has(a.id) && !isMusicShow(a) && articleHasListenableBody(a)) // shows live under the Listen bell
       .map(articleQueueItem);
     items = [...items, ...articleItems];
   }
@@ -33417,6 +33454,16 @@ function showAdSkippedToast() {
 // exact behavior that used to be inline. Arrow bodies run at playback time, so
 // referencing functions/consts defined later in the file is fine.
 const MEDIA_KINDS = {
+  // A music show from the Listen bell (media-music-show-ui.js): the native player
+  // runs the whole show (spoken write-ups and Apple Music songs) by itself.
+  musicShow: {
+    active: () => musicShows.active(),
+    el: () => null,
+    toggle: () => musicShows.toggle(),
+    skip: (sec) => musicShows.step(sec < 0 ? -1 : 1),
+    open: () => musicShows.open(),
+    info: () => musicShows.info(),
+  },
   podcast: {
     active: () => !!podcastAudio,
     el: () => podcastAudio,
@@ -33486,7 +33533,7 @@ const MEDIA_KINDS = {
     info: () => { const a = listenArticle; return { art: a ? articleArtUrl(a) : "", title: a?.title || "Now playing", show: a?.author || a?.publication || "", date: a?.pubDate ? formatArticleDate(a.pubDate) : "", desc: plainTextFromHtml(a?.text || a?.excerpt).slice(0, 2000) }; },
   },
 };
-const NOW_PLAYING_ORDER = ["podcast", "radio", "music", "nativeAudio", "tts"];
+const NOW_PLAYING_ORDER = ["musicShow", "podcast", "radio", "music", "nativeAudio", "tts"];
 
 // THE one playback engine for the whole app. It owns the single shared media
 // element and drives every source; feature behavior is dispatched by the
@@ -36042,6 +36089,7 @@ function nowPlayingEngineState() {
   return (k && s && s.providerId === k) ? s : null;
 }
 function nowPlayingIsPlaying() {
+  if (musicShows.active()) return musicShows.isPlaying(); // the native player runs the show
   if (musicPlaybackProvider) return !!(musicOwnedNP && musicOwnedNP.isPlaying); // Apple Music owns its transport
   if (radioNative) return !!radioNative.playing; // native live radio
   if (listenSpeechSynth) { // on-device voice (native plugin or Web Speech)
@@ -36055,6 +36103,7 @@ function nowPlayingIsPlaying() {
   return !!(listenSpeaking && listenAudio && !listenAudio.paused);
 }
 function nowPlayingElapsed() {
+  if (musicShows.active()) return 0; // a show is parts, not one timeline
   if (musicPlaybackProvider) return musicOwnedNP ? (musicOwnedNP.positionMs || 0) / 1000 : 0;
   if (radioNative) return 0; // live
   const s = nowPlayingEngineState();
@@ -36063,6 +36112,7 @@ function nowPlayingElapsed() {
 }
 // Live radio has no finite duration → 0 (the bar shows no progress for it).
 function nowPlayingTotal() {
+  if (musicShows.active()) return 0;
   if (musicPlaybackProvider) return (musicOwnedNP && musicOwnedNP.durationMs) ? musicOwnedNP.durationMs / 1000 : 0;
   if (radioNative) return 0; // live
   const s = nowPlayingEngineState();
@@ -36103,6 +36153,7 @@ function nowPlayingEpisodeStep(dir) {
 }
 function nowPlayingSeekFraction(f) {
   if (nowPlayingIsLive()) return; // live: no seek
+  if (musicShows.active()) return; // a show moves by parts (skip), not by seeking
   if (musicPlaybackProvider) { // Apple Music owns the transport
     const dur = musicOwnedNP && musicOwnedNP.durationMs;
     if (dur) musicPlaybackProvider.seek(Math.max(0, Math.min(1, f)) * dur);
@@ -39892,6 +39943,7 @@ function toggleListenPlayPause() {
 }
 
 function stopListen() {
+  musicShows.stop(); // a music show from the Listen bell (no-op when none plays)
   listenGenId++;
   teardownSystemVoice(); // cancel any on-device (speechSynthesis) read
   // Engine pauses the element, detaches its handlers, and clears the source;

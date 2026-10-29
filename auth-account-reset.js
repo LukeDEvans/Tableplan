@@ -34,6 +34,8 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "live-display-v1",         // DISPLAY_CACHE_KEY — this person's last theme, applied before first paint
   "live-view-v1",            // the last view used and this person's view list (views.js)
   "live-receipt-scans-v1",   // RECEIPT_QUEUE_KEY (receipt-scan-queue.js) — receipts sent to be read, with photo refs
+  "live-music-show-pos-v1",  // POS_KEY (media-music-show-ui.js) — where each Listen-bell show was left
+  "live-music-show-import-v1", // IMPORT_KEY (media-music-show-ui.js) — the mailbox's recent shows were fetched
 ];
 
 // Some account-scoped keys are DYNAMIC (a stable prefix + a variable suffix), so
