@@ -2816,6 +2816,7 @@ function bindEvents() {
   elements.closeWatchSearchBtn.addEventListener("click", () => elements.watchSearchDialog.close());
   elements.watchSearchDialog.addEventListener("click", closeDialogOnBackdropClick);
   elements.watchSearchDialog.addEventListener("close", () => {
+    watchSearchLinkId = null;
     elements.watchSearchDialogInput.value = "";
     elements.watchSearchDialogResults.innerHTML = "";
   });
@@ -4023,7 +4024,10 @@ function setupDiagnostics() {
     planScope: () => (localDevMode ? sectionScope("plan") : null),
     scopes: () => (localDevMode ? Object.fromEntries(VIEW_TOGGLE_SECTIONS.map((s) => [s, sectionScope(s)])) : null),
     businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
-    watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); persist(); return true; },
+    watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); (items || []).forEach((i) => i?.id && unrecordDeletion("watchItems", i.id)); persist(); if (activeAppArea === "watch") { activeWatchCategory = "all"; expandedWatchItemId = null; renderWatchPlanner(); } return true; },
+    // The Watch list and its removals as saved (scripts/qa-watch-panel.mjs). Local dev only.
+    watchItemsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.watchItems || [])) : null),
+    watchTombstonesForQa: () => (localDevMode ? [...(state.tombstones?.watchItems || [])] : null),
     // Listen bell music shows (scripts/qa-music-shows.mjs): saved articles carrying a
     // musicShow, as the inbox sweep writes them. Local dev only.
     musicShowsSeedForQa: (articles) => { if (!localDevMode) return null; state.savedArticles = [...(state.savedArticles || []).filter((a) => !articles.some((b) => b.id === a.id)), ...articles]; persist(); musicShows.updateBadge(); return true; },
@@ -6342,7 +6346,7 @@ function normalizeWatchItems(items) {
       watchedDate: item?.watchedDate || null,
       rating: item?.rating != null ? Number(item.rating) : null,
       watchNotes: item?.watchNotes || null,
-      seasonProgress: item?.seasonProgress && typeof item.seasonProgress === "object" ? item.seasonProgress : {},
+      seasonProgress: watchSeasonProgressWithoutViewState(item?.seasonProgress),
       episodeData: item?.episodeData && typeof item.episodeData === "object" ? item.episodeData : {},
       inTheaters: item?.inTheaters === true,
       theatricalReleaseDate: item?.theatricalReleaseDate || null,
@@ -6350,6 +6354,19 @@ function normalizeWatchItems(items) {
       createdAt: item?.createdAt || new Date().toISOString()
     }))
     .filter((item) => item.title);
+}
+
+// Season open/closed used to be stored as seasonProgress[n].__expanded; it's
+// device view state now (watchOpenSeasons), so drop the old flag on load.
+function watchSeasonProgressWithoutViewState(progress) {
+  if (!progress || typeof progress !== "object") return {};
+  const out = {};
+  for (const [season, sd] of Object.entries(progress)) {
+    if (!sd || typeof sd !== "object") continue;
+    const { __expanded: _open, ...rest } = sd;
+    out[season] = rest;
+  }
+  return out;
 }
 
 function normalizeWatchSettings(raw) {
@@ -19046,6 +19063,8 @@ function closeFloatingMenus() {
 
 function closeFloatingMenusOnPageScroll(event) {
   if (elements.weekJumpMenu?.contains(event.target)) return;
+  // Scrolling inside a menu (a long Watch tab list) isn't a page scroll.
+  if (event.target instanceof Element && event.target.closest(".folder-context-menu")) return;
   const startMenu = document.getElementById("groceryRangeStartMenu");
   const endMenu = document.getElementById("groceryRangeEndMenu");
   if (startMenu?.contains(event.target) || endMenu?.contains(event.target)) return;
@@ -22246,9 +22265,21 @@ function watchItemById(id) {
   return watchItemsList().find((item) => item.id === id) || null;
 }
 
-function openWatchSearchDialog() {
+// The "+" window. Two modes (Luke, 2026-10-29):
+//   add  — search and tap to add. A title already on the list is tagged
+//          "In your list"; tapping it opens that show's panel instead of adding
+//          a second copy.
+//   link — "Find the right title" on a show with no poster: the box starts with
+//          its title, and the tapped result fills in poster, year, services and
+//          seasons on THAT show (its progress stays).
+let watchSearchLinkId = null;
+function openWatchSearchDialog({ linkId = null } = {}) {
+  const linkItem = linkId ? watchItemById(linkId) : null;
+  watchSearchLinkId = linkItem ? linkItem.id : null;
+  const head = elements.watchSearchDialog.querySelector(".dialog-head h2");
+  if (head) head.textContent = linkItem ? "Find the right title" : "Add to Watch List";
   elements.watchSearchDialogResults.innerHTML = "";
-  elements.watchSearchDialogInput.value = "";
+  elements.watchSearchDialogInput.value = linkItem ? linkItem.title : "";
   if (!elements.watchSearchDialog.open) elements.watchSearchDialog.showModal();
   requestAnimationFrame(() => elements.watchSearchDialogInput.focus());
 
@@ -22265,30 +22296,66 @@ function openWatchSearchDialog() {
   elements.watchSearchDialogInput.removeEventListener("input", elements.watchSearchDialogInput._handler);
   elements.watchSearchDialogInput._handler = handleInput;
   elements.watchSearchDialogInput.addEventListener("input", handleInput);
+  if (linkItem) fetchWatchSearchResultsDialog(linkItem.title);
+}
+
+// Open a show's panel from elsewhere (the "+" window's "In your list"): show it
+// in a tab that holds it, then scroll to it.
+function revealWatchItem(id) {
+  const item = watchItemById(id);
+  if (!item) return;
+  if (item.status === "watched") { openWatchArchive(); return; }
+  const inTab = activeWatchCategory === "all"
+    || (activeWatchCategory === "__upcoming" && item.theatricalReleaseDate && !item.inTheaters)
+    || (activeWatchCategory === "__in-theaters" && item.inTheaters)
+    || (Array.isArray(item.categories) && item.categories.includes(activeWatchCategory));
+  if (!inTab) activeWatchCategory = "all";
+  watchCollapsedSections.delete(item.type === "tv" ? "TV Shows" : "Movies");
+  expandedWatchItemId = id;
+  watchPanelLast = null; // a fresh open: scroll to it
+  renderWatchPlanner();
+  elements.watchPlannerGrid?.querySelector(`[data-watch-item="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 async function fetchWatchSearchResultsDialog(query) {
   const resultsEl = elements.watchSearchDialogResults;
+  const token = (fetchWatchSearchResultsDialog.token = (fetchWatchSearchResultsDialog.token || 0) + 1);
   resultsEl.innerHTML = `<div class="watch-search-loading">Searching…</div>`;
   try {
     const response = await fetch(tmdbSearchUrl(query), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
+    if (token !== fetchWatchSearchResultsDialog.token) return; // a newer search is on its way
     if (!response.ok) { resultsEl.innerHTML = `<div class="watch-search-error">${escapeHtml(data.error || "Search failed.")}</div>`; return; }
     if (!data.results?.length) { resultsEl.innerHTML = `<div class="watch-search-empty">No results found.</div>`; return; }
-    resultsEl.innerHTML = data.results.map((r) =>
-      watchTmdbResultTemplate(r, `data-tmdb-pick="${escapeHtml(JSON.stringify(r))}"`)
-    ).join("");
+    const linking = watchSearchLinkId;
+    resultsEl.innerHTML = data.results.map((r, i) => {
+      const owned = r.tmdbId != null ? videoInWatchlist(r.tmdbId) : null;
+      const isSelf = owned && owned.id === linking;
+      return watchTmdbResultTemplate(r, `data-tmdb-pick="${i}"`, owned && !isSelf ? "In your list" : "");
+    }).join("");
     resultsEl.querySelectorAll("[data-tmdb-pick]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        let result;
-        try { result = JSON.parse(btn.dataset.tmdbPick); } catch { return; }
-        addWatchItemFromTmdb(result);
+        const result = data.results[Number(btn.dataset.tmdbPick)];
+        if (!result) return;
+        const owned = result.tmdbId != null ? videoInWatchlist(result.tmdbId) : null;
+        if (linking) {
+          if (owned && owned.id !== linking) {
+            try { showVoiceToast(`“${owned.title}” is already on your list.`); } catch { /* noop */ }
+            return;
+          }
+          linkWatchItemToTmdb(linking, result);
+          elements.watchSearchDialog.close();
+          renderWatchPlanner();
+          return;
+        }
         elements.watchSearchDialog.close();
+        if (owned) { revealWatchItem(owned.id); return; }
+        addWatchItemFromTmdb(result);
         renderWatchPlanner();
       });
     });
   } catch {
-    resultsEl.innerHTML = `<div class="watch-search-error">Search failed. Check your TMDB_API_KEY.</div>`;
+    if (token === fetchWatchSearchResultsDialog.token) resultsEl.innerHTML = `<div class="watch-search-error">Search failed. Try again in a moment.</div>`;
   }
 }
 
@@ -22361,20 +22428,27 @@ function renderWatchPlanner() {
         const newCat = { id: createId("wcat"), name };
         state.watchSettings.categories.push(newCat);
         activeWatchCategory = newCat.id;
+        // "New tab…" from a show's Tabs popover files that show under it.
+        const forItem = watchNewTabFor && watchItemById(watchNewTabFor);
+        if (forItem) forItem.categories = [...(Array.isArray(forItem.categories) ? forItem.categories : []), newCat.id];
         persist();
       }
+      watchNewTabFor = null;
       watchCategoryInputActive = false;
       renderWatchPlanner();
     });
     inlineInput.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         watchCategoryInputActive = false;
+        watchNewTabFor = null;
         renderWatchPlanner();
       }
     });
     inlineInput.addEventListener("blur", () => {
       setTimeout(() => {
+        if (!watchCategoryInputActive) return; // already submitted or cancelled
         watchCategoryInputActive = false;
+        watchNewTabFor = null;
         renderWatchPlanner();
       }, 120);
     });
@@ -22398,6 +22472,9 @@ function renderWatchPlanner() {
   bindWatchControls(elements.watchPlannerGrid);
 
   updateTabIndicator(elements.watchPlannerGrid);
+  placeWatchPanelPointer(elements.watchPlannerGrid);
+  const open = expandedWatchItemId && watchItemById(expandedWatchItemId);
+  if (open) ensureWatchNextSeasonLoaded(open);
 }
 
 function watchDayTabTemplate(day, isActive) {
@@ -22505,7 +22582,7 @@ function watchCardSub(item) {
 }
 
 function watchListTemplate() {
-  let items = watchItemsList().filter((i) => i.status !== "watched");
+  let items = watchItemsList().filter((i) => i.status !== "watched" && !watchIsPendingRemoval(i.id));
   if (activeWatchCategory === "__upcoming") {
     items = items.filter((i) => i.theatricalReleaseDate && !i.inTheaters);
   } else if (activeWatchCategory === "__in-theaters") {
@@ -22780,22 +22857,229 @@ function watchItemTemplate(item) {
   `;
   if (!expanded) return card;
 
-  // Full-width detail row (spans the grid) with the controls that used to crowd
-  // the card: providers/showtimes/hub-play, load-info/find, and TV episode tracking.
+  // The show's panel (Luke, 2026-10-29). It spans the grid; `grid-auto-flow:
+  // dense` on .watch-grid lets the posters after this one fill the rest of its
+  // row first, so the row stays put and the panel opens under the whole row. A
+  // pointer on its top edge marks the open poster (placed in
+  // placeWatchPanelPointer after render). Actions live here so they work on a
+  // phone (iOS has no right-click; the laptop keeps the context menu too).
   const providerHtml = watchProviderOrShowtimesHtml(item);
   const episodeProgressHtml = isTv ? watchEpisodeProgressHtml(item) : "";
+  const id = escapeHtml(item.id);
   const detail = `
-    <div class="watch-detail-row" data-watch-detail="${escapeHtml(item.id)}">
+    <div class="watch-detail-row" data-watch-detail="${id}" role="region" aria-label="${escapeHtml(item.title)}">
+      <span class="watch-detail-pointer" aria-hidden="true"></span>
       <div class="watch-detail-inner">
+        <div class="watch-detail-head">
+          <span class="watch-detail-title">${escapeHtml(item.title)}</span>
+          ${sub ? `<span class="watch-detail-sub">${escapeHtml(sub)}</span>` : ""}
+        </div>
+        ${isTv ? watchNextEpisodeHtml(item) : ""}
         ${providerHtml}
-        ${!item.streamingProviders && !item.inTheaters && !item.theatricalReleaseDate && item.tmdbId ? `<button class="watch-load-providers-btn secondary-btn compact-btn" type="button" data-watch-load-providers="${escapeHtml(item.id)}">Load streaming info</button>` : ""}
-        ${!item.tmdbId ? `<button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${escapeHtml(item.id)}">Find on TMDB</button>` : ""}
+        ${!item.streamingProviders && !item.inTheaters && !item.theatricalReleaseDate && item.tmdbId ? `<button class="watch-load-providers-btn secondary-btn compact-btn" type="button" data-watch-load-providers="${id}">Load streaming info</button>` : ""}
+        ${!item.tmdbId ? `<div class="watch-detail-unlinked"><span>No poster or services yet.</span><button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${id}">Find the right title</button></div>` : ""}
         ${episodeProgressHtml}
+        <div class="watch-detail-actions">
+          <button class="watch-action" type="button" data-watch-act-watched="${id}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Watched</span>
+          </button>
+          <button class="watch-action" type="button" data-watch-act-tabs="${id}" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10l3 3v7a1 1 0 0 1-1 1H4z"/><path d="M8 4h9l3 3v8"/></svg><span>Tabs</span>
+          </button>
+          <button class="watch-action watch-action--danger" type="button" data-watch-act-remove="${id}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg><span>Remove</span>
+          </button>
+        </div>
       </div>
     </div>
   `;
   return card + detail;
 }
+
+// ── The open panel's pointer ─────────────────────────────────────────────────
+// After each render, point the panel at its poster. Switching to another poster
+// in the same row slides the pointer there (like the category-tab underline)
+// and skips the panel's entry animation; opening a new row just places it. The
+// page scrolls only when a different poster was opened, and only enough to
+// show the panel — never on the re-render after an episode tick.
+let watchPanelLast = null; // { id, x, rowTop } of the panel as last drawn
+function placeWatchPanelPointer(root) {
+  const detail = root?.querySelector("[data-watch-detail]");
+  if (!detail) { watchPanelLast = null; return; }
+  const id = detail.dataset.watchDetail;
+  const card = root.querySelector(`[data-watch-item="${CSS.escape(id)}"]`);
+  const poster = card?.querySelector(".watch-poster") || card;
+  if (!poster) return;
+  const d = detail.getBoundingClientRect();
+  const p = poster.getBoundingClientRect();
+  const x = Math.round(p.left + p.width / 2 - d.left);
+  const rowTop = Math.round(p.top - root.getBoundingClientRect().top);
+  const prev = watchPanelLast;
+  watchPanelLast = { id, x, rowTop };
+  if (prev && prev.rowTop === rowTop) {
+    detail.classList.add("is-steady"); // same row: no entry animation
+    if (prev.id !== id && prev.x !== x && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      detail.style.setProperty("--watch-ptr-x", `${prev.x}px`);
+      void detail.offsetWidth; // start the slide from where the pointer was
+      detail.classList.add("is-sliding");
+    }
+  }
+  detail.style.setProperty("--watch-ptr-x", `${x}px`);
+  if (!prev || prev.id !== id) {
+    const bottom = usableViewportBottom();
+    const r = detail.getBoundingClientRect();
+    if (r.bottom > bottom || r.top < 0) {
+      const top = p.top < 80 ? p.top : null;
+      if (top !== null) window.scrollBy({ top: top - 80, behavior: "smooth" });
+      else detail.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }
+}
+
+// ── Next episode (Luke, 2026-10-29) ──────────────────────────────────────────
+// The first unticked episode, season by season. A season marked watched as a
+// whole is skipped. When a season's episode list isn't loaded yet, the episode
+// after the highest tick is next (the list loads on open and corrects it).
+// Returns { season, episode, name } or null when everything known is watched.
+function watchNextEpisode(item) {
+  if (!item || item.type !== "tv") return null;
+  const progress = item.seasonProgress || {};
+  const known = Object.keys(item.episodeData || {}).map(Number);
+  const tracked = Object.keys(progress).map(Number).filter((n) => n > 0);
+  const last = item.totalSeasons || Math.max(1, ...known, ...tracked);
+  for (let s = 1; s <= last; s++) {
+    const sd = progress[s] || {};
+    if (sd.watched) continue;
+    const ticked = sd.episodes || {};
+    const eps = item.episodeData?.[s] || [];
+    if (eps.length) {
+      const ep = eps.find((e) => !ticked[e.episodeNumber]);
+      if (ep) return { season: s, episode: ep.episodeNumber, name: ep.name || "" };
+      continue;
+    }
+    const nums = Object.keys(ticked).filter((k) => ticked[k]).map(Number);
+    let e = 1;
+    while (ticked[e]) e++;
+    // Season length unknown: if nothing is ticked past a gap, e is next.
+    if (!nums.length || e <= Math.max(...nums) + 1) return { season: s, episode: e, name: "", unsure: !!nums.length };
+  }
+  return null;
+}
+
+function watchNextEpisodeHtml(item) {
+  const next = watchNextEpisode(item);
+  const id = escapeHtml(item.id);
+  if (!next) {
+    const anyTracked = Object.keys(item.seasonProgress || {}).length;
+    return anyTracked ? `<div class="watch-next watch-next--done">All caught up</div>` : "";
+  }
+  const label = `S${next.season} E${next.episode}`;
+  return `
+    <div class="watch-next">
+      <div class="watch-next-text">
+        <span class="watch-next-label">Next</span>
+        <span class="watch-next-ep">${label}${next.name ? ` · ${escapeHtml(next.name)}` : ""}</span>
+      </div>
+      <button class="watch-next-tick" type="button" data-watch-next-tick="${id}" data-season="${next.season}" data-episode="${next.episode}" aria-label="Mark ${label} watched">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Watched</span>
+      </button>
+    </div>`;
+}
+
+// Load the episode list the Next line needs (once per show and season per
+// session; the panel shows the best guess meanwhile).
+const watchEpisodeListRequested = new Set();
+function ensureWatchNextSeasonLoaded(item) {
+  if (!item?.tmdbId || item.type !== "tv") return;
+  const next = watchNextEpisode(item);
+  const s = next ? next.season : null;
+  if (!s || (item.episodeData?.[s] || []).length) return;
+  const key = `${item.id}:${s}`;
+  if (watchEpisodeListRequested.has(key)) return;
+  watchEpisodeListRequested.add(key);
+  loadWatchSeasonEpisodes(item.id, s);
+}
+
+// Which seasons are open is this device's view, not data: kept in memory, never
+// synced (it used to be saved as seasonProgress[n].__expanded, so every tap was a
+// save and the other person saw your seasons open).
+const watchOpenSeasons = new Set();
+const watchSeasonKey = (itemId, seasonNum) => `${itemId}:${seasonNum}`;
+
+// ── Remove, with Undo (Luke, 2026-10-29) ─────────────────────────────────────
+// A removal waits ~6 s before it's real: the show disappears at once and the
+// toast offers Undo; nothing is saved or synced (no tombstone) until the toast
+// is gone. If the app closes first, the show simply stays — the safe way to fail.
+const WATCH_REMOVE_DELAY_MS = 6000;
+const watchPendingRemovals = new Map(); // id → timer
+function watchIsPendingRemoval(id) { return watchPendingRemovals.has(id); }
+function requestWatchRemove(id) {
+  const item = watchItemById(id);
+  if (!item || watchPendingRemovals.has(id)) return;
+  if (expandedWatchItemId === id) expandedWatchItemId = null;
+  const commit = () => {
+    watchPendingRemovals.delete(id);
+    if (watchItemById(id)) deleteWatchItem(id); else renderWatchPlanner();
+  };
+  watchPendingRemovals.set(id, setTimeout(commit, WATCH_REMOVE_DELAY_MS));
+  renderWatchPlanner();
+  if (elements.watchArchiveDialog?.open) openWatchArchive();
+  showMailToast(`Removed “${item.title}”`, () => {
+    clearTimeout(watchPendingRemovals.get(id));
+    watchPendingRemovals.delete(id);
+    renderWatchPlanner();
+    if (elements.watchArchiveDialog?.open) openWatchArchive();
+  }, { durationMs: WATCH_REMOVE_DELAY_MS });
+}
+
+// ── Tabs popover (the panel's Tabs button) ───────────────────────────────────
+// Ticks the tabs this show is filed under; stays open so several can be ticked.
+function openWatchTabsMenu(btn, itemId) {
+  closeFolderMenu();
+  const item = watchItemById(itemId);
+  if (!item) return;
+  const cats = state.watchSettings?.categories || [];
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu watch-item-context-menu watch-tabs-menu";
+  menu.setAttribute("role", "menu");
+  const draw = () => {
+    const on = new Set(Array.isArray(item.categories) ? item.categories : []);
+    menu.innerHTML = cats.length
+      ? cats.map((c) => `<button type="button" role="menuitemcheckbox" aria-checked="${on.has(c.id)}" data-watch-tab-toggle="${escapeHtml(c.id)}" class="watch-ctx-category-btn${on.has(c.id) ? " is-active" : ""}"><span class="watch-tabs-check" aria-hidden="true">${on.has(c.id) ? "&#10003;" : ""}</span>${escapeHtml(c.name)}</button>`).join("")
+        + `<div class="watch-context-divider"></div><button type="button" role="menuitem" data-watch-tab-new>New tab…</button>`
+      : `<div class="watch-tabs-empty">No tabs yet.</div><button type="button" role="menuitem" data-watch-tab-new>New tab…</button>`;
+  };
+  draw();
+  menu.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const t = e.target.closest("[data-watch-tab-toggle]");
+    if (t) {
+      const catId = t.dataset.watchTabToggle;
+      if (!Array.isArray(item.categories)) item.categories = [];
+      item.categories = item.categories.includes(catId) ? item.categories.filter((c) => c !== catId) : [...item.categories, catId];
+      persist();
+      draw();
+      renderWatchPlanner();
+      return;
+    }
+    if (e.target.closest("[data-watch-tab-new]")) {
+      closeFolderMenu();
+      watchCategoryInputActive = true;
+      watchNewTabFor = itemId;
+      renderWatchPlanner();
+      elements.watchPlannerGrid?.querySelector("#watchCategoryInlineInput")?.focus();
+    }
+  });
+  document.body.append(menu);
+  const r = btn.getBoundingClientRect();
+  const bottom = usableViewportBottom();
+  const left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 10);
+  const below = r.bottom + 6;
+  const top = below + menu.offsetHeight > bottom - 10 ? r.top - menu.offsetHeight - 6 : below;
+  menu.style.left = `${Math.max(10, left)}px`;
+  menu.style.top = `${Math.max(10, top)}px`;
+}
+let watchNewTabFor = null; // a show to file under the tab being typed (from the Tabs popover)
 
 function watchEpisodeProgressHtml(item) {
   const totalSeasons = item.totalSeasons || 0;
@@ -22832,18 +23116,19 @@ function watchSeasonTemplate(item, seasonNum, seasonData) {
   const totalEps = episodes.length || Object.keys(watchedEps).length || 0;
   const watchedCount = Object.values(watchedEps).filter(Boolean).length;
   const allWatched = seasonData?.watched || (totalEps > 0 && watchedCount >= totalEps);
-  const isExpanded = seasonData?.__expanded || false;
+  const isExpanded = watchOpenSeasons.has(watchSeasonKey(item.id, seasonNum));
+  const pct = allWatched ? 100 : (totalEps ? Math.round((watchedCount / totalEps) * 100) : 0);
+  const count = allWatched && !totalEps ? "Watched" : (totalEps ? `${allWatched ? totalEps : watchedCount}/${totalEps}` : "");
 
   return `
-    <div class="watch-season">
+    <div class="watch-season${isExpanded ? " is-open" : ""}">
       <div class="watch-season-head">
-        <label class="watch-season-label">
-          <input type="checkbox" class="watch-season-check" data-watch-season-toggle="${escapeHtml(item.id)}" data-season="${seasonNum}" ${allWatched ? "checked" : ""} />
-          Season ${seasonNum}
-        </label>
-        ${totalEps ? `<span class="watch-season-progress">${watchedCount}/${totalEps}</span>` : ""}
-        <button class="watch-season-expand-btn icon-btn" type="button" data-watch-season-expand="${escapeHtml(item.id)}" data-season="${seasonNum}" aria-label="${isExpanded ? "Collapse" : "Expand"} season ${seasonNum}">
-          <svg viewBox="0 0 24 24" aria-hidden="true" class="${isExpanded ? "is-expanded" : ""}"><path d="m6 9 6 6 6-6" /></svg>
+        <input type="checkbox" class="watch-check watch-season-check" id="wsc-${escapeHtml(item.id)}-${seasonNum}" data-watch-season-toggle="${escapeHtml(item.id)}" data-season="${seasonNum}" ${allWatched ? "checked" : ""} aria-label="Season ${seasonNum} watched" />
+        <button class="watch-season-open" type="button" data-watch-season-expand="${escapeHtml(item.id)}" data-season="${seasonNum}" aria-expanded="${isExpanded}">
+          <span class="watch-season-name">Season ${seasonNum}</span>
+          <span class="watch-season-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>
+          ${count ? `<span class="watch-season-progress">${count}</span>` : ""}
+          <svg class="watch-season-chev${isExpanded ? " is-expanded" : ""}" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
         </button>
       </div>
       ${isExpanded ? watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) : ""}
@@ -22871,8 +23156,9 @@ function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
     <div class="watch-episodes">
       ${episodes.map((ep) => `
         <label class="watch-episode">
-          <input type="checkbox" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" ${watchedEps[ep.episodeNumber] ? "checked" : ""} />
-          <span>${escapeHtml(ep.name || `Episode ${ep.episodeNumber}`)}</span>
+          <input type="checkbox" class="watch-check" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" ${watchedEps[ep.episodeNumber] ? "checked" : ""} />
+          <span class="watch-episode-num">${ep.episodeNumber}</span>
+          <span class="watch-episode-name">${escapeHtml(ep.name || `Episode ${ep.episodeNumber}`)}</span>
         </label>
       `).join("")}
     </div>
@@ -22894,7 +23180,20 @@ function bindWatchControls(root = document) {
   });
 
   root.querySelectorAll("[data-watch-find]").forEach((btn) => {
-    btn.addEventListener("click", () => openWatchTmdbSearch(btn.dataset.watchFind, root));
+    btn.addEventListener("click", () => openWatchSearchDialog({ linkId: btn.dataset.watchFind }));
+  });
+  // The open panel's actions (Luke, 2026-10-29).
+  root.querySelectorAll("[data-watch-act-watched]").forEach((btn) => {
+    btn.addEventListener("click", () => openWatchLogDialog(btn.dataset.watchActWatched));
+  });
+  root.querySelectorAll("[data-watch-act-tabs]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); openWatchTabsMenu(btn, btn.dataset.watchActTabs); });
+  });
+  root.querySelectorAll("[data-watch-act-remove]").forEach((btn) => {
+    btn.addEventListener("click", () => requestWatchRemove(btn.dataset.watchActRemove));
+  });
+  root.querySelectorAll("[data-watch-next-tick]").forEach((btn) => {
+    btn.addEventListener("click", () => toggleWatchEpisode(btn.dataset.watchNextTick, Number(btn.dataset.season), Number(btn.dataset.episode), true));
   });
   root.querySelectorAll("[data-watch-load-providers]").forEach((btn) => {
     btn.addEventListener("click", () => loadWatchProviders(btn.dataset.watchLoadProviders));
@@ -23042,7 +23341,7 @@ function openWatchItemMenu(event) {
     </div>` : ""}
     <div class="watch-context-divider"></div>
     ${item.tmdbId ? `<button type="button" role="menuitem" data-watch-ctx-reload="${escapeHtml(itemId)}">Reload</button>` : ""}
-    <button type="button" role="menuitem" data-watch-ctx-delete="${escapeHtml(itemId)}" class="danger-item">Delete</button>
+    <button type="button" role="menuitem" data-watch-ctx-delete="${escapeHtml(itemId)}" class="danger-item">Remove</button>
   `;
 
   document.body.append(menu);
@@ -23106,7 +23405,7 @@ function openWatchItemMenu(event) {
 
   const delBtn = menu.querySelector("[data-watch-ctx-delete]");
   if (delBtn) {
-    const h = handle(() => deleteWatchItem(itemId));
+    const h = handle(() => requestWatchRemove(itemId));
     delBtn.addEventListener("pointerdown", h);
     delBtn.addEventListener("click", h);
   }
@@ -23201,12 +23500,17 @@ function toggleWatchSeason(itemId, seasonNum, checked) {
   renderWatchPlanner();
 }
 
+// Open/close a season's episode list — this device only, never saved (see
+// watchOpenSeasons). Opening loads the list if it isn't there yet.
 function toggleWatchSeasonExpand(itemId, seasonNum) {
   const item = watchItemById(itemId);
   if (!item) return;
-  if (!item.seasonProgress[seasonNum]) item.seasonProgress[seasonNum] = {};
-  item.seasonProgress[seasonNum].__expanded = !item.seasonProgress[seasonNum].__expanded;
-  persist();
+  const key = watchSeasonKey(itemId, seasonNum);
+  if (watchOpenSeasons.has(key)) watchOpenSeasons.delete(key);
+  else {
+    watchOpenSeasons.add(key);
+    if (item.tmdbId && !(item.episodeData?.[seasonNum] || []).length) loadWatchSeasonEpisodes(itemId, seasonNum);
+  }
   renderWatchPlanner();
 }
 
@@ -23350,7 +23654,7 @@ function skipWatchLog() {
 
 function openWatchArchive() {
   if (!elements.watchArchiveDialog || !elements.watchArchiveBody) return;
-  const watched = watchItemsList().filter((i) => i.status === "watched");
+  const watched = watchItemsList().filter((i) => i.status === "watched" && !watchIsPendingRemoval(i.id));
   const movies = watched.filter((i) => i.type === "movie");
   const tvShows = watched.filter((i) => i.type === "tv");
 
@@ -23498,10 +23802,7 @@ function openWatchArchiveItemMenu(event) {
 
   const delBtn = menu.querySelector("[data-watch-ctx-delete]");
   if (delBtn) {
-    const h = handle(() => {
-      deleteWatchItem(itemId);
-      openWatchArchive();
-    });
+    const h = handle(() => requestWatchRemove(itemId)); // re-draws the Archive itself
     delBtn.addEventListener("pointerdown", h);
     delBtn.addEventListener("click", h);
   }
@@ -23605,44 +23906,7 @@ function handleWatchItemDrop(event, dayId) {
   draggedWatchScheduled = null;
 }
 
-async function fetchWatchSearchResults(query, root, addForm) {
-  const resultsEl = root.querySelector("[data-watch-search-results]");
-  if (!resultsEl) return;
-  resultsEl.innerHTML = `<div class="watch-search-loading">Searching...</div>`;
-  resultsEl.hidden = false;
-  trackUsage("tmdb_search");
-  try {
-    const response = await fetch(tmdbSearchUrl(query), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
-    const data = await response.json();
-    if (!response.ok) {
-      resultsEl.innerHTML = `<div class="watch-search-error">${escapeHtml(data.error || "Search failed.")}</div>`;
-      return;
-    }
-    if (!data.results?.length) {
-      resultsEl.innerHTML = `<div class="watch-search-empty">No results found.</div>`;
-      return;
-    }
-    resultsEl.innerHTML = data.results.map((r) =>
-      watchTmdbResultTemplate(r, `data-tmdb-pick="${escapeHtml(JSON.stringify(r))}"`)
-    ).join("");
-    resultsEl.querySelectorAll("[data-tmdb-pick]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        let result;
-        try { result = JSON.parse(btn.dataset.tmdbPick); } catch { return; }
-        const titleInput = addForm?.querySelector("[data-watch-add-input]");
-        const typeSelect = addForm?.querySelector("[data-watch-add-type]");
-        if (titleInput) titleInput.value = result.title;
-        if (typeSelect) typeSelect.value = result.type;
-        hideWatchSearchResults(root);
-        addWatchItemFromTmdb(result);
-      });
-    });
-  } catch {
-    resultsEl.innerHTML = `<div class="watch-search-error">Search failed. Check your TMDB_API_KEY.</div>`;
-  }
-}
-
-function watchTmdbResultTemplate(r, dataAttr) {
+function watchTmdbResultTemplate(r, dataAttr, tag = "") {
   const posterUrl = r.posterPath
     ? `https://image.tmdb.org/t/p/w185${r.posterPath}`
     : null;
@@ -23654,17 +23918,10 @@ function watchTmdbResultTemplate(r, dataAttr) {
       ${posterHtml}
       <span class="watch-result-title">${escapeHtml(r.title)}</span>
       ${r.year ? `<span class="watch-result-year">${escapeHtml(r.year)}</span>` : ""}
+      ${tag ? `<span class="watch-result-tag">${escapeHtml(tag)}</span>` : ""}
       <span class="watch-type-badge watch-type-${escapeHtml(r.type)}">${r.type === "tv" ? "TV" : "M"}</span>
     </button>
   `;
-}
-
-function hideWatchSearchResults(root) {
-  const resultsEl = root?.querySelector("[data-watch-search-results]");
-  if (resultsEl) {
-    resultsEl.hidden = true;
-    resultsEl.innerHTML = "";
-  }
 }
 
 function addWatchItemFromTmdb(tmdbResult) {
@@ -23720,40 +23977,6 @@ async function loadWatchProviders(itemId) {
   }
 }
 
-async function openWatchTmdbSearch(itemId, root) {
-  const item = watchItemById(itemId);
-  if (!item) return;
-  const resultsEl = root?.querySelector("[data-watch-search-results]");
-  if (!resultsEl) return;
-  resultsEl.innerHTML = `<div class="watch-search-loading">Searching for "${escapeHtml(item.title)}"...</div>`;
-  resultsEl.hidden = false;
-  try {
-    const response = await fetch(tmdbSearchUrl(item.title), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
-    const data = await response.json();
-    if (!response.ok || !data.results?.length) {
-      resultsEl.innerHTML = `<div class="watch-search-error">${escapeHtml(data.error || "No results found.")} <button class="secondary-btn compact-btn" type="button" data-close-watch-search>Close</button></div>`;
-      resultsEl.querySelector("[data-close-watch-search]")?.addEventListener("click", () => hideWatchSearchResults(root));
-      return;
-    }
-    resultsEl.innerHTML = `<div class="watch-search-header">Link "${escapeHtml(item.title)}" to:</div>` +
-      data.results.map((r) =>
-        watchTmdbResultTemplate(r, `data-tmdb-link="${escapeHtml(JSON.stringify({ ...r, targetId: itemId }))}"`)
-      ).join("") +
-      `<button class="secondary-btn compact-btn watch-search-cancel" type="button" data-close-watch-search>Cancel</button>`;
-    resultsEl.querySelectorAll("[data-tmdb-link]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        let result;
-        try { result = JSON.parse(btn.dataset.tmdbLink); } catch { return; }
-        linkWatchItemToTmdb(result.targetId, result);
-        hideWatchSearchResults(root);
-      });
-    });
-    resultsEl.querySelector("[data-close-watch-search]")?.addEventListener("click", () => hideWatchSearchResults(root));
-  } catch {
-    resultsEl.innerHTML = `<div class="watch-search-error">Search failed.</div>`;
-  }
-}
-
 function linkWatchItemToTmdb(itemId, tmdbResult) {
   const item = watchItemById(itemId);
   if (!item) return;
@@ -23761,7 +23984,7 @@ function linkWatchItemToTmdb(itemId, tmdbResult) {
   item.posterPath = tmdbResult.posterPath || item.posterPath;
   item.year = tmdbResult.year || item.year;
   item.overview = tmdbResult.overview || item.overview;
-  item.type = tmdbResult.type === "tv" ? "tv" : item.type;
+  item.type = tmdbResult.type === "tv" ? "tv" : "movie"; // the match decides (a plain title was guessed)
   item.totalSeasons = tmdbResult.totalSeasons || item.totalSeasons;
   item.streamingProviders = null;
   persist();

@@ -75,6 +75,34 @@ changes to the Watch page only.
   a result with no TMDB id (YouTube) plays when tapped. Listen's search keeps its Save
   buttons.
 
+- **Two lists (Luke, 2026-10-29):** a shared **Household** Watch list (Luke + Marijane)
+  and Luke's own **Personal** list — the existing per-view rows. Household starts empty
+  via the #189 row reset, which goes out with the next big deploy.
+- **The show panel (Luke, 2026-10-29; WATCH_AUDIT.md):** tapping a poster opens its panel
+  **under the whole row** — the row stays put (`grid-auto-flow: dense` on `.watch-grid`
+  lets later posters fill the row first). A **pointer** on the panel's top edge marks the
+  open poster and **slides** when another poster in the same row opens
+  (`placeWatchPanelPointer`); the open poster keeps its **ring**; tap again closes; no
+  dimming of other posters. The panel holds the full title, a **Next episode** line for TV
+  ("Next: S3 E6 · title [✓ Watched]", `watchNextEpisode`), services, the season tracker
+  and **Watched · Tabs · Remove** — the phone's way to do what the laptop's right-click
+  menu does (iOS has no right-click; holding a poster starts a drag).
+- **Remove waits ~6 s with Undo (2026-10-29):** `requestWatchRemove` hides the show and
+  shows the Undo toast; nothing is saved or tombstoned until the toast is gone
+  (`watchPendingRemovals`). All removals (panel, right-click, Archive) go through it.
+- **Seasons open/closed is device state (2026-10-29):** `watchOpenSeasons`, never synced;
+  the old `seasonProgress[n].__expanded` is dropped on load.
+- **"+" window (2026-10-29):** titles already on the list are tagged **In your list** and
+  tapping one opens its panel (no second copy). **Link mode**
+  (`openWatchSearchDialog({ linkId })`): "Find the right title" on a show without a TMDB
+  match opens the window with its title; the tapped result fills in that same show. No
+  Paste-a-list import and no automatic matching (Luke adds titles one by one).
+- **Agreed, not built yet (WATCH_AUDIT.md "Decisions"):** per-tick merge of episode ticks
+  and tabs; episode lists/showtimes in a device cache and trimmed providers; refresh
+  where-to-watch on view after 7 days; two-line titles + grid/list toggle; "Add" in the
+  search row and hide empty Upcoming / In Theaters; Archive window actions; Continue
+  watching row; Sort + Filter; "Finished — move to Archive?"; housekeeping.
+
 ## Domain landmines (do NOT change without flagging)
 - **Merges:** `watchItems` is an id-keyed union with tombstones (delete through
   `recordDeletion("watchItems", id)`), `watchPlans` merges per week
@@ -90,6 +118,7 @@ changes to the Watch page only.
 `npx vitest run` (`media-provider-tmdb`, `-youtube`, `-jellyfin`, `media-deeplink`,
 `media-watch-adapter`, `media-watch-merge` (Watch item → Discover availability path),
 `media-search-scope`), `npm run check:boot`, `npm run qa:watch-search`,
+`npm run qa:watch-panel` (the panel, pointer, actions, Undo, tracker, link mode),
 and headless Chromium at phone width against `npm run dev:local` (mock the tmdb/youtube
 functions with `page.route`).
 

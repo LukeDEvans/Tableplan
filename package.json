@@ -29,6 +29,7 @@
     "qa:meal-context": "node scripts/qa-meal-context.mjs",
     "qa:watch-search": "node scripts/qa-watch-search.mjs",
     "qa:watch-links": "node scripts/qa-watch-links.mjs",
+    "qa:watch-panel": "node scripts/qa-watch-panel.mjs",
     "qa:app-links": "node scripts/qa-app-links.mjs",
     "qa:language": "node scripts/qa-language.mjs",
     "qa:music-shows": "node scripts/qa-music-shows.mjs",
