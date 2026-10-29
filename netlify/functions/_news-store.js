@@ -436,6 +436,6 @@ function acceptedArticleRecord(card, nowIso) {
 module.exports = {
   KEEP_DAYS, PRUNE_DAYS, PAGE_MAX, COLUMNS, FORYOU_SHOW,
   rowFromCard, cardFromRow, countsFromRows, feedQuery, parseCursor, searchTerm, forYouQuery, arrangeForYouRows,
-  insertArticles, setTopics, markLeads, loadCounts, loadFeedPage, loadForYou, applyDecisions, learnFromDecisions, pruneArticles,
+  insertArticles, setTopics, markLeads, getRows, patchRows, loadCounts, loadFeedPage, loadForYou, applyDecisions, learnFromDecisions, pruneArticles,
   forYouReady, resetSchemaProbe, loadInterest, loadInterests, saveInterest
 };

@@ -12,6 +12,7 @@ const { XMLParser } = require("fast-xml-parser");
 const Links = require("./_news-links.js");
 const Rank = require("./_news-rank.js");
 const Tags = require("./_news-tags.js");
+const Titles = require("./_news-titles.js");
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15";
@@ -106,7 +107,13 @@ const FEEDS = [
   athletic("college-football"), athletic("football")
 ];
 
-const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", textNodeName: "#text", trimValues: true });
+// Titles and summaries are read raw (stopNodes): parsed as XML, a title with
+// inline markup ("Who Should <em>A.I.</em> …") lost the text around the tag
+// (NEWS_TITLES_DESIGN.md). stripHtml then unwraps CDATA, drops tags and decodes.
+const parser = new XMLParser({
+  ignoreAttributes: false, attributeNamePrefix: "@_", textNodeName: "#text", trimValues: true,
+  stopNodes: ["*.item.title", "*.item.description", "*.entry.title", "*.entry.summary"]
+});
 const arr = (x) => (Array.isArray(x) ? x : x == null ? [] : [x]);
 const text = (x) => {
   if (x == null) return "";
@@ -114,10 +121,12 @@ const text = (x) => {
   return String(x);
 };
 const stripHtml = (s) => String(s || "")
+  .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+  .replace(/&lt;(\/?[a-z][a-z0-9]*\b[^&]*?)&gt;/gi, "<$1>")
   .replace(/<[^>]+>/g, " ")
   .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
   .replace(/&quot;|&#8220;|&#8221;/gi, '"').replace(/&#39;|&#8217;|&#8216;|&apos;/gi, "’")
-  .replace(/\s+/g, " ").trim();
+  .replace(/\s+/g, " ").replace(/ ([?!.,;:])/g, "$1").trim();
 
 // RSS 2.0 or Atom → [{ url, title, description, image, publishedAt }]. Pure.
 function parseFeed(xml) {
@@ -163,9 +172,15 @@ function cardFromItem(item, feed, nowMs = Date.now()) {
   const publishedAt = Number.isNaN(t) ? Links.dateFromUrl(c.url) : new Date(t).toISOString();
   if (!publishedAt) return null;
   if (!Links.isFresh(publishedAt, nowMs)) return null;
-  const title = String(item.title || "").replace(source.titleSuffixRe, "").trim();
+  // "Here’s the latest." (NYT live-blog updates) → "Live: <the blog>".
+  const fixed = Titles.fixFeedTitle({
+    title: String(item.title || "").replace(source.titleSuffixRe, "").trim(),
+    subtitle: String(item.description || "").trim(),
+    url: c.url
+  });
+  const title = fixed.title;
   if (!title) return null;
-  const subtitle = String(item.description || "").trim();
+  const subtitle = fixed.subtitle;
   return {
     id: Links.seenId(c.key),
     url: c.url,
@@ -269,7 +284,9 @@ function feedsForRun(users, interests) {
 // store each person's topics + rank for them.
 const RUN_BUDGET_MS = 26_000; // scheduled functions get ~30 s
 
-async function runFeedIntake(serviceKey, { fetchImpl = fetch, nowMs = Date.now(), store = require("./_news-store.js"), tagStories = Tags.tagStories, startedAt = Date.now() } = {}) {
+const TITLE_PAGE_CAP = 8; // article pages read per run to fix weak email titles
+
+async function runFeedIntake(serviceKey, { fetchImpl = fetch, nowMs = Date.now(), store = require("./_news-store.js"), tagStories = Tags.tagStories, startedAt = Date.now(), fetchMeta = Links.fetchArticleMeta } = {}) {
   const users = await loadSignedInUsers(serviceKey, { fetchImpl });
   const forYou = users.length ? await store.forYouReady(serviceKey, { fetchImpl }) : false;
   const interests = forYou ? await store.loadInterests(serviceKey, users.map((u) => u.userId), { fetchImpl }).catch(() => new Map()) : new Map();
@@ -310,8 +327,26 @@ async function runFeedIntake(serviceKey, { fetchImpl = fetch, nowMs = Date.now()
       await store.setTopics(serviceKey, u.userId, ranked, "rss", { fetchImpl }).catch((e) => { tagging.errors.push(String(e.message).slice(0, 80)); });
     }
   }
+  // Weak titles (newsletter link text, live-blog stand-ins) get the feed's
+  // headline, the live blog's, or the article page's (NEWS_TITLES_DESIGN.md).
+  const titles = {};
+  const rssById = new Map(cards.map((c) => [c.id, c]));
+  for (const u of users) {
+    const left = RUN_BUDGET_MS - (Date.now() - startedAt);
+    if (left < 4000) break;
+    titles[u.userId] = await Titles.repairTitles({
+      userId: u.userId,
+      rssById,
+      getRows: (q) => store.getRows(serviceKey, q, { fetchImpl }),
+      patchRow: (id, body) => store.patchRows(serviceKey, u.userId, [id], body, "", { fetchImpl }),
+      fetchMeta: (url) => fetchMeta(url),
+      metaCap: TITLE_PAGE_CAP,
+      deadlineMs: Date.now() + left - 3000,
+      nowMs
+    }).catch((e) => ({ error: String(e.message || e).slice(0, 80) }));
+  }
   await store.pruneArticles(serviceKey, { fetchImpl, nowMs });
-  const summary = { runAt: new Date(nowMs).toISOString(), users: users.length, cards: cards.length, inserted, forYou, ...(tagging ? { tagging } : {}), feeds: status };
+  const summary = { runAt: new Date(nowMs).toISOString(), users: users.length, cards: cards.length, inserted, forYou, ...(tagging ? { tagging } : {}), titles, feeds: status };
   // One small status row per run (no read): which feeds answered and how many items.
   await fetchImpl(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
     method: "POST",
