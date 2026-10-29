@@ -4,7 +4,7 @@ const {
   loadUserGmailTokens, saveUserGmailTokens, deleteUserGmailTokens,
   getUserId, getValidAccessToken, gFetch, gBatchGet, headersMap, extractBody,
   htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep,
-  loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread
+  loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread, loadAppConfig
 } = require("./_gmail-shared");
 const { loadMailAiRow, dismissPendingRecipe } = require("./_recipe-digest");
 const NewsLinks = require("./_news-links");
@@ -325,6 +325,51 @@ exports.handler = async (event) => {
       console.error("checkInboxNow failed:", e.message);
       return json(502, { error: e.message || "Inbox check failed." });
     }
+  }
+
+  // Music shows (AMPLIFIER_DESIGN.md): turn the most recent playlist newsletters
+  // already in the mailbox (any label, incl. Apps/AI trash) into shows for the
+  // Listen bell. The app calls this once per device; the sweep handles new mail.
+  // Idempotent: a show already saved (id show-<messageId>) isn't saved again.
+  // (A show the user has finished or dismissed is filtered out by the app.)
+  if (action === "importMusicShows") {
+    const MusicShow = require("./_music-show");
+    const appCfg = await loadAppConfig(serviceKey, userId).catch(() => null);
+    const mailAi = appCfg?.mailAiSettings || {};
+    const sources = MusicShow.MUSIC_SHOW_SOURCES.filter((s) => mailAi[s.key] !== false);
+    if (!sources.length) return json(200, { imported: 0 });
+    const max = Math.min(Math.max(parseInt(body.max) || 2, 1), 4);
+    const params = new URLSearchParams({ maxResults: String(max * 2), q: 'in:anywhere from:nytimes.com subject:"The Amplifier" newer_than:21d' });
+    const listRes = await gFetch(gToken, `/messages?${params}`);
+    if (!listRes.ok) return json(502, { error: `Gmail search failed (${listRes.status}).` });
+    const ids = ((await listRes.json()).messages || []).map((m) => m.id).slice(0, max * 2);
+    let imported = 0;
+    const articles = [];
+    for (const id of ids) {
+      if (imported >= max) break;
+      const r = await gFetch(gToken, `/messages/${id}?format=full`);
+      if (!r.ok) continue;
+      const msg = await r.json();
+      const hdrs = headersMap(msg.payload?.headers);
+      const source = MusicShow.musicShowSourceFor(hdrs.from, hdrs.subject, mailAi);
+      if (!source) continue;
+      const show = MusicShow.parseMusicShow(extractBody(msg.payload) || "");
+      if (!show) continue;
+      await MusicShow.resolveShowSongs(show);
+      const article = MusicShow.musicShowArticle(show, source, { messageId: id, subject: hdrs.subject || "", date: hdrs.date || "" });
+      // Saved unless it's there already or was finished/dismissed (read) before.
+      let saved = false;
+      await require("./_state-sections.js").updateSection(serviceKey, `u-${userId}`, "media", (st) => {
+        const list = Array.isArray(st.savedArticles) ? st.savedArticles : [];
+        const read = Array.isArray(st.readArticleIds) ? st.readArticleIds : [];
+        if (list.some((a) => a?.id === article.id) || read.includes(article.id)) return null;
+        saved = true;
+        return { ...st, savedArticles: [...list, article] };
+      });
+      if (saved) { imported++; articles.push(article); }
+    }
+    // The records too, so the app shows them without waiting for a sync.
+    return json(200, { imported, articles });
   }
 
   if (action === "listBookingEmails") {

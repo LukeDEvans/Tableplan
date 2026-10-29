@@ -21,7 +21,7 @@ changes to the Listen page's audio (everything except streaming music) only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `media-queue-*.js`, `media-tier.js`, `media-progress.js`, `media-history.js`, `media-state.js`, `media-sources.js`, `media-model.js`, `media-search.js`, `media-provider.js`, `media-provider-podcast.js`, `media-provider-radio.js`, `media-content.js`, `radio*.js`, `podcast-retention.js`, `playback-*.js`, `voice-*.js`, `tts-*.js`, `tts-*.mjs`, `kokoro-*.mjs`, `article-body-backfill.mjs`, `netlify/functions/fetch-podcast.js`, `netlify/functions/generate-tts.js`, `netlify/functions/kokoro-tts.mjs`, `netlify/functions/presynth-*.mjs`, `netlify/functions/_presynth-key.mjs`, `netlify/functions/tts-cache-cleanup.js`, `netlify/functions/check-hcl.js`
+- files: `media-queue-*.js`, `media-tier.js`, `media-progress.js`, `media-history.js`, `media-state.js`, `media-sources.js`, `media-model.js`, `media-search.js`, `media-provider.js`, `media-provider-podcast.js`, `media-provider-radio.js`, `media-content.js`, `radio*.js`, `podcast-retention.js`, `playback-*.js`, `voice-*.js`, `tts-*.js`, `tts-*.mjs`, `kokoro-*.mjs`, `article-body-backfill.mjs`, `netlify/functions/fetch-podcast.js`, `netlify/functions/generate-tts.js`, `netlify/functions/kokoro-tts.mjs`, `netlify/functions/presynth-*.mjs`, `netlify/functions/_presynth-key.mjs`, `netlify/functions/tts-cache-cleanup.js`, `netlify/functions/check-hcl.js`, `media-music-show.js`, `media-music-show-ui.js`, `netlify/functions/_music-show.js`
 - state: `podcast*`, `media*`, `radio*`, `readingItems`, `readingSettings`, `readingProgress`, `libraryKey`, `publicationTiers`
 
 ## Naming — read this first
@@ -79,6 +79,15 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
   "month".
 - **A podcast whose audio never loads moves the queue on** (`onPodcastLoadFailed`,
   2026-10-26), like music; an error after playback started leaves it for a retry.
+- **Music shows live under the Listen bell, not in the queue (2026-10-28).** NYT's
+  The Amplifier is parsed by the inbox sweep (`netlify/functions/_music-show.js`, no
+  AI; Mail → Automation toggle `amplifierToListen`) into a saved article `show-<gmail
+  id>` carrying `musicShow`. The bell (`media-music-show-ui.js`) lists unfinished
+  shows; Play hands the whole show to `LiveTtsPlugin` as "speech" items (intro, each
+  song's write-up) and "appleMusic" items (each song, through MusicKit's
+  ApplicationMusicPlayer), so it runs with the phone locked. Finishing or dismissing
+  marks the article read. Outside the iPhone app Play opens it to read. Pure helpers
+  and matching: `media-music-show.js`. See AMPLIFIER_DESIGN.md.
 
 ## Shared infrastructure you steward (flag cross-domain effects)
 `playback-engine.js`, `playback-coordinator.js`, `playback-speed.js` (one speed for

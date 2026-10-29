@@ -190,9 +190,10 @@ export function unreadCounts(articles) {
 
 // A newsletter briefing (The Morning, The world in brief…): a saved article the
 // mail sweep converted from a paper's newsletter, id "news-<gmail id>". Briefings
-// live only in Listen (Luke, 2026-10-16), so News's Saved list leaves them out.
+// live only in Listen (Luke, 2026-10-16), so News's Saved list leaves them out —
+// and so are music shows (id "show-<gmail id>"), which live under the Listen bell.
 export function isNewsletterBriefing(a) {
-  return !!a && String(a.id || "").startsWith("news-");
+  return !!a && /^(news|show)-/.test(String(a.id || ""));
 }
 
 // Does the sign-in status need a fresh check (any paper never checked, or over 24 h)?

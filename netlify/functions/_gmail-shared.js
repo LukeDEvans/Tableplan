@@ -15,6 +15,7 @@ const { claudeCall } = require("./_claude");
 const { recipeSourceForSender, extractRecipes, handleExtractedRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, enabledRecipeSources } = require("./_recipe-digest");
 const MailJobs = require("./_mail-jobs");
 const { conversionSourceFor, conversionTooShort, convertNewsEmailToArticle, saveArticleToMediaSection } = require("./_news-articles");
+const MusicShow = require("./_music-show");
 const NewsLinks = require("./_news-links");
 
 // ─── Token storage (Supabase tableplan_states, id = gmail_<userId>) ──────────
@@ -578,8 +579,32 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
 
       // News → listenable article, saved before the email is filed away.
       let converted = false;
+
+      // A playlist newsletter (The Amplifier) becomes a music show for the Listen
+      // bell instead of a plain article (AMPLIFIER_DESIGN.md). No AI: it's parsed.
+      // If it doesn't parse as a playlist, the generic conversion below takes it.
+      const showSource = MusicShow.musicShowSourceFor(hdrs.from, hdrs.subject, mailAi);
+      if (showSource) {
+        const show = MusicShow.parseMusicShow(rawBody);
+        if (show) {
+          try {
+            await MusicShow.resolveShowSongs(show);
+            const article = MusicShow.musicShowArticle(show, showSource, { messageId, subject: hdrs.subject || "", date: hdrs.date || "" });
+            await saveArticleToMediaSection(serviceKey, userId, article);
+            converted = true;
+            const found = show.songs.filter((s) => s.appleMusicId).length;
+            console.log(`[music-show] ${showSource.name}: saved "${article.title}" (${show.songs.length} songs, ${found} Apple Music ids)`);
+          } catch (e) {
+            console.error(`[music-show] ${showSource.name} failed — left for retry:`, e.message);
+            return { suggestions: [], retry: true };
+          }
+        } else {
+          console.log(`[music-show] ${showSource.name}: not a playlist issue — using the article conversion`);
+        }
+      }
+
       // A recipe email (NYT Cooking) is never converted by the generic path.
-      if (convSource && !(convSource.generic && recipeHandled) && !conversionTooShort(convSource, rawBody)) {
+      if (!converted && convSource && !(convSource.generic && recipeHandled) && !conversionTooShort(convSource, rawBody)) {
         try {
           const articleHtml = await convertNewsEmailToArticle(anthropicKey, convSource, {
             subject: hdrs.subject || "", date: hdrs.date || "", html: rawBody

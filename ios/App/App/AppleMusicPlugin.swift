@@ -232,6 +232,9 @@ public class AppleMusicPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @MainActor private func emitChange() {
+        // A music show's song (LiveTtsPlugin) is playing: not the web music
+        // player's business, so it hears nothing until the show lets go.
+        if LiveTtsPlugin.ownsAppleMusicPlayer { return }
         var snap = snapshot()
         let code = (snap["playbackState"] as? Int) ?? 0
         // Playing → stopped (or paused with nothing left) means the queue ran out:

@@ -24916,3 +24916,20 @@ body[data-theme="dark"] .contact-phone-act { color: var(--accent); background: c
 .grocery-store-app { flex: 0 0 auto; color: var(--accent-dark); }
 .grocery-store-app .out-link-arrow { width: 18px; height: 18px; }
 body[data-theme="dark"] .grocery-store-app { color: var(--accent); }
+
+/* ── Listen bell: music shows (media-music-show-ui.js, AMPLIFIER_DESIGN.md) ── */
+.music-show-list { display: flex; flex-direction: column; gap: 10px; max-height: 64vh; overflow-y: auto; }
+.music-show-row {
+  display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: start;
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 12px; padding: 10px;
+}
+.music-show-art { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; display: block; background: var(--accent-soft); }
+.music-show-art--blank { background: var(--accent-soft); }
+.music-show-body { min-width: 0; }
+.music-show-kicker { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+.music-show-title { font-size: 0.95rem; font-weight: 700; color: var(--ink); margin-top: 2px; overflow-wrap: anywhere; }
+.music-show-sub { font-size: 0.78rem; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.music-show-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.music-show-actions .music-show-dismiss { margin-left: auto; }
+.music-show-dismiss svg { width: 18px; height: 18px; }
+.music-show-actions .music-show-dismiss { width: 34px; height: 34px; min-width: 34px; }

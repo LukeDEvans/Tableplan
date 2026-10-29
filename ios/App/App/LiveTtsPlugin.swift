@@ -3,6 +3,8 @@ import UIKit
 import Capacitor
 import AVFoundation
 import MediaPlayer
+import MusicKit
+import Combine
 
 // Native playback queue for the Media "listen" flow: on-device text-to-speech
 // (AVSpeechSynthesizer) for articles, plus an AVPlayer for audio files (podcast
@@ -20,6 +22,13 @@ import MediaPlayer
 //     ttsPosition) so its UI and saved state catch up when it runs again.
 //   • Resume re-activates the audio session and, if the synthesizer can't
 //     continue (a long pause while suspended), re-speaks from the last word.
+//
+// Apple Music songs (kind "appleMusic") can sit in the same queue — a music show
+// (AMPLIFIER_DESIGN.md) is spoken write-ups with the song after each one. A song
+// plays through MusicKit's ApplicationMusicPlayer (the same player the AppleMusic
+// plugin uses); its end is detected here and the queue moves on natively, so a
+// show keeps going with the phone locked. While a song plays, MusicKit runs the
+// lock screen and the AppleMusic plugin stays quiet (ownsAppleMusicPlayer).
 //
 // Speech voices: this can use ALL of the device's installed voices, including the
 // downloadable Enhanced/Premium ones — the closest thing to Siri a third-party
@@ -45,8 +54,15 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     ]
 
     // speech = an article read aloud; audio = a podcast episode (seekable);
-    // live = a radio stream (no seeking; resume jumps back to live).
-    private enum Kind: String { case speech, audio, live }
+    // live = a radio stream (no seeking; resume jumps back to live);
+    // appleMusic = one Apple Music catalog song (MusicKit plays it).
+    private enum Kind: String { case speech, audio, live, appleMusic }
+
+    // True while this plugin has an Apple Music song in ApplicationMusicPlayer.
+    // AppleMusicPlugin reads it (main thread) and sends the web app no "change"
+    // events meanwhile, so the web music player never reacts to a show's songs.
+    static var ownsAppleMusicPlayer = false
+    private struct SongUnavailable: Error {}
 
     private struct Item {
         let id: String
@@ -59,6 +75,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         let skipRanges: [(Double, Double)] // audio only: [start, end) seconds to jump over (ads)
         var fallbackUrls: [URL] = []       // live only: other streams for the station, tried in order
         var isMusic = false                // audio only: a song (next-track controls, music session mode)
+        var songId = ""                    // appleMusic only: the catalog song id
     }
 
     private let synth = AVSpeechSynthesizer()
@@ -96,6 +113,18 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     private var liveItemId = ""
     private var liveUrlIdx = 0
     private var liveRetries = 0
+
+    // Apple Music state (appleMusic items). musicToken changes on every start so a
+    // late callback from an earlier song is ignored.
+    private var songCache: [String: Song] = [:]
+    private var musicToken: UUID?
+    private var musicSub: AnyCancellable?
+    private var musicTicker: Timer?
+    private var musicActive = false
+    private var musicStarted = false
+    private var musicPlaying = false
+    private var musicDuration: Double = 0
+    private var musicLastTime: Double = 0
 
     // Lock-screen targets exist ONLY while native playback is active, so they
     // never shadow WebKit's own handlers for web-played podcasts / music / Kokoro.
@@ -199,6 +228,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         if let sp = call.getDouble("speechSpeed") { speechSpeed = Float(sp) }
         DispatchQueue.main.async {
             self.upcoming = []
+            self.prefetchSongs([item])
             self.start(item)
             call.resolve()
         }
@@ -216,8 +246,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
                 case .audio:
                     if !self.userPaused, let p = self.player, p.rate > 0 { p.rate = max(0.5, min(3.0, r)) }
                     self.updateNowPlaying(playing: !self.userPaused)
-                case .live:
-                    break // live radio always plays at 1×
+                case .live, .appleMusic:
+                    break // live radio and Apple Music songs always play at 1×
                 case .speech:
                     if self.isActivelyPlaying() { self.start(item, speechOffset: self.lastLocation) }
                     else { self.speechRateDirty = true }
@@ -231,11 +261,13 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     // Speech: { id, kind: "speech", text, title, subtitle }
     // Audio:  { id, kind: "audio", url, title, subtitle, startPosition?, skipRanges?: [[start, end]] }
     // Live:   { id, kind: "live", url, urls?: [fallback stream urls], title, subtitle }
+    // Song:   { id, kind: "appleMusic", songId, title, subtitle }
     @objc func setUpcoming(_ call: CAPPluginCall) {
         let raw = call.getArray("items", JSObject.self) ?? []
         let items: [Item] = raw.compactMap { LiveTtsPlugin.parseItem($0) }
         DispatchQueue.main.async {
             self.upcoming = items
+            self.prefetchSongs(items)
             call.resolve(["count": items.count])
         }
     }
@@ -246,6 +278,12 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         let title = (o["title"] as? String) ?? (kind == .audio ? "Podcast" : "Article")
         let subtitle = (o["subtitle"] as? String) ?? ""
         switch kind {
+        case .appleMusic:
+            guard let songId = o["songId"] as? String, !songId.isEmpty else { return nil }
+            var item = Item(id: id, kind: .appleMusic, text: "", url: nil, title: title, subtitle: subtitle,
+                            startPosition: 0, skipRanges: [])
+            item.songId = songId
+            return item
         case .speech:
             guard let text = o["text"] as? String, !text.isEmpty else { return nil }
             return Item(id: id, kind: .speech, text: text, url: nil, title: title, subtitle: subtitle,
@@ -398,7 +436,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     // MARK: - Playback core (main thread)
 
     private func activateSession() {
-        let mode: AVAudioSession.Mode = (current?.kind == .live || current?.isMusic == true) ? .default : .spokenAudio
+        let mode: AVAudioSession.Mode = (current?.kind == .live || current?.kind == .appleMusic || current?.isMusic == true) ? .default : .spokenAudio
         // Background playback + lock-screen requires an active .playback session.
         // Re-asserted on every start/resume: iOS can deactivate it while the app
         // is suspended during a pause, and resuming into an inactive session is
@@ -411,12 +449,14 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         }
     }
 
-    // Silence whatever is currently producing sound (speech or audio) without
-    // touching the queue.
-    private func stopOutput() {
+    // Silence whatever is currently producing sound (speech, audio or a song)
+    // without touching the queue. keepMusicPlayer: the next item is a song, which
+    // replaces the player's queue itself (stopping first would race its start).
+    private func stopOutput(keepMusicPlayer: Bool = false) {
         currentUtterance = nil
         if synth.isSpeaking { synth.stopSpeaking(at: .immediate) }
         teardownPlayer()
+        stopAppleMusic(stopPlayer: !keepMusicPlayer)
     }
 
     private func teardownPlayer() {
@@ -436,7 +476,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     }
 
     private func start(_ item: Item, speechOffset: Int = 0, audioPosition: Double? = nil) {
-        stopOutput()
+        stopOutput(keepMusicPlayer: item.kind == .appleMusic)
         current = item
         activateSession()
         userPaused = false
@@ -448,10 +488,139 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             if item.id != liveItemId { liveItemId = item.id; liveUrlIdx = 0; liveRetries = 0 }
             let urls = [item.url].compactMap { $0 } + item.fallbackUrls
             startAudio(item, at: 0, url: urls[min(liveUrlIdx, urls.count - 1)])
+        case .appleMusic:
+            startAppleMusic(item)
         }
-        wireRemoteCommands()
-        configureCommands(for: item.kind, music: item.isMusic)
-        updateNowPlaying(playing: true)
+        if item.kind == .appleMusic {
+            // MusicKit runs the lock screen and AirPods controls while a song plays.
+            unwireRemoteCommands()
+        } else {
+            wireRemoteCommands()
+            configureCommands(for: item.kind, music: item.isMusic)
+            updateNowPlaying(playing: true)
+        }
+    }
+
+    // MARK: - Apple Music songs (appleMusic items)
+
+    // Look the upcoming songs up ahead of time, so moving on to one with the phone
+    // locked needs no network round trip before it plays.
+    private func prefetchSongs(_ items: [Item]) {
+        let ids = Array(Set(items.filter { $0.kind == .appleMusic && songCache[$0.songId] == nil }.map { $0.songId }))
+        guard !ids.isEmpty else { return }
+        if songCache.count > 200 { songCache = [:] }
+        Task { @MainActor in
+            let request = MusicCatalogResourceRequest<Song>(matching: \.id, memberOf: ids.map { MusicItemID($0) })
+            if let response = try? await request.response() {
+                for song in response.items { self.songCache[song.id.rawValue] = song }
+            }
+        }
+    }
+
+    private func startAppleMusic(_ item: Item) {
+        let token = UUID()
+        musicToken = token
+        musicActive = true
+        musicStarted = false
+        musicPlaying = false
+        musicDuration = 0
+        musicLastTime = 0
+        LiveTtsPlugin.ownsAppleMusicPlayer = true
+        let songId = item.songId
+        let cached = songCache[songId]
+        Task { @MainActor in
+            do {
+                guard MusicAuthorization.currentStatus == .authorized else { throw SongUnavailable() }
+                let song: Song
+                if let c = cached {
+                    song = c
+                } else {
+                    let request = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: MusicItemID(songId))
+                    guard let found = try await request.response().items.first else { throw SongUnavailable() }
+                    song = found
+                    self.songCache[songId] = found
+                }
+                guard self.musicToken == token else { return }
+                self.musicDuration = song.duration ?? 0
+                let player = ApplicationMusicPlayer.shared
+                player.queue = ApplicationMusicPlayer.Queue(for: [song])
+                self.musicSub = player.state.objectWillChange.sink { [weak self] _ in
+                    // objectWillChange fires before the new value is set.
+                    Task { @MainActor in self?.checkAppleMusic(token) }
+                }
+                try await player.play()
+                guard self.musicToken == token else { return }
+                self.musicStarted = true
+                self.musicPlaying = true
+                self.startMusicTicker(token)
+            } catch {
+                guard self.musicToken == token else { return }
+                self.notifyListeners("ttsSongFailed", data: ["id": item.id, "songId": songId])
+                self.itemFinished(failed: true)
+            }
+        }
+    }
+
+    // Samples the position once a second while a song is loaded: how a song that
+    // played out (the player rewinds to 0 and pauses) is told from a user's pause.
+    private func startMusicTicker(_ token: UUID) {
+        musicTicker?.invalidate()
+        musicTicker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self = self, self.musicToken == token else { return }
+                let t = ApplicationMusicPlayer.shared.playbackTime
+                if self.musicPlaying && t.isFinite && t > 0 { self.musicLastTime = t }
+            }
+        }
+    }
+
+    @MainActor private func checkAppleMusic(_ token: UUID) {
+        guard musicToken == token, musicActive, let item = current, item.kind == .appleMusic else { return }
+        let player = ApplicationMusicPlayer.shared
+        switch player.state.playbackStatus {
+        case .playing:
+            musicStarted = true
+            if !musicPlaying {
+                musicPlaying = true
+                if userPaused { userPaused = false; notifyListeners("ttsState", data: ["playing": true]) }
+            }
+        case .paused, .stopped, .interrupted:
+            guard musicStarted else { return }
+            musicPlaying = false
+            let t = player.playbackTime
+            let nearEnd = musicDuration > 0 && max(t, musicLastTime) >= musicDuration - 3
+            let rewound = musicLastTime > 5 && t < 1
+            let ended = player.state.playbackStatus == .stopped || player.queue.currentEntry == nil || nearEnd || rewound
+            if ended && player.state.playbackStatus != .interrupted {
+                itemFinished(failed: false)
+            } else if !userPaused {
+                // Paused from the lock screen / AirPods (MusicKit's controls).
+                userPaused = true
+                notifyListeners("ttsState", data: ["playing": false])
+            }
+        default:
+            break
+        }
+    }
+
+    private func stopAppleMusic(stopPlayer: Bool) {
+        guard musicActive else { return }
+        musicActive = false
+        musicStarted = false
+        musicPlaying = false
+        musicToken = nil
+        musicSub?.cancel()
+        musicSub = nil
+        musicTicker?.invalidate()
+        musicTicker = nil
+        if stopPlayer {
+            Task { @MainActor in
+                ApplicationMusicPlayer.shared.stop()
+                // Hand the player back only once it's stopped, so the stop itself
+                // never reaches the web music player as a song ending.
+                if !self.musicActive { LiveTtsPlugin.ownsAppleMusicPlayer = false }
+            }
+        }
     }
 
     private func startSpeech(_ item: Item, from offset: Int) {
@@ -601,7 +770,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             "skipped": skipping,
             "total": nextItem.kind == .speech ? (nextItem.text as NSString).length : 0,
             "position": nextItem.kind == .audio ? nextItem.startPosition : 0,
-            "remaining": upcoming.count
+            "remaining": upcoming.count,
+            "songId": nextItem.songId
         ])
         return true
     }
@@ -657,6 +827,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         switch item.kind {
         case .speech: return synth.isSpeaking && !synth.isPaused
         case .audio, .live: return (player?.rate ?? 0) > 0
+        case .appleMusic: return musicPlaying
         }
     }
 
@@ -674,6 +845,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         case .live:
             // Stop the stream rather than buffer it: resuming jumps back to live.
             teardownPlayer()
+        case .appleMusic:
+            musicPlaying = false
+            Task { @MainActor in ApplicationMusicPlayer.shared.pause() }
         }
         updateNowPlaying(playing: false)
         if notify { notifyListeners("ttsState", data: ["playing": false]) }
@@ -705,6 +879,15 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         case .live:
             liveRetries = 0
             start(item) // reconnect at the live edge
+        case .appleMusic:
+            if musicStarted {
+                musicPlaying = true
+                Task { @MainActor in
+                    do { try await ApplicationMusicPlayer.shared.play() } catch { self.start(item) }
+                }
+            } else {
+                start(item)
+            }
         }
         if notify { notifyListeners("ttsState", data: ["playing": true]) }
     }
@@ -714,6 +897,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
               let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
         DispatchQueue.main.async {
+            // MusicKit pauses and resumes its own songs around a call.
+            if self.current?.kind == .appleMusic { return }
             if type == .began {
                 if self.current != nil && !self.userPaused {
                     self.doPause(notify: true)
@@ -830,6 +1015,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }
+        if item.kind == .appleMusic { return } // MusicKit shows the song itself
         var info: [String: Any] = [:]
         info[MPMediaItemPropertyTitle] = item.title
         if !item.subtitle.isEmpty { info[MPMediaItemPropertyArtist] = item.subtitle }

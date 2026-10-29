@@ -31,6 +31,7 @@
     "qa:watch-links": "node scripts/qa-watch-links.mjs",
     "qa:app-links": "node scripts/qa-app-links.mjs",
     "qa:language": "node scripts/qa-language.mjs",
+    "qa:music-shows": "node scripts/qa-music-shows.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },

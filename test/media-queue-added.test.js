@@ -6,6 +6,7 @@ import {
   episodeRef, articleRef, libraryAlbumRef, slimCatalogItem, libraryAlbumTracks,
 } from "../media-queue-added.js";
 import { upNextOrder, withSkippedLast } from "../media-queue-order.js";
+import { isMusicShow } from "../media-music-show.js";
 
 // Manual "Add to queue" entries: the pure list helpers, then the REAL app.js
 // functions that place them in the queue and hand playback back after an album
@@ -64,7 +65,7 @@ describe("queue-added items in the Media queue (real app.js functions)", () => {
   const FNS = ["articleHasListenableBody", "articleQueueItem", "queueAddedItems", "queuedMusicRow", "getAutoPlaylist", "getAllListenList"];
   function build(state) {
     const env = {
-      state, normalizeQueueAdded, libraryAlbumTracks,
+      state, normalizeQueueAdded, libraryAlbumTracks, isMusicShow,
       withSkippedLast, mediaAllQueueSkipped: [], nowPlayingQueueId: () => null, queueNowId: () => null,
       RECENT_WINDOW_OPTIONS: [{ value: "month", ms: 30 * 864e5 }, 0, 0, 0, { value: "month", ms: 30 * 864e5 }],
       getBundleHeldEpisodeIds: () => new Set(),
@@ -96,6 +97,17 @@ describe("queue-added items in the Media queue (real app.js functions)", () => {
     expect(ids).toContain("inline");
     expect(ids).toContain("stored"); // the regression: dropped once text was stripped from the synced row
     expect(ids).not.toContain("empty");
+  });
+
+  it("a music show stays out of the queue (it lives under the Listen bell)", () => {
+    const state = base();
+    state.savedArticles = [
+      { id: "show-1", title: "The Amplifier", text: "<p>intro</p>", url: null, savedAt: recent, publication: "email", musicShow: { songs: [{ n: 1, title: "x", artist: "y" }] } },
+      { id: "news-2", title: "The Morning", text: "<p>news</p>", url: null, savedAt: recent, publication: "email" },
+    ];
+    const ids = build(state).getAllListenList().map((i) => i.id);
+    expect(ids).toContain("news-2");
+    expect(ids).not.toContain("show-1");
   });
 
   it("manual adds go last, in add order, including items the rules leave out", () => {
