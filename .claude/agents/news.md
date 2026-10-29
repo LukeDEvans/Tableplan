@@ -67,7 +67,8 @@ Scores. Scores has no menu entry of its own.
   `_news-links.js` (links from newspaper emails, shared redirect cache),
   `_news-feeds.js` + `news-feeds.js` (hourly RSS intake, The Athletic's team feeds),
   `_news-rank.js` (pure For you ranking: features, weights, scoring, arrangement),
-  `_news-tags.js` (Haiku 5.5 topic tags for new stories), `_news-articles.js`
+  `_news-tags.js` (Haiku 5.5 topic tags for new stories), `_news-titles.js` (telling
+  real headlines from newsletter link fragments; the hourly title repair), `_news-articles.js`
   (newsletter → listenable article), and the article intake/fetch functions
   `fetch-article.js`, `save-article.js`, `save-page-articles.js`, `scan-article.js`,
   `save-sync-cookie.js`, `sync-saved-articles.js`.
@@ -82,6 +83,12 @@ Scores. Scores has no menu entry of its own.
   Scores themselves are never stored.
 
 ## Luke's decisions (keep them)
+- **Titles are real headlines (Luke, 2026-10-28; NEWS_TITLES_DESIGN.md):** a story's
+  title is never the bit of newsletter text that happened to be linked ("your most
+  pressing questions"). Email intake uses the page's headline, else headline-like link
+  text, else the URL slug; the hourly job (`news-feeds`) then upgrades weak titles from
+  the feeds, the live blog's own headline, or the article page (8 page reads a run at
+  most). NYT live-blog "Here’s the latest." items read "Live: <blog>".
 - **Newsletter briefings run on Claude Haiku 5.5 (2026-10-28):** `_news-articles.js`
   `NEWSLETTER_MODEL`, one pass, effort low, 16k token cap. Haiku 5.5 rejects prefill and
   sampling parameters (`_claude.js` skips continuation for it) and can refuse; a refusal
