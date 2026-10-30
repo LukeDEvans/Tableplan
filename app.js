@@ -834,6 +834,7 @@ let watchCategoryInputActive = false;
 // Poster-grid: which card is tapped-open into its full-width detail row (providers,
 // episode tracking). One at a time; null = grid is all clean posters.
 let expandedWatchItemId = null;
+let watchListScrollReset = false; // next Watch redraw starts the list at the top (tab switch)
 let watchLogPendingId = null;
 let watchLogRating = null;
 let watchLogEditMode = false;
@@ -22342,6 +22343,14 @@ async function fetchWatchSearchResultsDialog(query) {
 function renderWatchPlanner() {
   if (!elements.watchPlannerGrid) return;
   const categories = state.watchSettings?.categories || [];
+  // Keep the list where it was across a redraw (ticking an episode, opening a
+  // season) so the screen doesn't jump; a tab switch starts at the top.
+  const prevList = elements.watchPlannerGrid.querySelector(".watch-list-panel");
+  const keepScroll = watchListScrollReset ? 0 : (prevList?.scrollTop || 0);
+  const keepWindowY = window.scrollY;
+  const keepEpisodes = new Map([...elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]")]
+    .filter((el) => el.scrollTop).map((el) => [el.dataset.watchEps, el.scrollTop]));
+  watchListScrollReset = false;
   elements.watchPlannerGrid.innerHTML = `
     <div class="watch-category-bar">
       <div class="watch-category-tabs" role="tablist" aria-label="Watch categories">
@@ -22371,6 +22380,7 @@ function renderWatchPlanner() {
       activeWatchCategory = btn.dataset.watchCategory;
       watchCategoryInputActive = false;
       expandedWatchItemId = null;
+      watchListScrollReset = true;
       renderWatchPlanner();
     });
     btn.addEventListener("dragover", (e) => {
@@ -22449,6 +22459,13 @@ function renderWatchPlanner() {
 
   bindWatchControls(elements.watchPlannerGrid);
 
+  const newList = elements.watchPlannerGrid.querySelector(".watch-list-panel");
+  if (newList && keepScroll) newList.scrollTop = keepScroll;
+  elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]").forEach((el) => {
+    const top = keepEpisodes.get(el.dataset.watchEps);
+    if (top) el.scrollTop = top;
+  });
+  if (window.scrollY !== keepWindowY) window.scrollTo(window.scrollX, keepWindowY);
   updateTabIndicator(elements.watchPlannerGrid);
   placeWatchPanelPointer(elements.watchPlannerGrid);
   const open = expandedWatchItemId && watchItemById(expandedWatchItemId);
@@ -22858,8 +22875,8 @@ function watchItemTemplate(item) {
         ${!item.tmdbId ? `<div class="watch-detail-unlinked"><span>No poster or services yet.</span><button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${id}">Find the right title</button></div>` : ""}
         ${episodeProgressHtml}
         <div class="watch-detail-actions">
-          <button class="watch-action" type="button" data-watch-act-watched="${id}">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Watched</span>
+          <button class="watch-action watch-action--check" type="button" data-watch-act-watched="${id}" aria-label="Watched" title="Watched">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="m7.8 12.3 2.9 2.9 5.6-5.8"/></svg>
           </button>
           <button class="watch-action" type="button" data-watch-act-tabs="${id}" aria-haspopup="menu">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10l3 3v7a1 1 0 0 1-1 1H4z"/><path d="M8 4h9l3 3v8"/></svg><span>Tabs</span>
@@ -23117,7 +23134,7 @@ function watchSeasonTemplate(item, seasonNum, seasonData) {
 function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
   if (!episodes.length) {
     return `
-      <div class="watch-episodes">
+      <div class="watch-episodes" data-watch-eps="${escapeHtml(item.id)}:${seasonNum}">
         <div class="empty-state watch-episodes-loading">
           ${item.tmdbId
             ? `<button class="secondary-btn compact-btn" type="button" data-watch-load-season="${escapeHtml(item.id)}" data-season="${seasonNum}">Load episode list</button>`
@@ -23131,7 +23148,7 @@ function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
     `;
   }
   return `
-    <div class="watch-episodes">
+    <div class="watch-episodes" data-watch-eps="${escapeHtml(item.id)}:${seasonNum}">
       ${episodes.map((ep) => `
         <label class="watch-episode">
           <input type="checkbox" class="watch-check" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" ${watchedEps[ep.episodeNumber] ? "checked" : ""} />
