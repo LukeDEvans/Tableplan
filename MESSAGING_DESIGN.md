@@ -397,4 +397,4 @@ A second separate agent attacked everything above the crypto core (account, engi
 
 **Verified:** 114 messaging tests (`test/messaging-*.test.js`) against PGlite with both migrations; 13 of the fixes confirmed by planting the bug back (each makes tests fail); `npm run qa:messaging-ui` 28/28, now including sign-out (device removed, store deleted); crypto QA passes; full suite 3215 passing; build passes.
 
-**Migration 2026-10-31** is additive (no DROP), re-runnable, and checked by `scripts/check-messaging-migration.mjs` (89 checks over both migrations).
+**Migration 2026-10-31** is additive (no DROP), re-runnable, and checked by `scripts/check-messaging-migration.mjs` (89 checks over both migrations). **Applied 2026-10-30** via execute_sql (additive part, then the revokes and column grant separately); verified afterwards: `msg_rate` has row security and no access for signed-in users or anon, `msg_rate_take` isn't callable by them, `last_seen_at` isn't selectable while the key columns are, the new `msg_send` / `msg_claim_prekey` bodies are live; recorded in `schema_migrations` (20261031090000).
