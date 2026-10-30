@@ -1,6 +1,4 @@
-# Encrypted messaging — design & plan
-
-Status: **DESIGN AGREED** (Luke, 2026-10-29/30). **Step 1 (crypto core) built and independently reviewed** on branch `claude/messaging-crypto` (2026-10-30) — §15, §16. No migration, no UI, nothing deployed.
+Status: **DESIGN AGREED** (Luke, 2026-10-29/30). **Step 1 merged (#200). Steps 2–5 and most of 7 built on `claude/messaging-step2`; the `msg_` migration is LIVE (applied and verified 2026-10-30).** Push (step 6) waits on notifications Phase 2. Nothing deployed to Netlify — §17.
 
 Goal: end-to-end encrypted messages between app users, Signal-level protection, living in the current Mail page, which is renamed **Message**. Phone numbers (SMS) may come later as an invite link into the app (§13).
 
@@ -28,9 +26,9 @@ Goal: end-to-end encrypted messages between app users, Signal-level protection, 
 ## 1. Checks against the code
 
 1. ✅ **The iPhone app runs bundled JS** (2026-10-30): `capacitor.config.json` has no `server.url`; it loads `dist` from the signed TestFlight build. So the phone's crypto code really comes from the build, and phones can be the trusted devices.
-2. ⏳ Mail page structure and the **Message** menu entry (PAGE_GROUPS_DESIGN), and Contacts' call/text/FaceTime row (APP_LINKS_DESIGN) — at step 7.
-3. ⏳ `_push.js` / `live_push_subscriptions` state from IOS_NOTIFICATIONS_DESIGN Phase 2 — at step 6; messaging needs to push to one device.
-4. ⏳ The laptop app: Capacitor desktop build or the PWA? — at step 2 (decides how it's linked).
+2. ✅ The Mail page became **Message** with Messages | Mail tabs (`#mailMainPage`; route `#mail` unchanged). Contacts has no link between a contact card and an app user, so its **Message** button is deferred (§17).
+3. ❌ Notifications **Phase 2 (APNs) was never applied**: `live_push_subscriptions` has no device columns and no rows (checked 2026-10-30). Push for messages (step 6) needs Phase 2 first, including Luke's Apple key steps.
+4. ✅ The laptop app links like any browser (it runs the web app): "Link this browser" → scan or paste on the phone.
 
 ---
 
@@ -338,3 +336,65 @@ A separate agent, which hadn't seen the code written, attacked the crypto core a
 7. *(P3)* Ids are limited to `A–Z a–z 0–9 _ -` (one byte form), and signed prekeys carry a signed creation time and expire after 60 days.
 
 **Test gaps closed:** the vacuous "identity separation" test is gone; the session-limit test now checks which session is evicted and which sends; the one-time-prekey test now says plainly that deleting the prekey is the app's job.
+
+
+---
+
+## 17. Steps 2–7 — what's built (2026-10-30)
+
+**Live in Supabase:** `migrations/2026-10-30-messaging.sql` — `msg_identities`, `msg_devices`, `msg_prekeys`, `msg_conversation_members`, `msg_inbox` with row security, the `msg_*` functions and the device guard. Applied by Luke's approval from the laptop session; verified afterwards (RLS on all five tables; no anon access; no TRUNCATE for signed-in users — Supabase's default ALL grants were revoked; functions callable by signed-in users only; `msg_prune` service-role only; trigger active); recorded in `schema_migrations` (20261030193500). `scripts/check-messaging-migration.mjs` runs 80 access checks against PGlite with Supabase's default privileges simulated.
+
+Who can message whom: people sharing a household group or business space (`msg_can_contact`). Known limit (ISSUES.md P2): in a group mixing household and business people, members who aren't contacts of each other can't see each other's devices — fine until someone joins Business.
+
+**Client modules:** `messaging/server.js` (the only door to Supabase), `keystore.js` (IndexedDB, AES-GCM under a non-extractable key; Keychain key on iPhone; Web Locks), `account.js` (setup, linking, prekeys, pinned identities, verification), `engine.js` (conversations, fan-out, receive, groups, timers, receipts, delete for everyone, session repair), `ui.js` (the Messages tab), `peek.js` (menu badge).
+
+**Changes from the plan, found while building:**
+- **Link code**: compact binary (`LIVEMSG2:`, ~430 characters; QR 73 modules instead of 101). The new device signs the identity key it was *shown*; the phone refuses the link unless that's its real identity — so a lying server is caught at link time and the new device's pinned identity is the true one, with no extra code to compare.
+- **Primary identity** is an Ed25519 key only (no X25519).
+- **New devices and existing conversations**: a newly linked device holds messages for conversations it doesn't know yet; any of my devices that sees a new sibling sends it each open conversation's shape (name, members, timer — never history) as `sync` "conv", which releases them.
+- **Content to my own devices** travels as `sync` copies; group changes go to all my devices directly; receipts never go to my own devices.
+- **Contacts "Message" button** deferred: nothing links a contact card to an app user yet. Start a conversation from Messages › New (lists household and business people).
+- **Settings**: Messaging's settings live in Messages › ⋯ (Devices & security: devices, link a device, read receipts, crypto check, reset), not the global Settings dialog.
+- **Crypto-chunk integrity check** (§2): not built yet.
+
+**Native (needs a TestFlight build):** `MessagingKeysPlugin.swift` (Keychain wrapping key, …ThisDeviceOnly) and `QrScanPlugin.swift` (AVFoundation QR scanner, iOS 15), registered in `MainViewController`, added to the Xcode project; camera permission text updated. Compile-checked by CI's unsigned `xcodebuild`, **not run on a phone**.
+
+**Verified:**
+- `test/messaging-account.test.js` (17) and `test/messaging-engine.test.js` (19) against PGlite with the real migration and row security; every security rule confirmed by a planted bug (identity check at link time, certificate check, identity-change flag, account check, scan verification, sync-only-from-me, conversation binding, delete-only-own, member check, store-before-send, timer start).
+- `npm run qa:messaging-ui` — three Chromium profiles (Luke's phone, Luke's browser, Marijane's phone) at 390 px against a PostgREST-shaped stand-in on PGlite: setup, linking by pasted code, conversation, delivery, HTML shown as text, copy on Luke's browser, reply, read receipt, card, matching safety numbers, crypto check — 26/26, no page errors, no sideways scroll.
+- Real app (local dev): boot check passes; landing and page menu say **Message**; tabs switch and remember; Mail tab unchanged.
+- **Not verified:** anything on an iPhone (Keychain plugin, QR scanner, the web view running the crypto) — first TestFlight build; the real Supabase over the network (the stand-in runs the same SQL and policies).
+
+**Still to do:**
+- **Step 6, push**: after notifications Phase 2 (APNs) is applied — then a notify function + the Notification Service Extension (sender only).
+- The crypto-chunk integrity check (§2).
+- Daily cleanup: `msg_prune()` is now called from the daily maintenance function (`daily-briefing.js`) — live once deployed.
+- **Deploy** (Luke's OK required) + TestFlight build; then Marijane installs TestFlight, sets up on her phone, and links her browser.
+
+---
+
+## 18. Second review — the app layer (2026-10-30)
+
+A second separate agent attacked everything above the crypto core (account, engine, keystore, server functions, sign-out) the way §16 attacked the core. Every finding below was fixed before merging, and each has a test that fails when its fix is reverted (`test/messaging-engine-review.test.js`, plus the account tests and `scripts/check-messaging-migration.mjs`; confirmed by planting each bug back).
+
+**Fixed:**
+1. *(P0)* Leaving or being removed kept the conversation's messages on the device indefinitely (the sweep skipped left conversations). → Leaving, removal, or a leave from another of my devices erases them at once; the sweep also cleans any left conversation.
+2. *(P0)* Signing out (or switching accounts) left the keys and plaintext in the browser for the next person. → `messaging/signout.js`: the device is removed from the account, the store deleted and the Keychain wrapping key destroyed, on sign-out and account switch.
+3. *(P1)* One forged inbox row (the server can add one) made session repair discard the working session, losing every message already in flight. → Repair adds a session; it never discards existing ones.
+4. *(P1)* The inbox cursor skipped a row committed after a higher id had been fetched (ids are handed out before commit). → No cursor: rows are fetched from the start and tracked by id once handled.
+5. *(P1)* A failure part-way through receiving (an acknowledgement lost, the app stopped) could duplicate messages or mark real ones undecryptable. → A decrypted envelope is parked under the same lock that stores its session record, and filed on the next run.
+6. *(P1)* One unreachable device (an old browser with an expired signed prekey) stopped the whole send. → Each device is sealed separately and skipped if unreachable; the sender sees **Not delivered · Retry** only when nobody else got it.
+7. *(P1)* A contact I'd verified changing their security code only showed a notice. → Sending to them is refused until I check the new code or choose Send anyway (decision 9 is unchanged for contacts never verified).
+8. *(P1)* A linked browser could remove the phone, leaving the account without its trusted device. → Only the phone removes devices; a phone that was removed anyway sets itself up again under the same identity (contacts see no code change).
+9. *(P1)* Anyone with a contact could flood their inbox. → Migration `2026-10-31-messaging-limits.sql`: 3000 queued rows an hour per person, 2000 waiting rows per device, 32768 characters per message.
+10. *(P2)* Leaving on one of my devices didn't close the conversation on the others.
+11. *(P2)* Messages held for unknown conversations weren't bounded. → Kept 7 days, at most 1000.
+12. *(P2)* With read receipts off, I still saw other people's. → Off hides both ways (Signal's rule).
+13. *(P2)* Two tabs could overwrite each other's conversation changes. → One lock per conversation for every local read-then-write.
+14. *(P3)* Contacts could read when each of my devices was last used, and drain my one-time prekeys. → `last_seen_at` is no longer readable; 200 prekey claims an hour per person.
+
+**Found while fixing:** a contact who set up again (new install or reset) never received an existing conversation — their new device held its messages forever. Now a device I'm writing to for the first time is sent the conversation's shape (group, then timer) right after the message, which releases it. And in the UI check: a browser linked moments before a new conversation missed it (the phone's one-minute device cache) — linking now refreshes the phone's list of its own devices, and a copy of my own message for a conversation a device hasn't learned yet is held and released like any other.
+
+**Verified:** 114 messaging tests (`test/messaging-*.test.js`) against PGlite with both migrations; 13 of the fixes confirmed by planting the bug back (each makes tests fail); `npm run qa:messaging-ui` 28/28, now including sign-out (device removed, store deleted); crypto QA passes; full suite 3215 passing; build passes.
+
+**Migration 2026-10-31** is additive (no DROP), re-runnable, and checked by `scripts/check-messaging-migration.mjs` (89 checks over both migrations). **Applied 2026-10-30** via execute_sql (additive part, then the revokes and column grant separately); verified afterwards: `msg_rate` has row security and no access for signed-in users or anon, `msg_rate_take` isn't callable by them, `last_seen_at` isn't selectable while the key columns are, the new `msg_send` / `msg_claim_prekey` bodies are live; recorded in `schema_migrations` (20261031090000).

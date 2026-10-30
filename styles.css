@@ -25022,3 +25022,55 @@ body[data-theme="dark"] .grocery-store-app { color: var(--accent); }
 .watch-other-services-title { font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; }
 .watch-other-services-note { margin: 0; font-size: .86rem; color: var(--muted); }
 .watch-other-services-list { margin-top: 0; padding-bottom: 6px; }
+
+/* ─── Message page: Messages | Mail tabs + secure messages (MESSAGING_DESIGN.md §11) ─── */
+.mail-page { display: flex; flex-direction: column; }
+.message-tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.message-tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; font-weight: 600; padding: 8px 12px; cursor: pointer; }
+.message-tab.is-active { color: var(--ink); border-bottom-color: var(--accent); }
+.mail-page.is-contacts-mode .message-tabs { display: flex; }
+.messages-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.msg-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 12px 16px; gap: 10px; overflow-y: auto; max-width: 720px; width: 100%; margin: 0 auto; box-sizing: border-box; color: var(--ink); }
+.msg-head { display: flex; align-items: center; gap: 8px; }
+.msg-title { flex: 1; font-size: 1.15rem; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-head-actions { display: flex; gap: 6px; align-items: center; }
+.msg-icon-btn { appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; min-width: 36px; height: 36px; font-size: 1.1rem; cursor: pointer; }
+.msg-muted { color: var(--text-muted, var(--muted)); font-size: 0.9rem; }
+.msg-error { color: var(--tomato); }
+.msg-intro { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.msg-conv-list, .msg-members, .msg-card-pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.msg-conv, .msg-pick { appearance: none; width: 100%; text-align: left; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 2px; cursor: pointer; font: inherit; }
+.msg-conv-title { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.msg-conv-preview { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-conv-meta { color: var(--muted); font-size: 0.8rem; }
+.msg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; }
+.msg-banner { background: var(--sun-soft, var(--surface)); color: var(--ink); border-radius: 10px; padding: 8px 12px; font-size: 0.9rem; }
+.msg-banner-warn { background: var(--tomato-soft); }
+.msg-thread-list { list-style: none; margin: 0; padding: 4px 0; display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 120px; overflow-y: auto; }
+.msg-bubble { position: relative; max-width: 80%; align-self: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 16px 16px 16px 4px; padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.msg-bubble.is-mine { align-self: flex-end; background: var(--accent); color: var(--on-accent); border-color: transparent; border-radius: 16px 16px 4px 16px; }
+.msg-bubble.is-mine .msg-muted, .msg-bubble.is-mine .msg-time, .msg-bubble.is-mine .msg-read { color: var(--on-accent); opacity: 0.85; }
+.msg-text { white-space: pre-wrap; }
+.msg-from { font-size: 0.75rem; font-weight: 600; color: var(--muted); }
+.msg-time, .msg-read { font-size: 0.7rem; color: var(--muted); }
+.msg-more { position: absolute; top: 2px; right: 4px; appearance: none; background: none; border: 0; color: inherit; opacity: 0.5; cursor: pointer; font-size: 0.9rem; }
+.msg-system { align-self: center; color: var(--muted); font-size: 0.8rem; text-align: center; padding: 2px 8px; }
+.msg-card { appearance: none; text-align: left; background: var(--card, var(--surface)); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 2px; cursor: pointer; font: inherit; min-width: 180px; }
+.msg-card-kind { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.msg-card-title { font-weight: 600; }
+.msg-compose { display: flex; gap: 8px; align-items: flex-end; padding-top: 6px; border-top: 1px solid var(--line); }
+.msg-compose textarea { flex: 1; min-width: 0; resize: none; height: 40px; min-height: 40px; max-height: 140px; box-sizing: border-box; line-height: 1.35; font: inherit; padding: 8px 10px; border-radius: 18px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.msg-form { display: flex; flex-direction: column; gap: 8px; }
+.msg-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; }
+.msg-field input, .msg-field select { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.msg-check { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+.msg-sub { font-size: 0.95rem; margin: 8px 0 0; }
+.msg-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.msg-toggle-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; }
+/* QR codes need dark-on-white to scan in every theme: the one literal color here, on purpose. */
+.msg-qr { background: #fff; padding: 8px; border-radius: 12px; width: min(280px, 100%); align-self: center; line-height: 0; }
+.msg-qr svg { width: 100%; height: auto; }
+.msg-safety { font-family: ui-monospace, Menlo, monospace; font-size: 1.05rem; letter-spacing: 0.05em; word-spacing: 0.4em; text-align: center; line-height: 1.8; }
+.msg-code { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.msg-link { display: flex; flex-direction: column; gap: 10px; }
+.msg-details summary { cursor: pointer; color: var(--link, var(--accent)); }

@@ -419,6 +419,17 @@ async function backupFinanceSection(headers, groupId, finState) {
   else console.log(`[fin-backup] stored ${today} (richness ${todayRichness}, ${Object.keys(snaps).length} days kept)`);
 }
 
+// Secure messages (MESSAGING_DESIGN.md §8): drop inbox rows no device fetched in
+// 30 days, and prekeys of removed devices. One RPC; returns nothing.
+async function pruneMessaging(serviceKey) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/msg_prune`, {
+    method: "POST",
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "content-type": "application/json", prefer: "return=minimal" },
+    body: "{}",
+  });
+  if (!r.ok) console.error(`[msg-prune] ${r.status}`);
+}
+
 export default async () => {
   const apiKey = (process.env.ANTHROPIC_API_KEY || "").trim();
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -428,6 +439,8 @@ export default async () => {
     catch (e) { console.error("[tts-cleanup] failed:", e.message); }
     try { await snapshotFinanceBalances(serviceKey); }
     catch (e) { console.error("[fin-snapshot] failed:", e.message); }
+    try { await pruneMessaging(serviceKey); }
+    catch (e) { console.error("[msg-prune] failed:", e.message); }
   }
   const vapidPublic = (process.env.VAPID_PUBLIC_KEY || "").trim();
   const vapidPrivate = (process.env.VAPID_PRIVATE_KEY || "").trim();

@@ -23,6 +23,8 @@
 		7A1C0E642E90000100C0FFEE /* WebAuthPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E652E90000100C0FFEE /* WebAuthPlugin.swift */; };
 		7A1C0E662E90000100C0FFEE /* LiveLocationPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E672E90000100C0FFEE /* LiveLocationPlugin.swift */; };
 		7A1C0E702E90000100C0FFEE /* ShareTokenPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E712E90000100C0FFEE /* ShareTokenPlugin.swift */; };
+		4D5E6A112F10000100C0FFEE /* QrScanPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A122F10000100C0FFEE /* QrScanPlugin.swift */; };
+		4D5E6A0F2F10000100C0FFEE /* MessagingKeysPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A102F10000100C0FFEE /* MessagingKeysPlugin.swift */; };
 		A1C0FFEE2E90000100A1C0DE /* AppIconPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */; };
 		B7A11AC02E90000100A77AC0 /* AttachmentPreviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */; };
 		D07C4A102E90000100D07C4A /* LiveLanguagePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */; };
@@ -78,6 +80,8 @@
 		7A1C0E652E90000100C0FFEE /* WebAuthPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAuthPlugin.swift; sourceTree = "<group>"; };
 		7A1C0E672E90000100C0FFEE /* LiveLocationPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLocationPlugin.swift; sourceTree = "<group>"; };
 		7A1C0E712E90000100C0FFEE /* ShareTokenPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareTokenPlugin.swift; sourceTree = "<group>"; };
+		4D5E6A122F10000100C0FFEE /* QrScanPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QrScanPlugin.swift; sourceTree = "<group>"; };
+		4D5E6A102F10000100C0FFEE /* MessagingKeysPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingKeysPlugin.swift; sourceTree = "<group>"; };
 		A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconPlugin.swift; sourceTree = "<group>"; };
 		B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPreviewPlugin.swift; sourceTree = "<group>"; };
 		D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLanguagePlugin.swift; sourceTree = "<group>"; };
@@ -151,6 +155,8 @@
 				7A1C0E652E90000100C0FFEE /* WebAuthPlugin.swift */,
 				7A1C0E672E90000100C0FFEE /* LiveLocationPlugin.swift */,
 				7A1C0E712E90000100C0FFEE /* ShareTokenPlugin.swift */,
+				4D5E6A122F10000100C0FFEE /* QrScanPlugin.swift */,
+				4D5E6A102F10000100C0FFEE /* MessagingKeysPlugin.swift */,
 				A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */,
 				B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */,
 				D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */,
@@ -348,6 +354,8 @@
 				7A1C0E642E90000100C0FFEE /* WebAuthPlugin.swift in Sources */,
 				7A1C0E662E90000100C0FFEE /* LiveLocationPlugin.swift in Sources */,
 				7A1C0E702E90000100C0FFEE /* ShareTokenPlugin.swift in Sources */,
+				4D5E6A112F10000100C0FFEE /* QrScanPlugin.swift in Sources */,
+				4D5E6A0F2F10000100C0FFEE /* MessagingKeysPlugin.swift in Sources */,
 				A1C0FFEE2E90000100A1C0DE /* AppIconPlugin.swift in Sources */,
 				B7A11AC02E90000100A77AC0 /* AttachmentPreviewPlugin.swift in Sources */,
 				D07C4A102E90000100D07C4A /* LiveLanguagePlugin.swift in Sources */,

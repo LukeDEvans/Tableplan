@@ -21,7 +21,7 @@ const CONTROL_OPS = new Set([
   "group_create", "group_rename", "member_add", "member_remove", "member_leave",
   "timer_set", "delete_for_everyone", "reset_session",
 ]);
-const SYNC_KINDS = new Set(["sent", "verified", "read"]);
+const SYNC_KINDS = new Set(["sent", "verified", "read", "conv"]);
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
@@ -96,6 +96,10 @@ function parseBody(type, b) {
       if (!SYNC_KINDS.has(b.kind)) fail("bad sync kind");
       if (b.kind === "sent") return { kind: "sent", envelope: parseEnvelope(b.envelope, { nested: true }) };
       if (b.kind === "verified") return { kind: "verified", userId: id(b.userId, "user"), verified: b.verified === true };
+      if (b.kind === "conv") {
+        // A conversation's current shape, for my newly linked device (no history; §0, 2).
+        return { kind: "conv", conv: id(b.conv, "conversation"), name: optStr(b.name, LIMITS.name, "group name"), members: idList(b.members, LIMITS.members + 1, "member"), secs: timer(b.secs ?? null) };
+      }
       return { kind: "read", conv: id(b.conv, "conversation"), upTo: id(b.upTo, "message") };
     }
     default:

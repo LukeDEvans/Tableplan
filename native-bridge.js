@@ -146,6 +146,41 @@ export function nativeLanguage() {
   return _language;
 }
 
+// Encrypted messaging's store key (MessagingKeysPlugin.swift): a 32-byte key kept in
+// this phone's Keychain that encrypts messaging's IndexedDB store
+// (messaging/keystore.js). null in a browser/PWA → a non-extractable WebCrypto key
+// kept in IndexedDB instead; null in an app build from before the plugin → same.
+let _messagingKeys;
+export function nativeMessagingKeys() {
+  if (_messagingKeys !== undefined) return _messagingKeys;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _messagingKeys = null;
+      return _messagingKeys;
+    }
+    const p = registerPlugin("MessagingKeys");
+    _messagingKeys = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("MessagingKeys")) ? p : null;
+  } catch { _messagingKeys = null; }
+  return _messagingKeys;
+}
+
+// One-shot QR scanner (QrScanPlugin.swift) for linking devices and verifying a
+// contact's security code. null in a browser/PWA or an older build → the
+// messaging UI offers paste instead.
+let _qrScan;
+export function nativeQrScan() {
+  if (_qrScan !== undefined) return _qrScan;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _qrScan = null;
+      return _qrScan;
+    }
+    const p = registerPlugin("QrScan");
+    _qrScan = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("QrScan")) ? p : null;
+  } catch { _qrScan = null; }
+  return _qrScan;
+}
+
 // Base64 JPEG pages from the native scanner → File objects the scan pipeline
 // takes. Decoded by hand: fetch(data:) can be intercepted by CapacitorHttp.
 export function scannedPagesToFiles(pages, stamp = Date.now()) {

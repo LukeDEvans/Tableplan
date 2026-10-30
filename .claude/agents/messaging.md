@@ -54,9 +54,60 @@ as security-critical.
   change isn't done until both pass and a planted bug in the area you touched is
   caught by a test.
 
+## Modules (step 2–3, 2026-10-30)
+- `messaging/server.js` — the only door to Supabase (`createMessagingServer(transport)`
+  + `createRestTransport` for PostgREST). Every read names columns; nothing loops.
+- `messaging/keystore.js` — on-device storage (IndexedDB, AES-GCM under a
+  non-extractable key; on iPhone the wrapping key comes from the Keychain) and
+  `withLock` (Web Locks across tabs).
+- `messaging/account.js` — phone setup, linking by code, prekey upkeep, pinned
+  identities (first key seen is pinned; a change flags "security code changed"),
+  safety numbers and QR verification.
+- `messaging/engine.js` — conversations, fan-out, receive, groups, timers, receipts,
+  delete for everyone, session repair, holding messages for conversations a new
+  device doesn't know yet (released by a `sync` "conv" from my other device).
+- `messaging/ui.js` — the Messages tab (`mountMessages(root, deps)`), imported by
+  app.js the first time the tab opens; `messaging/peek.js` — the menu badge's
+  one-id inbox check (no crypto). app.js glue is under "Message page: Messages | Mail
+  tabs" next to `showMailApp` (tabs, card sources/openers, badge); keep it thin.
+- Native: `ios/App/App/MessagingKeysPlugin.swift` (Keychain wrapping key) and
+  `QrScanPlugin.swift` (AVFoundation QR, iOS 15), registered in MainViewController,
+  reached via `native-bridge.js` `nativeMessagingKeys()` / `nativeQrScan()`.
+- UI check: `npm run qa:messaging-ui` (three Chromium profiles against a PGlite
+  stand-in for Supabase; phone width; screenshots).
+- Tests run against a real Postgres with the real migration and row security:
+  `test/messaging-pglite-harness.js` (PGlite) + `test/messaging-account.test.js`,
+  `test/messaging-engine.test.js`; `scripts/check-messaging-migration.mjs` for the
+  SQL access rules. The `msg_` tables are LIVE (applied 2026-10-30) — any change is
+  a new, gated migration. The harness and the check script apply **every** messaging
+  migration in order (`2026-10-30-messaging.sql`, `2026-10-31-messaging-limits.sql`);
+  add a new one to both lists.
+- `messaging/signout.js` — sign-out and account switch forget messaging on the device
+  (remove the device, delete the store, destroy the Keychain key). Wired from app.js
+  `purgeLocalMessaging`.
+
+## App-layer rules from the second review (MESSAGING_DESIGN.md §18) — keep them
+- Receive has **no cursor**: rows are fetched from the start and tracked by id
+  (`doneRows`); a decrypted envelope is parked (`pend:<rowId>`) under the same lock
+  that stores its session record, then filed.
+- Session repair **adds** a session; never discard existing sessions.
+- Fan-out seals **per device** and skips the unreachable; status "failed" (Not
+  delivered · Retry) only when no one else got it. A device written to for the first
+  time is sent the conversation's shape (`introduce`).
+- A **verified** contact whose code changed blocks sending (`SAFETY_CHANGED`) until
+  acknowledged; unverified ones only show the notice (decision 9).
+- Leaving / removal / a leave from my other device **erases** the conversation's
+  messages here. Held messages: 7 days, 1000 total.
+- Only the phone removes devices; a removed phone re-registers under the same identity.
+- Read receipts off hides others' receipts too.
+- Server limits (migration 2026-10-31): ciphertext ≤ 32768 chars, 3000 queued rows/hour
+  per person, 2000 waiting rows per device, 200 prekey claims/hour; `last_seen_at`
+  isn't readable. Envelope limits (`LIMITS`) must keep the largest envelope under the
+  ciphertext cap.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `messaging/envelope.js`, `messaging/crypto/*.js`
+- files: `messaging/*.js`, `messaging/crypto/*.js`
 - state: none — messages never go in tableplan_states; they live on each device and in the msg_ tables

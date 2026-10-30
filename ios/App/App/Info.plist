@@ -25,7 +25,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Live uses the camera to scan receipts.</string>
+	<string>Live uses the camera to scan receipts, and the codes that link your devices and verify a contact for secure messages.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Live uses your location to show the weather where you are and to find nearby stores and restaurants.</string>
 	<key>NSMicrophoneUsageDescription</key>
