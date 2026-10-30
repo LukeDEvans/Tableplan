@@ -102,6 +102,28 @@ try {
     });
     check(geo.below, "the panel opens under the whole row");
     check(geo.ptrX != null && Math.abs(geo.ptrX - geo.posterX) <= 2, "the pointer points at the open poster", geo);
+    check(await page.locator(".watch-avail--stream").count() === 0, "no streaming-service bubble on the posters");
+
+    // The ring around the open poster isn't cut off at either end of the row,
+    // and the posters kept their size.
+    const ringFits = async (id) => {
+      await page.locator(`[data-watch-item="${id}"]`).tap();
+      await page.waitForTimeout(300);
+      return page.evaluate((pid) => {
+        const list = document.querySelector(".watch-list-panel");
+        const lr = list.getBoundingClientRect();
+        const p = document.querySelector(`[data-watch-item="${pid}"] .watch-poster`).getBoundingClientRect();
+        const cs = getComputedStyle(document.querySelector(`[data-watch-item="${pid}"] .watch-poster`));
+        const reach = parseFloat(cs.outlineWidth) + parseFloat(cs.outlineOffset);
+        return { left: Math.round(p.left - reach - lr.left), right: Math.round(lr.left + list.clientWidth - (p.right + reach)), w: Math.round(p.width) };
+      }, id);
+    };
+    const leftRing = await ringFits(`qa-m1-${globalThis.__qaR ?? R}`);
+    const rightRing = await ringFits(`qa-m4-${globalThis.__qaR ?? R}`);
+    check(leftRing.left >= 0 && rightRing.right >= 0, "the ring shows in full at both ends of the row", { leftRing, rightRing });
+    check(leftRing.w >= (width === 390 ? 75 : 68), "…and the posters keep their size", leftRing);
+    await page.locator(`[data-watch-item="qa-m2-${globalThis.__qaR ?? R}"]`).tap(); // back to where the next checks expect
+    await page.waitForTimeout(300);
     if (SHOT) await page.screenshot({ path: `${SHOT}-panel-${width}.png` });
 
     // Services: no "Your services" / "Other services" headings; services outside
@@ -331,6 +353,72 @@ try {
     await page.waitForTimeout(300);
     await page.locator("[data-watch-focus-search]").tap();
     check(await page.evaluate(() => document.activeElement?.id === "discoverSearchInput"), "the empty list's button goes to the search bar");
+
+    // Sidebar: the same text size as Listen's menu.
+    const sizes2 = await page.evaluate(() => ({
+      watch: getComputedStyle(document.querySelector("#watchSidebar .article-sidebar-tab")).fontSize,
+      listen: getComputedStyle(document.querySelector("#mediaSidebar .article-sidebar-tab")).fontSize,
+    }));
+    check(sizes2.watch === sizes2.listen, "the Watch menu's text matches Listen's", sizes2);
+
+    // YouTube: only on its own page (Luke, 2026-10-29).
+    const ytCalls = [];
+    await page.route(/(functions|api)\/youtube-search/, (r) => {
+      ytCalls.push(r.request().url());
+      r.fulfill(json({ items: [{ id: { videoId: "qaVid1" }, snippet: { title: "Holiday baking tips", channelTitle: "Bake Club", publishedAt: "2025-12-01T00:00:00Z", thumbnails: {} } }] }));
+    });
+    const typeSearch = async (q) => {
+      await page.fill("#discoverSearchInput", q);
+      await page.locator("#discoverSearchInput").dispatchEvent("input");
+      await page.waitForTimeout(1200);
+    };
+    await typeSearch("baking");
+    check(ytCalls.length === 0, "the Watch list's search doesn't search YouTube", ytCalls.length);
+    await page.fill("#discoverSearchInput", "");
+    await page.locator("#discoverSearchInput").dispatchEvent("input");
+    await page.waitForTimeout(500);
+    const openSide = async (side) => {
+      await page.locator("#watchSidebarToggle").tap();
+      await page.waitForTimeout(250);
+      await page.locator(`#watchSidebar [data-watch-side="${side}"]`).tap();
+      await page.waitForTimeout(600);
+    };
+    await openSide("youtube");
+    const ytHome = await page.evaluate(() => ({
+      active: document.querySelector('#watchSidebar [data-watch-side="youtube"]').classList.contains("is-active"),
+      placeholder: document.getElementById("discoverSearchInput").placeholder,
+      filterHidden: document.querySelector("#watchPagePanel .discover-filter").hidden,
+      gridHidden: document.getElementById("watchPlannerGrid").hidden,
+      empty: !!document.querySelector("#discoverResults .watch-yt-empty"),
+    }));
+    check(ytHome.active && ytHome.placeholder === "Search YouTube…" && ytHome.filterHidden && ytHome.gridHidden, "YouTube is its own page in the menu", ytHome);
+    check(ytHome.empty, "…with a hint when nothing is saved yet", ytHome);
+    if (SHOT) await page.screenshot({ path: `${SHOT}-yt-empty-${width}.png` });
+    await typeSearch("baking");
+    const ytRes = await page.$$eval("#discoverResults .discover-card .discover-title", (t) => t.map((x) => x.textContent.trim()));
+    check(await page.locator("#discoverResults .discover-svc-label:visible").count() === 0, "…without a services heading");
+    check(ytCalls.length >= 1 && ytRes.length === 1 && /Holiday baking tips/.test(ytRes[0]), "its search searches YouTube only", { calls: ytCalls.length, ytRes });
+    if (SHOT) await page.screenshot({ path: `${SHOT}-yt-search-${width}.png` });
+    await page.locator("#discoverResults [data-save-key]").first().tap();
+    await page.waitForTimeout(200);
+    await page.fill("#discoverSearchInput", "");
+    await page.locator("#discoverSearchInput").dispatchEvent("input");
+    await page.waitForTimeout(800);
+    const savedList = await page.evaluate(() => ({ head: document.querySelector("#discoverResults .watch-yt-head")?.textContent, titles: [...document.querySelectorAll("#discoverResults .discover-title")].map((t) => t.textContent.trim()) }));
+    check(savedList.head === "Saved videos" && savedList.titles.length === 1, "a saved video is listed on the YouTube page", savedList);
+    if (SHOT) await page.screenshot({ path: `${SHOT}-yt-saved-${width}.png` });
+    await page.locator("#discoverResults .discover-card .discover-title").first().tap();
+    await page.waitForTimeout(400);
+    const frame = await page.evaluate(() => document.querySelector("#videoSurfaceOverlay iframe")?.getAttribute("src") || "");
+    check(/youtube\.com\/embed\/qaVid1/.test(frame), "tapping it plays it in the app", frame);
+    await page.evaluate(() => document.querySelector("#videoSurfaceOverlay .video-surface-close")?.click());
+    await page.waitForTimeout(200);
+    await page.locator("#discoverResults [data-save-key]").first().tap();
+    await page.waitForTimeout(800);
+    check(await page.locator("#discoverResults .watch-yt-empty").count() === 1, "un-saving takes it off the page");
+    await openSide("list");
+    const back = await page.evaluate(() => ({ grid: !document.getElementById("watchPlannerGrid").hidden, placeholder: document.getElementById("discoverSearchInput").placeholder, filter: !document.querySelector("#watchPagePanel .discover-filter").hidden }));
+    check(back.grid && back.filter && /movies, shows/.test(back.placeholder), "Watch list brings the list back", back);
 
     check(errors.length === 0, "no page errors", errors.slice(0, 3));
     await context.close();

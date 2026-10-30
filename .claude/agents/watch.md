@@ -119,6 +119,18 @@ changes to the Watch page only.
   popover at the same spot.
 - **No scroll bars (Luke, 2026-10-29):** the Watch list and its tab strip scroll without a
   visible bar (`scrollbar-width: none` + `::-webkit-scrollbar`), scoped to `#watchPagePanel`.
+- **YouTube page (Luke, 2026-10-29):** "YouTube" sits under "Watch list" in the sidebar
+  (`watchSideView`, device-only). Its search bar searches YouTube only; with no search it
+  lists the saved YouTube videos (`state.mediaSaved`, the bookmark on a result); tapping a
+  video plays it in the in-app player (`openVideoSurface`). **The Watch list's search leaves
+  YouTube out** — YouTube is only on its own page. The search filter is hidden there.
+- **No streaming-service bubble on posters (Luke, 2026-10-29):** the open panel lists the
+  services; "In theaters" / "Upcoming" / "Rent" chips still show.
+- **Menu text matches Listen's (2026-10-29):** `#watchSidebar` tabs share `#mediaSidebar`'s
+  17px text and 48px rows.
+- **The ring isn't clipped (2026-10-29):** `#watchPlannerGrid` reaches 6px into the page's
+  side padding and pads back, so the open poster's ring shows at both ends of a row without
+  shrinking the posters.
 - **Agreed, not built yet (WATCH_AUDIT.md "Decisions"):** per-tick merge of episode ticks
   and tabs; episode lists/showtimes in a device cache and trimmed providers; refresh
   where-to-watch on view after 7 days; two-line titles + grid/list toggle; hide empty
