@@ -22469,7 +22469,7 @@ function renderWatchPlanner() {
   updateTabIndicator(elements.watchPlannerGrid);
   placeWatchPanelPointer(elements.watchPlannerGrid);
   const open = expandedWatchItemId && watchItemById(expandedWatchItemId);
-  if (open) ensureWatchNextSeasonLoaded(open);
+  if (open) { ensureWatchNextSeasonLoaded(open); ensureWatchShownSeasonRuntimes(open); }
 }
 
 function watchDayTabTemplate(day, isActive) {
@@ -22841,7 +22841,6 @@ function watchItemTemplate(item) {
   const card = `
     <article class="do-task-item watch-item watch-card${expanded ? " is-expanded" : ""}" data-watch-item="${escapeHtml(item.id)}" aria-expanded="${expanded}" tabindex="0">
       <div class="watch-poster${posterUrl ? "" : " watch-poster--ph"}">
-        <span class="watch-badge watch-badge--${isTv ? "tv" : "movie"}">${isTv ? "TV" : "M"}</span>
         ${chip && chip.cls !== "stream" ? `<span class="watch-avail watch-avail--${chip.cls}">${escapeHtml(chip.label)}</span>` : ""}
         ${posterInner}
         ${pct != null ? `<div class="watch-progress" aria-hidden="true"><i style="width:${pct}%"></i></div>` : ""}
@@ -23117,10 +23116,7 @@ function watchEpisodeProgressHtml(item) {
       </div>
     `;
   }
-  const progress = item.seasonProgress || {};
-  const seasonsToShow = totalSeasons
-    ? Array.from({ length: totalSeasons }, (_, i) => i + 1)
-    : Object.keys(progress).map(Number).sort((a, b) => a - b);
+  const seasonsToShow = watchSeasonNumbers(item);
 
   if (!seasonsToShow.length) {
     return `
@@ -23131,6 +23127,29 @@ function watchEpisodeProgressHtml(item) {
   }
 
   return watchSeasonPickerHtml(item, seasonsToShow);
+}
+
+function watchSeasonNumbers(item) {
+  return item.totalSeasons
+    ? Array.from({ length: item.totalSeasons }, (_, i) => i + 1)
+    : Object.keys(item.seasonProgress || {}).map(Number).filter((n) => n > 0).sort((a, b) => a - b);
+}
+
+// Episode lengths (Luke, 2026-10-29) came with tmdb-season later than the lists:
+// a list saved before then has no `runtime` on any episode, so the shown season
+// reloads once per session to pick them up (a network call, not a Supabase read).
+const watchRuntimeRequested = new Set();
+function ensureWatchShownSeasonRuntimes(item) {
+  if (!item?.tmdbId || item.type !== "tv") return;
+  const seasons = watchSeasonNumbers(item);
+  if (!seasons.length) return;
+  const s = watchShownSeason(item, seasons);
+  const eps = item.episodeData?.[s] || [];
+  if (!eps.length || eps.some((e) => e && "runtime" in e)) return;
+  const key = `${item.id}:${s}`;
+  if (watchRuntimeRequested.has(key)) return;
+  watchRuntimeRequested.add(key);
+  loadWatchSeasonEpisodes(item.id, s);
 }
 
 // The season the panel shows: the one picked on this device, else the next
@@ -23205,6 +23224,7 @@ function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
           <input type="checkbox" class="watch-check" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" ${watchedEps[ep.episodeNumber] ? "checked" : ""} />
           <span class="watch-episode-num">${ep.episodeNumber}</span>
           <span class="watch-episode-name">${escapeHtml(ep.name || `Episode ${ep.episodeNumber}`)}</span>
+          ${ep.runtime ? `<span class="watch-episode-len">${escapeHtml(formatWatchRuntime(ep.runtime))}</span>` : ""}
         </label>
       `).join("")}
     </div>
@@ -24038,6 +24058,7 @@ async function loadWatchSeasonEpisodes(itemId, seasonNum) {
     const data = await response.json();
     if (!response.ok || !data.episodes?.length) return;
     if (!item.episodeData) item.episodeData = {};
+    if (JSON.stringify(item.episodeData[seasonNum]) === JSON.stringify(data.episodes)) return; // nothing new: no save
     item.episodeData[seasonNum] = data.episodes;
     persist();
     renderWatchPlanner();
