@@ -10,6 +10,8 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Watch: YouTube page, menu text, full poster ring, no service bubble** — "YouTube" in the Watch sidebar (YouTube-only search, saved videos, tap to play in the app; the Watch list's search leaves YouTube out); Watch menu text matches Listen's; the open poster's ring isn't cut off at the row ends; no streaming-service bubble on posters · #198 · iPhone via TestFlight now; on the web after the deploy: Watch › menu › YouTube, search, bookmark a video, clear the search (it's listed), tap it (it plays).
+
 - **Watch: season menu, ⋯ menu, no scroll bars** — the open panel shows one season at a time from a menu (opens on the next episode's season); Watched · Tabs · Remove moved into a ⋯ menu at the panel's top-right; no scroll bar on the Watch list or its tab strip · #197 · iPhone via TestFlight now; on the web after the deploy: open a show, pick another season, use ⋯ → Tabs.
 
 - **Watch: screen stays put, compact season tracker** — opening a season or ticking an episode no longer jumps the list to the top; Watched is a check in a circle; episode rows sit close together; season boxes are ~2/3 the old height · #196 · iPhone via TestFlight now; on the web after the deploy: scroll down to a show, open a season and tick an episode (the screen stays put).
