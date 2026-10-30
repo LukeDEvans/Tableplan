@@ -92,15 +92,23 @@ changes to the Watch page only.
   (`watchPendingRemovals`). All removals (panel, right-click, Archive) go through it.
 - **Seasons open/closed is device state (2026-10-29):** `watchOpenSeasons`, never synced;
   the old `seasonProgress[n].__expanded` is dropped on load.
-- **"+" window (2026-10-29):** titles already on the list are tagged **In your list** and
-  tapping one opens its panel (no second copy). **Link mode**
-  (`openWatchSearchDialog({ linkId })`): "Find the right title" on a show without a TMDB
-  match opens the window with its title; the tapped result fills in that same show. No
-  Paste-a-list import and no automatic matching (Luke adds titles one by one).
+- **No "+" to add a show (Luke, 2026-10-29):** shows are added only from the page's
+  search bar; the empty list's button focuses it. The tab "+" stays.
+- **"Find the right title" window (2026-10-29)** (`openWatchSearchDialog({ linkId })`, now
+  link-only): a show without a TMDB match opens it with its title; the tapped result fills
+  in that same show. Results already on the list are tagged **In your list** and can't be
+  picked. No Paste-a-list import and no automatic matching (Luke adds titles one by one).
+- **Services in the panel (Luke, 2026-10-29):** no "Your services" / "Other services"
+  headings. Your services are buttons; services outside them fold into one
+  **Other services** button (same look) that opens `#watchOtherServicesDialog` naming them
+  (each still opens its service).
+- **A short list starts at the top (2026-10-29):** `.watch-list-panel`, `.watch-sections`
+  and `.watch-section` pack their rows at the top (`align-content: start`); without it the
+  stretched grid put a short list mid-screen and pushed Movies and TV Shows apart.
 - **Agreed, not built yet (WATCH_AUDIT.md "Decisions"):** per-tick merge of episode ticks
   and tabs; episode lists/showtimes in a device cache and trimmed providers; refresh
-  where-to-watch on view after 7 days; two-line titles + grid/list toggle; "Add" in the
-  search row and hide empty Upcoming / In Theaters; Archive window actions; Continue
+  where-to-watch on view after 7 days; two-line titles + grid/list toggle; hide empty
+  Upcoming / In Theaters; Archive window actions; Continue
   watching row; Sort + Filter; "Finished — move to Archive?"; housekeeping.
 
 ## Domain landmines (do NOT change without flagging)

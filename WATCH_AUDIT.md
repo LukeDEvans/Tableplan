@@ -11,12 +11,14 @@
 | 1 · Phone actions (R1) | **B:** Watched · Tabs · Remove buttons in the tapped poster's panel (right-click stays on the laptop). Panel opens **under the whole row** (row stays put; later posters backfill via `grid-auto-flow: dense`), with a **pointer** on the panel's top edge that **slides** between posters in the same row (like the category-tab underline) and the **ring** on the open poster. Tap again closes; scroll the panel into view. No dimming of other posters. |
 | 2 · Episode tracker (L1, R7) | **B:** fix the layout (small checks, number + full title, "Season 3 · 5/8" + thin bar) **plus a "Next: S3 E6 · title [✓ Watched]" line** at the top of the panel (▶ to the episode when the stream link exists). Season open/closed state stays per device, not synced. |
 | 3 · Remove (R4) | **A:** delayed remove — vanishes at once, ~6 s "Removed *X* · Undo" toast (Mail's toast); nothing saved/synced until it expires. |
-| 4 · Link a plain title (R5) | **A:** "Find on TMDB" opens the + search window in link mode, prefilled; tap the right result (progress kept). **+ window dedupe (R8):** titles already on the list show "In your list"; tapping opens that show's panel. |
+| 4 · Link a plain title (R5) | **A:** "Find the right title" opens the search window prefilled; tap the right result (progress kept). Titles already on the list show "In your list" and can't be picked. (The window no longer adds shows — see 9.) |
 | 5 · Concurrent edits (R3) | **Per-tick merge:** each episode tick and tab change carries its own time; two people ticking different episodes both stick. Shared merge infra — tests first. |
 | 6 · Sync size (R7) | **Cache extras + trim:** episode lists and showtimes in a device cache (refetched as needed); where-to-watch trimmed to service name + id. |
 | 7 · Freshness (R6) | **Refresh on view:** shows on screen older than 7 days refresh a few at a time via the Netlify function; clears stale "In theaters". |
 | 8 · Posters (L2) | Keep four a row, **two-line titles**, plus a **grid/list toggle** (per device; list rows: poster, title, service, progress). |
-| 9 · Tab bar (L4) | Add-title "+" moves into the search row as **"Add"**; **Upcoming / In Theaters show only when non-empty**. |
+| 9 · Tab bar (L4) | **The add-title "+" is removed** (built 2026-10-29) — the search bar adds shows (revised from "Add" in the search row); **Upcoming / In Theaters show only when non-empty** (not built yet). |
+| 15 · Short list (2026-10-29) | **Shows start at the top** of the list, not mid-screen (built; also closes the Movies/TV gap, L7). |
+| 16 · Services (2026-10-29) | **No "Your services" / "Other services" headings** in the panel; services outside yours fold into an **"Other services"** button (same look) that opens a window naming them (built). |
 | 10 · Archive (L6) | **Keep the window**, fix poster placeholders, add **Watch again · Edit rating/notes · Remove** (reachable on the phone). |
 | 11 · Housekeeping | Yes, all: remove dead planner code (leave the `watchPlans` key), keep theater `placeId` (R10), tombstone a pristine un-save from search (R8), theme tokens for the ~40 hard-coded colours (L5), close the Movies/TV gap (L7). |
 | 12 · Continue watching (U2) | **Row at the top**, only when something's in progress ("Next: S3 E6 · HBO Max ▶"); tap opens the panel. |

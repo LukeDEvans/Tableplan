@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Headless QA for the Watch show panel (Luke, 2026-10-29): the panel opens under
+// Headless QA for the Watch page (Luke, 2026-10-29): the show panel opens under
 // the whole row (the row stays put), a pointer marks the open poster and slides
 // within a row, Watched · Tabs · Remove work by tapping, Remove has Undo, the
 // Next-episode line ticks an episode, the tracker's check boxes are small, a
-// season's open state isn't saved, and the "+" window links a plain title and
-// tags titles already on the list.
+// season's open state isn't saved, "Find the right title" links a plain title
+// and tags titles already on the list, there's no "+" to add a show (the search
+// bar does that), a short list starts at the top, and services outside yours
+// sit behind an "Other services" button.
 //
 //   node scripts/qa-watch-panel.mjs [url]   (default http://localhost:4174/; needs `npm run dev:local`)
 //   TMDB is mocked; nothing leaves the machine. QA_WATCH_SHOT=/path/prefix → screenshots.
@@ -95,6 +97,32 @@ try {
     check(geo.below, "the panel opens under the whole row");
     check(geo.ptrX != null && Math.abs(geo.ptrX - geo.posterX) <= 2, "the pointer points at the open poster", geo);
     if (SHOT) await page.screenshot({ path: `${SHOT}-panel-${width}.png` });
+
+    // Services: no "Your services" / "Other services" headings; services outside
+    // yours fold into one "Other services" button that opens a window (Luke, 2026-10-29).
+    const m2 = `qa-m2-${globalThis.__qaR ?? R}`;
+    await page.waitForSelector(`[data-watch-detail="${m2}"] [data-watch-other-services]`, { timeout: 8000 }).catch(() => {});
+    check(await page.locator(`[data-watch-detail="${m2}"] .discover-svc-label`).count() === 0, "the panel has no services headings");
+    const otherBtn = page.locator(`[data-watch-detail="${m2}"] [data-watch-other-services]`);
+    check(await otherBtn.count() === 1, "services outside yours fold into an 'Other services' button");
+    if (await otherBtn.count()) {
+      const looks = await page.evaluate((id) => {
+        const b = document.querySelector(`[data-watch-detail="${id}"] [data-watch-other-services]`);
+        return b.classList.contains("discover-svc") && getComputedStyle(b).borderRadius === "999px";
+      }, m2);
+      check(looks, "…styled like the service buttons");
+      await otherBtn.tap();
+      await page.waitForTimeout(250);
+      const win = await page.evaluate(() => {
+        const d = document.getElementById("watchOtherServicesDialog");
+        return { open: d.open, title: d.querySelector("#watchOtherServicesTitle").textContent, services: [...d.querySelectorAll("#watchOtherServicesBody .discover-svc")].map((b) => b.textContent.trim()) };
+      });
+      check(win.open && win.title === "Past Lives" && win.services.join() === "Max", "…which opens a window naming the other services", win);
+      if (SHOT) await page.screenshot({ path: `${SHOT}-other-${width}.png` });
+      await page.locator("#closeWatchOtherServicesBtn").tap();
+      await page.waitForTimeout(200);
+      check(!(await page.evaluate(() => document.getElementById("watchOtherServicesDialog").open)), "…and closes");
+    }
 
     // Another poster in the same row: the pointer slides; the panel doesn't re-animate.
     await page.locator(`[data-watch-item="qa-m4-${globalThis.__qaR ?? R}"]`).tap();
@@ -208,23 +236,38 @@ try {
     check(await page.inputValue("#watchSearchDialogInput") === "Some Title From Notes", "Find starts with the show's title");
     check(/Find the right title/.test(await page.locator("#watchSearchDialog h2").textContent()), "…in link mode");
     if (SHOT) await page.screenshot({ path: `${SHOT}-link-${width}.png` });
+    const tags = await page.locator("#watchSearchDialogResults .watch-result-tag").allTextContents();
+    check(tags.length === 1 && tags[0] === "In your list", "a result already on the list is tagged", tags);
+    await page.locator("#watchSearchDialogResults .watch-tmdb-result").nth(1).tap();
+    await page.waitForTimeout(250);
+    check(await page.evaluate(() => document.getElementById("watchSearchDialog").open), "…and can't be picked to link");
     await page.locator("#watchSearchDialogResults .watch-tmdb-result").first().tap();
     await page.waitForTimeout(300);
     const linked = await page.evaluate(() => window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-m5-${globalThis.__qaR ?? R}`));
     check(linked?.tmdbId === 111 && linked?.title === "Some Title From Notes", "the tapped result links that show (same entry)", linked && { tmdbId: linked.tmdbId, title: linked.title });
 
-    // "+" window: In your list.
-    const countBefore = await page.evaluate(() => window.__liveQA.watchItemsForQa().length);
-    await page.evaluate(() => document.querySelector("[data-open-watch-search]")?.click());
-    await page.fill("#watchSearchDialogInput", "opp");
-    await page.waitForSelector("#watchSearchDialogResults .watch-tmdb-result", { timeout: 5000 });
-    const tags = await page.locator("#watchSearchDialogResults .watch-result-tag").allTextContents();
-    check(tags.length === 2 && tags.every((t) => t === "In your list"), "titles already on the list are tagged", tags);
-    await page.locator("#watchSearchDialogResults .watch-tmdb-result").nth(1).tap();
-    await page.waitForTimeout(400);
-    const countAfter = await page.evaluate(() => window.__liveQA.watchItemsForQa().length);
-    check(countAfter === countBefore, "tapping one adds no copy", { countBefore, countAfter });
-    check(await page.locator(`[data-watch-detail="qa-m1-${globalThis.__qaR ?? R}"]`).count() === 1, "…and opens its panel");
+    // No "+" to add a show: the search bar does that (Luke, 2026-10-29). The tab "+" stays.
+    check(await page.locator(".watch-category-bar [data-open-watch-search], .watch-corner-btn").count() === 0, "no '+' to add a show beside the tabs");
+    check(await page.locator(".watch-category-bar [data-watch-category-add]").count() === 1, "…the '+' that adds a tab is still there");
+
+    // A short list starts at the top of the list area, not the middle (Luke, 2026-10-29).
+    for (const [label, kinds] of [["TV only", ["tv", "tv", "tv"]], ["movies and TV", ["movie", "tv", "movie", "tv"]]]) {
+      await page.evaluate((items) => window.__liveQA.watchSeedForQa(items), kinds.map((type, i) => ({ id: `qa-s${i}-${R}-${label.length}`, type, title: `Short ${i}`, tmdbId: 8000 + i })));
+      await page.waitForTimeout(300);
+      const gaps = await page.evaluate(() => {
+        const list = document.querySelector(".watch-list-panel").getBoundingClientRect().top;
+        const heads = [...document.querySelectorAll(".watch-section-head")].map((h) => h.getBoundingClientRect());
+        const grids = [...document.querySelectorAll(".watch-grid")].map((g) => g.getBoundingClientRect());
+        return { firstPoster: Math.round(grids[0].top - list), headToGrid: Math.round(grids[0].top - heads[0].bottom), between: heads[1] ? Math.round(heads[1].top - grids[0].bottom) : null };
+      });
+      check(gaps.firstPoster < 60 && gaps.headToGrid < 16 && (gaps.between === null || gaps.between < 40), `a short list (${label}) starts at the top`, gaps);
+      if (SHOT) await page.screenshot({ path: `${SHOT}-short-${label.length}-${width}.png` });
+    }
+    await page.evaluate(() => document.querySelector("[data-watch-focus-search]") === null);
+    await page.evaluate(() => window.__liveQA.watchSeedForQa([]));
+    await page.waitForTimeout(300);
+    await page.locator("[data-watch-focus-search]").tap();
+    check(await page.evaluate(() => document.activeElement?.id === "discoverSearchInput"), "the empty list's button goes to the search bar");
 
     check(errors.length === 0, "no page errors", errors.slice(0, 3));
     await context.close();
