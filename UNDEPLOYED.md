@@ -10,6 +10,8 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Messaging step 1: encryption core** — Signal's protocol (X3DH + Double Ratchet) on libsodium in `messaging/crypto/`, plus the message envelope; not wired into the app yet, so nothing visible changes and the app's bundle is unchanged (MESSAGING_DESIGN.md §15–16) · #200 · none.
+
 - **Watch: episode lengths, no TV/M badge** — each episode in a show's panel shows its length when TMDB has it (`tmdb-season` now returns `runtime`; older saved lists reload once per session); posters drop the TV / M badge · #199 · **needs the Netlify deploy** for lengths (server function; the phone calls it too); badge removal is on the iPhone via TestFlight now. After the deploy: open a TV show — its episodes show lengths.
 
 - **Watch: YouTube page, menu text, full poster ring, no service bubble** — "YouTube" in the Watch sidebar (YouTube-only search, saved videos, tap to play in the app; the Watch list's search leaves YouTube out); Watch menu text matches Listen's; the open poster's ring isn't cut off at the row ends; no streaming-service bubble on posters · #198 · iPhone via TestFlight now; on the web after the deploy: Watch › menu › YouTube, search, bookmark a video, clear the search (it's listed), tap it (it plays).
