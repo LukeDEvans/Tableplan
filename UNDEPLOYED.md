@@ -10,6 +10,8 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Watch: episode lengths, no TV/M badge** — each episode in a show's panel shows its length when TMDB has it (`tmdb-season` now returns `runtime`; older saved lists reload once per session); posters drop the TV / M badge · #199 · **needs the Netlify deploy** for lengths (server function; the phone calls it too); badge removal is on the iPhone via TestFlight now. After the deploy: open a TV show — its episodes show lengths.
+
 - **Watch: YouTube page, menu text, full poster ring, no service bubble** — "YouTube" in the Watch sidebar (YouTube-only search, saved videos, tap to play in the app; the Watch list's search leaves YouTube out); Watch menu text matches Listen's; the open poster's ring isn't cut off at the row ends; no streaming-service bubble on posters · #198 · iPhone via TestFlight now; on the web after the deploy: Watch › menu › YouTube, search, bookmark a video, clear the search (it's listed), tap it (it plays).
 
 - **Watch: season menu, ⋯ menu, no scroll bars** — the open panel shows one season at a time from a menu (opens on the next episode's season); Watched · Tabs · Remove moved into a ⋯ menu at the panel's top-right; no scroll bar on the Watch list or its tab strip · #197 · iPhone via TestFlight now; on the web after the deploy: open a show, pick another season, use ⋯ → Tabs.
