@@ -311,10 +311,13 @@ describe("session repair and devices", () => {
     await laptop.account.finishLink();
     clock += 61 * 1000;
     await wife.engine.sendText(c.id, "after");
-    expect(await laptop.engine.receive()).toMatchObject({ received: 0 }); // held: conversation unknown here yet
-    await lukePhone.engine.receive(); // the phone notices its new sibling and sends the conversation's shape
+    // Marijane's device writes to the laptop for the first time, so it also sends the
+    // conversation's shape (§18): the laptop shows the message straight away.
     await laptop.engine.receive();
-    expect(await texts(laptop, c.id)).toEqual(["after"]); // released; "before" was never sent to it
+    expect(await texts(laptop, c.id)).toEqual(["after"]); // "before" was never sent to it
+    await lukePhone.engine.receive(); // the phone notices its new sibling and sends the shape too
+    await laptop.engine.receive();
+    expect(await texts(laptop, c.id)).toEqual(["after"]);
     expect((await laptop.engine.conversations()).map((x) => x.id)).toEqual([c.id]);
   });
 

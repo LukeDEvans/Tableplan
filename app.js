@@ -3399,6 +3399,7 @@ async function initializeSupabaseAuth() {
         purgeLocalCadenceContent(),
         purgeLocalMusicContent(),
         purgeLocalFinanceTxnStore(),
+        purgeLocalMessaging(), // the old session is already gone here, so only the local wipe happens
         syncShareTokenForSession(false),
       ]);
       window.location.reload();
@@ -4590,6 +4591,7 @@ async function toggleAuth() {
       Promise.allSettled([pendingFlush, removePushSubscriptionForSignOut()]),
       new Promise((resolve) => window.setTimeout(resolve, SIGN_OUT_FLUSH_TIMEOUT_MS)),
     ]);
+    const messagingHeaders = supabaseHeaders(); // still this account's token: lets the device removal through
     authSession = null;
     sharedStorageReady = false;
     activeSharedStorageProvider = null;
@@ -4609,6 +4611,7 @@ async function toggleAuth() {
     purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
     purgeLocalMusicContent();   // same: drop local uploaded-music blobs (live-music IDB)
     purgeLocalFinanceTxnStore(); // same: drop the durable-transaction mirror (live-finance-txns IDB)
+    await purgeLocalMessaging(messagingHeaders); // secure messages: remove this device from the account, delete its store and key
     await syncShareTokenForSession(false); // the iPhone Share Extension stops sending receipts for this account
     try {
       await supabaseClient.auth.signOut();
@@ -9221,6 +9224,30 @@ function setMessagesUnread(on) {
   messagesUnread = Boolean(on);
   setPageNotifCount("messages", messagesUnread ? 1 : 0);
 }
+// Sign-out / account switch (MESSAGING_DESIGN.md §18 finding 2): remove this device
+// from secure messages (when a token is still at hand), close the Messages tab and the
+// badge's connections, delete the local store, and on iPhone the Keychain key.
+async function purgeLocalMessaging(headersSnapshot = null) {
+  try {
+    const { forgetMessagingOnThisDevice } = await import("./messaging/signout.js");
+    const keys = nativeMessagingKeys();
+    await forgetMessagingOnThisDevice({
+      baseUrl: () => supabaseBaseUrl(),
+      headers: () => headersSnapshot || supabaseHeaders(),
+      getRawWrapKey: keys ? async () => { const { key } = await keys.wrapKey(); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); } : async () => null,
+      destroyKey: async () => { await keys?.destroy?.(); },
+      beforeDelete: async () => {
+        messagesUi?.destroy?.();
+        messagesUi = null;
+        messagesUiLoading = null;
+        try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }
+      },
+    });
+  } catch (e) {
+    console.warn("Messaging purge skipped:", e);
+  }
+}
+
 async function peekMessages() {
   if (localDevMode || !authSession?.user?.id || document.visibilityState !== "visible") return;
   if (activeAppArea === "mail" && currentMessageTab() === "messages") return; // the tab itself is fetching

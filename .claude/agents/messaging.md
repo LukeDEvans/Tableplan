@@ -79,7 +79,31 @@ as security-critical.
   `test/messaging-pglite-harness.js` (PGlite) + `test/messaging-account.test.js`,
   `test/messaging-engine.test.js`; `scripts/check-messaging-migration.mjs` for the
   SQL access rules. The `msg_` tables are LIVE (applied 2026-10-30) — any change is
-  a new, gated migration.
+  a new, gated migration. The harness and the check script apply **every** messaging
+  migration in order (`2026-10-30-messaging.sql`, `2026-10-31-messaging-limits.sql`);
+  add a new one to both lists.
+- `messaging/signout.js` — sign-out and account switch forget messaging on the device
+  (remove the device, delete the store, destroy the Keychain key). Wired from app.js
+  `purgeLocalMessaging`.
+
+## App-layer rules from the second review (MESSAGING_DESIGN.md §18) — keep them
+- Receive has **no cursor**: rows are fetched from the start and tracked by id
+  (`doneRows`); a decrypted envelope is parked (`pend:<rowId>`) under the same lock
+  that stores its session record, then filed.
+- Session repair **adds** a session; never discard existing sessions.
+- Fan-out seals **per device** and skips the unreachable; status "failed" (Not
+  delivered · Retry) only when no one else got it. A device written to for the first
+  time is sent the conversation's shape (`introduce`).
+- A **verified** contact whose code changed blocks sending (`SAFETY_CHANGED`) until
+  acknowledged; unverified ones only show the notice (decision 9).
+- Leaving / removal / a leave from my other device **erases** the conversation's
+  messages here. Held messages: 7 days, 1000 total.
+- Only the phone removes devices; a removed phone re-registers under the same identity.
+- Read receipts off hides others' receipts too.
+- Server limits (migration 2026-10-31): ciphertext ≤ 32768 chars, 3000 queued rows/hour
+  per person, 2000 waiting rows per device, 200 prekey claims/hour; `last_seen_at`
+  isn't readable. Envelope limits (`LIMITS`) must keep the largest envelope under the
+  ciphertext cap.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are

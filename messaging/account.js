@@ -59,7 +59,7 @@ function decodeLink(b) {
 }
 
 export class MessagingError extends Error {
-  constructor(code, message) { super(message); this.code = code; }
+  constructor(code, message, details = null) { super(message); this.code = code; this.details = details; }
 }
 
 const certFromRow = (row, identitySignPub) => ({
@@ -109,6 +109,23 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
       let a = await account();
       if (a && a.userId === userId && a.state === "ready") return status();
       const [existing] = await server.identities([userId]);
+      if (a && a.userId === userId && a.kind === "phone" && a.state === "removed") {
+        if (existing && existing.sign_pub === toB64(a.identitySignPub)) {
+          // This phone's device was removed but its identity is still mine: register a
+          // fresh device under the same identity (a removed device can't come back).
+          const device = generateDevice();
+          const createdAt = now();
+          const deviceId = newId();
+          const cert = { userId, identitySignPub: a.identitySignPub, deviceId, kind: "phone", signPub: device.signPub, dhPub: device.dhPub, createdAt };
+          await store.set("spk", { current: generateSignedPrekey(device, 1, createdAt), previous: [] });
+          await store.remove("opk");
+          for (const k of await store.keys("sess:")) await store.remove(k);
+          a = { ...a, deviceId, device, cert, sigs: certifyDevice(a.identity, device, cert), state: "registering" };
+          await store.set("account", a);
+        } else {
+          a = null; // reset elsewhere: this is a new phone (replaceExisting decides)
+        }
+      }
       if (!a || a.userId !== userId || a.kind !== "phone") {
         if (existing && !replaceExisting) {
           throw new MessagingError("IDENTITY_EXISTS", "Messaging is already set up on another phone.");
@@ -202,6 +219,7 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
       if (!verifyDeviceCert(a.identitySignPub, cert, sigs)) throw new MessagingError("BAD_LINK", "That link code's signature doesn't check out.");
       if (!verifySignedPrekey(cert.signPub, spk, now())) throw new MessagingError("BAD_LINK", "That link code has expired. Start again on the other device.");
       await server.registerDevice(rowFor(cert, sigs, spk, p.l));
+      await store.set("ownDevicesChangedAt", now()); // the engine re-reads my devices before its next send
       return { label: p.l || "device", deviceId: p.d };
     });
   }
@@ -327,7 +345,10 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
         pin = pins[uid] = { signPub: key, verified: false, firstSeenAt: now() };
         pinsChanged = true;
       } else if (!equalBytes(pin.signPub, key)) {
-        pin = pins[uid] = { signPub: key, verified: false, changed: true, changedAt: now(), firstSeenAt: pin.firstSeenAt };
+        // A key I'd verified changed: sending to them stops until I acknowledge it
+        // (engine ensureSendable; §18 finding 7). An unverified change only shows the notice.
+        const blocked = Boolean(pin.verified || pin.blocked);
+        pin = pins[uid] = { signPub: key, verified: false, changed: true, blocked, changedAt: now(), firstSeenAt: pin.firstSeenAt };
         pinsChanged = true;
       }
       const trusted = uid === userId ? a.identitySignPub : pin.signPub;
@@ -342,7 +363,7 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
           spk: { id: row.spk_id, pub: fromB64(row.spk_pub), sig: fromB64(row.spk_sig), createdAt: Number(row.spk_created_at_ms) },
         });
       }
-      people[uid] = { identitySignPub: trusted, verified: uid === userId || Boolean(pin?.verified), changed: Boolean(pin?.changed), devices };
+      people[uid] = { identitySignPub: trusted, verified: uid === userId || Boolean(pin?.verified), changed: Boolean(pin?.changed), blocked: uid !== userId && Boolean(pin?.blocked), devices };
     }
     if (pinsChanged) await store.set("pins", pins);
     return { people };
@@ -378,7 +399,7 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
     try { bytes = fromB64(String(scannedText).trim()); } catch { return false; }
     const ok = matchSafetyQr(bytes, { userId, signPub: a.identitySignPub }, { userId: otherId, signPub: pin.signPub });
     if (ok) {
-      pins[otherId] = { ...pin, verified: true, changed: false, verifiedAt: now() };
+      pins[otherId] = { ...pin, verified: true, changed: false, blocked: false, verifiedAt: now() };
       await store.set("pins", pins);
     }
     return ok;
@@ -387,7 +408,15 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
   // After comparing the 60 digits by eye (the fallback when scanning isn't possible).
   async function markVerified(otherId, verified = true) {
     const { pins, pin } = await pinFor(otherId);
-    pins[otherId] = { ...pin, verified: Boolean(verified), changed: verified ? false : pin.changed, verifiedAt: verified ? now() : null };
+    pins[otherId] = { ...pin, verified: Boolean(verified), changed: verified ? false : pin.changed, blocked: verified ? false : pin.blocked, verifiedAt: verified ? now() : null };
+    await store.set("pins", pins);
+  }
+
+  // "Send anyway" after a verified contact's security code changed: allows sending
+  // again; they stay unverified (and the notice stays) until verified afresh.
+  async function acknowledgeChange(otherId) {
+    const { pins, pin } = await pinFor(otherId);
+    pins[otherId] = { ...pin, blocked: false };
     await store.set("pins", pins);
   }
 
@@ -403,6 +432,10 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
     const a = await account();
     if (!a || a.state !== "ready") throw new MessagingError("NOT_READY", "Messaging isn't set up on this device.");
     if (deviceId === a.deviceId && a.kind === "phone") throw new MessagingError("IS_PHONE", "Use Reset messaging to replace this phone.");
+    if (a.kind !== "phone") {
+      const row = await server.device(deviceId);
+      if (row?.kind === "phone") throw new MessagingError("NOT_PHONE", "Only your phone can remove your phone — use Reset messaging there.");
+    }
     await server.removeDevice(deviceId);
     if (deviceId === a.deviceId) { a.state = "removed"; await store.set("account", a); }
   }
@@ -428,7 +461,7 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
   return {
     status, setupPhone, startLink, approveLink, finishLink, maintain,
     prekeyState, commitPrekeyUse, resolveDevices,
-    safetyNumberWith, safetyQrWith, confirmSafetyScan, markVerified,
+    safetyNumberWith, safetyQrWith, confirmSafetyScan, markVerified, acknowledgeChange,
     myDevices, removeDevice, reset, me,
   };
 }

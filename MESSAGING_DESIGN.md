@@ -370,3 +370,31 @@ Who can message whom: people sharing a household group or business space (`msg_c
 - The crypto-chunk integrity check (§2).
 - Daily cleanup: `msg_prune()` is now called from the daily maintenance function (`daily-briefing.js`) — live once deployed.
 - **Deploy** (Luke's OK required) + TestFlight build; then Marijane installs TestFlight, sets up on her phone, and links her browser.
+
+---
+
+## 18. Second review — the app layer (2026-10-30)
+
+A second separate agent attacked everything above the crypto core (account, engine, keystore, server functions, sign-out) the way §16 attacked the core. Every finding below was fixed before merging, and each has a test that fails when its fix is reverted (`test/messaging-engine-review.test.js`, plus the account tests and `scripts/check-messaging-migration.mjs`; confirmed by planting each bug back).
+
+**Fixed:**
+1. *(P0)* Leaving or being removed kept the conversation's messages on the device indefinitely (the sweep skipped left conversations). → Leaving, removal, or a leave from another of my devices erases them at once; the sweep also cleans any left conversation.
+2. *(P0)* Signing out (or switching accounts) left the keys and plaintext in the browser for the next person. → `messaging/signout.js`: the device is removed from the account, the store deleted and the Keychain wrapping key destroyed, on sign-out and account switch.
+3. *(P1)* One forged inbox row (the server can add one) made session repair discard the working session, losing every message already in flight. → Repair adds a session; it never discards existing ones.
+4. *(P1)* The inbox cursor skipped a row committed after a higher id had been fetched (ids are handed out before commit). → No cursor: rows are fetched from the start and tracked by id once handled.
+5. *(P1)* A failure part-way through receiving (an acknowledgement lost, the app stopped) could duplicate messages or mark real ones undecryptable. → A decrypted envelope is parked under the same lock that stores its session record, and filed on the next run.
+6. *(P1)* One unreachable device (an old browser with an expired signed prekey) stopped the whole send. → Each device is sealed separately and skipped if unreachable; the sender sees **Not delivered · Retry** only when nobody else got it.
+7. *(P1)* A contact I'd verified changing their security code only showed a notice. → Sending to them is refused until I check the new code or choose Send anyway (decision 9 is unchanged for contacts never verified).
+8. *(P1)* A linked browser could remove the phone, leaving the account without its trusted device. → Only the phone removes devices; a phone that was removed anyway sets itself up again under the same identity (contacts see no code change).
+9. *(P1)* Anyone with a contact could flood their inbox. → Migration `2026-10-31-messaging-limits.sql`: 3000 queued rows an hour per person, 2000 waiting rows per device, 32768 characters per message.
+10. *(P2)* Leaving on one of my devices didn't close the conversation on the others.
+11. *(P2)* Messages held for unknown conversations weren't bounded. → Kept 7 days, at most 1000.
+12. *(P2)* With read receipts off, I still saw other people's. → Off hides both ways (Signal's rule).
+13. *(P2)* Two tabs could overwrite each other's conversation changes. → One lock per conversation for every local read-then-write.
+14. *(P3)* Contacts could read when each of my devices was last used, and drain my one-time prekeys. → `last_seen_at` is no longer readable; 200 prekey claims an hour per person.
+
+**Found while fixing:** a contact who set up again (new install or reset) never received an existing conversation — their new device held its messages forever. Now a device I'm writing to for the first time is sent the conversation's shape (group, then timer) right after the message, which releases it. And in the UI check: a browser linked moments before a new conversation missed it (the phone's one-minute device cache) — linking now refreshes the phone's list of its own devices, and a copy of my own message for a conversation a device hasn't learned yet is held and released like any other.
+
+**Verified:** 114 messaging tests (`test/messaging-*.test.js`) against PGlite with both migrations; 13 of the fixes confirmed by planting the bug back (each makes tests fail); `npm run qa:messaging-ui` 28/28, now including sign-out (device removed, store deleted); crypto QA passes; full suite 3215 passing; build passes.
+
+**Migration 2026-10-31** is additive (no DROP), re-runnable, and checked by `scripts/check-messaging-migration.mjs` (89 checks over both migrations).

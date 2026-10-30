@@ -148,7 +148,7 @@ export async function mountMessages(root, deps) {
         const preview = !last ? "No messages yet" : last.type === "card" ? `${CARD_LABEL[last.body.kind] || "Card"}: ${last.body.snapshot.title}` : last.type === "deleted" ? "Message deleted" : last.body.text;
         return `<li><button type="button" class="msg-conv" data-act="open" data-id="${esc(c.id)}">
           <span class="msg-conv-title">${esc(convTitle(c))}${c.unread ? `<span class="msg-dot" aria-label="${c.unread} unread"></span>` : ""}</span>
-          <span class="msg-conv-preview">${esc(preview).slice(0, 140)}</span>
+          <span class="msg-conv-preview">${esc(String(preview).slice(0, 140))}</span>
           <span class="msg-conv-meta">${c.timerSecs ? `⏱ ${esc(timerLabel(c.timerSecs))}` : ""}${last ? ` · ${esc(timeLabel(last.sentAtMs))}` : ""}</span>
         </button></li>`;
       }));
@@ -168,7 +168,11 @@ export async function mountMessages(root, deps) {
       const others = c.members.filter((m) => m !== userId);
       const changed = others.filter((m) => people[m]?.changed);
       const unverified = others.filter((m) => people[m] && !people[m].verified);
-      const banner = changed.length
+      const blocked = others.filter((m) => people[m]?.blocked);
+      const banner = blocked.length
+        ? `<div class="msg-banner msg-banner-warn" role="alert">${esc(blocked.map(nameOf).join(", "))}'s security code changed since you verified it. Messages won't send until you check it.
+            <button type="button" class="link-btn" data-act="verify" data-id="${esc(blocked[0])}">Verify again</button> · <button type="button" class="link-btn" data-act="ack-change" data-id="${esc(blocked[0])}">Send anyway</button></div>`
+        : changed.length
         ? `<div class="msg-banner msg-banner-warn">${esc(changed.map(nameOf).join(", "))}'s security code changed. <button type="button" class="link-btn" data-act="verify" data-id="${esc(changed[0])}">Verify</button></div>`
         : unverified.length ? `<div class="msg-banner">Not verified · <button type="button" class="link-btn" data-act="verify" data-id="${esc(unverified[0])}">Verify</button></div>` : "";
       const msgs = await engine.messages(c.id);
@@ -181,7 +185,9 @@ export async function mountMessages(root, deps) {
         if (m.type === "deleted") body = `<span class="msg-muted">Message deleted</span>`;
         else if (m.type === "card") body = cardHtml(m);
         else body = `<span class="msg-text">${esc(m.body.text)}</span>`;
-        const read = mine && m === lastMine && Object.keys(m.readBy || {}).length ? `<span class="msg-read">Read</span>` : "";
+        const read = mine && m.status === "failed"
+          ? `<span class="msg-read">Not delivered · <button type="button" class="link-btn" data-act="retry" data-id="${esc(m.id)}">Retry</button></span>`
+          : mine && m === lastMine && Object.keys(m.readBy || {}).length ? `<span class="msg-read">Read</span>` : "";
         const menu = m.type !== "deleted" ? `<button type="button" class="msg-more" data-act="msg-menu" data-id="${esc(m.id)}" aria-label="Message options">⋯</button>` : "";
         return `<li class="msg-bubble ${mine ? "is-mine" : ""}">${who}${body}<span class="msg-time">${esc(timeLabel(m.sentAtMs))}</span>${read}${menu}</li>`;
       });
@@ -239,7 +245,7 @@ export async function mountMessages(root, deps) {
       const p = await engine.prefs();
       return frame(`<h3 class="msg-sub">Your devices</h3>
         <ul class="msg-members">${devices.map((d) => `<li>${esc(d.label || (d.kind === "phone" ? "iPhone" : "Browser"))} <span class="msg-muted">${d.kind === "phone" ? "phone" : "linked"}${d.thisDevice ? " · this device" : ""}</span>
-          ${!d.thisDevice || d.kind !== "phone" ? `<button type="button" class="link-btn" data-act="remove-device" data-id="${esc(d.deviceId)}">Remove</button>` : ""}</li>`).join("")}</ul>
+          ${(st.kind === "phone" ? !d.thisDevice : d.kind !== "phone") ? `<button type="button" class="link-btn" data-act="remove-device" data-id="${esc(d.deviceId)}">Remove</button>` : ""}</li>`).join("")}</ul>
         ${st.kind === "phone" ? `<div class="msg-row">${deps.nativeQrScan?.() ? `<button type="button" class="primary-btn" data-act="scan-link">Link a device</button>` : ""}
           <button type="button" class="secondary-btn" data-act="paste-link">Paste a link code</button></div>` : ""}
         <label class="msg-toggle-row"><span>Read receipts<br><span class="msg-muted">Off also hides others' receipts from you.</span></span><input type="checkbox" class="live-toggle" data-act-change="receipts" ${p.readReceipts ? "checked" : ""}></label>
@@ -293,7 +299,9 @@ export async function mountMessages(root, deps) {
     ui.busy = true;
     ui.error = "";
     try { await fn(); } catch (e) {
-      ui.error = e instanceof MessagingError || e?.message ? e.message : String(e);
+      ui.error = e?.code === "SAFETY_CHANGED"
+        ? `${(e.details?.userIds || []).map(nameOf).join(", ")}'s security code changed since you verified it. Verify again, or choose Send anyway in the notice.`
+        : e instanceof MessagingError || e?.message ? e.message : String(e);
       await render();
     } finally { ui.busy = false; }
   }
@@ -400,6 +408,12 @@ export async function mountMessages(root, deps) {
       const r = await runCryptoSelfTest();
       if (out) out.textContent = r.ok ? `All ${r.checks.length} checks passed (${r.ms} ms).` : `Failed: ${r.checks.filter((c) => !c.ok).map((c) => c.name).join(", ")}`;
     },
+    retry: (el) => guarded(async () => { await engine.retry(ui.convId, el.dataset.id); await render(); }),
+    "ack-change": (el) => guarded(async () => {
+      if (!window.confirm(`Send to ${nameOf(el.dataset.id)} without checking their new security code? Only do this if you know why it changed (a new phone, a reset).`)) return;
+      await engine.acknowledgeSafetyChange(el.dataset.id);
+      await render();
+    }),
     "card-picker": () => go("cards"),
     "send-card": (el) => guarded(async () => {
       const item = (deps.cardSources?.()[el.dataset.kind] || []).find((x) => x.ref === el.dataset.ref);
@@ -530,6 +544,12 @@ export async function mountMessages(root, deps) {
       clearTimeout(linkTimer);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
+    },
+    // Sign-out: stop everything and let go of the store so it can be deleted.
+    destroy() {
+      this.hide();
+      root.innerHTML = "";
+      store.close();
     },
   };
 }

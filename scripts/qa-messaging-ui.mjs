@@ -189,6 +189,27 @@ try {
   await phone.page.waitForFunction(() => /checks passed|Failed/.test(document.querySelector("#msgSelftest")?.textContent || ""), null, { timeout: 20000 });
   check((await phone.page.locator("#msgSelftest").innerText()).includes("checks passed"), "the crypto check passes in the page", await phone.page.locator("#msgSelftest").innerText());
 
+  console.log("Signing out of the browser");
+  const laptopDevice = await laptop.page.evaluate(async (appUrl) => {
+    const { createKeystore, idbBackend } = await import(`${appUrl}/messaging/keystore.js`);
+    const b = await idbBackend();
+    const id = (await createKeystore(b).get("account"))?.deviceId;
+    b.close();
+    return id;
+  }, appUrl);
+  await laptop.page.evaluate(async ({ appUrl, userId }) => {
+    const { forgetMessagingOnThisDevice } = await import(`${appUrl}/messaging/signout.js`);
+    await forgetMessagingOnThisDevice({
+      baseUrl: () => appUrl, headers: () => ({ authorization: `Bearer ${userId}`, "content-type": "application/json" }),
+      beforeDelete: async () => window.__ui.destroy(),
+    });
+  }, { appUrl, userId: USERS.luke });
+  await db.exec("reset role");
+  const revoked = await db.query(`select revoked_at from public.msg_devices where device_id = $1`, [laptopDevice]);
+  check(Boolean(laptopDevice) && revoked.rows[0]?.revoked_at, "signing out removes the browser from Luke's devices", String(laptopDevice));
+  const left = await laptop.page.evaluate(async () => (await indexedDB.databases()).map((d) => d.name));
+  check(!left.includes("live-messaging"), "…and deletes its messages and keys", left.join(","));
+
   for (const d of [phone, laptop, wife]) check(d.errors.length === 0, `${d.name}: no page errors`, d.errors.join(" | "));
 } catch (e) {
   fail++;

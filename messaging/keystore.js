@@ -45,6 +45,7 @@ export function memoryBackend() {
     async remove(k) { m.delete(k); },
     async keys(prefix = "") { return [...m.keys()].filter((k) => k.startsWith(prefix)); },
     async clear() { m.clear(); },
+    close() {},
     raw: m,
   };
 }
@@ -106,7 +107,29 @@ export async function idbBackend({ dbName = "live-messaging", getRawWrapKey = as
     async clear() {
       await idbRequest(tx("kv", "readwrite").clear());
     },
+    close() { db.close(); },
   };
+}
+
+// Does this browser hold a messaging store at all? (So the menu badge never creates
+// one, nor a Keychain key, for someone who hasn't set up messaging.) Unknown → false.
+export async function messagingStoreExists(dbName = "live-messaging") {
+  try {
+    if (typeof indexedDB === "undefined" || typeof indexedDB.databases !== "function") return false;
+    return (await indexedDB.databases()).some((d) => d.name === dbName);
+  } catch {
+    return false;
+  }
+}
+
+export function deleteMessagingStore(dbName = "live-messaging") {
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(dbName);
+      req.onsuccess = req.onerror = () => resolve();
+      req.onblocked = () => resolve(); // finishes once the last tab lets go
+    } catch { resolve(); }
+  });
 }
 
 // Typed access on top of a backend.
@@ -117,5 +140,6 @@ export function createKeystore(backend) {
     async remove(k) { await backend.remove(k); },
     async keys(prefix) { return backend.keys(prefix); },
     async clear() { await backend.clear(); },
+    close() { backend.close?.(); },
   };
 }

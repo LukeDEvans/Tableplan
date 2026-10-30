@@ -1,4 +1,4 @@
-// Applies migrations/2026-10-30-messaging.sql to a PGlite database shaped like prod
+// Applies the messaging migrations (2026-10-30, 2026-10-31) to a PGlite database shaped like prod
 // (auth stubs, live_groups/members, live_spaces/members), then checks every access
 // rule as Luke, his wife (same household), a stranger, and anon.
 //
@@ -7,7 +7,9 @@
 import { PGlite } from "@electric-sql/pglite";
 import { readFileSync } from "node:fs";
 
-const MIG = readFileSync(process.argv[2] || "migrations/2026-10-30-messaging.sql", "utf8");
+// Every messaging migration, in order (the second adds limits; §18).
+const MIG_FILES = process.argv.length > 2 ? process.argv.slice(2) : ["migrations/2026-10-30-messaging.sql", "migrations/2026-10-31-messaging-limits.sql"];
+const MIG = MIG_FILES.map((f) => readFileSync(f, "utf8")).join("\n");
 const db = new PGlite();
 const LUKE = "11111111-1111-1111-1111-111111111111";
 const WIFE = "22222222-2222-2222-2222-222222222222";
@@ -136,7 +138,7 @@ check(!isErr(await as(LUKE, `select public.msg_send(null, '${DEV.luke}', ${items
 check(isErr(await as(LUKE, `select public.msg_send(null, '${DEV.luke}', ${items([[DEV.wife, "X"]])})`)), "…but reaching anyone else does");
 check(isErr(await as(LUKE, `select public.msg_send('${CONV}', '${DEV.luke}', '[]'::jsonb)`)), "an empty send is refused");
 check(isErr(await as(LUKE, `select public.msg_send('${CONV}', '${DEV.luke}', ${items(Array.from({ length: 129 }, () => [DEV.wife, "X"]))})`)), "more than 128 rows is refused");
-check(isErr(await as(LUKE, `select public.msg_send('${CONV}', '${DEV.luke}', ${items([[DEV.wife, "x".repeat(90001)]])})`)), "an oversized message is refused");
+check(isErr(await as(LUKE, `select public.msg_send('${CONV}', '${DEV.luke}', ${items([[DEV.wife, "x".repeat(32769)]])})`)), "a message over 32768 characters is refused");
 check(isErr(await as(LUKE, `insert into public.msg_inbox (recipient_device_id, sender_device_id, sender_user_id, ciphertext) values ('${DEV.wife}', '${DEV.luke}', '${LUKE}', 'X')`)), "nobody inserts into the inbox directly");
 const wifeRows = await as(WIFE, `select id, ciphertext, sender_user_id::text s from public.msg_inbox where recipient_device_id = '${DEV.wife}' order by id`);
 check(Array.isArray(wifeRows) && wifeRows.length === 1 && wifeRows[0].ciphertext === "AAAA" && wifeRows[0].s === LUKE, "Marijane fetches her message, with the server-recorded sender");
@@ -146,6 +148,12 @@ check(Array.isArray(lukeAck) && lukeAck.length === 0, "Luke can't delete her row
 const ack = await as(WIFE, `delete from public.msg_inbox where id = ${wifeRows[0].id} returning id`);
 check(Array.isArray(ack) && ack.length === 1, "she acknowledges (deletes) her row");
 
+check(!isErr(await as(LUKE, `select public.msg_send('${CONV}', '${DEV.luke}', ${items([[DEV.wife, "x".repeat(32768)]])})`)), "…one of 32768 is fine");
+check(isErr(await as(LUKE, "select public.msg_rate_take('send', 1, 999999)")), "users can't call the rate counter directly");
+check(isErr(await as(LUKE, "select * from public.msg_rate")), "…or read it");
+const seen = await as(WIFE, `select last_seen_at from public.msg_devices where device_id = '${DEV.luke}'`);
+check(isErr(seen), "last_seen_at isn't readable (not even one's contacts')", JSON.stringify(seen));
+check(!isErr(await as(WIFE, `select device_id, sign_pub, spk_pub, revoked_at from public.msg_devices where device_id = '${DEV.luke}'`)), "…the key columns still are");
 console.log("Removing devices and resetting");
 check(!isErr(await as(LUKE, `update public.msg_devices set revoked_at = now() where device_id = '${DEV.luke2}'`)), "Luke removes his browser");
 check(isErr(await as(LUKE, `update public.msg_devices set revoked_at = null where device_id = '${DEV.luke2}'`)), "a removed device can't be brought back");
@@ -170,6 +178,20 @@ check(isErr(await as(STRANGER, `delete from public.msg_identities where user_id 
 check(isErr(await as(null, `select public.msg_send('${CONV}', '${DEV.wife}', '[]'::jsonb)`)), "anon can't send");
 check(isErr(await as(LUKE, "select public.msg_prune()")), "users can't run the cleanup");
 check(!isErr(await as("service", "select public.msg_prune()")), "the service role can");
+console.log("Rate limits");
+await as("service", `update public.msg_rate set n = 2999 where user_id = '${WIFE}' and kind = 'send'`);
+const overSend = await as(WIFE, `select public.msg_send(null, '${DEV.wife}', ${items([[DEV.wife, "A"], [DEV.wife, "B"]])})`);
+check(isErr(overSend) && /rate limited/.test(overSend), "over 3000 rows an hour is refused", JSON.stringify(overSend));
+await as("service", `update public.msg_rate set window_start = now() - interval '61 minutes' where user_id = '${WIFE}'`);
+check(!isErr(await as(WIFE, `select public.msg_send(null, '${DEV.wife}', ${items([[DEV.wife, "A"]])})`)), "…and allowed again after the hour");
+await as("service", `insert into public.msg_rate values ('${LUKE}', 'claim', now(), 200) on conflict (user_id, kind) do update set n = 200, window_start = now()`);
+const overClaim = await as(LUKE, `select * from public.msg_claim_prekey('${DEV.wife}')`);
+check(isErr(overClaim) && /rate limited/.test(overClaim), "over 200 prekey claims an hour is refused", JSON.stringify(overClaim));
+await as("service", `insert into public.msg_inbox (recipient_device_id, sender_device_id, sender_user_id, conversation_id, ciphertext)
+  select '${DEV.wife}', '${DEV.luke}', '${LUKE}', '${CONV}', 'Q' from generate_series(1, 2000)`);
+await as("service", `delete from public.msg_rate`);
+const full = await as(WIFE, `select public.msg_send(null, '${DEV.wife}', ${items([[DEV.wife, "Z"]])})`);
+check(isErr(full) && /inbox full/.test(full), "a device with 2000 waiting rows takes no more", JSON.stringify(full));
 const again = await db.exec(MIG).then(() => "ok", (e) => "ERR " + e.message);
 check(again === "ok", "the migration can be re-run safely", again);
 
