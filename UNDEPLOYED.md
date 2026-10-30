@@ -10,6 +10,8 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Watch: screen stays put, compact season tracker** — opening a season or ticking an episode no longer jumps the list to the top; Watched is a check in a circle; episode rows sit close together; season boxes are ~2/3 the old height · #196 · iPhone via TestFlight now; on the web after the deploy: scroll down to a show, open a season and tick an episode (the screen stays put).
+
 - **Watch: short list at the top, no "+", Other services button** — a short Watch list starts at the top of the screen (was mid-screen; also closes the Movies/TV gap); the "+" beside the tabs is gone (the search bar adds shows); the open panel drops the services headings and folds services outside yours into an "Other services" button that opens a window naming them · #195 · iPhone via TestFlight now; on the web after the deploy: open Watch with a few shows (they start at the top), open a show with services outside yours, tap Other services.
 
 - **Watch: show panel, phone actions, Next episode, Undo, link a plain title** — tapping a poster opens its panel under the whole row (row stays put; a pointer marks the poster and slides within the row); Watched · Tabs · Remove in the panel (they work on the iPhone now); "Next: S3 E6 [✓ Watched]" for TV and a fixed season tracker; Remove waits ~6 s with Undo; "Find the right title" links a plain title; the + window tags "In your list" (WATCH_AUDIT.md decisions 1–4) · #194 · iPhone via TestFlight now; on the web after the deploy: open Watch on the laptop, tap a poster in a full row (the row stays put), tap its neighbour (the pointer slides), Remove → Undo.
