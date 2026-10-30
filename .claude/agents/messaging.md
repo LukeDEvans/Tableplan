@@ -54,9 +54,27 @@ as security-critical.
   change isn't done until both pass and a planted bug in the area you touched is
   caught by a test.
 
+## Modules (step 2–3, 2026-10-30)
+- `messaging/server.js` — the only door to Supabase (`createMessagingServer(transport)`
+  + `createRestTransport` for PostgREST). Every read names columns; nothing loops.
+- `messaging/keystore.js` — on-device storage (IndexedDB, AES-GCM under a
+  non-extractable key; on iPhone the wrapping key comes from the Keychain) and
+  `withLock` (Web Locks across tabs).
+- `messaging/account.js` — phone setup, linking by code, prekey upkeep, pinned
+  identities (first key seen is pinned; a change flags "security code changed"),
+  safety numbers and QR verification.
+- `messaging/engine.js` — conversations, fan-out, receive, groups, timers, receipts,
+  delete for everyone, session repair, holding messages for conversations a new
+  device doesn't know yet (released by a `sync` "conv" from my other device).
+- Tests run against a real Postgres with the real migration and row security:
+  `test/messaging-pglite-harness.js` (PGlite) + `test/messaging-account.test.js`,
+  `test/messaging-engine.test.js`; `scripts/check-messaging-migration.mjs` for the
+  SQL access rules. The `msg_` tables are LIVE (applied 2026-10-30) — any change is
+  a new, gated migration.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `messaging/envelope.js`, `messaging/crypto/*.js`
+- files: `messaging/*.js`, `messaging/crypto/*.js`
 - state: none — messages never go in tableplan_states; they live on each device and in the msg_ tables

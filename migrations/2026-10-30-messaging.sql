@@ -386,8 +386,11 @@ grant select, insert, update on public.msg_devices to authenticated;
 grant select, insert, delete on public.msg_prekeys to authenticated;
 grant select on public.msg_conversation_members to authenticated;
 grant select, delete on public.msg_inbox to authenticated;
-grant all on public.msg_identities, public.msg_devices, public.msg_prekeys,
-  public.msg_conversation_members, public.msg_inbox to service_role;
+grant all on public.msg_identities to service_role;
+grant all on public.msg_devices to service_role;
+grant all on public.msg_prekeys to service_role;
+grant all on public.msg_conversation_members to service_role;
+grant all on public.msg_inbox to service_role;
 
 revoke all on function public.msg_can_contact(uuid), public.msg_contacts(), public.msg_claim_prekey(uuid),
   public.msg_reset_identity(text), public.msg_is_member(uuid), public.msg_create_conversation(uuid, uuid[]),
