@@ -2815,6 +2815,11 @@ function bindEvents() {
   elements.openTasksPageBtn?.addEventListener("click", openTasksPage);
   elements.closeWatchSearchBtn.addEventListener("click", () => elements.watchSearchDialog.close());
   elements.watchSearchDialog.addEventListener("click", closeDialogOnBackdropClick);
+  {
+    const other = document.getElementById("watchOtherServicesDialog");
+    other?.addEventListener("click", closeDialogOnBackdropClick);
+    other?.querySelector("#closeWatchOtherServicesBtn")?.addEventListener("click", () => other.close());
+  }
   elements.watchSearchDialog.addEventListener("close", () => {
     watchSearchLinkId = null;
     elements.watchSearchDialogInput.value = "";
@@ -22265,21 +22270,20 @@ function watchItemById(id) {
   return watchItemsList().find((item) => item.id === id) || null;
 }
 
-// The "+" window. Two modes (Luke, 2026-10-29):
-//   add  — search and tap to add. A title already on the list is tagged
-//          "In your list"; tapping it opens that show's panel instead of adding
-//          a second copy.
-//   link — "Find the right title" on a show with no poster: the box starts with
-//          its title, and the tapped result fills in poster, year, services and
-//          seasons on THAT show (its progress stays).
+// "Find the right title" (Luke, 2026-10-29): a show with no poster opens this
+// window with its title; the tapped result fills in poster, year, services and
+// seasons on THAT show (its progress stays). Results already on the list are
+// tagged "In your list" and can't be picked. Shows are ADDED from the page's
+// search bar — this window no longer adds (the "+" was removed, 2026-10-29).
 let watchSearchLinkId = null;
 function openWatchSearchDialog({ linkId = null } = {}) {
   const linkItem = linkId ? watchItemById(linkId) : null;
-  watchSearchLinkId = linkItem ? linkItem.id : null;
+  if (!linkItem) return;
+  watchSearchLinkId = linkItem.id;
   const head = elements.watchSearchDialog.querySelector(".dialog-head h2");
-  if (head) head.textContent = linkItem ? "Find the right title" : "Add to Watch List";
+  if (head) head.textContent = "Find the right title";
   elements.watchSearchDialogResults.innerHTML = "";
-  elements.watchSearchDialogInput.value = linkItem ? linkItem.title : "";
+  elements.watchSearchDialogInput.value = linkItem.title;
   if (!elements.watchSearchDialog.open) elements.watchSearchDialog.showModal();
   requestAnimationFrame(() => elements.watchSearchDialogInput.focus());
 
@@ -22296,25 +22300,7 @@ function openWatchSearchDialog({ linkId = null } = {}) {
   elements.watchSearchDialogInput.removeEventListener("input", elements.watchSearchDialogInput._handler);
   elements.watchSearchDialogInput._handler = handleInput;
   elements.watchSearchDialogInput.addEventListener("input", handleInput);
-  if (linkItem) fetchWatchSearchResultsDialog(linkItem.title);
-}
-
-// Open a show's panel from elsewhere (the "+" window's "In your list"): show it
-// in a tab that holds it, then scroll to it.
-function revealWatchItem(id) {
-  const item = watchItemById(id);
-  if (!item) return;
-  if (item.status === "watched") { openWatchArchive(); return; }
-  const inTab = activeWatchCategory === "all"
-    || (activeWatchCategory === "__upcoming" && item.theatricalReleaseDate && !item.inTheaters)
-    || (activeWatchCategory === "__in-theaters" && item.inTheaters)
-    || (Array.isArray(item.categories) && item.categories.includes(activeWatchCategory));
-  if (!inTab) activeWatchCategory = "all";
-  watchCollapsedSections.delete(item.type === "tv" ? "TV Shows" : "Movies");
-  expandedWatchItemId = id;
-  watchPanelLast = null; // a fresh open: scroll to it
-  renderWatchPlanner();
-  elements.watchPlannerGrid?.querySelector(`[data-watch-item="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  fetchWatchSearchResultsDialog(linkItem.title);
 }
 
 async function fetchWatchSearchResultsDialog(query) {
@@ -22338,19 +22324,13 @@ async function fetchWatchSearchResultsDialog(query) {
         const result = data.results[Number(btn.dataset.tmdbPick)];
         if (!result) return;
         const owned = result.tmdbId != null ? videoInWatchlist(result.tmdbId) : null;
-        if (linking) {
-          if (owned && owned.id !== linking) {
-            try { showVoiceToast(`“${owned.title}” is already on your list.`); } catch { /* noop */ }
-            return;
-          }
-          linkWatchItemToTmdb(linking, result);
-          elements.watchSearchDialog.close();
-          renderWatchPlanner();
+        if (!linking) return;
+        if (owned && owned.id !== linking) {
+          try { showVoiceToast(`“${owned.title}” is already on your list.`); } catch { /* noop */ }
           return;
         }
+        linkWatchItemToTmdb(linking, result);
         elements.watchSearchDialog.close();
-        if (owned) { revealWatchItem(owned.id); return; }
-        addWatchItemFromTmdb(result);
         renderWatchPlanner();
       });
     });
@@ -22377,9 +22357,6 @@ function renderWatchPlanner() {
              </form>`
           : `<button class="watch-category-tab watch-category-add-tab" type="button" data-watch-category-add title="Add tab">+</button>`
         }
-      </div>
-      <div class="watch-category-actions">
-        <button class="watch-corner-btn" type="button" data-open-watch-search title="Add movie or TV show" aria-label="Add movie or TV show"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
       </div>
     </div>
     <section class="day-column planner-day-panel do-backlog-panel watch-list-panel" aria-label="Watch List">
@@ -22454,8 +22431,9 @@ function renderWatchPlanner() {
     });
   }
 
-  elements.watchPlannerGrid.querySelectorAll("[data-open-watch-search]")
-    .forEach((btn) => btn.addEventListener("click", openWatchSearchDialog));
+  // Shows are added from the page's search bar (the "+" was removed, Luke 2026-10-29).
+  elements.watchPlannerGrid.querySelectorAll("[data-watch-focus-search]")
+    .forEach((btn) => btn.addEventListener("click", () => document.getElementById("discoverSearchInput")?.focus()));
 
   elements.watchPlannerGrid.querySelectorAll("[data-watch-section-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -22618,7 +22596,7 @@ function watchEmptyStateTemplate() {
         <rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M7 5 4.5 19M17 5l2.5 14M2.5 9.5h19M2.5 14.5h19"/>
       </svg>
       <p class="watch-empty-msg">${escapeHtml(msg)}</p>
-      ${cta ? `<button class="secondary-btn compact-btn" type="button" data-open-watch-search>Add a movie or show</button>` : ""}
+      ${cta ? `<button class="secondary-btn compact-btn" type="button" data-watch-focus-search>Search to add a movie or show</button>` : ""}
     </div>
   `;
 }
@@ -23168,7 +23146,10 @@ function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
 function bindWatchControls(root = document) {
   // Hub-powered Play/Open buttons on Watch cards (present once the media hub is
   // loaded) — same activation as Discover, via the shared handler.
-  if (mediaHub) root.querySelectorAll(".discover-svc").forEach((btn) => btn.addEventListener("click", () => discoverSvcActivate(btn, mediaHub)));
+  if (mediaHub) root.querySelectorAll(".discover-svc:not([data-watch-other-services])").forEach((btn) => btn.addEventListener("click", () => discoverSvcActivate(btn, mediaHub)));
+  root.querySelectorAll("[data-watch-other-services]").forEach((btn) => {
+    btn.addEventListener("click", () => openWatchOtherServices(btn.dataset.watchOtherServices));
+  });
   root.querySelectorAll("[data-watch-delete]").forEach((btn) => {
     btn.addEventListener("click", () => deleteWatchItem(btn.dataset.watchDelete));
   });
@@ -30193,10 +30174,32 @@ function watchHubProvidersHtml(item) {
     view = mediaHub.search.discoverView(canonical, mediaHub.registry);
   } catch { return ""; }
   if (!view || !view.hasTargets) return ""; // nothing resolved → keep the fallback
-  const group = (label, entries) => entries.length
-    ? `<div class="discover-svc-group"><span class="discover-svc-label">${label}</span>${entries.map((e) => discoverServiceBtn(e, view.title, view.key)).join("")}</div>`
+  // No "Your services" / "Other services" headings (Luke, 2026-10-29): your
+  // services are buttons, and the rest fold into one "Other services" button
+  // that opens a window listing them (openWatchOtherServices).
+  watchOtherServicesFor.set(item.id, { title: view.title, key: view.key, entries: view.others });
+  const yours = view.yours.map((e) => discoverServiceBtn(e, view.title, view.key)).join("");
+  const other = view.others.length
+    ? `<button class="discover-svc discover-svc--open watch-other-svc" type="button" data-watch-other-services="${escapeHtml(item.id)}" aria-haspopup="dialog">Other services</button>`
     : "";
-  return `<div class="watch-providers watch-providers--hub">${group("Your services", view.yours)}${group("Other services", view.others)}</div>`;
+  return `<div class="watch-providers watch-providers--hub"><div class="discover-svc-group">${yours}${other}</div></div>`;
+}
+
+// The services outside your own for each show drawn in a panel, for the
+// "Other services" window.
+const watchOtherServicesFor = new Map(); // item id → { title, key, entries }
+function openWatchOtherServices(itemId) {
+  const data = watchOtherServicesFor.get(itemId);
+  const dialog = document.getElementById("watchOtherServicesDialog");
+  if (!data || !dialog) return;
+  dialog.querySelector("#watchOtherServicesTitle").textContent = data.title || "";
+  const body = dialog.querySelector("#watchOtherServicesBody");
+  body.innerHTML = data.entries.map((e) => discoverServiceBtn(e, data.title, data.key)).join("");
+  body.querySelectorAll(".discover-svc").forEach((btn) => btn.addEventListener("click", () => {
+    if (mediaHub) discoverSvcActivate(btn, mediaHub);
+    dialog.close();
+  }));
+  if (!dialog.open) dialog.showModal();
 }
 function ensureHubForWatch() {
   if (watchHubReady || watchHubLoading) return;
