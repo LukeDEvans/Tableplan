@@ -85,12 +85,12 @@ changes to the Watch page only.
   (`placeWatchPanelPointer`); the open poster keeps its **ring**; tap again closes; no
   dimming of other posters. The panel holds the full title, a **Next episode** line for TV
   ("Next: S3 E6 · title [✓ Watched]", `watchNextEpisode`), services, the season tracker
-  and **Watched · Tabs · Remove** — the phone's way to do what the laptop's right-click
+  and a **⋯ menu** with Watched · Tabs · Remove — the phone's way to do what the laptop's right-click
   menu does (iOS has no right-click; holding a poster starts a drag).
 - **Remove waits ~6 s with Undo (2026-10-29):** `requestWatchRemove` hides the show and
   shows the Undo toast; nothing is saved or tombstoned until the toast is gone
   (`watchPendingRemovals`). All removals (panel, right-click, Archive) go through it.
-- **Seasons open/closed is device state (2026-10-29):** `watchOpenSeasons`, never synced;
+- **The shown season is device state (2026-10-29):** `watchSelectedSeason`, never synced;
   the old `seasonProgress[n].__expanded` is dropped on load.
 - **No "+" to add a show (Luke, 2026-10-29):** shows are added only from the page's
   search bar; the empty list's button focuses it. The tab "+" stays.
@@ -107,11 +107,18 @@ changes to the Watch page only.
   stretched grid put a short list mid-screen and pushed Movies and TV Shows apart.
 - **The screen stays put on a redraw (Luke, 2026-10-29):** `renderWatchPlanner` keeps the
   list's scroll (and each open season's episode-list scroll, `data-watch-eps`) across the
-  redraw that follows opening a season or ticking an episode; only a tab switch
+  redraw that follows picking a season or ticking an episode; only a tab switch
   (`watchListScrollReset`) starts at the top. Any new redraw path gets this for free.
-- **Compact tracker (Luke, 2026-10-29):** Watched is an icon-only check in a circle
-  (`.watch-action--check`, `aria-label="Watched"`); season boxes are ~2/3 the old height
-  (≈30px); episode rows have almost no space between them (a long title still wraps).
+- **Season menu (Luke, 2026-10-29):** the panel shows one season at a time, picked from a
+  `<select>` (`watchSeasonPickerHtml`; options read "Season 3 · 5/8" / "· ✓"), with its
+  progress bar, an "All" tick for the whole season, and that season's episodes below.
+  Unpicked it shows the next episode's season (`watchShownSeason`); the pick is device
+  state (`watchSelectedSeason`), never saved. Episode rows nearly touch.
+- **⋯ menu (Luke, 2026-10-29):** Watched · Tabs · Remove live in a ⋯ button at the panel's
+  top-right (`openWatchMoreMenu`); there's no button row at the bottom. Tabs opens the Tabs
+  popover at the same spot.
+- **No scroll bars (Luke, 2026-10-29):** the Watch list and its tab strip scroll without a
+  visible bar (`scrollbar-width: none` + `::-webkit-scrollbar`), scoped to `#watchPagePanel`.
 - **Agreed, not built yet (WATCH_AUDIT.md "Decisions"):** per-tick merge of episode ticks
   and tabs; episode lists/showtimes in a device cache and trimmed providers; refresh
   where-to-watch on view after 7 days; two-line titles + grid/list toggle; hide empty
