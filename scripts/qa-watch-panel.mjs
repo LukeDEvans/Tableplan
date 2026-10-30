@@ -62,7 +62,11 @@ try {
     page.on("pageerror", (e) => errors.push(String(e)));
     await page.route(/image\.tmdb\.org/, (r) => r.fulfill({ status: 404, body: "" }));
     await page.route(/(functions|api)\/tmdb-search/, (r) => r.fulfill(json({ results: SEARCH })));
-    await page.route(/(functions|api)\/tmdb-season/, (r) => r.fulfill(json({ episodes: eps(8) })));
+    const seasonCalls = [];
+    await page.route(/(functions|api)\/tmdb-season/, (r) => {
+      seasonCalls.push(r.request().url());
+      r.fulfill(json({ episodes: eps(8).map((e) => ({ ...e, runtime: 50 + e.episodeNumber })) }));
+    });
     await page.route(/(?:functions|api)\/(tmdb-watch-providers|tmdb-details|youtube-search|stream-links|showtimes)/, (r) => r.fulfill(json({ results: [], items: [], providers: null })));
 
     await page.goto(URL + "#watch", { waitUntil: "domcontentloaded" });
@@ -103,6 +107,7 @@ try {
     check(geo.below, "the panel opens under the whole row");
     check(geo.ptrX != null && Math.abs(geo.ptrX - geo.posterX) <= 2, "the pointer points at the open poster", geo);
     check(await page.locator(".watch-avail--stream").count() === 0, "no streaming-service bubble on the posters");
+    check(await page.locator(".watch-badge").count() === 0, "no TV / M badge on the posters");
 
     // The ring around the open poster isn't cut off at either end of the row,
     // and the posters kept their size.
@@ -260,6 +265,16 @@ try {
     }, pick);
     check(shown && shown.options.length === 3 && shown.boxes === 0, "seasons are a menu, not a box per season", shown);
     check(shown && shown.value === "3" && shown.eps === 8, "it opens on the next episode's season, with its episodes", shown);
+    await page.waitForTimeout(300);
+    const lens = await page.$$eval(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-episode-len`, (e) => e.map((x) => x.textContent.trim()));
+    check(lens.length === 8 && lens[0] === "51m" && lens[7] === "58m", "each episode shows its length (a list saved without lengths reloads)", lens);
+    const s3Calls = () => seasonCalls.filter((u) => /season=3/.test(u)).length;
+    const before3 = s3Calls();
+    await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).tap(); // close
+    await page.waitForTimeout(200);
+    await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).tap(); // reopen
+    await page.waitForTimeout(300);
+    check(before3 === 1 && s3Calls() === 1, "…and only once", { before3, after: s3Calls() });
     check(shown && /Season 1 · ✓/.test(shown.options[0]) && /Season 3 · 6\/8/.test(shown.options[2]), "each season shows its progress", shown && shown.options);
     await page.locator(pick).scrollIntoViewIfNeeded();
     await page.waitForTimeout(150);
@@ -295,11 +310,12 @@ try {
       const cb = document.querySelector(".watch-episode .watch-check").getBoundingClientRect().width;
       const sc = document.querySelector(".watch-season-check").getBoundingClientRect().width;
       const name = document.querySelector(".watch-episode-name").getBoundingClientRect().width;
+      const row = document.querySelector(".watch-episode").getBoundingClientRect().width;
       const head = document.querySelector(".watch-season-select").getBoundingClientRect().height;
-      return { cb, sc, name, head };
+      return { cb, sc, name: Math.round(name), row: Math.round(row), head };
     });
     check(lay.cb <= 24 && lay.sc <= 24, "tracker check boxes are small", lay);
-    check(lay.name > 180, "episode titles get the row's width", lay);
+    check(lay.name >= lay.row * 0.55, "episode titles get most of the row's width", lay);
     check(lay.head <= 34, "'Season 3' stays on one line", lay);
     const savedOpen = await page.evaluate(() => JSON.stringify(window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress));
     check(!/__expanded|selected/.test(savedOpen), "picking a season isn't saved", savedOpen);

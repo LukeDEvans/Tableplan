@@ -25,7 +25,8 @@ exports.handler = async (event) => {
     const episodes = (data.episodes || []).map((ep) => ({
       episodeNumber: ep.episode_number,
       name: ep.name || `Episode ${ep.episode_number}`,
-      airDate: ep.air_date || null
+      airDate: ep.air_date || null,
+      runtime: Number.isFinite(ep.runtime) && ep.runtime > 0 ? ep.runtime : null // minutes
     }));
     return jsonResponse(200, { episodes });
   } catch (error) {

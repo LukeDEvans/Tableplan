@@ -131,6 +131,12 @@ changes to the Watch page only.
 - **The ring isn't clipped (2026-10-29):** `#watchPlannerGrid` reaches 6px into the page's
   side padding and pads back, so the open poster's ring shows at both ends of a row without
   shrinking the posters.
+- **Episode lengths (Luke, 2026-10-29):** each episode row shows its length
+  (`tmdb-season` passes TMDB's `runtime`, minutes, or null) when TMDB has it. A season list
+  saved before that has no `runtime` key, so the shown season reloads once per session
+  (`ensureWatchShownSeasonRuntimes`); an unchanged reload isn't saved.
+- **No TV / M badge on posters (Luke, 2026-10-29):** the Movies / TV Shows sections already
+  say it.
 - **Agreed, not built yet (WATCH_AUDIT.md "Decisions"):** per-tick merge of episode ticks
   and tabs; episode lists/showtimes in a device cache and trimmed providers; refresh
   where-to-watch on view after 7 days; two-line titles + grid/list toggle; hide empty
