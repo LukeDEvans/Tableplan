@@ -3,58 +3,77 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { loadSodium } from "../messaging/crypto/sodium.js";
 import {
-  generateIdentity, generateDevice, certifyDevice, verifyDeviceCert,
+  generateIdentity, generateDevice, certifyDevice, verifyDeviceCert, signCertAsDevice, signCertAsIdentity, SPK_MAX_AGE_MS,
   generateSignedPrekey, verifySignedPrekey, dh, generateDhKeyPair,
   safetyNumber, safetyQr, matchSafetyQr, generateOneTimePrekeys,
 } from "../messaging/crypto/keys.js";
 
 beforeAll(async () => { await loadSodium(); });
 
-function certFor(device, overrides = {}) {
-  return { userId: "luke", deviceId: "dev-1", kind: "linked", signPub: device.signPub, dhPub: device.dhPub, createdAt: 1761800000000, ...overrides };
+function certFor(identity, device, overrides = {}) {
+  return { userId: "luke", identitySignPub: identity.signPub, deviceId: "dev-1", kind: "linked", signPub: device.signPub, dhPub: device.dhPub, createdAt: 1761800000000, ...overrides };
 }
 
 describe("device certificates", () => {
-  it("verify against the signing identity only", () => {
+  it("verify only against the trusted identity, with both signatures", () => {
     const id = generateIdentity();
     const other = generateIdentity();
     const dev = generateDevice();
-    const cert = certFor(dev);
-    const sig = certifyDevice(id, cert);
-    expect(verifyDeviceCert(id.signPub, cert, sig)).toBe(true);
-    expect(verifyDeviceCert(other.signPub, cert, sig)).toBe(false);
+    const cert = certFor(id, dev);
+    const sigs = certifyDevice(id, dev, cert);
+    expect(verifyDeviceCert(id.signPub, cert, sigs)).toBe(true);
+    expect(verifyDeviceCert(other.signPub, cert, sigs)).toBe(false);
+    expect(verifyDeviceCert(id.signPub, cert, { identitySig: sigs.identitySig })).toBe(false);
+    expect(verifyDeviceCert(id.signPub, cert, { identitySig: sigs.identitySig, deviceSig: sigs.identitySig })).toBe(false);
   });
 
   it("break when any certified field changes", () => {
     const id = generateIdentity();
     const dev = generateDevice();
     const swap = generateDevice();
-    const cert = certFor(dev);
-    const sig = certifyDevice(id, cert);
+    const cert = certFor(id, dev);
+    const sigs = certifyDevice(id, dev, cert);
     for (const change of [
       { userId: "marijane" }, { deviceId: "dev-2" }, { kind: "phone" },
       { signPub: swap.signPub }, { dhPub: swap.dhPub }, { createdAt: cert.createdAt + 1 },
+      { identitySignPub: generateIdentity().signPub },
     ]) {
-      expect(verifyDeviceCert(id.signPub, { ...cert, ...change }, sig)).toBe(false);
+      expect(verifyDeviceCert(id.signPub, { ...cert, ...change }, sigs)).toBe(false);
     }
+  });
+
+  it("can't certify someone else's device keys (review finding 1: proof of possession)", () => {
+    const luke = generateIdentity();
+    const lukeDev = generateDevice();
+    const mallory = generateIdentity();
+    const forged = certFor(mallory, lukeDev, { userId: "mallory", deviceId: "m1" });
+    // Mallory can vouch, but can't produce the device's own signature…
+    expect(() => certifyDevice(mallory, generateDevice(), forged)).toThrow(/not this device/);
+    const identitySig = signCertAsIdentity(mallory, forged);
+    const deviceSig = signCertAsDevice(lukeDev, certFor(luke, lukeDev)); // a real device sig, for a different cert
+    expect(verifyDeviceCert(mallory.signPub, forged, { identitySig, deviceSig })).toBe(false);
+    expect(() => signCertAsIdentity(mallory, certFor(luke, lukeDev))).toThrow(/not this identity/);
   });
 
   it("can't be re-split across fields (length-prefixed)", () => {
     const id = generateIdentity();
     const dev = generateDevice();
-    const sig = certifyDevice(id, certFor(dev, { userId: "ab", deviceId: "c" }));
-    expect(verifyDeviceCert(id.signPub, certFor(dev, { userId: "a", deviceId: "bc" }), sig)).toBe(false);
+    const sigs = certifyDevice(id, dev, certFor(id, dev, { userId: "ab", deviceId: "c" }));
+    expect(verifyDeviceCert(id.signPub, certFor(id, dev, { userId: "a", deviceId: "bc" }), sigs)).toBe(false);
   });
 
   it("reject malformed input instead of throwing", () => {
     const id = generateIdentity();
     const dev = generateDevice();
-    const cert = certFor(dev);
-    const sig = certifyDevice(id, cert);
-    expect(verifyDeviceCert(id.signPub, cert, sig.subarray(0, 10))).toBe(false);
-    expect(verifyDeviceCert(id.signPub, { ...cert, kind: "laptop" }, sig)).toBe(false);
-    expect(verifyDeviceCert(new Uint8Array(5), cert, sig)).toBe(false);
-    expect(() => certifyDevice(id, { ...cert, userId: "" })).toThrow();
+    const cert = certFor(id, dev);
+    const sigs = certifyDevice(id, dev, cert);
+    expect(verifyDeviceCert(id.signPub, cert, { ...sigs, identitySig: sigs.identitySig.subarray(0, 10) })).toBe(false);
+    expect(verifyDeviceCert(id.signPub, { ...cert, kind: "laptop" }, sigs)).toBe(false);
+    expect(verifyDeviceCert(new Uint8Array(5), cert, sigs)).toBe(false);
+    expect(verifyDeviceCert(id.signPub, cert, null)).toBe(false);
+    expect(() => certifyDevice(id, dev, { ...cert, userId: "" })).toThrow();
+    expect(() => certifyDevice(id, dev, { ...cert, userId: "lu ke" })).toThrow(); // one byte form per id
+    expect(() => certifyDevice(id, dev, { ...cert, userId: "lüke" })).toThrow();
   });
 });
 
@@ -67,6 +86,16 @@ describe("prekeys", () => {
     expect(verifySignedPrekey(other.signPub, spk)).toBe(false);
     expect(verifySignedPrekey(dev.signPub, { ...spk, id: 8 })).toBe(false);
     expect(verifySignedPrekey(dev.signPub, { ...spk, pub: generateDhKeyPair().pub })).toBe(false);
+    expect(verifySignedPrekey(dev.signPub, { ...spk, createdAt: spk.createdAt - 1 })).toBe(false);
+  });
+
+  it("signed prekeys expire, and can't be dated in the future", () => {
+    const dev = generateDevice();
+    const now = 1_800_000_000_000;
+    const spk = generateSignedPrekey(dev, 1, now);
+    expect(verifySignedPrekey(dev.signPub, spk, now + SPK_MAX_AGE_MS - 1)).toBe(true);
+    expect(verifySignedPrekey(dev.signPub, spk, now + SPK_MAX_AGE_MS)).toBe(false);
+    expect(verifySignedPrekey(dev.signPub, generateSignedPrekey(dev, 2, now + 2 * 24 * 3600 * 1000), now)).toBe(false);
   });
 
   it("one-time prekeys are numbered and distinct", () => {

@@ -13,7 +13,8 @@ import { parseEnvelope } from "../envelope.js";
 export { loadSodium } from "./sodium.js";
 export { toB64, fromB64 } from "./bytes.js";
 export {
-  generateIdentity, generateDevice, certifyDevice, verifyDeviceCert,
+  generateIdentity, generateDevice, certifyDevice, signCertAsDevice, signCertAsIdentity,
+  verifyDeviceCert, deviceDescriptor,
   generateSignedPrekey, verifySignedPrekey, generateOneTimePrekeys,
   safetyNumber, safetyQr, matchSafetyQr,
 } from "./keys.js";
@@ -26,16 +27,17 @@ export function sealEnvelope(record, envelope, now = Date.now()) {
   return encryptToDevice(record, pad(utf8(JSON.stringify(checked))), now);
 }
 
-// Decrypt one wire message from one device. Returns { record, envelope,
-// usedOneTimePrekeyId }; a session or envelope problem throws and leaves the
-// stored record untouched.
+// Decrypt one wire message from one device. Returns { record, envelope, error,
+// usedOneTimePrekeyId, newPrekeyMessage }. A session failure throws and leaves the
+// stored record untouched. If the message decrypts but its envelope is invalid, the
+// new record is still returned (store it, so that message key is gone) with
+// envelope null and the reason in `error` — the app drops the message.
 export function openEnvelope(record, args) {
   const r = decryptFromDevice(record, args);
-  let parsed;
+  const base = { record: r.record, usedOneTimePrekeyId: r.usedOneTimePrekeyId, newPrekeyMessage: r.newPrekeyMessage };
   try {
-    parsed = JSON.parse(fromUtf8(unpad(r.plaintext)));
-  } catch {
-    throw new Error("envelope: not valid JSON");
+    return { ...base, envelope: parseEnvelope(JSON.parse(fromUtf8(unpad(r.plaintext)))), error: null };
+  } catch (e) {
+    return { ...base, envelope: null, error: String(e && e.message || e) };
   }
-  return { record: r.record, envelope: parseEnvelope(parsed), usedOneTimePrekeyId: r.usedOneTimePrekeyId };
 }

@@ -2,6 +2,13 @@
 // Pure validation, no crypto. Everything a device decrypts goes through
 // parseEnvelope before the app sees it, so a malformed or hostile payload from any
 // device is rejected in one place.
+//
+// Shape only. WHO may send what is the caller's job, using the sender it learned
+// from decryption (MESSAGING_DESIGN.md §5): `sync` only from the user's own certified
+// devices; `control` only from current group members; `delete_for_everyone` only for
+// the sender's own messages. A card `thumb` is a URL the sender chose — load it only
+// through the app's image proxy or on tap, never automatically (it would tell the
+// sender when and from where the card was read).
 
 export const ENVELOPE_VERSION = 1;
 export const TIMER_CHOICES = [3600, 86400, 604800, 2419200]; // 1 h, 1 day, 1 week, 4 weeks
@@ -16,6 +23,7 @@ const CONTROL_OPS = new Set([
 ]);
 const SYNC_KINDS = new Set(["sent", "verified", "read"]);
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 function fail(msg) {
   throw new Error(`envelope: ${msg}`);
@@ -101,7 +109,7 @@ export function parseEnvelope(e, { nested = false } = {}) {
   if (!TYPES.has(e.type)) fail("bad type");
   if (nested && e.type === "sync") fail("nested sync");
   const sentAt = str(e.sentAt, 40, "sentAt");
-  if (Number.isNaN(Date.parse(sentAt))) fail("bad sentAt");
+  if (!ISO_RE.test(sentAt) || Number.isNaN(Date.parse(sentAt))) fail("bad sentAt");
   return {
     v: ENVELOPE_VERSION,
     type: e.type,

@@ -15,11 +15,14 @@ const SPK_LABEL = utf8("LiveMsg/signed-prekey/v1");
 const FP_VERSION = 0;
 const FP_ITERATIONS = 5200; // Signal's safety-number iteration count
 
-function requireId(name, v) {
-  if (typeof v !== "string" || !v || v.length > 64) throw new Error(`${name} must be a non-empty string ≤ 64 chars`);
+// Ids are UUIDs or similar: a fixed ASCII set, so there is exactly one byte form.
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function requireId(name, v) {
+  if (typeof v !== "string" || !ID_RE.test(v)) throw new Error(`${name} must be 1–64 of A–Z a–z 0–9 _ -`);
 }
 
-function requireKey(name, v, len = 32) {
+export function requireKey(name, v, len = 32) {
   if (!(v instanceof Uint8Array) || v.length !== len) throw new Error(`${name} must be ${len} bytes`);
 }
 
@@ -55,49 +58,93 @@ export function dh(priv, pub) {
 }
 
 // ---- device certificates ---------------------------------------------------
+// A certificate names the person (userId + their identity key) and the device
+// (deviceId, kind, its two public keys). It carries TWO signatures:
+//   - identitySig: the person's primary identity vouches for the device;
+//   - deviceSig:   the device proves it holds the signing key being certified, so
+//                  nobody can certify someone else's device keys as their own.
+// X3DH then binds both ends' userId, deviceId and identity key into the session's
+// associated data (x3dh.js), so a relabelled device can't decrypt as someone else.
+
+const DEVICE_SIG_LABEL = utf8("LiveMsg/device-cert-self/v1");
 
 function certBytes(c) {
   requireId("userId", c.userId);
   requireId("deviceId", c.deviceId);
+  requireKey("identity signPub", c.identitySignPub);
   if (c.kind !== "phone" && c.kind !== "linked") throw new Error("kind must be phone or linked");
   requireKey("device signPub", c.signPub);
   requireKey("device dhPub", c.dhPub);
   if (!Number.isInteger(c.createdAt) || c.createdAt < 0) throw new Error("createdAt must be epoch ms");
   return concat(
-    field(CERT_LABEL), field(utf8(c.userId)), field(utf8(c.deviceId)), field(utf8(c.kind)),
+    field(CERT_LABEL), field(utf8(c.userId)), field(c.identitySignPub), field(utf8(c.deviceId)), field(utf8(c.kind)),
     field(c.signPub), field(c.dhPub), field(utf8(String(c.createdAt)))
   );
 }
 
-export function certifyDevice(identity, cert) {
+// On the new device: prove it holds the certified signing key.
+export function signCertAsDevice(device, cert) {
+  if (!equalBytes(device.signPub, cert.signPub) || !equalBytes(device.dhPub, cert.dhPub)) throw new Error("cert: not this device's keys");
+  return sodium().crypto_sign_detached(concat(field(DEVICE_SIG_LABEL), certBytes(cert)), device.signPriv);
+}
+
+// On the person's phone: vouch for the device.
+export function signCertAsIdentity(identity, cert) {
+  if (!equalBytes(identity.signPub, cert.identitySignPub)) throw new Error("cert: not this identity");
   return sodium().crypto_sign_detached(certBytes(cert), identity.signPriv);
 }
 
-export function verifyDeviceCert(identitySignPub, cert, sig) {
+// Convenience when both keys are at hand (the phone certifying itself, tests).
+export function certifyDevice(identity, device, cert) {
+  return { identitySig: signCertAsIdentity(identity, cert), deviceSig: signCertAsDevice(device, cert) };
+}
+
+const isSig = (s) => s instanceof Uint8Array && s.length === 64;
+
+// identitySignPub is the key the caller trusts for that person (stored, and
+// verified by safety number) — never just the one written in the certificate.
+export function verifyDeviceCert(identitySignPub, cert, sigs) {
   try {
     requireKey("identity signPub", identitySignPub);
-    if (!(sig instanceof Uint8Array) || sig.length !== 64) return false;
-    return sodium().crypto_sign_verify_detached(sig, certBytes(cert), identitySignPub);
+    if (!sigs || !isSig(sigs.identitySig) || !isSig(sigs.deviceSig)) return false;
+    if (!equalBytes(identitySignPub, cert.identitySignPub)) return false;
+    const bytes = certBytes(cert);
+    const s = sodium();
+    return s.crypto_sign_verify_detached(sigs.identitySig, bytes, identitySignPub)
+      && s.crypto_sign_verify_detached(sigs.deviceSig, concat(field(DEVICE_SIG_LABEL), bytes), cert.signPub);
   } catch {
     return false;
   }
 }
 
-// ---- prekeys ------------------------------------------------------------------
+// The descriptor X3DH binds into a session: who the device belongs to and its keys.
+export function deviceDescriptor(cert) {
+  return { userId: cert.userId, deviceId: cert.deviceId, identitySignPub: cert.identitySignPub, signPub: cert.signPub, dhPub: cert.dhPub };
+}
 
-const spkBytes = (id, pub) => concat(field(SPK_LABEL), u32(id), field(pub));
+// ---- prekeys ------------------------------------------------------------------
+// The signed prekey's creation time is signed too, so a server can't keep serving
+// an old one past its life (initiators refuse ones older than SPK_MAX_AGE_MS).
+
+export const SPK_MAX_AGE_MS = 60 * 24 * 3600 * 1000;
+
+const spkBytes = (id, pub, createdAt) => {
+  if (!Number.isInteger(createdAt) || createdAt < 0) throw new Error("spk createdAt must be epoch ms");
+  return concat(field(SPK_LABEL), u32(id), field(pub), field(utf8(String(createdAt))));
+};
 
 export function generateSignedPrekey(device, id, now = Date.now()) {
   const kp = generateDhKeyPair();
-  const sig = sodium().crypto_sign_detached(spkBytes(id, kp.pub), device.signPriv);
+  const sig = sodium().crypto_sign_detached(spkBytes(id, kp.pub, now), device.signPriv);
   return { id, pub: kp.pub, priv: kp.priv, sig, createdAt: now };
 }
 
-export function verifySignedPrekey(deviceSignPub, spk) {
+export function verifySignedPrekey(deviceSignPub, spk, now = Date.now()) {
   try {
     requireKey("spk pub", spk.pub);
-    if (!(spk.sig instanceof Uint8Array) || spk.sig.length !== 64) return false;
-    return sodium().crypto_sign_verify_detached(spk.sig, spkBytes(spk.id, spk.pub), deviceSignPub);
+    if (!isSig(spk.sig)) return false;
+    if (!(now - spk.createdAt < SPK_MAX_AGE_MS) || spk.createdAt > now + 24 * 3600 * 1000) return false;
+    return sodium().crypto_sign_verify_detached(spk.sig, spkBytes(spk.id, spk.pub, spk.createdAt), deviceSignPub);
   } catch {
     return false;
   }

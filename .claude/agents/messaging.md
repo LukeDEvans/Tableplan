@@ -41,8 +41,13 @@ as security-critical.
 - Every function is **pure**: it returns a new record/state and never mutates its
   input, so a failed decrypt can't damage a session. Callers store the new record
   **before** sending, and delete a used one-time prekey **after** storing.
-- A sender's device keys come from its **certificate** (verified against the
-  person's primary identity), never from the message itself.
+- A sender's device keys come from its **certificate** (both signatures verified
+  against the identity key stored for that person), never from the message itself.
+- **App-layer rules the core can't enforce** are listed in MESSAGING_DESIGN.md §4 and
+  at the top of `messaging/crypto/session.js`: store-before-send under a lock, the
+  prekey seen-store, sender authorization for `sync`/`control`, failed-decrypt rate
+  limits, card thumbs only via proxy or on tap. Every step that wires the core into
+  the app must implement and test them.
 - Tests: `test/messaging-*.test.js` (RFC 4231/5869 vectors, seeded property tests for
   reordering/loss/simultaneous starts, tampering, replays) and
   `npm run qa:messaging-crypto` (the self-test in headless Chromium). A crypto

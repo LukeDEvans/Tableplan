@@ -11,7 +11,7 @@
 
 import { concat, field, utf8 } from "./bytes.js";
 import { hkdf } from "./kdf.js";
-import { dh, generateDhKeyPair, verifySignedPrekey } from "./keys.js";
+import { dh, generateDhKeyPair, verifySignedPrekey, requireId, requireKey } from "./keys.js";
 
 const INFO = utf8("LiveMsg/X3DH/v1");
 const AD_LABEL = utf8("LiveMsg/AD/v1");
@@ -21,15 +21,28 @@ function deriveSk(parts) {
   return hkdf(new Uint8Array(32), concat(F, ...parts), INFO, 32);
 }
 
-// AD binds both devices' full identities (signing and DH keys), initiator first.
-export function associatedData(initiator, responder) {
-  return concat(field(AD_LABEL), field(initiator.signPub), field(initiator.dhPub), field(responder.signPub), field(responder.dhPub));
+// AD binds both ends' full identity, initiator first: the person (userId + identity
+// key) and the device (deviceId + both keys). A device certified under a different
+// person or id produces different AD, so it can't decrypt — or be credited — as the
+// real sender (fix for review finding 1, 2026-10-30).
+function descriptorBytes(d) {
+  requireId("userId", d.userId);
+  requireId("deviceId", d.deviceId);
+  requireKey("identitySignPub", d.identitySignPub);
+  requireKey("signPub", d.signPub);
+  requireKey("dhPub", d.dhPub);
+  return concat(field(utf8(d.userId)), field(d.identitySignPub), field(utf8(d.deviceId)), field(d.signPub), field(d.dhPub));
 }
 
-// me: { signPub, dhPub, dhPriv }; them: { signPub, dhPub } (certificate-verified);
-// spk: { id, pub, sig }; opk: { id, pub } | null.
-export function x3dhInitiate({ me, them, spk, opk = null, ephemeral = generateDhKeyPair() }) {
-  if (!verifySignedPrekey(them.signPub, spk)) throw new Error("x3dh: signed prekey signature invalid");
+export function associatedData(initiator, responder) {
+  return concat(field(AD_LABEL), descriptorBytes(initiator), descriptorBytes(responder));
+}
+
+// me: my device descriptor + dhPriv; them: their certificate-verified descriptor
+// ({ userId, deviceId, identitySignPub, signPub, dhPub } — keys.deviceDescriptor);
+// spk: { id, pub, sig, createdAt }; opk: { id, pub } | null.
+export function x3dhInitiate({ me, them, spk, opk = null, ephemeral = generateDhKeyPair(), now = Date.now() }) {
+  if (!verifySignedPrekey(them.signPub, spk, now)) throw new Error("x3dh: signed prekey signature invalid or expired");
   const parts = [dh(me.dhPriv, spk.pub), dh(ephemeral.priv, them.dhPub), dh(ephemeral.priv, spk.pub)];
   if (opk) parts.push(dh(ephemeral.priv, opk.pub));
   return {
@@ -41,7 +54,7 @@ export function x3dhInitiate({ me, them, spk, opk = null, ephemeral = generateDh
   };
 }
 
-// me: { signPub, dhPub, dhPriv }; initiator: { signPub, dhPub } (certificate-verified);
+// me: my device descriptor + dhPriv; initiator: its certificate-verified descriptor;
 // spk: { id, pub, priv }; opk: { id, pub, priv } | null; ephemeralPub from the message.
 export function x3dhRespond({ me, initiator, spk, opk = null, ephemeralPub }) {
   const parts = [dh(spk.priv, initiator.dhPub), dh(me.dhPriv, ephemeralPub), dh(spk.priv, ephemeralPub)];

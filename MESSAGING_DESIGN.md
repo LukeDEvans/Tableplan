@@ -1,6 +1,6 @@
 # Encrypted messaging — design & plan
 
-Status: **DESIGN AGREED** (Luke, 2026-10-29/30). **Step 1 (crypto core) built** on branch `claude/messaging-crypto` (2026-10-30) — §15. No migration, no UI, nothing deployed.
+Status: **DESIGN AGREED** (Luke, 2026-10-29/30). **Step 1 (crypto core) built and independently reviewed** on branch `claude/messaging-crypto` (2026-10-30) — §15, §16. No migration, no UI, nothing deployed.
 
 Goal: end-to-end encrypted messages between app users, Signal-level protection, living in the current Mail page, which is renamed **Message**. Phone numbers (SMS) may come later as an invite link into the app (§13).
 
@@ -53,9 +53,10 @@ Goal: end-to-end encrypted messages between app users, Signal-level protection, 
 
 **Device keys (every device, phone included)**
 - Ed25519 (signs the device's prekeys) + X25519 (its X3DH identity key).
-- **Signed prekey** (X25519, signed by the device's Ed25519 key, rotated ~monthly).
+- **Signed prekey** (X25519, signed by the device's Ed25519 key together with its creation time, rotated ~monthly; initiators refuse one older than 60 days).
 - **One-time prekeys**: batch of 20, refilled to 20 when fewer than 5 remain.
-- **Device certificate**: `{user_id, device_id, kind, device keys, created_at}`, length-prefixed and signed by the person's **primary identity key**. A recipient trusts a device only if its certificate verifies. Verifying someone's phone once covers all their linked devices.
+- **Device certificate**: `{user_id, identity key, device_id, kind, device keys, created_at}`, length-prefixed, with **two signatures**: the person's **primary identity key** vouches for the device, and the **device's own key** proves it holds the keys being certified (so nobody can certify someone else's device as theirs). A recipient trusts a device only if both verify against the identity key it has stored for that person. Verifying someone's phone once covers all their linked devices.
+- **Server rule (step 2):** a device's keys can appear in only one certificate (unique `sign_pub` and `dh_pub` in `msg_devices`).
 
 **Storage on device**
 - iPhone: a wrapping key in the Keychain encrypts the key store and session state at rest.
@@ -80,11 +81,13 @@ Goal: end-to-end encrypted messages between app users, Signal-level protection, 
 Following Signal's published specs (X3DH, Double Ratchet, a light form of Sesame for multi-device). Post-quantum (Signal's newer PQXDH) is out of scope — libsodium has no ML-KEM; noted for later.
 
 - **Sessions are per device pair.** Sending to Marijane = encrypt separately for each of her devices **and each of my other devices**.
-- **Session start (X3DH):** fetch the recipient device's certificate, signed prekey, and claim one one-time prekey (`claim_prekey` RPC, which deletes it atomically). Verify the certificate chain and prekey signature before use. `SK = HKDF(0³², 0xFF³² ‖ DH1 ‖ DH2 ‖ DH3 [‖ DH4], "LiveMsg/X3DH/v1")`; AD binds both devices' signing and DH keys.
+- **Session start (X3DH):** fetch the recipient device's certificate, signed prekey, and claim one one-time prekey (`claim_prekey` RPC, which deletes it atomically). Verify the certificate chain and prekey signature before use. `SK = HKDF(0³², 0xFF³² ‖ DH1 ‖ DH2 ‖ DH3 [‖ DH4], "LiveMsg/X3DH/v1")`; AD binds **both ends' full identity**: user id, identity key, device id, and both device keys.
 - **Every message (Double Ratchet):** fresh message key per message; DH ratchet step on each reply. Out-of-order messages handled with stored skipped keys (at most 1,000 skipped per gap, 2,000 stored, dropped after 7 days).
-- **Primitives:** X25519 (low-order keys rejected), Ed25519, HKDF-SHA256 and HMAC-SHA256 (chain keys), XChaCha20-Poly1305 (message encryption; key and nonce derived from the message key; AD ‖ header as associated data). Plaintext padded to 64-byte blocks.
-- **Wire:** a version byte, then either a normal message (`header ‖ ciphertext`) or a prekey message (`IK ‖ EK ‖ spkId ‖ opkId ‖ header ‖ ciphertext`). The initiator keeps sending prekey messages until it first hears back. The prekey message's identity key is **compared to** the sender's certificate, never trusted on its own.
-- **Several sessions per device pair** (up to 5, newest first): if both devices start at once, or one side resets, older sessions still decrypt stragglers while the newest is used to send.
+- **Primitives:** X25519 (low-order keys rejected), Ed25519, HKDF-SHA256 and HMAC-SHA256 (chain keys), XChaCha20-Poly1305 (message encryption; key derived from the message key, a **random 24-byte nonce** sent with each message; AD ‖ header as associated data). Plaintext padded to 64-byte blocks.
+- **Wire (version 2):** a version byte, then either a normal message (`header ‖ nonce ‖ ciphertext`) or a prekey message (`IK ‖ EK ‖ spkId ‖ opkId ‖ header ‖ nonce ‖ ciphertext`). The initiator keeps sending prekey messages until it first hears back. The prekey message's identity key is **compared to** the sender's certificate, never trusted on its own.
+- **Several sessions per device pair** (up to 5, most recently used first): if both devices start at once, or one side resets, older sessions still decrypt stragglers while the newest is used to send. A straggler on an older session doesn't make it the sending session. Sessions that already know a message's ratchet key are tried first, which keeps the cost of a forged message low.
+- **Replay guard for first messages:** each device keeps the ephemeral keys of prekey messages that set up a session, for the life of that signed prekey, and refuses repeats.
+- **App-layer rules (steps 2–3), which the core can't enforce:** store a record before sending or acting on a message, under a per-device-pair lock or version check (two tabs must not both advance one record); record `newPrekeyMessage` and delete `usedOneTimePrekeyId` after storing; if a decrypted envelope is invalid, still store the returned record; rate-limit failed decrypts per sending device; accept `sync` only from your own certified devices, `control` only from current members, and `delete_for_everyone` only for the sender's own messages; dedupe envelope ids.
 - **Session repair:** if a message can't be decrypted (lost state, e.g. cleared browser data), the device replies with an automatic `reset_session` and the sender starts a new session; the thread shows a quiet "a message couldn't be decrypted" line.
 
 **Testing honesty:** Signal's specs don't ship official test vectors for the full protocol. Assurance comes from libsodium's own primitives (never hand-rolled), the RFC 4231 / RFC 5869 vectors for HMAC/HKDF, a property-test suite (random message order, loss, simultaneous starts, resets), and the same self-test run in Node, in Chromium through Vite, in the production bundle, and (step 2) on the phone.
@@ -108,7 +111,7 @@ One versioned envelope for everything, validated by `messaging/envelope.js` on b
 ```
 
 - `text`: `{ "text": "..." }` (max 4,000 chars, not blank).
-- `card`: `{ "kind": "recipe"|"event"|"trip"|"shop", "ref": "<item id>", "snapshot": { "title", "subtitle", "date", "thumb" } }` — the snapshot always renders (thumb must be https); tapping opens the real item **only if the recipient can see it** (Personal items stay private).
+- `card`: `{ "kind": "recipe"|"event"|"trip"|"shop", "ref": "<item id>", "snapshot": { "title", "subtitle", "date", "thumb" } }` — the snapshot always renders; tapping opens the real item **only if the recipient can see it** (Personal items stay private). The thumb (https only) is a URL the sender chose, so it's loaded through the app's image proxy or on tap, never automatically — otherwise it would tell the sender when and from where the card was read.
 - `control`: `group_create`, `group_rename`, `member_add`, `member_remove`, `member_leave`, `timer_set` (1 h / 1 day / 1 week / 4 weeks / off), `delete_for_everyone`, `reset_session`.
 - `receipt`: `{ "read": ["<message ids>"] }`.
 - `sync`: to my other devices — `sent` (a copy of a message I sent), `verified` (verification status), `read` (read up to a message).
@@ -311,8 +314,27 @@ Watch the Supabase API logs for 48 h after steps 2 and 7.
 **Verified:**
 - `test/messaging-crypto-kdf.test.js` — RFC 4231 HMAC and RFC 5869 HKDF vectors (all three), bytes, padding.
 - `test/messaging-crypto-keys.test.js` — certificates (every field, re-splitting, malformed input), prekey signatures, low-order keys, safety numbers and QR (swapped key on either side caught).
-- `test/messaging-crypto-session.test.js` — conversations, no one-time prekey, repeated prekey messages, one-time-prekey reuse refused, replays (in order and out of order), tampering at several offsets with the stored record unchanged, imposter identity key, another device can't read, skip limit, skipped-key expiry, simultaneous starts, reset after lost state, session cap, no mutation; **8 seeded property runs** of 300 random steps each (both directions, reordering, 5% loss, sometimes simultaneous starts).
+- `test/messaging-crypto-session.test.js` — review regressions (§16), conversations, no one-time prekey, repeated prekey messages, one-time-prekey reuse refused, replays (in order and out of order), tampering at several offsets with the stored record unchanged, imposter identity key, another device can't read, skip limit, skipped-key expiry, simultaneous starts, reset after lost state, session cap, no mutation; **8 seeded property runs** of 300 random steps each (both directions, reordering, 5% loss, sometimes simultaneous starts).
 - `test/messaging-envelope.test.js` — every type accepted, unknown fields dropped, 19 hostile shapes rejected, seal/open round trip.
 - **Planted bugs:** dropping the header from the associated data (20 tests fail) and not deleting a used skipped key (caught once the out-of-order replay test was added — that test exists because the first run missed it). Removing the explicit duplicate check is caught by authentication anyway (defence in depth).
 - `npm run qa:messaging-crypto` — the self-test in headless Chromium through Vite: 9/9. The **Vite production bundle** of the self-test also passes 9/9 in Chromium (~350 KB gzipped, hence lazy loading).
-- **Not yet verified:** the iPhone's WebKit (step 2, via Settings → Run crypto check) and an independent review of the crypto (below).
+- **Not yet verified:** the iPhone's WebKit (step 2, via Settings → Run crypto check).
+
+---
+
+## 16. Independent review (2026-10-30)
+
+A separate agent, which hadn't seen the code written, attacked the crypto core against the Signal X3DH and Double Ratchet specs and confirmed each finding with a script.
+
+**Found correct:** the chain and root key derivations, X3DH (DH order, the 0xFF prefix, zero salt, prekey signature checked first, low-order keys refused), the ratchet step order, skipped-key handling and limits, nothing committed on failure, header and wire bounds, constant-time comparison, length-prefixed certificates, safety numbers and QR, and envelope rebuilding (stray fields and `__proto__` don't carry through).
+
+**Fixed (each now has a test that fails if the fix is reverted):**
+1. *(P1)* A server could certify one person's device keys as another person's device, mislabelling who sent a message (nothing readable). → Device certificates carry the device's own signature, and the session AD binds both ends' user id, identity key and device id.
+2. *(P1)* Reusing a stale record (two tabs, a retried save) reused a key **and** nonce. → Random nonces; the store-before-send lock is now a written app-layer rule.
+3. *(P1)* A captured first message could be replayed after its session aged out, and the replayed session took over sending. → Seen-store of first-message ephemeral keys; the core reports each new one for the app to record.
+4. *(P2)* A forged message could cost ~87 ms of work against all five sessions. → Likely session tried first; per-sender rate limit at the app layer (step 3).
+5. *(P2)* A message whose envelope was invalid left its key derivable. → The advanced record is returned for storing, with the message dropped.
+6. *(P2)* Sender authorization (`sync`, `control`), the card-thumb tracking risk, and loose dates. → Written as app-layer rules (§4, §5); dates must be ISO UTC.
+7. *(P3)* Ids are limited to `A–Z a–z 0–9 _ -` (one byte form), and signed prekeys carry a signed creation time and expire after 60 days.
+
+**Test gaps closed:** the vacuous "identity separation" test is gone; the session-limit test now checks which session is evicted and which sends; the one-time-prekey test now says plainly that deleting the prekey is the app's job.

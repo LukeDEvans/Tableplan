@@ -27,22 +27,27 @@ export async function runCryptoSelfTest() {
     toHex(hkdf(fromHex("000102030405060708090a0b0c"), new Uint8Array(22).fill(0x0b), fromHex("f0f1f2f3f4f5f6f7f8f9"), 42))
       === "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865");
 
-  const id = generateIdentity();
+  const ia = generateIdentity();
+  const ib = generateIdentity();
   const a = generateDevice();
   const b = generateDevice();
-  const cert = { userId: "self-test", deviceId: "d1", kind: "phone", signPub: a.signPub, dhPub: a.dhPub, createdAt: 0 };
-  check("device certificate verifies", () => verifyDeviceCert(id.signPub, cert, certifyDevice(id, cert)));
-  check("safety number is 60 digits", () => /^\d{60}$/.test(safetyNumber({ userId: "x", signPub: id.signPub }, { userId: "y", signPub: generateIdentity().signPub })));
+  const da = { userId: "self-test-a", deviceId: "a", identitySignPub: ia.signPub, signPub: a.signPub, dhPub: a.dhPub };
+  const db = { userId: "self-test-b", deviceId: "b", identitySignPub: ib.signPub, signPub: b.signPub, dhPub: b.dhPub };
+  const meA = { ...da, dhPriv: a.dhPriv };
+  const meB = { ...db, dhPriv: b.dhPriv };
+  const cert = { ...da, kind: "phone", createdAt: 0 };
+  check("device certificate verifies", () => verifyDeviceCert(ia.signPub, cert, certifyDevice(ia, a, cert)));
+  check("safety number is 60 digits", () => /^\d{60}$/.test(safetyNumber({ userId: "x", signPub: ia.signPub }, { userId: "y", signPub: ib.signPub })));
 
   const spk = generateSignedPrekey(b, 1);
   const [opk] = generateOneTimePrekeys(1, 1);
-  const prekeysB = { signed: (i) => (i === 1 ? spk : null), oneTime: (i) => (i === opk.id ? opk : null) };
-  let recA = startSession(undefined, { me: a, them: b, bundle: { spk: { id: 1, pub: spk.pub, sig: spk.sig }, opk: { id: opk.id, pub: opk.pub } } });
+  const prekeysB = { signed: (i) => (i === 1 ? spk : null), oneTime: (i) => (i === opk.id ? opk : null), seen: () => false };
+  let recA = startSession(undefined, { me: meA, them: db, bundle: { spk: { id: 1, pub: spk.pub, sig: spk.sig, createdAt: spk.createdAt }, opk: { id: opk.id, pub: opk.pub } } });
   let recB;
   const sendA = (t) => { const r = encryptToDevice(recA, utf8(t)); recA = r.record; return r.wire; };
   const sendB = (t) => { const r = encryptToDevice(recB, utf8(t)); recB = r.record; return r.wire; };
-  const recvB = (w) => { const r = decryptFromDevice(recB, { me: b, them: a, wire: w, prekeys: prekeysB }); recB = r.record; return fromUtf8(r.plaintext); };
-  const recvA = (w) => { const r = decryptFromDevice(recA, { me: a, them: b, wire: w, prekeys: prekeysB }); recA = r.record; return fromUtf8(r.plaintext); };
+  const recvB = (w) => { const r = decryptFromDevice(recB, { me: meB, them: da, wire: w, prekeys: prekeysB }); recB = r.record; return fromUtf8(r.plaintext); };
+  const recvA = (w) => { const r = decryptFromDevice(recA, { me: meA, them: db, wire: w, prekeys: prekeysB }); recA = r.record; return fromUtf8(r.plaintext); };
 
   check("first message decrypts", () => recvB(sendA("hello")) === "hello");
   check("reply decrypts", () => recvA(sendB("hi back")) === "hi back");

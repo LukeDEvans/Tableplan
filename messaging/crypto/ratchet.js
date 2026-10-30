@@ -6,8 +6,11 @@
 //
 //   KDF_RK(rk, dh)  = HKDF(salt = rk, ikm = dh, info "LiveMsg/ratchet/v1") → 64 bytes → (rk, ck)
 //   KDF_CK(ck)      = (HMAC(ck, 0x02) → next ck, HMAC(ck, 0x01) → message key)
-//   ENCRYPT(mk,…)   = XChaCha20-Poly1305 with key ‖ nonce = HKDF(mk, "LiveMsg/msg-keys/v1"),
-//                     associated data = AD ‖ header
+//   ENCRYPT(mk,…)   = XChaCha20-Poly1305, key = HKDF(mk, "LiveMsg/msg-keys/v1"), a RANDOM
+//                     24-byte nonce sent with the message, associated data = AD ‖ header.
+//                     (The nonce was first derived from mk too; a random one means even a
+//                     state reused by mistake — two tabs, a retried save — never repeats a
+//                     key+nonce pair. Review finding 2, 2026-10-30.)
 //   header          = DH ratchet public key (32) ‖ PN (u32) ‖ N (u32)
 
 import { sodium } from "./sodium.js";
@@ -19,6 +22,7 @@ export const MAX_SKIP = 1000;            // most message keys one gap may skip
 export const MAX_STORED_SKIPPED = 2000;  // most skipped keys a session keeps
 export const SKIPPED_TTL_MS = 7 * 24 * 3600 * 1000;
 export const HEADER_LEN = 40;
+export const NONCE_LEN = 24;
 
 const RK_INFO = utf8("LiveMsg/ratchet/v1");
 const MK_INFO = utf8("LiveMsg/msg-keys/v1");
@@ -32,10 +36,7 @@ function kdfCk(ck) {
   return [hmacSha256(ck, Uint8Array.of(2)), hmacSha256(ck, Uint8Array.of(1))];
 }
 
-function aeadKeys(mk) {
-  const out = hkdf(new Uint8Array(32), mk, MK_INFO, 56);
-  return { key: out.subarray(0, 32), nonce: out.subarray(32, 56) };
-}
+const aeadKey = (mk) => hkdf(new Uint8Array(32), mk, MK_INFO, 32);
 
 export function encodeHeader({ dh: dhPub, pn, n }) {
   return concat(dhPub, u32(pn), u32(n));
@@ -81,17 +82,17 @@ export function ratchetEncrypt(state, plaintext) {
   st.cks = S(ck);
   const header = encodeHeader({ dh: B(st.dhs.pub), pn: st.pn, n: st.ns });
   st.ns += 1;
-  const { key, nonce } = aeadKeys(mk);
-  const ciphertext = sodium().crypto_aead_xchacha20poly1305_ietf_encrypt(plaintext, concat(B(st.ad), header), null, nonce, key);
-  return { state: st, header, ciphertext };
+  const nonce = sodium().randombytes_buf(NONCE_LEN);
+  const ciphertext = sodium().crypto_aead_xchacha20poly1305_ietf_encrypt(plaintext, concat(B(st.ad), header), null, nonce, aeadKey(mk));
+  return { state: st, header, nonce, ciphertext };
 }
 
 // ---- decrypt (spec §3.5) --------------------------------------------------------
 
-function openWith(mk, ad, header, ciphertext) {
-  const { key, nonce } = aeadKeys(mk);
+function openWith(mk, ad, header, nonce, ciphertext) {
+  if (!(nonce instanceof Uint8Array) || nonce.length !== NONCE_LEN) throw new Error("ratchet: bad nonce");
   try {
-    return sodium().crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, concat(ad, header), nonce, key);
+    return sodium().crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, concat(ad, header), nonce, aeadKey(mk));
   } catch {
     throw new Error("ratchet: message failed authentication");
   }
@@ -115,7 +116,7 @@ function pruneSkipped(st, now) {
   if (st.skipped.length > MAX_STORED_SKIPPED) st.skipped = st.skipped.slice(st.skipped.length - MAX_STORED_SKIPPED);
 }
 
-export function ratchetDecrypt(state, header, ciphertext, now = Date.now()) {
+export function ratchetDecrypt(state, header, nonce, ciphertext, now = Date.now()) {
   const h = decodeHeader(header);
   const st = clone(state);
   const ad = B(st.ad);
@@ -124,7 +125,7 @@ export function ratchetDecrypt(state, header, ciphertext, now = Date.now()) {
   // A key we skipped earlier?
   const idx = st.skipped.findIndex(([k]) => k === `${hdh}:${h.n}`);
   if (idx >= 0) {
-    const plaintext = openWith(B(st.skipped[idx][1]), ad, header, ciphertext);
+    const plaintext = openWith(B(st.skipped[idx][1]), ad, header, nonce, ciphertext);
     st.skipped.splice(idx, 1);
     pruneSkipped(st, now);
     return { state: st, plaintext };
@@ -150,7 +151,7 @@ export function ratchetDecrypt(state, header, ciphertext, now = Date.now()) {
   if (h.n < st.nr) throw new Error("ratchet: duplicate or expired message");
   skipKeys(st, h.n, now);
   const [ck, mk] = kdfCk(B(st.ckr));
-  const plaintext = openWith(mk, ad, header, ciphertext);
+  const plaintext = openWith(mk, ad, header, nonce, ciphertext);
   st.ckr = S(ck);
   st.nr += 1;
   pruneSkipped(st, now);

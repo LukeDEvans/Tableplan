@@ -3,9 +3,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { parseEnvelope, DEFAULT_TIMER_SECS, LIMITS } from "../messaging/envelope.js";
 import {
-  loadSodium, generateDevice, generateSignedPrekey, startSession, sealEnvelope, openEnvelope, emptyRecord,
+  loadSodium, generateDevice, generateIdentity, generateSignedPrekey, startSession, sealEnvelope, openEnvelope, emptyRecord,
 } from "../messaging/crypto/index.js";
 import { generateOneTimePrekeys } from "../messaging/crypto/keys.js";
+import { encryptToDevice } from "../messaging/crypto/session.js";
+import { pad } from "../messaging/crypto/padding.js";
+import { utf8 } from "../messaging/crypto/bytes.js";
 
 beforeAll(async () => { await loadSodium(); });
 
@@ -41,6 +44,8 @@ describe("parseEnvelope", () => {
       base("text", { text: "x".repeat(LIMITS.text + 1) }),
       base("text", { text: "x" }, { conv: "../etc" }),
       base("text", { text: "x" }, { sentAt: "yesterday" }),
+      base("text", { text: "x" }, { sentAt: "Oct 30 2026" }),
+      base("text", { text: "x" }, { sentAt: "2026-10-30T14:00:00+05:00" }),
       base("text", { text: "x" }, { expireSecs: 5 }),
       base("card", { kind: "secret", ref: "r", snapshot: { title: "t" } }),
       base("card", { kind: "recipe", ref: "r", snapshot: { title: "t", thumb: "javascript:alert(1)" } }),
@@ -58,20 +63,41 @@ describe("parseEnvelope", () => {
 });
 
 describe("sealEnvelope / openEnvelope", () => {
-  it("round-trips an envelope between devices and validates both ends", () => {
+  function pair() {
+    const ia = generateIdentity();
+    const ib = generateIdentity();
     const a = generateDevice();
     const b = generateDevice();
+    const da = { userId: "luke", deviceId: "a", identitySignPub: ia.signPub, signPub: a.signPub, dhPub: a.dhPub };
+    const db = { userId: "marijane", deviceId: "b", identitySignPub: ib.signPub, signPub: b.signPub, dhPub: b.dhPub };
     const spk = generateSignedPrekey(b, 1);
     const [opk] = generateOneTimePrekeys(1, 1);
-    let recA = startSession(emptyRecord(), { me: a, them: b, bundle: { spk: { id: 1, pub: spk.pub, sig: spk.sig }, opk: { id: opk.id, pub: opk.pub } } });
-    const sealed = sealEnvelope(recA, base("text", { text: "hello", junk: true }));
-    recA = sealed.record;
-    const opened = openEnvelope(emptyRecord(), {
-      me: b, them: a, wire: sealed.wire,
-      prekeys: { signed: (id) => (id === 1 ? spk : null), oneTime: (id) => (id === opk.id ? opk : null) },
+    const rec = startSession(emptyRecord(), { me: { ...da, dhPriv: a.dhPriv }, them: db, bundle: { spk: { id: 1, pub: spk.pub, sig: spk.sig, createdAt: spk.createdAt }, opk: { id: opk.id, pub: opk.pub } } });
+    const open = (wire) => openEnvelope(emptyRecord(), {
+      me: { ...db, dhPriv: b.dhPriv }, them: da, wire,
+      prekeys: { signed: (id) => (id === 1 ? spk : null), oneTime: (id) => (id === opk.id ? opk : null), seen: () => false },
     });
+    return { rec, open, opk };
+  }
+
+  it("round-trips an envelope between devices and validates both ends", () => {
+    const { rec, open, opk } = pair();
+    const sealed = sealEnvelope(rec, base("text", { text: "hello", junk: true }));
+    const opened = open(sealed.wire);
     expect(opened.envelope.body).toEqual({ text: "hello" });
+    expect(opened.error).toBe(null);
     expect(opened.usedOneTimePrekeyId).toBe(opk.id);
-    expect(() => sealEnvelope(recA, base("text", { text: "" }))).toThrow(/envelope/);
+    expect(opened.newPrekeyMessage).toMatchObject({ spkId: 1 });
+    expect(() => sealEnvelope(sealed.record, base("text", { text: "" }))).toThrow(/envelope/);
+  });
+
+  it("returns the advanced record with no envelope when a decrypted payload is invalid", () => {
+    const { rec, open } = pair();
+    // A buggy or hostile sender skips sealEnvelope's checks:
+    const raw = encryptToDevice(rec, pad(utf8(JSON.stringify(base("text", { text: "   " })))));
+    const opened = open(raw.wire);
+    expect(opened.envelope).toBe(null);
+    expect(opened.error).toMatch(/envelope/);
+    expect(opened.record.sessions.length).toBe(1); // store it: that message key is now spent
   });
 });
