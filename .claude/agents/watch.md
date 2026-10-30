@@ -105,6 +105,13 @@ changes to the Watch page only.
 - **A short list starts at the top (2026-10-29):** `.watch-list-panel`, `.watch-sections`
   and `.watch-section` pack their rows at the top (`align-content: start`); without it the
   stretched grid put a short list mid-screen and pushed Movies and TV Shows apart.
+- **The screen stays put on a redraw (Luke, 2026-10-29):** `renderWatchPlanner` keeps the
+  list's scroll (and each open season's episode-list scroll, `data-watch-eps`) across the
+  redraw that follows opening a season or ticking an episode; only a tab switch
+  (`watchListScrollReset`) starts at the top. Any new redraw path gets this for free.
+- **Compact tracker (Luke, 2026-10-29):** Watched is an icon-only check in a circle
+  (`.watch-action--check`, `aria-label="Watched"`); season boxes are ~2/3 the old height
+  (≈30px); episode rows have almost no space between them (a long title still wraps).
 - **Agreed, not built yet (WATCH_AUDIT.md "Decisions"):** per-tick merge of episode ticks
   and tabs; episode lists/showtimes in a device cache and trimmed providers; refresh
   where-to-watch on view after 7 days; two-line titles + grid/list toggle; hide empty

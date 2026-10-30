@@ -195,10 +195,18 @@ try {
     await page.waitForTimeout(250);
     await page.locator(`[data-watch-act-watched="qa-m1-${globalThis.__qaR ?? R}"]`).tap();
     await page.waitForTimeout(200);
+    const checkBtn = await page.evaluate(() => {
+      const b = document.querySelector(`[data-watch-act-watched="qa-m1-${globalThis.__qaR ?? R}"]`);
+      return b && { text: b.textContent.trim(), label: b.getAttribute("aria-label"), w: Math.round(b.getBoundingClientRect().width), circle: !!b.querySelector("svg circle") };
+    });
+    check(checkBtn && !checkBtn.text && checkBtn.label === "Watched" && checkBtn.circle && checkBtn.w <= 48, "Watched is just a check in a circle (no word)", checkBtn);
     check(await page.evaluate(() => document.getElementById("watchLogDialog")?.open), "Watched opens the watched/rating window");
     await page.evaluate(() => document.getElementById("watchLogDialog")?.close());
 
-    // Next episode + tracker layout.
+    // Next episode + tracker layout. A short screen so the list has to scroll,
+    // which is what makes a redraw jump.
+    await page.setViewportSize({ width, height: 560 });
+    await page.waitForTimeout(200);
     await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).scrollIntoViewIfNeeded();
     await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).tap();
     await page.waitForTimeout(350);
@@ -210,8 +218,33 @@ try {
     const nextText2 = await page.locator(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-next-ep`).textContent().catch(() => "");
     check(/S3 E7/.test(nextText2 || ""), "ticking it moves Next to S3 E7", nextText2);
     check(await page.locator(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-episode`).count() === 0, "seasons start closed (the old saved open flag is ignored)");
-    await page.locator(`[data-watch-season-expand="qa-t1-${globalThis.__qaR ?? R}"][data-season="3"]`).tap();
+    const s3 = `[data-watch-season-expand="qa-t1-${globalThis.__qaR ?? R}"][data-season="3"]`;
+    await page.locator(s3).scrollIntoViewIfNeeded();
+    await page.waitForTimeout(150);
+    const where = () => page.evaluate((sel) => ({ top: Math.round(document.querySelector(sel).getBoundingClientRect().top), list: Math.round(document.querySelector(".watch-list-panel").scrollTop), win: Math.round(scrollY) }), s3);
+    const w0 = await where();
+    await page.locator(s3).tap();
     await page.waitForTimeout(300);
+    const w1 = await where();
+    check(w0.list + w0.win > 0, "(the list is scrolled down for the next checks)", w0);
+    check(Math.abs(w1.top - w0.top) <= 1, "opening a season doesn't move the screen", { w0, w1 });
+    const ep8 = page.locator(`[data-watch-episode="qa-t1-${globalThis.__qaR ?? R}"][data-episode="8"]`);
+    await ep8.scrollIntoViewIfNeeded(); // the tap would do this itself; measure after it
+    await page.waitForTimeout(150);
+    const w1b = await where();
+    await ep8.tap();
+    await page.waitForTimeout(300);
+    const w2 = await where();
+    check(w1b.list + w1b.win > 0 && Math.abs(w2.top - w1b.top) <= 1, "ticking an episode doesn't move the screen", { w1b, w2 });
+    check(await page.evaluate(() => window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress[3].episodes[8] === true), "…and the tick is saved");
+    const sizes = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll(".watch-episode")].map((e) => e.getBoundingClientRect());
+      const name = document.querySelector(".watch-episode-name").getBoundingClientRect().height;
+      return { head: Math.round(document.querySelector(".watch-season-head").getBoundingClientRect().height), row: Math.round(rows[0].height), name: Math.round(name), gap: Math.round(rows[1].top - rows[0].bottom) };
+    });
+    check(sizes.head <= 34, "season boxes are about 2/3 of the old 48px", sizes);
+    // A row is its title plus 2px; a long title still wraps to a second line.
+    check(sizes.row <= Math.max(sizes.name, 20) + 3 && sizes.gap <= 1, "episodes sit close together", sizes);
     const lay = await page.evaluate(() => {
       const cb = document.querySelector(".watch-episode .watch-check").getBoundingClientRect().width;
       const sc = document.querySelector(".watch-season-check").getBoundingClientRect().width;
@@ -226,6 +259,7 @@ try {
     check(!/__expanded/.test(savedOpen), "opening a season isn't saved", savedOpen);
     if (SHOT) await page.screenshot({ path: `${SHOT}-tracker-${width}.png` });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "nothing scrolls sideways");
+    await page.setViewportSize({ width, height: 844 });
 
     // Link a plain title.
     await page.locator(`[data-watch-item="qa-m5-${globalThis.__qaR ?? R}"]`).scrollIntoViewIfNeeded();
