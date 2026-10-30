@@ -33,6 +33,7 @@
     "qa:app-links": "node scripts/qa-app-links.mjs",
     "qa:language": "node scripts/qa-language.mjs",
     "qa:music-shows": "node scripts/qa-music-shows.mjs",
+    "qa:messaging-crypto": "node scripts/qa-messaging-crypto.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },
@@ -42,6 +43,7 @@
     "@capacitor/local-notifications": "^6.1.3",
     "fast-xml-parser": "^5.10.1",
     "fflate": "^0.8.3",
+    "libsodium-wrappers-sumo": "0.7.15",
     "opensheetmusicdisplay": "^2.1.2",
     "web-push": "^3.6.7"
   },

@@ -6,7 +6,7 @@
 //   - files: `path`, `glob*`, …   (repo-root paths; `*` matches within one name)
 //   - state: `key`, `prefix*`, …  (STATE_SECTIONS keys)
 // This guard fails when:
-//   1. a module, calendar/ file or Netlify function exists that no agent claims and
+//   1. a module, calendar/, music/ or messaging/ file or Netlify function exists that no agent claims and
 //      that isn't listed in SHARED_FILES below;
 //   2. a STATE_SECTIONS key exists that no agent claims and isn't in SHARED_STATE;
 //   3. an ownership entry matches nothing (the file or key was renamed or removed);
@@ -100,7 +100,7 @@ function listFiles(dir, re) {
   return readdirSync(join(root, dir)).filter((f) => re.test(f) && statSync(join(root, dir, f)).isFile()).map((f) => (dir === "." ? f : `${dir}/${f}`));
 }
 const CODE = /\.(js|mjs)$/;
-const candidateFiles = [...listFiles(".", CODE), ...listFiles("calendar", CODE), ...listFiles("music", CODE), ...listFiles("netlify/functions", CODE)];
+const candidateFiles = [...listFiles(".", CODE), ...listFiles("calendar", CODE), ...listFiles("music", CODE), ...listFiles("messaging", CODE), ...listFiles("messaging/crypto", CODE), ...listFiles("netlify/functions", CODE)];
 
 function stateKeys() {
   const src = readFileSync(join(root, "app.js"), "utf8");
