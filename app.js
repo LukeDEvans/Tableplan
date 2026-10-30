@@ -6363,7 +6363,7 @@ function normalizeWatchItems(items) {
 }
 
 // Season open/closed used to be stored as seasonProgress[n].__expanded; it's
-// device view state now (watchOpenSeasons), so drop the old flag on load.
+// device view state now (watchSelectedSeason), so drop the old flag on load.
 function watchSeasonProgressWithoutViewState(progress) {
   if (!progress || typeof progress !== "object") return {};
   const out = {};
@@ -22541,7 +22541,7 @@ function watchAvailChip(item) {
 }
 
 // TV watch progress as a 0–100 percent (or null when nothing is tracked yet),
-// mirroring the per-season counting in watchSeasonTemplate.
+// mirroring the per-season counting in watchSeasonStats.
 function watchProgressPct(item) {
   if (item.type !== "tv") return null;
   const progress = item.seasonProgress || {};
@@ -22865,26 +22865,20 @@ function watchItemTemplate(item) {
     <div class="watch-detail-row" data-watch-detail="${id}" role="region" aria-label="${escapeHtml(item.title)}">
       <span class="watch-detail-pointer" aria-hidden="true"></span>
       <div class="watch-detail-inner">
-        <div class="watch-detail-head">
-          <span class="watch-detail-title">${escapeHtml(item.title)}</span>
-          ${sub ? `<span class="watch-detail-sub">${escapeHtml(sub)}</span>` : ""}
+        <div class="watch-detail-top">
+          <div class="watch-detail-head">
+            <span class="watch-detail-title">${escapeHtml(item.title)}</span>
+            ${sub ? `<span class="watch-detail-sub">${escapeHtml(sub)}</span>` : ""}
+          </div>
+          <button class="watch-detail-more" type="button" data-watch-more="${id}" aria-label="More for ${escapeHtml(item.title)}" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+          </button>
         </div>
         ${isTv ? watchNextEpisodeHtml(item) : ""}
         ${providerHtml}
         ${!item.streamingProviders && !item.inTheaters && !item.theatricalReleaseDate && item.tmdbId ? `<button class="watch-load-providers-btn secondary-btn compact-btn" type="button" data-watch-load-providers="${id}">Load streaming info</button>` : ""}
         ${!item.tmdbId ? `<div class="watch-detail-unlinked"><span>No poster or services yet.</span><button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${id}">Find the right title</button></div>` : ""}
         ${episodeProgressHtml}
-        <div class="watch-detail-actions">
-          <button class="watch-action watch-action--check" type="button" data-watch-act-watched="${id}" aria-label="Watched" title="Watched">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="m7.8 12.3 2.9 2.9 5.6-5.8"/></svg>
-          </button>
-          <button class="watch-action" type="button" data-watch-act-tabs="${id}" aria-haspopup="menu">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10l3 3v7a1 1 0 0 1-1 1H4z"/><path d="M8 4h9l3 3v8"/></svg><span>Tabs</span>
-          </button>
-          <button class="watch-action watch-action--danger" type="button" data-watch-act-remove="${id}">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg><span>Remove</span>
-          </button>
-        </div>
       </div>
     </div>
   `;
@@ -22995,11 +22989,53 @@ function ensureWatchNextSeasonLoaded(item) {
   loadWatchSeasonEpisodes(item.id, s);
 }
 
-// Which seasons are open is this device's view, not data: kept in memory, never
-// synced (it used to be saved as seasonProgress[n].__expanded, so every tap was a
-// save and the other person saw your seasons open).
-const watchOpenSeasons = new Set();
-const watchSeasonKey = (itemId, seasonNum) => `${itemId}:${seasonNum}`;
+// Which season the panel shows is this device's view, not data: kept in memory,
+// never synced (open seasons used to be saved as seasonProgress[n].__expanded, so
+// every tap was a save and the other person saw your seasons open). Unpicked, the
+// panel shows the season of the next episode.
+const watchSelectedSeason = new Map(); // itemId → season number
+
+// ── The panel's ⋯ menu (Luke, 2026-10-29) ────────────────────────────────────
+// Watched · Tabs · Remove, from the panel's top-right corner. Tabs swaps this
+// menu for the Tabs popover at the same spot.
+function openWatchMoreMenu(btn, itemId) {
+  const wasOpen = document.querySelector(`.watch-more-menu[data-for="${CSS.escape(itemId)}"]`);
+  closeFolderMenu();
+  if (wasOpen) return; // a second tap on ⋯ closes it
+  const item = watchItemById(itemId);
+  if (!item) return;
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu watch-item-context-menu watch-more-menu";
+  menu.dataset.for = itemId;
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-watch-more-act="watched">Watched</button>
+    <button type="button" role="menuitem" data-watch-more-act="tabs" aria-haspopup="menu">Tabs</button>
+    <div class="watch-context-divider"></div>
+    <button type="button" role="menuitem" data-watch-more-act="remove" class="danger-item">Remove</button>`;
+  menu.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const act = e.target.closest("[data-watch-more-act]")?.dataset.watchMoreAct;
+    if (!act) return;
+    closeFolderMenu();
+    if (act === "watched") openWatchLogDialog(itemId);
+    else if (act === "tabs") openWatchTabsMenu(btn, itemId, { alignRight: true });
+    else if (act === "remove") requestWatchRemove(itemId);
+  });
+  document.body.append(menu);
+  placeWatchPopover(menu, btn, { alignRight: true });
+}
+
+// Under the button (above it if there's no room), inside the screen.
+function placeWatchPopover(menu, btn, { alignRight = false } = {}) {
+  const r = btn.getBoundingClientRect();
+  const bottom = usableViewportBottom();
+  const left = Math.min(alignRight ? r.right - menu.offsetWidth : r.left, window.innerWidth - menu.offsetWidth - 10);
+  const below = r.bottom + 6;
+  const top = below + menu.offsetHeight > bottom - 10 ? r.top - menu.offsetHeight - 6 : below;
+  menu.style.left = `${Math.max(10, left)}px`;
+  menu.style.top = `${Math.max(10, top)}px`;
+}
 
 // ── Remove, with Undo (Luke, 2026-10-29) ─────────────────────────────────────
 // A removal waits ~6 s before it's real: the show disappears at once and the
@@ -23029,7 +23065,7 @@ function requestWatchRemove(id) {
 
 // ── Tabs popover (the panel's Tabs button) ───────────────────────────────────
 // Ticks the tabs this show is filed under; stays open so several can be ticked.
-function openWatchTabsMenu(btn, itemId) {
+function openWatchTabsMenu(btn, itemId, { alignRight = false } = {}) {
   closeFolderMenu();
   const item = watchItemById(itemId);
   if (!item) return;
@@ -23066,13 +23102,7 @@ function openWatchTabsMenu(btn, itemId) {
     }
   });
   document.body.append(menu);
-  const r = btn.getBoundingClientRect();
-  const bottom = usableViewportBottom();
-  const left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 10);
-  const below = r.bottom + 6;
-  const top = below + menu.offsetHeight > bottom - 10 ? r.top - menu.offsetHeight - 6 : below;
-  menu.style.left = `${Math.max(10, left)}px`;
-  menu.style.top = `${Math.max(10, top)}px`;
+  placeWatchPopover(menu, btn, { alignRight });
 }
 let watchNewTabFor = null; // a show to file under the tab being typed (from the Tabs popover)
 
@@ -23098,35 +23128,54 @@ function watchEpisodeProgressHtml(item) {
     `;
   }
 
-  return `
-    <div class="watch-seasons" data-watch-seasons="${escapeHtml(item.id)}">
-      ${seasonsToShow.map((seasonNum) => watchSeasonTemplate(item, seasonNum, progress[seasonNum])).join("")}
-    </div>
-  `;
+  return watchSeasonPickerHtml(item, seasonsToShow);
 }
 
-function watchSeasonTemplate(item, seasonNum, seasonData) {
+// The season the panel shows: the one picked on this device, else the next
+// episode's, else the last one (all caught up).
+function watchShownSeason(item, seasons) {
+  const picked = watchSelectedSeason.get(item.id);
+  if (seasons.includes(picked)) return picked;
+  const next = watchNextEpisode(item);
+  if (next && seasons.includes(next.season)) return next.season;
+  return next ? seasons[0] : seasons[seasons.length - 1];
+}
+
+function watchSeasonStats(item, seasonNum) {
+  const sd = item.seasonProgress?.[seasonNum] || {};
   const episodes = item.episodeData?.[seasonNum] || [];
-  const watchedEps = seasonData?.episodes || {};
+  const watchedEps = sd.episodes || {};
   const totalEps = episodes.length || Object.keys(watchedEps).length || 0;
   const watchedCount = Object.values(watchedEps).filter(Boolean).length;
-  const allWatched = seasonData?.watched || (totalEps > 0 && watchedCount >= totalEps);
-  const isExpanded = watchOpenSeasons.has(watchSeasonKey(item.id, seasonNum));
-  const pct = allWatched ? 100 : (totalEps ? Math.round((watchedCount / totalEps) * 100) : 0);
-  const count = allWatched && !totalEps ? "Watched" : (totalEps ? `${allWatched ? totalEps : watchedCount}/${totalEps}` : "");
+  const allWatched = !!sd.watched || (totalEps > 0 && watchedCount >= totalEps);
+  return { episodes, watchedEps, totalEps, watchedCount, allWatched };
+}
 
+// One season at a time, picked from a menu (Luke, 2026-10-29) — the season boxes
+// stacked one per season were long for a show with many.
+function watchSeasonPickerHtml(item, seasons) {
+  const id = escapeHtml(item.id);
+  const shown = watchShownSeason(item, seasons);
+  const st = watchSeasonStats(item, shown);
+  const optionLabel = (n) => {
+    const o = watchSeasonStats(item, n);
+    const count = o.allWatched ? "✓" : (o.totalEps ? `${o.watchedCount}/${o.totalEps}` : "");
+    return `Season ${n}${count ? ` · ${count}` : ""}`;
+  };
+  const pct = st.allWatched ? 100 : (st.totalEps ? Math.round((st.watchedCount / st.totalEps) * 100) : 0);
   return `
-    <div class="watch-season${isExpanded ? " is-open" : ""}">
-      <div class="watch-season-head">
-        <input type="checkbox" class="watch-check watch-season-check" id="wsc-${escapeHtml(item.id)}-${seasonNum}" data-watch-season-toggle="${escapeHtml(item.id)}" data-season="${seasonNum}" ${allWatched ? "checked" : ""} aria-label="Season ${seasonNum} watched" />
-        <button class="watch-season-open" type="button" data-watch-season-expand="${escapeHtml(item.id)}" data-season="${seasonNum}" aria-expanded="${isExpanded}">
-          <span class="watch-season-name">Season ${seasonNum}</span>
-          <span class="watch-season-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>
-          ${count ? `<span class="watch-season-progress">${count}</span>` : ""}
-          <svg class="watch-season-chev${isExpanded ? " is-expanded" : ""}" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-        </button>
+    <div class="watch-seasons" data-watch-seasons="${id}">
+      <div class="watch-season-pick">
+        <select class="watch-season-select" data-watch-season-select="${id}" aria-label="Season">
+          ${seasons.map((n) => `<option value="${n}"${n === shown ? " selected" : ""}>${escapeHtml(optionLabel(n))}</option>`).join("")}
+        </select>
+        <span class="watch-season-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>
+        <label class="watch-season-all">
+          <input type="checkbox" class="watch-check watch-season-check" data-watch-season-toggle="${id}" data-season="${shown}" ${st.allWatched ? "checked" : ""} />
+          <span>All</span>
+        </label>
       </div>
-      ${isExpanded ? watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) : ""}
+      ${watchEpisodesTemplate(item, shown, st.episodes, st.watchedEps)}
     </div>
   `;
 }
@@ -23180,15 +23229,9 @@ function bindWatchControls(root = document) {
   root.querySelectorAll("[data-watch-find]").forEach((btn) => {
     btn.addEventListener("click", () => openWatchSearchDialog({ linkId: btn.dataset.watchFind }));
   });
-  // The open panel's actions (Luke, 2026-10-29).
-  root.querySelectorAll("[data-watch-act-watched]").forEach((btn) => {
-    btn.addEventListener("click", () => openWatchLogDialog(btn.dataset.watchActWatched));
-  });
-  root.querySelectorAll("[data-watch-act-tabs]").forEach((btn) => {
-    btn.addEventListener("click", (e) => { e.stopPropagation(); openWatchTabsMenu(btn, btn.dataset.watchActTabs); });
-  });
-  root.querySelectorAll("[data-watch-act-remove]").forEach((btn) => {
-    btn.addEventListener("click", () => requestWatchRemove(btn.dataset.watchActRemove));
+  // The open panel's ⋯ menu: Watched · Tabs · Remove (Luke, 2026-10-29).
+  root.querySelectorAll("[data-watch-more]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); openWatchMoreMenu(btn, btn.dataset.watchMore); });
   });
   root.querySelectorAll("[data-watch-next-tick]").forEach((btn) => {
     btn.addEventListener("click", () => toggleWatchEpisode(btn.dataset.watchNextTick, Number(btn.dataset.season), Number(btn.dataset.episode), true));
@@ -23205,8 +23248,8 @@ function bindWatchControls(root = document) {
   root.querySelectorAll("[data-watch-season-toggle]").forEach((cb) => {
     cb.addEventListener("change", () => toggleWatchSeason(cb.dataset.watchSeasonToggle, Number(cb.dataset.season), cb.checked));
   });
-  root.querySelectorAll("[data-watch-season-expand]").forEach((btn) => {
-    btn.addEventListener("click", () => toggleWatchSeasonExpand(btn.dataset.watchSeasonExpand, Number(btn.dataset.season)));
+  root.querySelectorAll("[data-watch-season-select]").forEach((sel) => {
+    sel.addEventListener("change", () => selectWatchSeason(sel.dataset.watchSeasonSelect, Number(sel.value)));
   });
   root.querySelectorAll("[data-watch-load-season]").forEach((btn) => {
     btn.addEventListener("click", () => loadWatchSeasonEpisodes(btn.dataset.watchLoadSeason, Number(btn.dataset.season)));
@@ -23498,17 +23541,13 @@ function toggleWatchSeason(itemId, seasonNum, checked) {
   renderWatchPlanner();
 }
 
-// Open/close a season's episode list — this device only, never saved (see
-// watchOpenSeasons). Opening loads the list if it isn't there yet.
-function toggleWatchSeasonExpand(itemId, seasonNum) {
+// Show another season in the panel — this device only, never saved (see
+// watchSelectedSeason). Loads its episode list if it isn't there yet.
+function selectWatchSeason(itemId, seasonNum) {
   const item = watchItemById(itemId);
-  if (!item) return;
-  const key = watchSeasonKey(itemId, seasonNum);
-  if (watchOpenSeasons.has(key)) watchOpenSeasons.delete(key);
-  else {
-    watchOpenSeasons.add(key);
-    if (item.tmdbId && !(item.episodeData?.[seasonNum] || []).length) loadWatchSeasonEpisodes(itemId, seasonNum);
-  }
+  if (!item || !seasonNum) return;
+  watchSelectedSeason.set(itemId, seasonNum);
+  if (item.tmdbId && !(item.episodeData?.[seasonNum] || []).length) loadWatchSeasonEpisodes(itemId, seasonNum);
   renderWatchPlanner();
 }
 

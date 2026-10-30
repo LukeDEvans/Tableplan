@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Headless QA for the Watch page (Luke, 2026-10-29): the show panel opens under
 // the whole row (the row stays put), a pointer marks the open poster and slides
-// within a row, Watched · Tabs · Remove work by tapping, Remove has Undo, the
+// within a row, Watched · Tabs · Remove (the ⋯ menu) work by tapping, Remove has Undo, the
 // Next-episode line ticks an episode, the tracker's check boxes are small, a
 // season's open state isn't saved, "Find the right title" links a plain title
 // and tags titles already on the list, there's no "+" to add a show (the search
@@ -77,6 +77,12 @@ try {
     await page.evaluate(() => document.querySelector('[data-watch-category="all"]')?.click());
     await page.waitForTimeout(400);
 
+    const moreAct = async (id, act) => {
+      await page.locator(`[data-watch-more="${id}"]`).tap();
+      await page.waitForTimeout(150);
+      await page.locator(`.watch-more-menu [data-watch-more-act="${act}"]`).tap();
+      await page.waitForTimeout(200);
+    };
     const tops = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("[data-watch-item]")].map((c) => [c.dataset.watchItem, Math.round(c.getBoundingClientRect().top + scrollY)])));
     const before = await tops();
     if (process.env.QA_DEBUG) console.log("seeded", seedFor(R).map((i) => i.id), Object.keys(before));
@@ -146,10 +152,25 @@ try {
     await page.waitForTimeout(200);
     check(await page.locator("[data-watch-detail]").count() === 0, "tapping the open poster closes the panel");
 
-    // Remove with Undo.
+    // The ⋯ menu, top-right of the panel: Watched · Tabs · Remove.
     await page.locator(`[data-watch-item="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
     await page.waitForTimeout(250);
-    await page.locator(`[data-watch-act-remove="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
+    const corner = await page.evaluate(() => {
+      const d = document.querySelector(`[data-watch-detail="qa-m3-${globalThis.__qaR ?? R}"] .watch-detail-inner`).getBoundingClientRect();
+      const b = document.querySelector(`[data-watch-more="qa-m3-${globalThis.__qaR ?? R}"]`)?.getBoundingClientRect();
+      return b && { right: Math.round(d.right - b.right), top: Math.round(b.top - d.top), oldRow: !!document.querySelector(".watch-detail-actions") };
+    });
+    check(corner && corner.right >= 0 && corner.right < 24 && corner.top < 24 && !corner.oldRow, "⋯ sits top-right and the bottom buttons are gone", corner);
+    await page.locator(`[data-watch-more="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(150);
+    const items = await page.$$eval(".watch-more-menu [data-watch-more-act]", (b) => b.map((x) => x.textContent.trim()));
+    check(items.join() === "Watched,Tabs,Remove", "⋯ opens Watched · Tabs · Remove", items);
+    await page.locator(`[data-watch-more="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(150);
+    check(await page.locator(".watch-more-menu").count() === 0, "…and a second tap closes it");
+
+    // Remove with Undo.
+    await moreAct(`qa-m3-${globalThis.__qaR ?? R}`, "remove");
     await page.waitForTimeout(200);
     check(await page.locator(`[data-watch-item="qa-m3-${globalThis.__qaR ?? R}"]`).count() === 0, "Remove hides the show at once");
     check(await page.locator("#mailToast .mail-toast-undo").count() === 1, "…with an Undo toast");
@@ -164,7 +185,7 @@ try {
     // Remove for real.
     await page.locator(`[data-watch-item="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
     await page.waitForTimeout(250);
-    await page.locator(`[data-watch-act-remove="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
+    await moreAct(`qa-m3-${globalThis.__qaR ?? R}`, "remove");
     await page.waitForTimeout(6400);
     const gone = await page.evaluate(() => window.__liveQA.watchItemsForQa());
     check(Array.isArray(gone) && !gone.some((i) => i.id === `qa-m3-${globalThis.__qaR ?? R}`), "without Undo the show is removed", gone && gone.map((i) => i.id));
@@ -174,8 +195,7 @@ try {
     await page.locator(`[data-watch-item="qa-m1-${globalThis.__qaR ?? R}"]`).tap();
     await page.waitForTimeout(250);
     await page.waitForTimeout(400); // let the open's scroll finish (a scroll closes menus)
-    await page.locator(`[data-watch-act-tabs="qa-m1-${globalThis.__qaR ?? R}"]`).tap();
-    await page.waitForTimeout(150);
+    await moreAct(`qa-m1-${globalThis.__qaR ?? R}`, "tabs");
     check(await page.locator(".watch-tabs-menu [data-watch-tab-new]").count() === 1, "Tabs opens a menu with New tab…");
     await page.locator(".watch-tabs-menu [data-watch-tab-new]").tap();
     await page.waitForTimeout(150);
@@ -193,13 +213,7 @@ try {
     // Watched opens the log window.
     await page.locator(`[data-watch-item="qa-m1-${globalThis.__qaR ?? R}"]`).tap();
     await page.waitForTimeout(250);
-    await page.locator(`[data-watch-act-watched="qa-m1-${globalThis.__qaR ?? R}"]`).tap();
-    await page.waitForTimeout(200);
-    const checkBtn = await page.evaluate(() => {
-      const b = document.querySelector(`[data-watch-act-watched="qa-m1-${globalThis.__qaR ?? R}"]`);
-      return b && { text: b.textContent.trim(), label: b.getAttribute("aria-label"), w: Math.round(b.getBoundingClientRect().width), circle: !!b.querySelector("svg circle") };
-    });
-    check(checkBtn && !checkBtn.text && checkBtn.label === "Watched" && checkBtn.circle && checkBtn.w <= 48, "Watched is just a check in a circle (no word)", checkBtn);
+    await moreAct(`qa-m1-${globalThis.__qaR ?? R}`, "watched");
     check(await page.evaluate(() => document.getElementById("watchLogDialog")?.open), "Watched opens the watched/rating window");
     await page.evaluate(() => document.getElementById("watchLogDialog")?.close());
 
@@ -217,17 +231,27 @@ try {
     await page.waitForTimeout(300);
     const nextText2 = await page.locator(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-next-ep`).textContent().catch(() => "");
     check(/S3 E7/.test(nextText2 || ""), "ticking it moves Next to S3 E7", nextText2);
-    check(await page.locator(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-episode`).count() === 0, "seasons start closed (the old saved open flag is ignored)");
-    const s3 = `[data-watch-season-expand="qa-t1-${globalThis.__qaR ?? R}"][data-season="3"]`;
-    await page.locator(s3).scrollIntoViewIfNeeded();
+    const pick = `[data-watch-season-select="qa-t1-${globalThis.__qaR ?? R}"]`;
+    const shown = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      return el && { value: el.value, options: [...el.options].map((o) => o.textContent.trim()), eps: document.querySelectorAll(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-episode`).length, boxes: document.querySelectorAll(".watch-season-open, .watch-season-head").length };
+    }, pick);
+    check(shown && shown.options.length === 3 && shown.boxes === 0, "seasons are a menu, not a box per season", shown);
+    check(shown && shown.value === "3" && shown.eps === 8, "it opens on the next episode's season, with its episodes", shown);
+    check(shown && /Season 1 · ✓/.test(shown.options[0]) && /Season 3 · 6\/8/.test(shown.options[2]), "each season shows its progress", shown && shown.options);
+    await page.locator(pick).scrollIntoViewIfNeeded();
     await page.waitForTimeout(150);
-    const where = () => page.evaluate((sel) => ({ top: Math.round(document.querySelector(sel).getBoundingClientRect().top), list: Math.round(document.querySelector(".watch-list-panel").scrollTop), win: Math.round(scrollY) }), s3);
+    const where = () => page.evaluate((sel) => ({ top: Math.round(document.querySelector(sel).getBoundingClientRect().top), list: Math.round(document.querySelector(".watch-list-panel").scrollTop), win: Math.round(scrollY) }), pick);
     const w0 = await where();
-    await page.locator(s3).tap();
-    await page.waitForTimeout(300);
+    await page.selectOption(pick, "1");
+    await page.waitForTimeout(400);
     const w1 = await where();
     check(w0.list + w0.win > 0, "(the list is scrolled down for the next checks)", w0);
-    check(Math.abs(w1.top - w0.top) <= 1, "opening a season doesn't move the screen", { w0, w1 });
+    check(Math.abs(w1.top - w0.top) <= 1, "picking a season doesn't move the screen", { w0, w1 });
+    const s1 = await page.evaluate((sel) => ({ value: document.querySelector(sel).value, eps: [...document.querySelectorAll(".watch-episode .watch-check")].map((c) => c.dataset.season) }), pick);
+    check(s1.value === "1" && s1.eps.length === 8 && s1.eps.every((x) => x === "1"), "picking Season 1 loads and shows its episodes", s1);
+    await page.selectOption(pick, "3");
+    await page.waitForTimeout(300);
     const ep8 = page.locator(`[data-watch-episode="qa-t1-${globalThis.__qaR ?? R}"][data-episode="8"]`);
     await ep8.scrollIntoViewIfNeeded(); // the tap would do this itself; measure after it
     await page.waitForTimeout(150);
@@ -240,25 +264,30 @@ try {
     const sizes = await page.evaluate(() => {
       const rows = [...document.querySelectorAll(".watch-episode")].map((e) => e.getBoundingClientRect());
       const name = document.querySelector(".watch-episode-name").getBoundingClientRect().height;
-      return { head: Math.round(document.querySelector(".watch-season-head").getBoundingClientRect().height), row: Math.round(rows[0].height), name: Math.round(name), gap: Math.round(rows[1].top - rows[0].bottom) };
+      return { head: Math.round(document.querySelector(".watch-season-select").getBoundingClientRect().height), row: Math.round(rows[0].height), name: Math.round(name), gap: Math.round(rows[1].top - rows[0].bottom) };
     });
-    check(sizes.head <= 34, "season boxes are about 2/3 of the old 48px", sizes);
+    check(sizes.head <= 34, "the season menu is compact", sizes);
     // A row is its title plus 2px; a long title still wraps to a second line.
     check(sizes.row <= Math.max(sizes.name, 20) + 3 && sizes.gap <= 1, "episodes sit close together", sizes);
     const lay = await page.evaluate(() => {
       const cb = document.querySelector(".watch-episode .watch-check").getBoundingClientRect().width;
       const sc = document.querySelector(".watch-season-check").getBoundingClientRect().width;
       const name = document.querySelector(".watch-episode-name").getBoundingClientRect().width;
-      const head = document.querySelector(".watch-season-name").getBoundingClientRect().height;
+      const head = document.querySelector(".watch-season-select").getBoundingClientRect().height;
       return { cb, sc, name, head };
     });
     check(lay.cb <= 24 && lay.sc <= 24, "tracker check boxes are small", lay);
     check(lay.name > 180, "episode titles get the row's width", lay);
-    check(lay.head < 26, "'Season 3' stays on one line", lay);
+    check(lay.head <= 34, "'Season 3' stays on one line", lay);
     const savedOpen = await page.evaluate(() => JSON.stringify(window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress));
-    check(!/__expanded/.test(savedOpen), "opening a season isn't saved", savedOpen);
+    check(!/__expanded|selected/.test(savedOpen), "picking a season isn't saved", savedOpen);
     if (SHOT) await page.screenshot({ path: `${SHOT}-tracker-${width}.png` });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "nothing scrolls sideways");
+    const bars = await page.evaluate(() => [".watch-list-panel", ".watch-category-tabs"].map((q) => {
+      const e = document.querySelector(`#watchPagePanel ${q}`);
+      return { q, bar: getComputedStyle(e).scrollbarWidth, gutter: e.offsetWidth - e.clientWidth };
+    }));
+    check(bars.every((b) => b.bar === "none" && b.gutter <= 2), "no scroll bar on the list or the tab strip", bars);
     await page.setViewportSize({ width, height: 844 });
 
     // Link a plain title.
