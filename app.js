@@ -2783,9 +2783,7 @@ function bindEvents() {
     if (!tab) return;
     if (window.innerWidth <= 680) document.getElementById("watchSidebar")?.classList.remove("is-expanded");
     if (tab.dataset.watchSide === "archive") { openWatchArchive(); return; }
-    const input = document.getElementById("discoverSearchInput");
-    if (input?.value) { input.value = ""; runDiscoverSearch(""); }
-    renderWatchPlanner();
+    setWatchSideView(tab.dataset.watchSide === "youtube" ? "youtube" : "list");
   });
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
@@ -8630,7 +8628,9 @@ function render() {
   if (activeAppArea === "media") renderActiveMediaView();
   // Watch reads the view's row: redraw its list when that row swaps in (a view
   // switch) or merges (another device) — it used to keep the old view's list.
-  if (activeAppArea === "watch" && !document.getElementById("discoverSearchInput")?.value.trim()) renderWatchPlanner();
+  if (activeAppArea === "watch" && !document.getElementById("discoverSearchInput")?.value.trim()) {
+    if (watchSideView === "youtube") renderYouTubeSaved(); else renderWatchPlanner();
+  }
   if (activeAppArea === "news") refreshSavedArticlesIfShown(); // News → Saved articles
   if (activeAppArea === "explore") refreshExploreTrips();
   if (activeAppArea === "finance") renderFinancePage();
@@ -22827,6 +22827,8 @@ function isWatchItemScheduled(id) {
 function watchItemTemplate(item) {
   const expanded = expandedWatchItemId === item.id;
   const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w342${item.posterPath}` : null;
+  // No streaming-service label on the poster (Luke, 2026-10-29) — the open panel
+  // lists the services; "In theaters" / "Upcoming" / "Rent" still show.
   const chip = watchAvailChip(item);
   const pct = watchProgressPct(item);
   const isTv = item.type === "tv";
@@ -22840,7 +22842,7 @@ function watchItemTemplate(item) {
     <article class="do-task-item watch-item watch-card${expanded ? " is-expanded" : ""}" data-watch-item="${escapeHtml(item.id)}" aria-expanded="${expanded}" tabindex="0">
       <div class="watch-poster${posterUrl ? "" : " watch-poster--ph"}">
         <span class="watch-badge watch-badge--${isTv ? "tv" : "movie"}">${isTv ? "TV" : "M"}</span>
-        ${chip ? `<span class="watch-avail watch-avail--${chip.cls}">${escapeHtml(chip.label)}</span>` : ""}
+        ${chip && chip.cls !== "stream" ? `<span class="watch-avail watch-avail--${chip.cls}">${escapeHtml(chip.label)}</span>` : ""}
         ${posterInner}
         ${pct != null ? `<div class="watch-progress" aria-hidden="true"><i style="width:${pct}%"></i></div>` : ""}
       </div>
@@ -29771,9 +29773,82 @@ function watchTabSearch(q) {
 function showWatchList() {
   const grid = document.getElementById("watchPlannerGrid");
   const results = document.getElementById("discoverResults");
+  markWatchSide();
+  if (watchSideView === "youtube") { // the YouTube page's home: saved videos
+    if (grid) grid.hidden = true;
+    renderYouTubeSaved();
+    return;
+  }
   if (results) { results.hidden = true; results.innerHTML = ""; }
   if (grid) grid.hidden = false;
   renderWatchPlanner();
+}
+
+// ── Watch sidebar: Watch list · YouTube (Luke, 2026-10-29) ────────────────────
+// YouTube is its own page: the search bar searches YouTube only, and with no
+// search it lists the videos you've saved (state.mediaSaved, the app's saved
+// store — the same one Discover's bookmark writes). Tapping a video plays it in
+// the in-app player. Which page is showing is this device's view, never saved.
+let watchSideView = "list"; // "list" | "youtube"
+function markWatchSide() {
+  document.querySelectorAll("#watchSidebar [data-watch-side]").forEach((b) => {
+    const on = b.dataset.watchSide === watchSideView;
+    b.classList.toggle("is-active", on);
+    if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
+  });
+  const input = document.getElementById("discoverSearchInput");
+  if (input) {
+    input.placeholder = watchSideView === "youtube" ? "Search YouTube…" : "Search movies, shows, videos…";
+    input.setAttribute("aria-label", watchSideView === "youtube" ? "Search YouTube" : "Search all media");
+  }
+  document.getElementById("discoverResults")?.classList.toggle("is-youtube", watchSideView === "youtube");
+  const filter = document.querySelector("#watchPagePanel .discover-filter");
+  if (filter) filter.hidden = watchSideView === "youtube"; // the filter picks media types; YouTube is one
+}
+function setWatchSideView(view) {
+  watchSideView = view;
+  closeDiscoverFilterMenu();
+  const input = document.getElementById("discoverSearchInput");
+  if (input?.value) { input.value = ""; input.dispatchEvent(new Event("input", { bubbles: true })); }
+  runDiscoverSearch(""); // bumps the search token, then shows this page's home
+}
+function watchYouTubeRef(item) {
+  return (item?.providerRefs || []).some((r) => r && r.providerId === "youtube");
+}
+async function renderYouTubeSaved() {
+  const results = document.getElementById("discoverResults");
+  if (!results) return;
+  const token = ++discoverSearchToken;
+  results.hidden = false;
+  let hub;
+  try { hub = await getMediaHub(); } catch { hub = null; }
+  if (token !== discoverSearchToken || watchSideView !== "youtube") return;
+  const saved = hub ? hub.mstate.savedList(state.mediaSaved || [], { kind: "video" }).filter(watchYouTubeRef) : [];
+  if (!saved.length) {
+    results.innerHTML = `<div class="watch-yt-empty"><p class="watch-yt-empty-title">No saved videos yet</p><p>Search YouTube above, then tap the bookmark on a video to keep it here.</p><button class="secondary-btn compact-btn" type="button" data-watch-focus-search>Search YouTube</button></div>`;
+    results.querySelector("[data-watch-focus-search]")?.addEventListener("click", () => document.getElementById("discoverSearchInput")?.focus());
+    return;
+  }
+  discoverItemsByKey = new Map();
+  const views = discoverViewsFor(saved.map(savedRecordToItem), hub);
+  results.innerHTML = `<h3 class="watch-yt-head">Saved videos</h3>` + views.map((v) => discoverCardHtml(v)).join("");
+  wireDiscoverButtons(results, hub);
+  wireYouTubeCards(results, hub, { onUnsave: () => renderYouTubeSaved() });
+}
+// A YouTube card plays when tapped anywhere but its buttons; un-saving on the
+// saved list takes the video off it.
+function wireYouTubeCards(container, hub, { onUnsave = null } = {}) {
+  container.querySelectorAll(".discover-card").forEach((card) => {
+    card.classList.add("discover-card--tap");
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      const svc = card.querySelector(".discover-svc:not([disabled])");
+      if (svc) discoverSvcActivate(svc, hub);
+    });
+  });
+  if (onUnsave) container.querySelectorAll("[data-save-key]").forEach((btn) => btn.addEventListener("click", () => {
+    if (!btn.classList.contains("is-saved")) onUnsave();
+  }));
 }
 
 // ── Discover: universal media search across providers ─────────────────────────
@@ -30151,7 +30226,10 @@ async function runDiscoverSearch(query, { resultsId = "discoverResults", types =
   const token = ++discoverSearchToken;
   const isWatch = !types;
   if (!query) { if (isWatch) showWatchList(); else { results.hidden = true; results.innerHTML = ""; } return; }
-  const allowedIds = allowedProviderIds({ types: isWatch ? watchPageScopeTypes() : types });
+  const youTubeOnly = isWatch && watchSideView === "youtube";
+  const allowedIds = youTubeOnly ? new Set(["youtube"]) : allowedProviderIds({ types: isWatch ? watchPageScopeTypes() : types });
+  // YouTube lives only on its own page; the Watch list's search leaves it out (Luke, 2026-10-29).
+  if (isWatch && !youTubeOnly) allowedIds.delete("youtube");
   if (!allowedIds.size) { results.hidden = false; results.innerHTML = `<p class="discover-hint">No media types selected. Tap the filter and pick at least one.</p>`; return; }
   results.innerHTML = `<p class="discover-hint">Searching…</p>`;
   try {
@@ -30161,6 +30239,11 @@ async function runDiscoverSearch(query, { resultsId = "discoverResults", types =
     if (token !== discoverSearchToken) return; // out-of-order guard
     const enriched = await hub.search.enrichWithAvailability(items, hub.tmdb); // "where can I watch this"
     if (token !== discoverSearchToken) return;
+    if (youTubeOnly) {
+      renderDiscoverResults(enriched, providerStatuses, hub, { results, servicesOnly: false, pick: false });
+      wireYouTubeCards(results, hub);
+      return;
+    }
     renderDiscoverResults(enriched, providerStatuses, hub, { results, servicesOnly: isWatch && getWatchSearchScope().servicesOnly, pick: isWatch });
   } catch (e) {
     if (token !== discoverSearchToken) return;
@@ -30836,6 +30919,7 @@ function wireTopSearchDiscoverRow(listEl, q) {
 }
 // Universal Watch search for `q` (mediaApi.open).
 function goToDiscoverSearch(q) {
+  watchSideView = "list"; // a search from elsewhere is the all-media search
   showWatchApp();
   const input = document.getElementById("discoverSearchInput");
   if (input) input.value = q;

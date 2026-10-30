@@ -10020,6 +10020,20 @@ body.touch-drag-active * {
   -webkit-overflow-scrolling: touch;
   padding-bottom: 24px;
 }
+/* The open poster's ring sits 4px outside the poster. The list's left and right
+   edges lined up with the posters and clipped it, so the list reaches 6px into
+   the page's side padding and pads back by the same 6px: posters keep their
+   size and the ring shows in full (Luke, 2026-10-29). */
+#watchPagePanel #watchPlannerGrid:not([hidden]) { margin-inline: -6px; }
+#watchPagePanel #watchPlannerGrid > .watch-category-bar,
+#watchPagePanel #watchPlannerGrid .watch-list-panel { padding-inline: 6px; }
+/* Watch › YouTube page (Luke, 2026-10-29): saved videos, or YouTube search. */
+.watch-yt-head { margin: 4px 0 8px; font-size: .78rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.watch-yt-empty { display: grid; justify-items: center; gap: 6px; padding: 40px 16px; text-align: center; color: var(--muted); font-size: .9rem; }
+.watch-yt-empty p { margin: 0; }
+.watch-yt-empty-title { font-weight: 700; color: var(--ink); font-size: 1rem; }
+.discover-card--tap { cursor: pointer; }
+#discoverResults.is-youtube .discover-svc-label { display: none; } /* "Other services" means nothing here */
 /* No scroll bars on the Watch list or its tab strip (Luke, 2026-10-29). */
 #watchPagePanel #watchPlannerGrid .watch-list-panel,
 #watchPagePanel .watch-category-tabs { scrollbar-width: none; -ms-overflow-style: none; }
@@ -16141,16 +16155,18 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
   fill: none;
   flex-shrink: 0;
 }
-/* Media's menu: larger text and taller rows, so each tab is an easy target
+/* Listen's and Watch's menus (Watch matched to Listen, Luke 2026-10-29): larger text and taller rows, so each tab is an easy target
    (17px text in a 48px row; the shared rule above is 14px in about 34px). */
-#mediaSidebar .article-sidebar-tab {
+#mediaSidebar .article-sidebar-tab,
+#watchSidebar .article-sidebar-tab {
   font-size: 1.0625rem;
   padding-top: 12px;
   padding-bottom: 12px;
   gap: 14px;
   min-height: 48px;
 }
-#mediaSidebar .article-sidebar-icon { width: 22px; height: 22px; }
+#mediaSidebar .article-sidebar-icon,
+#watchSidebar .article-sidebar-icon { width: 22px; height: 22px; }
 .article-sidebar-divider {
   height: 1px;
   background: color-mix(in srgb, var(--ink) 8%, transparent);
