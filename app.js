@@ -59,7 +59,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
@@ -729,7 +729,7 @@ const PAGE_ACCESS_GROUPS = [
   { key: "plan",     label: "Calendar",  keys: ["plan", "do"],                  note: "Includes Tasks" },
   { key: "finance",  label: "Finance",   keys: ["finance"] },
   { key: "read",     label: "Listen",    keys: ["read"] },
-  { key: "mail",     label: "Mail",      keys: ["mail", "contacts"],            note: "Includes Contacts" },
+  { key: "mail",     label: "Message",   keys: ["mail", "contacts"],            note: "Messages, Mail and Contacts" },
   { key: "eat",      label: "Meal Plan", keys: ["eat"] },
   { key: "news",     label: "News",      keys: ["news"],                         note: "Includes Scores" },
   { key: "recreate", label: "Recreate",  keys: ["recreate", "play", "explore"], note: "Explore, Exercise and Leisure" },
@@ -1707,6 +1707,7 @@ let mealPlanNotifOpen = false;
 // title, show it as a dot (styles.css).
 const PAGE_NOTIF_BUTTONS = {
   mail: ["homeMailBtn", "titleMailBtn"],
+  messages: ["homeMailBtn", "titleMailBtn"], // secure messages waiting (messaging/peek.js)
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
   do: ["planTasksBtn"], // Tasks notif dot now lives on the Calendar page's bell
   eat: ["homeEatBtn", "titleMealPlanBtn"],
@@ -1749,10 +1750,18 @@ function readerArticle(id) {
 }
 
 const pageNotifCounts = {};
+// The Messages tab's module once loaded (messaging/ui.js; see "Message page" below).
+// Declared this early because hideAllPages reads it.
+const MESSAGE_TAB_KEY = "liveMessageTab";
+let messagesUi = null;
+let messagesUiLoading = null;
 function setPageNotifCount(page, count) {
   pageNotifCounts[page] = count;
+  // A button marks if ANY page sharing it has something (Message: Mail suggestions
+  // or secure messages waiting).
   (PAGE_NOTIF_BUTTONS[page] || []).forEach((key) => {
-    elements[key]?.classList.toggle("has-notif-dot", count > 0);
+    const on = Object.entries(PAGE_NOTIF_BUTTONS).some(([p, keys]) => keys.includes(key) && (pageNotifCounts[p] || 0) > 0);
+    elements[key]?.classList.toggle("has-notif-dot", on);
   });
   // A group heading carries the mark of any page inside it (page-groups.js).
   syncPageGroups(elements.homePageGroups);
@@ -8759,6 +8768,7 @@ function hideAllPages() {
     elements.newsMainPage.hidden = true;
   }
   elements.mailMainPage.hidden = true;
+  messagesUi?.hide(); // stops its fetching while the page isn't showing
   document.getElementById("exploreMainPage").hidden = true;
 }
 
@@ -8970,8 +8980,9 @@ function showContactsApp(event) {
   elements.contactsMainPage.hidden = false;
   elements.weekLabel.closest(".week-tools").hidden = true; // no date bar on Contacts
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Mail");
+  setPageTitle("Message");
   setPageHash("contacts");
+  showMessagePanes("mail"); // Contacts lives under the Mail tab
   renderContactsPage();
   closePageTitleMenu();
   closeAppMenu();
@@ -9087,11 +9098,152 @@ function showMailApp(event, hashParams) {
   // previous visit (removing is-expanded closes the mobile drawer; harmless on
   // desktop, which uses is-collapsed instead).
   document.getElementById("mailSidebar")?.classList.remove("is-expanded");
-  setPageTitle("Mail");
+  setPageTitle("Message");
   setPageHash("mail");
   closePageTitleMenu();
   closeAppMenu();
   initMailPage(hashParams);
+  applyMessageTab();
+}
+
+// ─── Message page: Messages | Mail tabs (MESSAGING_DESIGN.md §11) ─────────────
+// The Messages tab is messaging/ui.js, imported the first time it opens, so the
+// crypto library (~350 KB) never loads at boot. The tab chosen last is remembered
+// per device. Everything else about messaging lives in messaging/.
+// (messagesUi / messagesUiLoading are declared up with pageNotifCounts: hideAllPages
+// reads messagesUi and can run before this point in the file.)
+
+function currentMessageTab() {
+  try { return localStorage.getItem(MESSAGE_TAB_KEY) === "mail" ? "mail" : "messages"; } catch { return "messages"; }
+}
+
+function setMessageTab(tab) {
+  try { localStorage.setItem(MESSAGE_TAB_KEY, tab === "mail" ? "mail" : "messages"); } catch { /* private mode */ }
+  applyMessageTab();
+}
+
+function showMessagePanes(tab) {
+  const page = elements.mailMainPage;
+  if (!page) return;
+  page.classList.toggle("is-messages-tab", tab === "messages");
+  document.querySelectorAll("[data-message-tab]").forEach((b) => {
+    const on = b.dataset.messageTab === tab;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  const pane = document.getElementById("messagesPane");
+  if (pane) pane.hidden = tab !== "messages";
+  const inner = page.querySelector(".mail-page-inner");
+  if (inner) inner.hidden = tab === "messages";
+}
+
+function messagingDeps() {
+  return {
+    userId: authSession?.user?.id || "",
+    baseUrl: () => supabaseBaseUrl(),
+    headers: () => supabaseHeaders(),
+    isNative: isNativeApp(),
+    nativeMessagingKeys,
+    nativeQrScan,
+    toast: (text) => showMailToast(text),
+    cardSources: messagingCardSources,
+    openCard: openMessagingCard,
+    onUnreadChange: (unread) => setMessagesUnread(unread),
+  };
+}
+
+async function applyMessageTab() {
+  const tab = elements.mailMainPage?.classList.contains("is-contacts-mode") ? "mail" : currentMessageTab();
+  showMessagePanes(tab);
+  if (tab !== "messages" || activeAppArea !== "mail") { messagesUi?.hide(); return; }
+  const pane = document.getElementById("messagesPane");
+  if (localDevMode || !authSession?.user?.id) {
+    pane.innerHTML = `<div class="msg-pane"><p class="msg-muted">Sign in to use secure messages.</p></div>`;
+    return;
+  }
+  try {
+    if (!messagesUi) {
+      messagesUiLoading ||= import("./messaging/ui.js").then((m) => m.mountMessages(pane, messagingDeps()));
+      messagesUi = await messagesUiLoading;
+    }
+    if (activeAppArea === "mail" && currentMessageTab() === "messages") await messagesUi.show();
+  } catch (e) {
+    messagesUiLoading = null;
+    console.warn("Messages failed to load:", e);
+    pane.innerHTML = `<div class="msg-pane"><p class="msg-error">Secure messages couldn't load. Check your connection and open the tab again.</p></div>`;
+  }
+}
+
+// What a message card can point to (§5). A card carries only a snapshot; tapping it
+// opens the real item only if this person can see it (openMessagingCard).
+const cardRef = (v) => String(v ?? "").replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 64);
+function messagingCardSources() {
+  const today = dateKeyFromDate(new Date());
+  return {
+    recipe: (typeof activeRecipes === "function" ? activeRecipes() : []).map((r) => ({ ref: cardRef(r.id), title: r.title || r.name || "Recipe", subtitle: r.time || "" })).filter((x) => x.ref),
+    event: (state.planEvents || []).filter((e) => e?.id && (e.date || "") >= today).sort((a, b) => String(a.date).localeCompare(String(b.date))).slice(0, 50)
+      .map((e) => ({ ref: cardRef(e.id), title: e.title || "Event", date: e.date || "", subtitle: e.time || e.startTime || "" })),
+    trip: travelTrips().map((t) => ({ ref: cardRef(t.id), title: t.name || t.destination || "Trip" })).filter((x) => x.ref),
+    shop: (state.persistentManualGroceries || []).map((g) => {
+      const name = typeof g === "string" ? g : g?.name || g?.item || "";
+      return { ref: cardRef(typeof g === "string" ? name.toLowerCase() : g?.id || name.toLowerCase()), title: name };
+    }).filter((x) => x.ref && x.title),
+  };
+}
+
+function openMessagingCard(kind, ref) {
+  if (kind === "recipe") {
+    const r = (typeof activeRecipes === "function" ? activeRecipes() : []).find((x) => cardRef(x.id) === ref);
+    if (!r) return false;
+    openRecipeView(r.id);
+    return true;
+  }
+  if (kind === "event") {
+    const e = (state.planEvents || []).find((x) => cardRef(x.id) === ref);
+    if (!e) return false;
+    openPlanEventDetail(e.id, e.date || null);
+    return true;
+  }
+  if (kind === "trip") {
+    const t = travelTrips().find((x) => cardRef(x.id) === ref);
+    if (!t) return false;
+    showExploreTrips(t.id);
+    return true;
+  }
+  if (kind === "shop") { showShopApp(); return true; }
+  return false;
+}
+
+// Unread mark on Message in the menus: on app focus and every 2 minutes while the
+// app is visible (one id from the inbox; no crypto loaded). Never while hidden.
+let messagesUnread = false;
+function setMessagesUnread(on) {
+  messagesUnread = Boolean(on);
+  setPageNotifCount("messages", messagesUnread ? 1 : 0);
+}
+async function peekMessages() {
+  if (localDevMode || !authSession?.user?.id || document.visibilityState !== "visible") return;
+  if (activeAppArea === "mail" && currentMessageTab() === "messages") return; // the tab itself is fetching
+  try {
+    const { messagingWaiting } = await import("./messaging/peek.js");
+    const keys = nativeMessagingKeys();
+    const waiting = await messagingWaiting({
+      baseUrl: () => supabaseBaseUrl(),
+      headers: () => supabaseHeaders(),
+      getRawWrapKey: keys ? async () => { const { key } = await keys.wrapKey(); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); } : async () => null,
+    });
+    if (waiting) setMessagesUnread(true);
+  } catch { /* the badge is best-effort */ }
+}
+if (typeof window !== "undefined") {
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest?.("[data-message-tab]");
+    if (!b) return;
+    if (b.dataset.messageTab === "messages" && elements.mailMainPage?.classList.contains("is-contacts-mode")) leaveMailContactsMode();
+    setMessageTab(b.dataset.messageTab);
+  });
+  window.addEventListener("focus", () => { peekMessages(); });
+  setInterval(() => { peekMessages(); }, 2 * 60 * 1000);
 }
 
 // ─── Mail / Gmail ─────────────────────────────────────────────────────────────
@@ -12576,7 +12728,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "news") return "News";
   if (activeAppArea === "weather") return "Weather";
   if (activeAppArea === "finance") return "Finance";
-  if (activeAppArea === "mail") return "Mail";
+  if (activeAppArea === "mail") return "Message";
   if (activeAppArea === "explore") return "Explore";
   return "Meal Plan";
 }

@@ -16,7 +16,7 @@ import {
   certifyDevice, signCertAsDevice, signCertAsIdentity, verifyDeviceCert, verifySignedPrekey,
   safetyNumber, safetyQr, matchSafetyQr, SPK_MAX_AGE_MS,
 } from "./crypto/keys.js";
-import { toB64, fromB64, utf8, fromUtf8, equalBytes } from "./crypto/bytes.js";
+import { toB64, fromB64, utf8, fromUtf8, equalBytes, concat, u32, readU32, toHex, fromHex } from "./crypto/bytes.js";
 import { withLock } from "./keystore.js";
 
 export const OPK_TARGET = 20;
@@ -24,7 +24,39 @@ export const OPK_REFILL_BELOW = 5;
 export const SPK_ROTATE_MS = 30 * 24 * 3600 * 1000;
 export const SPK_KEEP_PREVIOUS_MS = 14 * 24 * 3600 * 1000;
 export const SEEN_KEEP_MS = SPK_MAX_AGE_MS + 7 * 24 * 3600 * 1000;
-const LINK_PREFIX = "LIVEMSG1:";
+const LINK_PREFIX = "LIVEMSG2:";
+
+// The link code, compact binary so its QR stays easy to scan off a laptop screen:
+//   0x02 ‖ userId(16) ‖ deviceId(16) ‖ createdAt(u64) ‖ signPub(32) ‖ dhPub(32) ‖
+//   identitySignPub(32) ‖ deviceSig(64) ‖ spkId(u32) ‖ spkPub(32) ‖ spkSig(64) ‖
+//   spkCreatedAt(u64) ‖ labelLen(1) ‖ label(utf8, ≤ 60)
+const uuidBytes = (id) => fromHex(String(id).replace(/-/g, ""));
+const uuidFrom = (b) => { const h = toHex(b); return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`; };
+const u64 = (n) => concat(u32(Math.floor(n / 2 ** 32)), u32(n % 2 ** 32));
+const readU64 = (b, at) => readU32(b, at) * 2 ** 32 + readU32(b, at + 4);
+
+function encodeLink(p) {
+  const label = utf8(String(p.l || "").slice(0, 60)).subarray(0, 60);
+  return concat(Uint8Array.of(2), uuidBytes(p.u), uuidBytes(p.d), u64(p.c), p.s, p.x, p.i, p.g,
+    u32(p.k.id), p.k.p, p.k.g, u64(p.k.c), Uint8Array.of(label.length), label);
+}
+
+function decodeLink(b) {
+  const FIXED = 1 + 16 + 16 + 8 + 32 + 32 + 32 + 64 + 4 + 32 + 64 + 8 + 1;
+  if (b.length < FIXED || b[0] !== 2) throw new Error("bad link");
+  let at = 1;
+  const take = (n) => { const out = b.subarray(at, at + n); at += n; return out; };
+  const p = { u: uuidFrom(take(16)), d: uuidFrom(take(16)) };
+  p.c = readU64(b, at); at += 8;
+  p.s = take(32); p.x = take(32); p.i = take(32); p.g = take(64);
+  const k = { id: readU32(b, at) }; at += 4;
+  k.p = take(32); k.g = take(64); k.c = readU64(b, at); at += 8;
+  const n = b[at]; at += 1;
+  if (b.length !== at + n) throw new Error("bad link");
+  p.l = fromUtf8(take(n));
+  p.k = k;
+  return p;
+}
 
 export class MessagingError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -138,22 +170,18 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
         await store.set("account", a);
       }
       const { current: spk } = await store.get("spk");
-      const payload = {
-        v: 1, u: a.userId, d: a.deviceId, l: a.label, c: a.cert.createdAt,
-        s: toB64(a.cert.signPub), x: toB64(a.cert.dhPub), i: toB64(a.identitySignPub), g: toB64(a.deviceSig),
-        k: { id: spk.id, p: toB64(spk.pub), g: toB64(spk.sig), c: spk.createdAt },
-      };
-      return LINK_PREFIX + toB64(utf8(JSON.stringify(payload)));
+      return LINK_PREFIX + toB64(encodeLink({
+        u: a.userId, d: a.deviceId, l: a.label, c: a.cert.createdAt,
+        s: a.cert.signPub, x: a.cert.dhPub, i: a.identitySignPub, g: a.deviceSig,
+        k: { id: spk.id, p: spk.pub, g: spk.sig, c: spk.createdAt },
+      }));
     });
   }
 
   function parseLinkCode(text) {
     const t = String(text || "").trim();
     if (!t.startsWith(LINK_PREFIX)) throw new MessagingError("BAD_LINK", "That isn't a link code from this app.");
-    let p;
-    try { p = JSON.parse(fromUtf8(fromB64(t.slice(LINK_PREFIX.length)))); } catch { throw new MessagingError("BAD_LINK", "That link code is damaged."); }
-    if (!p || p.v !== 1 || !p.k) throw new MessagingError("BAD_LINK", "That link code is from a different version.");
-    return p;
+    try { return decodeLink(fromB64(t.slice(LINK_PREFIX.length))); } catch { throw new MessagingError("BAD_LINK", "That link code is damaged."); }
   }
 
   // On the phone, after scanning (or pasting) the new device's code. Returns
@@ -164,13 +192,13 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
       if (!a || a.kind !== "phone" || a.state !== "ready") throw new MessagingError("NOT_PHONE", "Only your phone can link devices.");
       const p = parseLinkCode(text);
       if (p.u !== userId) throw new MessagingError("OTHER_ACCOUNT", "That device is signed in to a different account.");
-      const identitySignPub = fromB64(p.i);
+      const identitySignPub = p.i;
       if (!equalBytes(identitySignPub, a.identitySignPub)) {
         throw new MessagingError("IDENTITY_MISMATCH", "That device was shown the wrong security key. Don't link it — try again on a trusted network.");
       }
-      const cert = { userId, identitySignPub, deviceId: p.d, kind: "linked", signPub: fromB64(p.s), dhPub: fromB64(p.x), createdAt: p.c };
-      const spk = { id: p.k.id, pub: fromB64(p.k.p), sig: fromB64(p.k.g), createdAt: p.k.c };
-      const sigs = { identitySig: signCertAsIdentity(a.identity, cert), deviceSig: fromB64(p.g) };
+      const cert = { userId, identitySignPub, deviceId: p.d, kind: "linked", signPub: p.s, dhPub: p.x, createdAt: p.c };
+      const spk = { id: p.k.id, pub: p.k.p, sig: p.k.g, createdAt: p.k.c };
+      const sigs = { identitySig: signCertAsIdentity(a.identity, cert), deviceSig: p.g };
       if (!verifyDeviceCert(a.identitySignPub, cert, sigs)) throw new MessagingError("BAD_LINK", "That link code's signature doesn't check out.");
       if (!verifySignedPrekey(cert.signPub, spk, now())) throw new MessagingError("BAD_LINK", "That link code has expired. Start again on the other device.");
       await server.registerDevice(rowFor(cert, sigs, spk, p.l));

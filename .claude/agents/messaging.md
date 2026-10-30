@@ -66,6 +66,15 @@ as security-critical.
 - `messaging/engine.js` — conversations, fan-out, receive, groups, timers, receipts,
   delete for everyone, session repair, holding messages for conversations a new
   device doesn't know yet (released by a `sync` "conv" from my other device).
+- `messaging/ui.js` — the Messages tab (`mountMessages(root, deps)`), imported by
+  app.js the first time the tab opens; `messaging/peek.js` — the menu badge's
+  one-id inbox check (no crypto). app.js glue is under "Message page: Messages | Mail
+  tabs" next to `showMailApp` (tabs, card sources/openers, badge); keep it thin.
+- Native: `ios/App/App/MessagingKeysPlugin.swift` (Keychain wrapping key) and
+  `QrScanPlugin.swift` (AVFoundation QR, iOS 15), registered in MainViewController,
+  reached via `native-bridge.js` `nativeMessagingKeys()` / `nativeQrScan()`.
+- UI check: `npm run qa:messaging-ui` (three Chromium profiles against a PGlite
+  stand-in for Supabase; phone width; screenshots).
 - Tests run against a real Postgres with the real migration and row security:
   `test/messaging-pglite-harness.js` (PGlite) + `test/messaging-account.test.js`,
   `test/messaging-engine.test.js`; `scripts/check-messaging-migration.mjs` for the

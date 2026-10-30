@@ -79,6 +79,11 @@ export function createMessagingServer(transport) {
       `recipient_device_id=eq.${uuid(deviceId, "device")}&id=gt.${Number(afterId) | 0}&order=id&limit=${Math.min(Math.max(max | 0, 1), 200)}&select=id,sender_device_id,sender_user_id,conversation_id,ciphertext,created_at`
     ),
 
+    // Is anything waiting? One id, no ciphertext (the menu badge; ~0.1 KB).
+    hasWaiting: async (deviceId, afterId = 0) => (await transport.select(
+      "msg_inbox", `recipient_device_id=eq.${uuid(deviceId, "device")}&id=gt.${Number(afterId) | 0}&select=id&limit=1`
+    )).length > 0,
+
     // Delivered: delete them (the inbox only ever holds what's in flight).
     ack: (deviceId, ids) => ids.length
       ? transport.remove("msg_inbox", `recipient_device_id=eq.${uuid(deviceId, "device")}&id=in.(${ids.map((i) => Number(i) | 0).join(",")})`)

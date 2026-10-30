@@ -34,6 +34,8 @@
     "qa:language": "node scripts/qa-language.mjs",
     "qa:music-shows": "node scripts/qa-music-shows.mjs",
     "qa:messaging-crypto": "node scripts/qa-messaging-crypto.mjs",
+    "qa:messaging-ui": "node scripts/qa-messaging-ui.mjs",
+    "check:messaging-migration": "node scripts/check-messaging-migration.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },
@@ -45,6 +47,7 @@
     "fflate": "^0.8.3",
     "libsodium-wrappers-sumo": "0.7.15",
     "opensheetmusicdisplay": "^2.1.2",
+    "qrcode-generator": "2.0.4",
     "web-push": "^3.6.7"
   },
   "devDependencies": {

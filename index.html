@@ -161,7 +161,7 @@
                 <div class="page-group" data-page-group="message">
                   <button type="button" class="page-group-head" aria-expanded="false" aria-controls="titleGroupMessage"><span>Message</span></button>
                   <div class="page-group-pages" id="titleGroupMessage" hidden>
-                    <button type="button" id="titleMailBtn">Mail</button>
+                    <button type="button" id="titleMailBtn">Message</button>
                   </div>
                 </div>
                 <div class="page-group" data-page-group="recreate">
@@ -312,7 +312,7 @@
                 <div class="page-group" data-page-group="message">
                   <button type="button" class="page-group-head" aria-expanded="false" aria-controls="homeGroupMessage"><span>Message</span></button>
                   <div class="page-group-pages" id="homeGroupMessage" hidden>
-                    <button type="button" id="homeMailBtn">Mail</button>
+                    <button type="button" id="homeMailBtn">Message</button>
                   </div>
                 </div>
                 <div class="page-group" data-page-group="recreate">
@@ -785,7 +785,13 @@
         <section class="planner-column do-column weather-page" id="weatherMainPage" aria-label="Weather" hidden>
           <div class="weather-page-inner" id="weatherPageInner"></div>
         </section>
-        <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
+        <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Message" hidden>
+          <!-- Messages | Mail (MESSAGING_DESIGN.md §11). Messages is messaging/ui.js, loaded on first open. -->
+          <div class="message-tabs" role="tablist" aria-label="Message">
+            <button type="button" role="tab" class="message-tab" id="messageTabMessages" data-message-tab="messages" aria-controls="messagesPane" aria-selected="true">Messages</button>
+            <button type="button" role="tab" class="message-tab" id="messageTabMail" data-message-tab="mail" aria-selected="false">Mail</button>
+          </div>
+          <div class="messages-pane" id="messagesPane" role="tabpanel" aria-labelledby="messageTabMessages" hidden></div>
           <div class="mail-page-inner">
             <!-- Not connected -->
             <div class="mail-connect-view" id="mailConnectView">

@@ -72,8 +72,8 @@ describe("linking a browser", () => {
     await phone.account.setupPhone();
     const browser = device("luke");
     const code = await browser.account.startLink({ label: "Chrome on Mac" });
-    expect(code.startsWith("LIVEMSG1:")).toBe(true);
-    expect(code.length).toBeLessThan(900); // fits a QR comfortably
+    expect(code.startsWith("LIVEMSG2:")).toBe(true);
+    expect(code.length).toBeLessThan(520); // compact: an easy QR to scan off a screen
     expect((await browser.account.finishLink()).state).toBe("awaiting-link"); // not approved yet
     expect(await phone.account.approveLink(code)).toMatchObject({ label: "Chrome on Mac" });
     expect((await browser.account.finishLink()).state).toBe("ready");
@@ -109,9 +109,10 @@ describe("linking a browser", () => {
     await phone.account.setupPhone();
     const browser = device("luke");
     const code = await browser.account.startLink();
-    const p = JSON.parse(fromUtf8(fromB64(code.slice(9))));
-    p.x = toB64(new Uint8Array(32).fill(9)); // swap the DH key
-    await expect(phone.account.approveLink("LIVEMSG1:" + toB64(utf8(JSON.stringify(p))))).rejects.toMatchObject({ code: "BAD_LINK" });
+    const bytes = fromB64(code.slice(9));
+    bytes[1 + 16 + 16 + 8 + 32 + 5] ^= 1; // flip a bit of the DH key
+    await expect(phone.account.approveLink("LIVEMSG2:" + toB64(bytes))).rejects.toMatchObject({ code: "BAD_LINK" });
+    await expect(phone.account.approveLink(code.slice(0, -4))).rejects.toMatchObject({ code: "BAD_LINK" }); // truncated
     await expect(phone.account.approveLink("hello")).rejects.toMatchObject({ code: "BAD_LINK" });
   });
 
