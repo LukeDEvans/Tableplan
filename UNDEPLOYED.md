@@ -18,3 +18,7 @@ Each entry: what shipped · PR · post-deploy steps.
 - **Watch: hide the NEXT box** · #204 · The show panel no longer shows the Next-episode
   line (code kept behind `WATCH_SHOW_NEXT_BOX`); a season that's loading keeps the
   episode list's height so the screen doesn't move. Post-deploy: open a show — no NEXT box.
+- **Watch: services as links under the year line; light panel; one season box** · #205 ·
+  Services / Other services are plain links in the theme's link colour, left-aligned with
+  Other services first, right under the year line; the panel is the light surface and the
+  season menu heads one box with its episodes. Post-deploy: open a show in light and dark.
