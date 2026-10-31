@@ -106,7 +106,16 @@ const GENERIC_TEAM_WORDS = new Set(["united", "city", "fc", "sc", "afc", "cf", "
 // a place name alone ("Minnesota" from "Minnesota United") is never an alias.
 // Returns [{ text, cased }].
 const CLUB_ABBR = new Set(["fc", "afc", "sc", "cf"]);
-function teamAliases(team) {
+// College nicknames shared by many schools: alone they'd pull in other schools'
+// stories ("Cougars" is BYU, Houston, Washington State…), so a college team gets
+// them only as part of a phrase ("Morris Cougars").
+const COMMON_COLLEGE_NICKNAMES = new Set(("aggies bears bearcats bobcats broncos buffaloes bulldogs cardinals cavaliers cougars cowboys "
+  + "cyclones eagles falcons gators hawks hornets huskies hurricanes jaguars knights lions lumberjacks mavericks miners "
+  + "mustangs owls panthers pioneers rams rebels royals spartans tigers titans trojans warriors wildcats wolves").split(" "));
+
+// `places`: words that begin two or more of the person's favourites' names
+// ("minnesota") — a place, not a team, so never an alias on its own.
+function teamAliases(team, { places = new Set() } = {}) {
   const out = new Map();
   const add = (s, cased = false) => {
     const n = norm(s).split(" ").filter((w) => !CLUB_ABBR.has(w)).join(" ");
@@ -116,20 +125,37 @@ function teamAliases(team) {
   const words = all.filter((w) => !GENERIC_TEAM_WORDS.has(w));
   const placeOnly = words.length === 1 && all.some((w) => GENERIC_TEAM_WORDS.has(w) && !CLUB_ABBR.has(w));
   add(team?.name);
-  const short = norm(team?.short);
+  const short = norm(team?.short).split(" ").filter((w) => !CLUB_ABBR.has(w)).join(" ");
   if (short && short.includes(" ")) add(short);
   if (words.length >= 3) add(words.slice(-2).join(" ")); // "golden gophers"
-  if (words.length > 1) add(words[words.length - 1], true); // "vikings", "wild"
-  else if (words.length === 1 && !placeOnly) add(words[0], true); // "AFC Ajax" → "Ajax"
+  // The one-word name the team goes by: its short name when that isn't a place
+  // ("Ajax" for Ajax Amsterdam, "Vikings"), else the last word of its name
+  // ("Gophers"), never a city ("Amsterdam" isn't Ajax) and never a common college
+  // nickname alone.
+  const shortWord = short && !short.includes(" ") && short.length >= 4 && !places.has(short) && !(placeOnly && short === words[0]) ? short : "";
+  const last = words.length > 1 ? words[words.length - 1] : "";
+  const nick = shortWord || last || (words.length === 1 && !placeOnly ? words[0] : "");
+  if (nick && !(team?.scope === "college" && COMMON_COLLEGE_NICKNAMES.has(nick))) add(nick, true);
   return [...out].map(([text, cased]) => ({ text, cased }));
+}
+
+// The words that begin two or more favourites' names (see teamAliases).
+function placeWords(teams) {
+  const counts = new Map();
+  for (const t of teams || []) {
+    const first = norm(t?.name).split(" ")[0];
+    if (first) counts.set(first, (counts.get(first) || 0) + 1);
+  }
+  return new Set([...counts].filter(([, n]) => n >= 2).map(([w]) => w));
 }
 
 // [teams] → (text) => [team keys mentioned]. Whole words only.
 function teamMatcher(teams) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const places = placeWords(teams);
   const list = (Array.isArray(teams) ? teams : []).filter((t) => t?.key).map((t) => ({
     key: t.key,
-    tests: teamAliases(t).map(({ text, cased }) => (cased
+    tests: teamAliases(t, { places }).map(({ text, cased }) => (cased
       ? { cased: true, re: new RegExp(`(^|[^A-Za-z])${esc(text[0].toUpperCase() + text.slice(1))}([^A-Za-z]|$)`) }
       : { cased: false, re: new RegExp(`(^| )${esc(text)}( |$)`) }))
   }));
@@ -368,7 +394,7 @@ function cleanTeams(raw) {
 
 module.exports = {
   TOPICS, DECISION_DELTA, MAX_TOPICS, HALF_LIFE_MS, FAVORITE_TEAM_WEIGHT,
-  keywordFeatures, teamAliases, teamMatcher, storyFeatures,
+  keywordFeatures, teamAliases, placeWords, teamMatcher, storyFeatures,
   weightOf, normalizeInterest, applyFeedback, primaryFeature, addMute,
   scoreStory, interestScore, whyLabel, featureLabel, arrangeForYou,
   teamsSignature, cleanTeams, kindOf, athleticForUser, learnedSummary, editInterest, SKIP_LIMIT
