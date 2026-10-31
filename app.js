@@ -547,7 +547,16 @@ async function setSectionScope(section, scope, { quick = false } = {}) {
   for (const key of keys) { if (key in incoming) draft[key] = incoming[key]; }
   sectionScopes[section] = scope;
   try { localStorage.setItem(SCOPE_PREFS_KEY, JSON.stringify(sectionScopes)); } catch { /* full */ }
+  // applyStoredState forgets what's been written (it's built for whole-state
+  // replacements), which made the next save re-send EVERY section row after a
+  // view switch — ~15 writes, Household rows included (WATCH_AUDIT D2, Luke
+  // 2026-10-31). Only this section changed, so keep the record: its entry still
+  // holds the old scope's bytes, so the swapped-in data stays dirty and gets its
+  // merge-protected write (step 3 below), and every other section is written
+  // only if its data actually differs.
+  const writtenBeforeSwap = lastWrittenSections;
   applyStoredState(draft);
+  if (writtenBeforeSwap) lastWrittenSections = writtenBeforeSwap;
   adoptSettingsBaseline(); // the other scope's settings swapped in — not a user change
   mirrorStateToLocalStorage();
 
