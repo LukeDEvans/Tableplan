@@ -48,6 +48,8 @@ import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate 
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
 import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes, ROW_RESET_SECTIONS, applyRowReset } from './views.js';
+import { mergeWatchItems, stampTick, stampTab, touchItem as touchWatchItem } from './watch-merge.js';
+import { watchEpisodes } from './watch-episodes.js';
 import * as ExploreScope from './explore-scope.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
@@ -6343,6 +6345,11 @@ function normalizePlayAutoRules(rules) {
 }
 
 function normalizeWatchItems(items) {
+  // Episode lists are device data now (watch-episodes.js): an older copy's
+  // lists move into this device's store and are left off the synced show.
+  for (const item of Array.isArray(items) ? items : []) {
+    if (item?.tmdbId && item.episodeData && typeof item.episodeData === "object") watchEpisodes.adopt(item.tmdbId, item.episodeData);
+  }
   return (Array.isArray(items) ? items : [])
     .map((item) => ({
       id: item?.id || createId("watch"),
@@ -6363,7 +6370,9 @@ function normalizeWatchItems(items) {
       rating: item?.rating != null ? Number(item.rating) : null,
       watchNotes: item?.watchNotes || null,
       seasonProgress: watchSeasonProgressWithoutViewState(item?.seasonProgress),
-      episodeData: item?.episodeData && typeof item.episodeData === "object" ? item.episodeData : {},
+      ...(item?.tickAt && typeof item.tickAt === "object" ? { tickAt: item.tickAt } : {}),
+      ...(item?.tabsAt && typeof item.tabsAt === "object" ? { tabsAt: item.tabsAt } : {}),
+      ...(item?.updatedAt ? { updatedAt: String(item.updatedAt) } : {}),
       inTheaters: item?.inTheaters === true,
       theatricalReleaseDate: item?.theatricalReleaseDate || null,
       categories: Array.isArray(item?.categories) ? item.categories.filter((id) => typeof id === "string") : [],
@@ -7090,8 +7099,8 @@ function mergeStates(newer, older) {
     "calendarSources",
     "doTasks", "doBacklog", "doArchive", "playBacklog",
     "recurringTasks", "playAutoRules",
-    // Watch / Read / Recreate
-    "watchItems", "readingItems",
+    // Read / Recreate (Watch items merge tick by tick below — watch-merge.js)
+    "readingItems",
     "pianoSongs", "sailingLog", "sailingBoats", "pianoLog",
     // Cadence: Works, blob catalog, sessions, annotations (all carry an `id`;
     // blob records use id = blobId). Union so neither device loses a score.
@@ -7140,6 +7149,13 @@ function mergeStates(newer, older) {
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
+
+  // Watch items: a show on both sides is merged episode by episode and tab by
+  // tab, each by its own time, so two people's ticks both stick (watch-merge.js,
+  // WATCH_AUDIT.md decision 5). Membership is unionById's: either side's ids,
+  // minus tombstones.
+  merged.watchItems = mergeWatchItems(newer.watchItems, older.watchItems,
+    merged.tombstones?.watchItems?.length ? new Set(merged.tombstones.watchItems) : null);
 
   // Recurring charges are unique per MERCHANT, not per id — unioning by id let
   // each device's independently-created entry survive, piling up hundreds of
@@ -22600,7 +22616,7 @@ function renderWatchPlanner() {
         activeWatchCategory = newCat.id;
         // "New tab…" from a show's Tabs popover files that show under it.
         const forItem = watchNewTabFor && watchItemById(watchNewTabFor);
-        if (forItem) forItem.categories = [...(Array.isArray(forItem.categories) ? forItem.categories : []), newCat.id];
+        if (forItem) stampTab(forItem, newCat.id, true);
         persist();
       }
       watchNewTabFor = null;
@@ -22739,7 +22755,7 @@ function watchProgressPct(item) {
   let watched = 0, total = 0;
   for (const s of seasons) {
     const sd = progress[s] || {};
-    const eps = item.episodeData?.[s] || [];
+    const eps = watchEpisodes.get(item.tmdbId, s);
     const epTotal = eps.length || Object.keys(sd.episodes || {}).length;
     const epWatched = Object.values(sd.episodes || {}).filter(Boolean).length;
     if (sd.watched && epTotal) { watched += epTotal; total += epTotal; }
@@ -23127,14 +23143,14 @@ function placeWatchPanelPointer(root) {
 function watchNextEpisode(item) {
   if (!item || item.type !== "tv") return null;
   const progress = item.seasonProgress || {};
-  const known = Object.keys(item.episodeData || {}).map(Number);
+  const known = Object.keys(watchEpisodes.seasons(item.tmdbId)).map(Number);
   const tracked = Object.keys(progress).map(Number).filter((n) => n > 0);
   const last = item.totalSeasons || Math.max(1, ...known, ...tracked);
   for (let s = 1; s <= last; s++) {
     const sd = progress[s] || {};
     if (sd.watched) continue;
     const ticked = sd.episodes || {};
-    const eps = item.episodeData?.[s] || [];
+    const eps = watchEpisodes.get(item.tmdbId, s);
     if (eps.length) {
       const ep = eps.find((e) => !ticked[e.episodeNumber]);
       if (ep) return { season: s, episode: ep.episodeNumber, name: ep.name || "" };
@@ -23176,7 +23192,7 @@ function ensureWatchNextSeasonLoaded(item) {
   if (!item?.tmdbId || item.type !== "tv") return;
   const next = watchNextEpisode(item);
   const s = next ? next.season : null;
-  if (!s || (item.episodeData?.[s] || []).length) return;
+  if (!s || watchEpisodes.get(item.tmdbId, s).length) return;
   const key = `${item.id}:${s}`;
   if (watchEpisodeListRequested.has(key)) return;
   watchEpisodeListRequested.add(key);
@@ -23280,8 +23296,7 @@ function openWatchTabsMenu(btn, itemId, { alignRight = false } = {}) {
     const t = e.target.closest("[data-watch-tab-toggle]");
     if (t) {
       const catId = t.dataset.watchTabToggle;
-      if (!Array.isArray(item.categories)) item.categories = [];
-      item.categories = item.categories.includes(catId) ? item.categories.filter((c) => c !== catId) : [...item.categories, catId];
+      stampTab(item, catId, !(Array.isArray(item.categories) && item.categories.includes(catId)));
       persist();
       draw();
       renderWatchPlanner();
@@ -23337,7 +23352,7 @@ function ensureWatchShownSeasonRuntimes(item) {
   const seasons = watchSeasonNumbers(item);
   if (!seasons.length) return;
   const s = watchShownSeason(item, seasons);
-  const eps = item.episodeData?.[s] || [];
+  const eps = watchEpisodes.get(item.tmdbId, s);
   if (!eps.length || eps.some((e) => e && "runtime" in e)) return;
   const key = `${item.id}:${s}`;
   if (watchRuntimeRequested.has(key)) return;
@@ -23357,7 +23372,7 @@ function watchShownSeason(item, seasons) {
 
 function watchSeasonStats(item, seasonNum) {
   const sd = item.seasonProgress?.[seasonNum] || {};
-  const episodes = item.episodeData?.[seasonNum] || [];
+  const episodes = watchEpisodes.get(item.tmdbId, seasonNum);
   const watchedEps = sd.episodes || {};
   const totalEps = episodes.length || Object.keys(watchedEps).length || 0;
   const watchedCount = Object.values(watchedEps).filter(Boolean).length;
@@ -23625,12 +23640,7 @@ function openWatchItemMenu(event) {
       const catId = btn.dataset.categoryId;
       const it = watchItemById(itemId);
       if (!it) return;
-      if (!Array.isArray(it.categories)) it.categories = [];
-      if (it.categories.includes(catId)) {
-        it.categories = it.categories.filter((id) => id !== catId);
-      } else {
-        it.categories.push(catId);
-      }
+      stampTab(it, catId, !(Array.isArray(it.categories) && it.categories.includes(catId)));
       persist();
       renderWatchPlanner();
     });
@@ -23677,7 +23687,6 @@ function addWatchItem(title, type) {
     rating: null,
     watchNotes: null,
     seasonProgress: {},
-    episodeData: {},
     categories: [],
     createdAt: new Date().toISOString()
   };
@@ -23707,6 +23716,7 @@ function updateWatchItemStatus(id, status) {
   const item = watchItemById(id);
   if (!item) return;
   item.status = status;
+  touchWatchItem(item);
   persist();
   renderWatchPlanner();
 }
@@ -23733,7 +23743,7 @@ function selectWatchSeason(itemId, seasonNum) {
   const item = watchItemById(itemId);
   if (!item || !seasonNum) return;
   watchSelectedSeason.set(itemId, seasonNum);
-  if (item.tmdbId && !(item.episodeData?.[seasonNum] || []).length) loadWatchSeasonEpisodes(itemId, seasonNum);
+  if (item.tmdbId && !watchEpisodes.get(item.tmdbId, seasonNum).length) loadWatchSeasonEpisodes(itemId, seasonNum);
   renderWatchPlanner();
 }
 
@@ -23748,9 +23758,7 @@ function initWatchSeasonTracking(itemId) {
 function toggleWatchEpisode(itemId, seasonNum, episodeNum, checked) {
   const item = watchItemById(itemId);
   if (!item) return;
-  if (!item.seasonProgress[seasonNum]) item.seasonProgress[seasonNum] = {};
-  if (!item.seasonProgress[seasonNum].episodes) item.seasonProgress[seasonNum].episodes = {};
-  item.seasonProgress[seasonNum].episodes[episodeNum] = checked;
+  stampTick(item, seasonNum, episodeNum, checked); // per-tick merge (watch-merge.js)
   persist();
   renderWatchPlanner();
 }
@@ -23761,9 +23769,8 @@ function setWatchEpisodeCount(itemId, seasonNum, count) {
   if (!item.seasonProgress[seasonNum]) item.seasonProgress[seasonNum] = {};
   if (!item.seasonProgress[seasonNum].episodes) item.seasonProgress[seasonNum].episodes = {};
   const existing = item.seasonProgress[seasonNum].episodes;
-  const newEps = {};
-  for (let i = 1; i <= count; i++) newEps[i] = true;
-  item.seasonProgress[seasonNum].episodes = { ...existing, ...newEps };
+  const at = new Date().toISOString();
+  for (let i = 1; i <= count; i++) if (!existing[i]) stampTick(item, seasonNum, i, true, at);
   persist();
   renderWatchPlanner();
 }
@@ -23852,6 +23859,7 @@ function saveWatchLog() {
   item.watchNotes = elements.watchLogNotes.value.trim() || null;
   const wasEdit = watchLogEditMode;
   if (!wasEdit) item.status = "watched";
+  touchWatchItem(item);
   watchLogPendingId = null;
   watchLogRating = null;
   watchLogEditMode = false;
@@ -23866,7 +23874,7 @@ function saveWatchLog() {
 
 function skipWatchLog() {
   const item = watchItemById(watchLogPendingId);
-  if (item) item.status = "watched";
+  if (item) { item.status = "watched"; touchWatchItem(item); }
   watchLogPendingId = null;
   watchLogRating = null;
   watchLogEditMode = false;
@@ -24106,9 +24114,9 @@ function categorizeWatchItem(id, targetCategoryId) {
   const isSystemTab = (x) => x === "all" || x === "__upcoming" || x === "__in-theaters";
   if (!isSystemTab(targetCategoryId)) {
     if (!isSystemTab(activeWatchCategory) && activeWatchCategory !== targetCategoryId) {
-      item.categories = item.categories.filter((c) => c !== activeWatchCategory);
+      stampTab(item, activeWatchCategory, false);
     }
-    if (!item.categories.includes(targetCategoryId)) item.categories.push(targetCategoryId);
+    if (!item.categories.includes(targetCategoryId)) stampTab(item, targetCategoryId, true);
   }
   activeWatchCategory = targetCategoryId;
   persist();
@@ -24167,7 +24175,6 @@ function addWatchItemFromTmdb(tmdbResult) {
     rating: null,
     watchNotes: null,
     seasonProgress: {},
-    episodeData: {},
     categories: (activeWatchCategory !== "all" && activeWatchCategory !== "__upcoming" && activeWatchCategory !== "__in-theaters") ? [activeWatchCategory] : [],
     createdAt: new Date().toISOString()
   };
@@ -24221,11 +24228,8 @@ async function loadWatchSeasonEpisodes(itemId, seasonNum) {
     const response = await fetch(tmdbSeasonUrl(item.tmdbId, seasonNum), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
     if (!response.ok || !data.episodes?.length) return;
-    if (!item.episodeData) item.episodeData = {};
-    if (JSON.stringify(item.episodeData[seasonNum]) === JSON.stringify(data.episodes)) return; // nothing new: no save
-    item.episodeData[seasonNum] = data.episodes;
-    persist();
-    renderWatchPlanner();
+    // Device data (watch-episodes.js): no save, nothing synced; redraw only if new.
+    if (watchEpisodes.set(item.tmdbId, seasonNum, data.episodes)) renderWatchPlanner();
   } catch {
     // silently fail
   }
@@ -30460,8 +30464,7 @@ function videoInWatchlist(tmdbId) {
 // history (seasonProgress, rating, watchedDate, non-want status) is never deleted.
 function watchItemIsPristine(w) {
   return w && w.status === "want" && !w.rating && !w.watchedDate &&
-    !(w.seasonProgress && Object.keys(w.seasonProgress).length) &&
-    !(w.episodeData && Object.keys(w.episodeData).length);
+    !(w.seasonProgress && Object.keys(w.seasonProgress).length);
 }
 // A canonical Discover video → the TMDB-result shape addWatchItemFromTmdb expects.
 function discoverVideoToTmdbResult(item) {
@@ -42244,7 +42247,7 @@ async function executeChatTool(name, input) {
           streamingProviders: null, providersUpdatedAt: null,
           totalSeasons: null, totalEpisodes: null, runtime: null, avgEpisodeRuntime: null,
           watchedDate: null, rating: null, watchNotes: null,
-          seasonProgress: {}, episodeData: {}, categories: [],
+          seasonProgress: {}, categories: [],
           createdAt: new Date().toISOString()
         });
         persist();
@@ -42273,6 +42276,7 @@ async function executeChatTool(name, input) {
         if (!item) return `No watchlist item found matching "${input.title}".`;
         item.status = "watched";
         if (!item.watchedDate) item.watchedDate = new Date().toISOString().slice(0, 10);
+        touchWatchItem(item);
         persist();
         return `Marked "${item.title}" as watched.`;
       }

@@ -331,6 +331,16 @@ try {
     const w2 = await where();
     check(w1b.list + w1b.win > 0 && Math.abs(w2.top - w1b.top) <= 1, "ticking an episode doesn't move the screen", { w1b, w2 });
     check(await page.evaluate(() => window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress[3].episodes[8] === true), "…and the tick is saved");
+    // Per-tick merge + device episode lists (Luke, 2026-10-31): the tick carries
+    // its own time; the synced show carries no episode lists — they're in this
+    // device's store, keyed by TMDB id.
+    const synced = await page.evaluate(() => {
+      const it = window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`);
+      let store = {};
+      try { store = JSON.parse(localStorage.getItem("live.watchEpisodes.v1") || "{}"); } catch {}
+      return { stamp: it.tickAt?.["3:8"] || null, hasLists: "episodeData" in it, device: Object.keys(store[String(it.tmdbId)]?.seasons || {}) };
+    });
+    check(!!synced.stamp && !synced.hasLists && synced.device.includes("3"), "a tick carries its own time; episode lists stay on the device", synced);
     const struck = () => page.evaluate(() => {
       const b = document.querySelector(`[data-watch-episode="qa-t1-${globalThis.__qaR ?? R}"][data-episode="8"]`);
       return { cls: b.classList.contains("is-watched"), line: getComputedStyle(b.querySelector(".watch-episode-name")).textDecorationLine };
