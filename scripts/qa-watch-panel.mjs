@@ -287,27 +287,13 @@ try {
     await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).scrollIntoViewIfNeeded();
     await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).tap();
     await page.waitForTimeout(350);
-    const nextSel = `[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-next`;
-    const nextText = await page.locator(`${nextSel} .watch-next-code`).textContent().catch(() => "");
-    check(/S3 E6/.test(nextText || ""), "Next shows S3 E6", nextText);
-    // S3 E6 sits on the NEXT line; the title gets the line below; the tick is just
-    // a check mark (Luke, 2026-10-30).
-    const nextLay = await page.evaluate((sel) => {
-      const n = document.querySelector(sel);
-      const lab = n.querySelector(".watch-next-label").getBoundingClientRect();
-      const code = n.querySelector(".watch-next-code").getBoundingClientRect();
-      const ep = n.querySelector(".watch-next-ep");
-      const tick = n.querySelector(".watch-next-tick");
-      const tr = tick.getBoundingClientRect();
-      return { sameLine: Math.abs(code.top - lab.top) <= 2, epBelow: ep.getBoundingClientRect().top >= lab.bottom - 1, ep: ep.textContent.trim(), tickText: tick.textContent.trim(), round: Math.abs(tr.width - tr.height) <= 1 && getComputedStyle(tick).borderRadius === "50%" };
-    }, nextSel);
-    check(nextLay.sameLine && nextLay.epBelow && !/S3/.test(nextLay.ep) && nextLay.ep.length > 0, "S3 E6 is on the NEXT line, the title below it", nextLay);
-    check(nextLay.tickText === "" && nextLay.round, "the Next tick is just a check mark", nextLay);
+    // No NEXT box in the panel (Luke, 2026-10-31; the code stays behind
+    // WATCH_SHOW_NEXT_BOX). The panel still opens on the next episode's season.
+    check(await page.locator(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-next`).count() === 0, "no NEXT box in the panel");
     if (SHOT) await page.screenshot({ path: `${SHOT}-tv-${width}.png` });
-    await page.locator("[data-watch-next-tick]").tap();
+    // Cross off S3 E6 (what the NEXT tick used to do) so the checks below see the same state.
+    await page.locator(`[data-watch-episode="qa-t1-${globalThis.__qaR ?? R}"][data-episode="6"]`).tap();
     await page.waitForTimeout(300);
-    const nextText2 = await page.locator(`${nextSel} .watch-next-code`).textContent().catch(() => "");
-    check(/S3 E7/.test(nextText2 || ""), "ticking it moves Next to S3 E7", nextText2);
     const pick = `[data-watch-season-select="qa-t1-${globalThis.__qaR ?? R}"]`;
     const shown = await page.evaluate((sel) => {
       const el = document.querySelector(sel);

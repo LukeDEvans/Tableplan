@@ -22529,6 +22529,10 @@ function renderWatchPlanner() {
   const keepWindowY = window.scrollY;
   const keepEpisodes = new Map([...elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]")]
     .filter((el) => el.scrollTop).map((el) => [el.dataset.watchEps, el.scrollTop]));
+  // While a newly picked season's episodes load, its short placeholder would let
+  // the list shrink and the browser pull the screen up; hold it at the last
+  // episode list's height until the episodes arrive.
+  const keepEpisodesHeight = Math.max(0, ...[...elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]")].map((el) => el.offsetHeight));
   watchListScrollReset = false;
   elements.watchPlannerGrid.innerHTML = `
     <div class="watch-category-bar">
@@ -22638,6 +22642,11 @@ function renderWatchPlanner() {
 
   bindWatchControls(elements.watchPlannerGrid);
 
+  if (keepEpisodesHeight) {
+    elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]").forEach((el) => {
+      if (el.querySelector(".watch-episodes-loading")) el.style.minHeight = `${keepEpisodesHeight}px`;
+    });
+  }
   const newList = elements.watchPlannerGrid.querySelector(".watch-list-panel");
   if (newList && keepScroll) newList.scrollTop = keepScroll;
   elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]").forEach((el) => {
@@ -23003,6 +23012,10 @@ function isWatchItemScheduled(id) {
   );
 }
 
+// The NEXT box is hidden (Luke, 2026-10-31) — kept in case he wants it back:
+// set this to true. watchNextEpisode still picks the season the panel opens on.
+const WATCH_SHOW_NEXT_BOX = false;
+
 function watchItemTemplate(item) {
   const expanded = expandedWatchItemId === item.id;
   const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w342${item.posterPath}` : null;
@@ -23055,7 +23068,7 @@ function watchItemTemplate(item) {
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
           </button>
         </div>
-        ${isTv ? watchNextEpisodeHtml(item) : ""}
+        ${isTv && WATCH_SHOW_NEXT_BOX ? watchNextEpisodeHtml(item) : ""}
         ${providerHtml}
         ${!item.streamingProviders && !item.inTheaters && !item.theatricalReleaseDate && item.tmdbId ? `<button class="watch-load-providers-btn secondary-btn compact-btn" type="button" data-watch-load-providers="${id}">Load streaming info</button>` : ""}
         ${!item.tmdbId ? `<div class="watch-detail-unlinked"><span>No poster or services yet.</span><button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${id}">Find the right title</button></div>` : ""}
