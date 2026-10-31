@@ -20,7 +20,7 @@ changes to the Watch page only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `media-provider-tmdb.js`, `media-provider-youtube.js`, `media-provider-jellyfin.js`, `media-availability.js`, `media-deeplink.js`, `media-watch-adapter.js`, `media-search-scope.js`, `media-stream-links.js`, `netlify/functions/stream-links.mjs`, `netlify/functions/tmdb-*.js`, `netlify/functions/youtube-search.js`, `netlify/functions/showtimes.js`
+- files: `media-provider-tmdb.js`, `media-provider-youtube.js`, `media-provider-jellyfin.js`, `media-availability.js`, `media-deeplink.js`, `media-watch-adapter.js`, `media-search-scope.js`, `watch-merge.js`, `watch-episodes.js`, `media-stream-links.js`, `netlify/functions/stream-links.mjs`, `netlify/functions/tmdb-*.js`, `netlify/functions/youtube-search.js`, `netlify/functions/showtimes.js`
 - state: `watch*`, `jellyfin`, `mediaServices`
 
 ## Your scope (edit these)
@@ -143,6 +143,17 @@ changes to the Watch page only.
   wants it back; `watchNextEpisode` still picks the season the panel opens on. While a
   picked season loads, its placeholder keeps the last episode list's height so the
   screen doesn't move.
+- **Per-tick merge (Luke, 2026-10-31; WATCH_AUDIT decision 5):** `watch-merge.js`. Every
+  episode tick (`stampTick` → `tickAt["s:e"]`), tab change (`stampTab` → `tabsAt[catId]`) and
+  other edit by a person (`touchItem` → `updatedAt`) carries its own time; `mergeStates`
+  merges `watchItems` with `mergeWatchItems`, deciding each episode and tab by its own time,
+  so two people's ticks both stick. Unstamped (older) data keeps the old newer-side rule.
+  Change ticks/tabs only through these helpers.
+- **Episode lists are device data (Luke, 2026-10-31; D3 / decision 6):** `watch-episodes.js`
+  keeps each show's season lists in this device's storage (`live.watchEpisodes.v1`, by
+  TMDB id, 80 shows LRU), never in the synced row. `normalizeWatchItems` moves an older
+  copy's `episodeData` into the store; `mergeWatchItems` drops it. Read lists with
+  `watchEpisodes.get(tmdbId, season)`.
 - **No year / season count under posters (Luke, 2026-10-30):** a poster shows only its
   title; the open panel keeps the year and season count (`watchCardSub` → `.watch-detail-sub`).
 - **Episodes are crossed off, no check boxes (Luke, 2026-10-30):** each episode row is a
