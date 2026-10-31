@@ -84,7 +84,7 @@ changes to the Watch page only.
   open poster and **slides** when another poster in the same row opens
   (`placeWatchPanelPointer`); the open poster keeps its **ring**; tap again closes; no
   dimming of other posters. The panel holds the full title, a **Next episode** line for TV
-  ("Next: S3 E6 · title [✓ Watched]", `watchNextEpisode`), services, the season tracker
+  ("NEXT S3 E6" on one line, the title below, a round ✓ with no text — Luke, 2026-10-30; `watchNextEpisode`), services, the season tracker
   and a **⋯ menu** with Watched · Tabs · Remove — the phone's way to do what the laptop's right-click
   menu does (iOS has no right-click; holding a poster starts a drag).
 - **Remove waits ~6 s with Undo (2026-10-29):** `requestWatchRemove` hides the show and
@@ -110,8 +110,9 @@ changes to the Watch page only.
   redraw that follows picking a season or ticking an episode; only a tab switch
   (`watchListScrollReset`) starts at the top. Any new redraw path gets this for free.
 - **Season menu (Luke, 2026-10-29):** the panel shows one season at a time, picked from a
-  `<select>` (`watchSeasonPickerHtml`; options read "Season 3 · 5/8" / "· ✓"), with its
-  progress bar, an "All" tick for the whole season, and that season's episodes below.
+  `<select>` (`watchSeasonPickerHtml`) with that season's episodes below. Since
+  2026-10-30 (Luke) the options read only "Season 3" — no progress count, no progress bar,
+  and **no way to tick a whole season**: episodes are crossed off one at a time.
   Unpicked it shows the next episode's season (`watchShownSeason`); the pick is device
   state (`watchSelectedSeason`), never saved. Episode rows nearly touch.
 - **⋯ menu (Luke, 2026-10-29):** Watched · Tabs · Remove live in a ⋯ button at the panel's
@@ -137,6 +138,14 @@ changes to the Watch page only.
   (`ensureWatchShownSeasonRuntimes`); an unchanged reload isn't saved.
 - **No TV / M badge on posters (Luke, 2026-10-29):** the Movies / TV Shows sections already
   say it.
+- **No year / season count under posters (Luke, 2026-10-30):** a poster shows only its
+  title; the open panel keeps the year and season count (`watchCardSub` → `.watch-detail-sub`).
+- **Episodes are crossed off, no check boxes (Luke, 2026-10-30):** each episode row is a
+  button; tapping it marks it watched (struck through, `.is-watched`) or back.
+- **Services start at the right (Luke, 2026-10-30):** he holds the phone in his right
+  hand, so in the panel your services line up from the right edge and "Other services"
+  comes last (furthest left) — `row-reverse` on the panel's `.discover-svc-group`; less
+  space above and below the row.
 - **Agreed, not built yet (WATCH_AUDIT.md "Decisions"):** per-tick merge of episode ticks
   and tabs; episode lists/showtimes in a device cache and trimmed providers; refresh
   where-to-watch on view after 7 days; two-line titles + grid/list toggle; hide empty

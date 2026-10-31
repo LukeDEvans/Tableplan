@@ -10342,6 +10342,14 @@ body.touch-drag-active * {
 .discover-sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 4px; }
 .watch-providers--hub { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .discover-svc-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+/* In a show's panel the services start at the right edge, where a right thumb
+   reaches, with "Other services" last (furthest left); and less space above and
+   below them (Luke, 2026-10-30). */
+.watch-detail-inner > .watch-providers { margin-top: -5px; }
+.watch-detail-inner > .watch-providers:not(:last-child) { margin-bottom: -5px; }
+.watch-detail-inner > .watch-providers--hub { align-items: stretch; }
+.watch-detail-inner > .watch-providers--hub .discover-svc-group { flex-direction: row-reverse; margin-top: 0; }
+.watch-detail-inner > .watch-providers:not(.watch-providers--hub) { justify-content: flex-end; }
 .discover-svc-label { flex: 0 0 100%; font-size: 0.72rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .discover-svc {
   font: inherit;
@@ -10599,21 +10607,26 @@ body[data-theme="dark"] .watch-type-badge.watch-type-tv {
 }
 .watch-next-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .watch-next-label { font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+/* S1 E1 sits beside NEXT, leaving the line below to the title (Luke, 2026-10-30). */
+.watch-next-code { margin-left: 6px; color: var(--ink); letter-spacing: .02em; }
 .watch-next-ep { font-size: .9rem; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Just a check mark on a round button, no "Watched" text (Luke, 2026-10-30). */
 .watch-next-tick {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
   flex: 0 0 auto;
-  min-height: 36px;
-  padding: 6px 12px;
-  border-radius: 999px;
+  width: 36px;
+  height: 36px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
   background: var(--accent);
   color: var(--on-accent, #fff);
   font-size: .82rem;
   font-weight: 800;
 }
-.watch-next-tick svg { width: 15px; height: 15px; }
+.watch-next-tick svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 .watch-next--done { justify-content: center; font-size: .85rem; font-weight: 700; color: var(--muted); padding: 8px 12px; }
 
 /* Tabs popover */
@@ -10893,20 +10906,6 @@ body[data-theme="dark"] .watch-provider-link:hover {
   font-size: .84rem;
   font-weight: 700;
 }
-.watch-season-all { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--muted); cursor: pointer; }
-/* Small check boxes in the tracker. The app-wide input rule makes every input
-   100% wide, which squeezed episode names to nothing on a phone. */
-.watch-check {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  accent-color: var(--accent);
-}
-.watch-season-bar { flex: 1; min-width: 24px; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 10%, transparent); overflow: hidden; }
-.watch-season-bar > i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
 
 .watch-episodes {
   display: grid;
@@ -10918,24 +10917,33 @@ body[data-theme="dark"] .watch-provider-link:hover {
   overflow-y: auto;
 }
 
+/* A row is a button: tap to cross the episode off or back on; watched ones are
+   struck through (Luke, 2026-10-30 — no check boxes). */
 .watch-episode {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   min-height: 0;
+  margin: 0;
   padding: 1px 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
   font-size: 0.85rem;
   line-height: 1.25;
+  text-align: left;
   cursor: pointer;
 }
+.watch-episode:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.watch-episode.is-watched .watch-episode-name { text-decoration: line-through; color: var(--muted); }
+.watch-episode.is-watched .watch-episode-len { text-decoration: line-through; }
 .watch-episode-num { flex: 0 0 1.6em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: .8rem; }
 .watch-episode-name { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.3; }
 .watch-episode-len { flex: 0 0 auto; margin-left: 6px; color: var(--muted); font-size: .76rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-.watch-episode input {
-  accent-color: var(--accent);
-  flex: 0 0 auto;
-}
 
 .watch-episode-manual {
   display: flex;

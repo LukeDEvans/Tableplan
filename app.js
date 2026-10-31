@@ -23016,6 +23016,8 @@ function watchItemTemplate(item) {
     ? `<img class="watch-poster-img" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`
     : watchPosterGlyph(item.type);
 
+  // The year and season count show only in the open panel, not under the
+  // poster (Luke, 2026-10-30).
   const sub = watchCardSub(item);
   const card = `
     <article class="do-task-item watch-item watch-card${expanded ? " is-expanded" : ""}" data-watch-item="${escapeHtml(item.id)}" aria-expanded="${expanded}" tabindex="0">
@@ -23026,7 +23028,6 @@ function watchItemTemplate(item) {
       </div>
       <div class="watch-card-meta">
         <span class="watch-card-title">${escapeHtml(item.title)}</span>
-        ${sub ? `<span class="watch-card-sub">${escapeHtml(sub)}</span>` : ""}
       </div>
     </article>
   `;
@@ -23146,11 +23147,11 @@ function watchNextEpisodeHtml(item) {
   return `
     <div class="watch-next">
       <div class="watch-next-text">
-        <span class="watch-next-label">Next</span>
-        <span class="watch-next-ep">${label}${next.name ? ` · ${escapeHtml(next.name)}` : ""}</span>
+        <span class="watch-next-label">Next <span class="watch-next-code">${label}</span></span>
+        <span class="watch-next-ep">${escapeHtml(next.name || `Episode ${next.episode}`)}</span>
       </div>
       <button class="watch-next-tick" type="button" data-watch-next-tick="${id}" data-season="${next.season}" data-episode="${next.episode}" aria-label="Mark ${label} watched">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Watched</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
       </button>
     </div>`;
 }
@@ -23351,29 +23352,19 @@ function watchSeasonStats(item, seasonNum) {
   return { episodes, watchedEps, totalEps, watchedCount, allWatched };
 }
 
-// One season at a time, picked from a menu (Luke, 2026-10-29) — the season boxes
-// stacked one per season were long for a show with many.
+// One season at a time, picked from a menu (Luke, 2026-10-29). The menu names
+// only the season; there's no progress bar and no tick-the-whole-season box —
+// episodes are crossed off one at a time (Luke, 2026-10-30).
 function watchSeasonPickerHtml(item, seasons) {
   const id = escapeHtml(item.id);
   const shown = watchShownSeason(item, seasons);
   const st = watchSeasonStats(item, shown);
-  const optionLabel = (n) => {
-    const o = watchSeasonStats(item, n);
-    const count = o.allWatched ? "✓" : (o.totalEps ? `${o.watchedCount}/${o.totalEps}` : "");
-    return `Season ${n}${count ? ` · ${count}` : ""}`;
-  };
-  const pct = st.allWatched ? 100 : (st.totalEps ? Math.round((st.watchedCount / st.totalEps) * 100) : 0);
   return `
     <div class="watch-seasons" data-watch-seasons="${id}">
       <div class="watch-season-pick">
         <select class="watch-season-select" data-watch-season-select="${id}" aria-label="Season">
-          ${seasons.map((n) => `<option value="${n}"${n === shown ? " selected" : ""}>${escapeHtml(optionLabel(n))}</option>`).join("")}
+          ${seasons.map((n) => `<option value="${n}"${n === shown ? " selected" : ""}>Season ${n}</option>`).join("")}
         </select>
-        <span class="watch-season-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>
-        <label class="watch-season-all">
-          <input type="checkbox" class="watch-check watch-season-check" data-watch-season-toggle="${id}" data-season="${shown}" ${st.allWatched ? "checked" : ""} />
-          <span>All</span>
-        </label>
       </div>
       ${watchEpisodesTemplate(item, shown, st.episodes, st.watchedEps)}
     </div>
@@ -23398,14 +23389,17 @@ function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
   }
   return `
     <div class="watch-episodes" data-watch-eps="${escapeHtml(item.id)}:${seasonNum}">
-      ${episodes.map((ep) => `
-        <label class="watch-episode">
-          <input type="checkbox" class="watch-check" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" ${watchedEps[ep.episodeNumber] ? "checked" : ""} />
+      ${episodes.map((ep) => {
+        // No check box: a watched episode is struck through, and tapping the
+        // row crosses it off or back on (Luke, 2026-10-30).
+        const done = !!watchedEps[ep.episodeNumber];
+        return `
+        <button type="button" class="watch-episode${done ? " is-watched" : ""}" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" aria-pressed="${done}">
           <span class="watch-episode-num">${ep.episodeNumber}</span>
           <span class="watch-episode-name">${escapeHtml(ep.name || `Episode ${ep.episodeNumber}`)}</span>
           ${ep.runtime ? `<span class="watch-episode-len">${escapeHtml(formatWatchRuntime(ep.runtime))}</span>` : ""}
-        </label>
-      `).join("")}
+        </button>`;
+      }).join("")}
     </div>
   `;
 }
@@ -23446,17 +23440,14 @@ function bindWatchControls(root = document) {
   root.querySelectorAll("[data-toggle-showtimes]").forEach((btn) => {
     btn.addEventListener("click", () => toggleShowtimesCollapse(btn.dataset.toggleShowtimes));
   });
-  root.querySelectorAll("[data-watch-season-toggle]").forEach((cb) => {
-    cb.addEventListener("change", () => toggleWatchSeason(cb.dataset.watchSeasonToggle, Number(cb.dataset.season), cb.checked));
-  });
   root.querySelectorAll("[data-watch-season-select]").forEach((sel) => {
     sel.addEventListener("change", () => selectWatchSeason(sel.dataset.watchSeasonSelect, Number(sel.value)));
   });
   root.querySelectorAll("[data-watch-load-season]").forEach((btn) => {
     btn.addEventListener("click", () => loadWatchSeasonEpisodes(btn.dataset.watchLoadSeason, Number(btn.dataset.season)));
   });
-  root.querySelectorAll("[data-watch-episode]").forEach((cb) => {
-    cb.addEventListener("change", () => toggleWatchEpisode(cb.dataset.watchEpisode, Number(cb.dataset.season), Number(cb.dataset.episode), cb.checked));
+  root.querySelectorAll("[data-watch-episode]").forEach((btn) => {
+    btn.addEventListener("click", () => toggleWatchEpisode(btn.dataset.watchEpisode, Number(btn.dataset.season), Number(btn.dataset.episode), btn.getAttribute("aria-pressed") !== "true"));
   });
   root.querySelectorAll("[data-watch-ep-count]").forEach((input) => {
     input.addEventListener("change", () => setWatchEpisodeCount(input.dataset.watchEpCount, Number(input.dataset.season), Number(input.value)));
@@ -23719,25 +23710,6 @@ function unscheduleWatchItem(id, dayId) {
   const key = weekKey();
   if (!state.watchPlans?.[key]?.[dayId]) return;
   state.watchPlans[key][dayId] = state.watchPlans[key][dayId].filter((itemId) => itemId !== id);
-  persist();
-  renderWatchPlanner();
-}
-
-function toggleWatchSeason(itemId, seasonNum, checked) {
-  const item = watchItemById(itemId);
-  if (!item) return;
-  if (!item.seasonProgress[seasonNum]) item.seasonProgress[seasonNum] = {};
-  if (checked) {
-    const episodes = item.episodeData?.[seasonNum] || [];
-    if (episodes.length) {
-      item.seasonProgress[seasonNum].episodes = {};
-      episodes.forEach((ep) => { item.seasonProgress[seasonNum].episodes[ep.episodeNumber] = true; });
-    } else {
-      item.seasonProgress[seasonNum].watched = true;
-    }
-  } else {
-    item.seasonProgress[seasonNum] = {};
-  }
   persist();
   renderWatchPlanner();
 }
