@@ -147,10 +147,12 @@ changes to the Watch page only.
   title; the open panel keeps the year and season count (`watchCardSub` → `.watch-detail-sub`).
 - **Episodes are crossed off, no check boxes (Luke, 2026-10-30):** each episode row is a
   button; tapping it marks it watched (struck through, `.is-watched`) or back.
-- **Services start at the right (Luke, 2026-10-30):** he holds the phone in his right
-  hand, so in the panel your services line up from the right edge and "Other services"
-  comes last (furthest left) — `row-reverse` on the panel's `.discover-svc-group`; less
-  space above and below the row.
+- **Services are links under the year line (Luke, 2026-10-31; replaces the 2026-10-30
+  right-aligned bubbles):** in the panel the services sit in `.watch-detail-head` right
+  under the year / season count, as plain text links in the theme's link colour
+  (`--accent-dark`), no bubbles, left-aligned with "Other services" first.
+- **Panel colour and season box (Luke, 2026-10-31):** the panel is the light `--surface`;
+  the season menu is the header of one box with its episodes (a hairline between).
 - **Agreed, not built yet (WATCH_AUDIT.md "Decisions"):** per-tick merge of episode ticks
   and tabs; episode lists/showtimes in a device cache and trimmed providers; refresh
   where-to-watch on view after 7 days; two-line titles + grid/list toggle; hide empty

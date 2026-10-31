@@ -143,42 +143,38 @@ try {
     const otherBtn = page.locator(`[data-watch-detail="${m2}"] [data-watch-other-services]`);
     check(await otherBtn.count() === 1, "services outside yours fold into an 'Other services' button");
     if (await otherBtn.count()) {
-      const looks = await page.evaluate((id) => {
-        const b = document.querySelector(`[data-watch-detail="${id}"] [data-watch-other-services]`);
-        return b.classList.contains("discover-svc") && getComputedStyle(b).borderRadius === "999px";
-      }, m2);
-      check(looks, "…styled like the service buttons");
-      // Services start at the right edge, "Other services" last (furthest left),
-      // with little space above and below (Luke, 2026-10-30).
+      // Services are plain links in the link colour — no bubbles — left-aligned,
+      // "Other services" first, right under the year line (Luke, 2026-10-31).
       const svc = await page.evaluate((id) => {
         const d = document.querySelector(`[data-watch-detail="${id}"]`);
-        const inner = d.querySelector(".watch-detail-inner");
-        const pad = parseFloat(getComputedStyle(inner).paddingRight);
+        const head = d.querySelector(".watch-detail-head");
         // No mocked service counts as one of yours, so put a stand-in "yours"
         // button where the app renders them (before "Other services").
         const group = d.querySelector(".watch-providers .discover-svc-group");
         const fake = document.createElement("button");
         fake.className = "discover-svc qa-fake-svc"; fake.textContent = "Netflix";
         group.prepend(fake);
-        const btns = [...d.querySelectorAll(".watch-providers .discover-svc")].map((b) => ({ t: b.textContent.trim(), r: b.getBoundingClientRect() }));
-        const first = btns[0], other = btns.find((b) => /Other services/.test(b.t));
-        const block = d.querySelector(".watch-providers").getBoundingClientRect();
-        const prev = d.querySelector(".watch-providers").previousElementSibling?.getBoundingClientRect();
-        const next = d.querySelector(".watch-providers").nextElementSibling?.getBoundingClientRect();
-        const top = Math.min(...btns.map((b) => b.r.top)), bottom = Math.max(...btns.map((b) => b.r.bottom));
+        const els = [...d.querySelectorAll(".watch-providers .discover-svc")];
+        const btns = els.map((b) => ({ t: b.textContent.trim(), r: b.getBoundingClientRect() }));
+        const other = btns.find((b) => /Other services/.test(b.t));
+        const sub = d.querySelector(".watch-detail-sub").getBoundingClientRect();
+        const probe = document.createElement("span");
+        probe.style.color = "var(--accent-dark, var(--accent))"; head.append(probe);
+        const linkColor = getComputedStyle(probe).color; probe.remove();
+        const cs = els.map((b) => getComputedStyle(b));
         return {
           n: btns.length,
-          firstRightGap: Math.round(inner.getBoundingClientRect().right - pad - first.r.right),
-          otherLeftmost: other && btns.every((b) => b === other || b.r.left > other.r.left),
-          above: prev ? Math.round(top - prev.bottom) : null,
-          below: next ? Math.round(next.top - bottom) : Math.round(inner.getBoundingClientRect().bottom - parseFloat(getComputedStyle(inner).paddingBottom) - bottom),
-          blockH: Math.round(block.height),
-          firstLabel: first.t,
+          inHead: !!d.querySelector(".watch-detail-head .watch-providers"),
+          noBubble: cs.every((c) => c.backgroundColor === "rgba(0, 0, 0, 0)" && parseFloat(c.borderTopWidth) === 0 && parseFloat(c.paddingLeft) === 0),
+          linkColored: cs.every((c) => c.color === linkColor),
+          otherFirst: other && btns.every((b) => b === other || b.r.left > other.r.left),
+          otherLeftGap: other && Math.round(other.r.left - head.getBoundingClientRect().left),
+          underSub: Math.round(Math.min(...btns.map((b) => b.r.top)) - sub.bottom),
         };
       }, m2);
-      check(svc.n >= 2 && svc.firstLabel === "Netflix" && svc.firstRightGap <= 1, "the services start at the right edge", svc);
-      check(svc.otherLeftmost, "…with 'Other services' last", svc);
-      check(svc.above != null && svc.above <= 8 && svc.below <= 8, "…and little space above and below them", svc);
+      check(svc.inHead && svc.noBubble && svc.linkColored, "services are plain links in the link colour, no bubbles", svc);
+      check(svc.n >= 2 && svc.otherFirst && Math.abs(svc.otherLeftGap) <= 1, "…left-aligned, 'Other services' first", svc);
+      check(svc.underSub >= 0 && svc.underSub <= 4, "…right under the year line", svc);
       await page.evaluate(() => document.querySelectorAll(".qa-fake-svc").forEach((e) => e.remove()));
       await otherBtn.tap();
       await page.waitForTimeout(250);
@@ -354,6 +350,19 @@ try {
       return { head: Math.round(document.querySelector(".watch-season-select").getBoundingClientRect().height), row: Math.round(rows[0].height), name: Math.round(name), gap: Math.round(rows[1].top - rows[0].bottom) };
     });
     check(sizes.head <= 34, "the season menu is compact", sizes);
+    // The panel is the light surface; the season menu and episodes are one box
+    // (Luke, 2026-10-31).
+    const box = await page.evaluate(() => {
+      const probe = document.createElement("span"); probe.style.background = "var(--surface)"; document.body.append(probe);
+      const surface = getComputedStyle(probe).backgroundColor; probe.remove();
+      const panel = getComputedStyle(document.querySelector(".watch-detail-row")).backgroundColor;
+      const seasons = document.querySelector(".watch-seasons");
+      const sel = getComputedStyle(seasons.querySelector(".watch-season-select"));
+      const eps = getComputedStyle(seasons.querySelector(".watch-episodes"));
+      return { surface, panel, boxBorder: parseFloat(getComputedStyle(seasons).borderTopWidth), selBorder: parseFloat(sel.borderTopWidth), epsBorder: parseFloat(eps.borderTopWidth), divider: parseFloat(getComputedStyle(seasons.querySelector(".watch-season-pick")).borderBottomWidth) };
+    });
+    check(box.panel === box.surface, "the panel is the light surface", box);
+    check(box.boxBorder >= 1 && box.selBorder === 0 && box.epsBorder === 0 && box.divider >= 1, "the season menu heads one box with its episodes", box);
     // A row is its title plus 2px; a long title still wraps to a second line.
     check(sizes.row <= Math.max(sizes.name, 20) + 3 && sizes.gap <= 1, "episodes sit close together", sizes);
     const lay = await page.evaluate(() => {
