@@ -22683,6 +22683,8 @@ function renderWatchPlanner() {
   placeWatchPanelPointer(elements.watchPlannerGrid);
   const open = expandedWatchItemId && watchItemById(expandedWatchItemId);
   if (open) { ensureWatchNextSeasonLoaded(open); ensureWatchShownSeasonRuntimes(open); }
+  // Week-old where-to-watch / season counts refresh, the open show first.
+  if (!localDevMode || window.__liveQA?.watchRefreshInDev) refreshStaleWatchShows([open, ...watchVisibleItems()].filter(Boolean));
 }
 
 function watchDayTabTemplate(day, isActive) {
@@ -22789,7 +22791,8 @@ function watchCardSub(item) {
   return bits.join(" · ");
 }
 
-function watchListTemplate() {
+// The shows the current tab lists.
+function watchVisibleItems() {
   let items = watchItemsList().filter((i) => i.status !== "watched" && !watchIsPendingRemoval(i.id));
   if (activeWatchCategory === "__upcoming") {
     items = items.filter((i) => i.theatricalReleaseDate && !i.inTheaters);
@@ -22798,6 +22801,11 @@ function watchListTemplate() {
   } else if (activeWatchCategory !== "all") {
     items = items.filter((i) => Array.isArray(i.categories) && i.categories.includes(activeWatchCategory));
   }
+  return items;
+}
+
+function watchListTemplate() {
+  const items = watchVisibleItems();
   const movies = items.filter((i) => i.type === "movie");
   const tvShows = items.filter((i) => i.type === "tv");
 
@@ -23362,7 +23370,10 @@ function ensureWatchShownSeasonRuntimes(item) {
   if (!seasons.length) return;
   const s = watchShownSeason(item, seasons);
   const eps = watchEpisodes.get(item.tmdbId, s);
-  if (!eps.length || eps.some((e) => e && "runtime" in e)) return;
+  // Reload once per session when the list predates lengths, or is over a week
+  // old (new episodes, air dates and names firm up while a season airs).
+  const stale = Date.now() - watchEpisodes.storedAt(item.tmdbId) > WATCH_REFRESH_AFTER_MS;
+  if (!eps.length || (!stale && eps.some((e) => e && "runtime" in e))) return;
   const key = `${item.id}:${s}`;
   if (watchRuntimeRequested.has(key)) return;
   watchRuntimeRequested.add(key);
@@ -23408,13 +23419,29 @@ function watchSeasonPickerHtml(item, seasons) {
   `;
 }
 
+// Seasons panel polish (Luke, 2026-10-31; WATCH_AUDIT second audit S1–S7):
+// the whole season shows (no scroll box inside the list), rows are ~30px and one
+// line, the next episode to watch is marked, episodes not out yet show their
+// date and can't be ticked, and a failed load says so.
+function watchEpisodeAired(ep, today = localDateKey(new Date())) {
+  return !ep?.airDate || String(ep.airDate).slice(0, 10) <= today;
+}
+
+function formatWatchAirDate(iso) {
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return "";
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+}
+
 function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
   if (!episodes.length) {
+    const failed = watchSeasonLoadFailed.has(`${item.id}:${seasonNum}`);
     return `
       <div class="watch-episodes" data-watch-eps="${escapeHtml(item.id)}:${seasonNum}">
         <div class="empty-state watch-episodes-loading">
           ${item.tmdbId
-            ? `<button class="secondary-btn compact-btn" type="button" data-watch-load-season="${escapeHtml(item.id)}" data-season="${seasonNum}">Load episode list</button>`
+            ? `${failed ? `<span class="watch-episodes-error">Couldn't load the episodes.</span>` : ""}<button class="secondary-btn compact-btn" type="button" data-watch-load-season="${escapeHtml(item.id)}" data-season="${seasonNum}">${failed ? "Try again" : "Load episode list"}</button>`
             : `<div class="watch-episode-manual">
                 <span class="muted-label">Episodes watched:</span>
                 <input type="number" class="watch-ep-count-input" min="0" max="99" value="${Object.values(watchedEps).filter(Boolean).length}" data-watch-ep-count="${escapeHtml(item.id)}" data-season="${seasonNum}" />
@@ -23426,17 +23453,29 @@ function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
   }
   return `
     <div class="watch-episodes" data-watch-eps="${escapeHtml(item.id)}:${seasonNum}">
-      ${episodes.map((ep) => {
-        // No check box: a watched episode is struck through, and tapping the
-        // row crosses it off or back on (Luke, 2026-10-30).
-        const done = !!watchedEps[ep.episodeNumber];
-        return `
-        <button type="button" class="watch-episode${done ? " is-watched" : ""}" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" aria-pressed="${done}">
-          <span class="watch-episode-num">${ep.episodeNumber}</span>
-          <span class="watch-episode-name">${escapeHtml(ep.name || `Episode ${ep.episodeNumber}`)}</span>
-          ${ep.runtime ? `<span class="watch-episode-len">${escapeHtml(formatWatchRuntime(ep.runtime))}</span>` : ""}
-        </button>`;
-      }).join("")}
+      ${(() => {
+        const today = localDateKey(new Date());
+        const next = watchNextEpisode(item);
+        return episodes.map((ep) => {
+          // No check box: a watched episode is struck through, and tapping the
+          // row crosses it off or back on (Luke, 2026-10-30).
+          const done = !!watchedEps[ep.episodeNumber];
+          const aired = watchEpisodeAired(ep, today);
+          const isNext = aired && !done && next && next.season === seasonNum && next.episode === ep.episodeNumber;
+          const name = ep.name || `Episode ${ep.episodeNumber}`;
+          const side = !aired && ep.airDate
+            ? `<span class="watch-episode-len watch-episode-date">${escapeHtml(formatWatchAirDate(ep.airDate))}</span>`
+            : (ep.runtime ? `<span class="watch-episode-len">${escapeHtml(formatWatchRuntime(ep.runtime))}</span>` : "");
+          const cls = `watch-episode${done ? " is-watched" : ""}${isNext ? " is-next" : ""}${aired ? "" : " is-upcoming"}`;
+          const label = isNext ? ` aria-label="Next: episode ${ep.episodeNumber}, ${escapeHtml(name)}"` : "";
+          return `
+          <button type="button" class="${cls}" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" aria-pressed="${done}"${aired ? "" : " disabled"}${label} title="${escapeHtml(name)}">
+            <span class="watch-episode-num">${ep.episodeNumber}</span>
+            <span class="watch-episode-name">${escapeHtml(name)}</span>
+            ${side}
+          </button>`;
+        }).join("");
+      })()}
     </div>
   `;
 }
@@ -24192,6 +24231,26 @@ function addWatchItemFromTmdb(tmdbResult) {
   loadWatchProviders(item.id);
 }
 
+// Where-to-watch and season counts refresh on view once they're a week old
+// (Luke, 2026-10-31; WATCH_AUDIT decision 7 / S5): a few shows at a time, each
+// at most once a session, so a new season shows up and "In theaters" clears.
+const WATCH_REFRESH_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+const WATCH_REFRESH_PER_SESSION = 12;
+const watchRefreshTried = new Set();
+let watchRefreshRunning = 0;
+function refreshStaleWatchShows(items) {
+  const now = Date.now();
+  for (const item of items) {
+    if (watchRefreshRunning >= 2 || watchRefreshTried.size >= WATCH_REFRESH_PER_SESSION) return;
+    if (!item?.tmdbId || watchRefreshTried.has(item.id)) continue;
+    const at = Date.parse(item.providersUpdatedAt || "") || 0;
+    if (now - at < WATCH_REFRESH_AFTER_MS) continue;
+    watchRefreshTried.add(item.id);
+    watchRefreshRunning++;
+    loadWatchProviders(item.id).finally(() => { watchRefreshRunning--; refreshStaleWatchShows(items); });
+  }
+}
+
 async function loadWatchProviders(itemId) {
   const item = watchItemById(itemId);
   if (!item?.tmdbId) return;
@@ -24230,17 +24289,28 @@ function linkWatchItemToTmdb(itemId, tmdbResult) {
   loadWatchProviders(itemId);
 }
 
+// Seasons whose episode list failed to load this session (the panel says so and
+// offers "Try again"). Device-only; cleared on the next success.
+const watchSeasonLoadFailed = new Set();
 async function loadWatchSeasonEpisodes(itemId, seasonNum) {
   const item = watchItemById(itemId);
   if (!item?.tmdbId) return;
+  const key = `${itemId}:${seasonNum}`;
+  const fail = () => {
+    // Only the empty placeholder shows the message; a list already on screen stays.
+    if (watchEpisodes.get(item.tmdbId, seasonNum).length || watchSeasonLoadFailed.has(key)) return;
+    watchSeasonLoadFailed.add(key);
+    renderWatchPlanner();
+  };
   try {
     const response = await fetch(tmdbSeasonUrl(item.tmdbId, seasonNum), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
-    if (!response.ok || !data.episodes?.length) return;
+    if (!response.ok || !data.episodes?.length) { fail(); return; }
+    const hadFailed = watchSeasonLoadFailed.delete(key);
     // Device data (watch-episodes.js): no save, nothing synced; redraw only if new.
-    if (watchEpisodes.set(item.tmdbId, seasonNum, data.episodes)) renderWatchPlanner();
+    if (watchEpisodes.set(item.tmdbId, seasonNum, data.episodes) || hadFailed) renderWatchPlanner();
   } catch {
-    // silently fail
+    fail();
   }
 }
 

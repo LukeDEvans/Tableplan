@@ -83,7 +83,13 @@ export function createEpisodeStore({
     return added;
   }
 
-  return { seasons, get, set, adopt };
+  /** When a show's lists were last stored (ms; 0 when none). */
+  function storedAt(tmdbId) {
+    const id = idOf(tmdbId);
+    return (id && load()[id]?.at) || 0;
+  }
+
+  return { seasons, get, set, adopt, storedAt };
 }
 
 export const watchEpisodes = createEpisodeStore();
