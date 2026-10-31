@@ -138,6 +138,11 @@ changes to the Watch page only.
   (`ensureWatchShownSeasonRuntimes`); an unchanged reload isn't saved.
 - **No TV / M badge on posters (Luke, 2026-10-29):** the Movies / TV Shows sections already
   say it.
+- **No NEXT box (Luke, 2026-10-31):** the panel no longer shows the Next-episode line.
+  The code stays (`watchNextEpisodeHtml`) behind `WATCH_SHOW_NEXT_BOX = false` in case he
+  wants it back; `watchNextEpisode` still picks the season the panel opens on. While a
+  picked season loads, its placeholder keeps the last episode list's height so the
+  screen doesn't move.
 - **No year / season count under posters (Luke, 2026-10-30):** a poster shows only its
   title; the open panel keeps the year and season count (`watchCardSub` → `.watch-detail-sub`).
 - **Episodes are crossed off, no check boxes (Luke, 2026-10-30):** each episode row is a
