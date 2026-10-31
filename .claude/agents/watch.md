@@ -143,6 +143,16 @@ changes to the Watch page only.
   wants it back; `watchNextEpisode` still picks the season the panel opens on. While a
   picked season loads, its placeholder keeps the last episode list's height so the
   screen doesn't move.
+- **Seasons panel polish (Luke, 2026-10-31; second audit S1–S7):** the whole season shows
+  (no scroll box inside the list); rows ~30px, one line each (long titles end in "…");
+  the next episode to watch gets an accent row (`.is-next`); episodes not out yet show
+  their air date and can't be ticked (`.is-upcoming`, `disabled`); a failed load says
+  "Couldn't load the episodes." with Try again (`watchSeasonLoadFailed`, device-only).
+- **Refresh on view (Luke, 2026-10-31; decision 7):** `refreshStaleWatchShows` reloads
+  where-to-watch + season counts for shows in the current tab whose `providersUpdatedAt`
+  is over 7 days old — two at a time, each once a session, 12 a session; the open show's
+  episode list reloads when it's over a week old. Off in local dev unless
+  `window.__liveQA.watchRefreshInDev`.
 - **Per-tick merge (Luke, 2026-10-31; WATCH_AUDIT decision 5):** `watch-merge.js`. Every
   episode tick (`stampTick` → `tickAt["s:e"]`), tab change (`stampTab` → `tabsAt[catId]`) and
   other edit by a person (`touchItem` → `updatedAt`) carries its own time; `mergeStates`

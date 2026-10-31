@@ -63,9 +63,13 @@ try {
     await page.route(/image\.tmdb\.org/, (r) => r.fulfill({ status: 404, body: "" }));
     await page.route(/(functions|api)\/tmdb-search/, (r) => r.fulfill(json({ results: SEARCH })));
     const seasonCalls = [];
+    let failSeasons = false;
     await page.route(/(functions|api)\/tmdb-season/, (r) => {
       seasonCalls.push(r.request().url());
-      r.fulfill(json({ episodes: eps(8).map((e) => ({ ...e, runtime: 50 + e.episodeNumber })) }));
+      if (failSeasons) return r.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+      // Season 2's last episode isn't out yet (air date in the future).
+      const s2 = /season=2/.test(r.request().url());
+      r.fulfill(json({ episodes: eps(8).map((e) => ({ ...e, runtime: 50 + e.episodeNumber, airDate: s2 && e.episodeNumber === 8 ? "2099-01-01" : "2024-06-01" })) }));
     });
     await page.route(/(?:functions|api)\/(tmdb-watch-providers|tmdb-details|youtube-search|stream-links|showtimes)/, (r) => r.fulfill(json({ results: [], items: [], providers: null })));
 
@@ -320,6 +324,21 @@ try {
     check(Math.abs(w1.top - w0.top) <= 1, "picking a season doesn't move the screen", { w0, w1 });
     const s1 = await page.evaluate((sel) => ({ value: document.querySelector(sel).value, eps: [...document.querySelectorAll(".watch-episode")].map((c) => c.dataset.season) }), pick);
     check(s1.value === "1" && s1.eps.length === 8 && s1.eps.every((x) => x === "1"), "picking Season 1 loads and shows its episodes", s1);
+    // A season that fails to load says so and offers Try again (Luke, 2026-10-31).
+    failSeasons = true;
+    await page.selectOption(pick, "2");
+    await page.waitForTimeout(400);
+    const failed = await page.evaluate(() => ({ msg: document.querySelector(".watch-episodes-error")?.textContent.trim() || "", btn: document.querySelector("[data-watch-load-season]")?.textContent.trim() || "" }));
+    check(/Couldn't load/.test(failed.msg) && failed.btn === "Try again", "a season that fails to load says so, with Try again", failed);
+    failSeasons = false;
+    await page.locator("[data-watch-load-season]").tap();
+    await page.waitForTimeout(400);
+    // Episodes not out yet show their date and can't be ticked.
+    const up = await page.evaluate(() => {
+      const b = document.querySelector('.watch-episode[data-season="2"][data-episode="8"]');
+      return b && { disabled: b.disabled, cls: b.classList.contains("is-upcoming"), side: b.querySelector(".watch-episode-len")?.textContent.trim() || "" };
+    });
+    check(up && up.disabled && up.cls && /2099/.test(up.side), "…then loads; an episode not out yet shows its date and can't be ticked", up);
     await page.selectOption(pick, "3");
     await page.waitForTimeout(300);
     const ep8 = page.locator(`[data-watch-episode="qa-t1-${globalThis.__qaR ?? R}"][data-episode="8"]`);
@@ -373,8 +392,24 @@ try {
     });
     check(box.panel === box.surface, "the panel is the light surface", box);
     check(box.boxBorder >= 1 && box.selBorder === 0 && box.epsBorder === 0 && box.divider >= 1, "the season menu heads one box with its episodes", box);
-    // A row is its title plus 2px; a long title still wraps to a second line.
-    check(sizes.row <= Math.max(sizes.name, 20) + 3 && sizes.gap <= 1, "episodes sit close together", sizes);
+    // ~30px rows, one line each (a long title ends in "…"), no gaps; the whole
+    // season shows — no scroll box inside the list (Luke, 2026-10-31).
+    check(sizes.row >= 28 && sizes.row <= 34 && sizes.name <= 20 && sizes.gap <= 1, "episode rows are ~30px, one line each", sizes);
+    const epBox = await page.evaluate(() => {
+      const e = document.querySelector(".watch-episodes");
+      const n = document.querySelector(".watch-episode-name");
+      return { overflow: getComputedStyle(e).overflowY, fits: e.scrollHeight <= e.clientHeight + 1, ellipsis: getComputedStyle(n).textOverflow };
+    });
+    check(epBox.overflow === "visible" && epBox.fits && epBox.ellipsis === "ellipsis", "the whole season shows, no scroll box inside the list", epBox);
+    // …and the lengths on the right aren't cut off.
+    const lenFit = await page.evaluate(() => {
+      const box = document.querySelector(".watch-episodes").getBoundingClientRect();
+      return [...document.querySelectorAll(".watch-episode-len")].every((l) => l.getBoundingClientRect().right <= box.right + 0.5);
+    });
+    check(lenFit, "episode lengths sit inside the box");
+    // The next episode to watch is marked: S3 has 1–6 and 8 ticked, so 7.
+    const nextMark = await page.evaluate(() => [...document.querySelectorAll(".watch-episode.is-next")].map((b) => `${b.dataset.season}:${b.dataset.episode}`));
+    check(nextMark.join() === "3:7", "the next episode to watch is marked", nextMark);
     const lay = await page.evaluate(() => {
       const boxes = document.querySelectorAll(".watch-episodes input[type=checkbox], .watch-seasons input[type=checkbox]").length;
       const name = document.querySelector(".watch-episode-name").getBoundingClientRect().width;
@@ -505,6 +540,20 @@ try {
     check(back.grid && back.filter && /movies, shows/.test(back.placeholder), "Watch list brings the list back", back);
 
     check(errors.length === 0, "no page errors", errors.slice(0, 3));
+    // Week-old where-to-watch refreshes on view, a few at a time, once each per
+    // session (Luke, 2026-10-31). The seeds have no providersUpdatedAt.
+    const provCalls = [];
+    page.on("request", (req) => { if (/tmdb-watch-providers/.test(req.url())) provCalls.push(req.url()); });
+    await page.evaluate((items) => { window.__liveQA.watchSeedForQa(items); window.__liveQA.watchRefreshInDev = true; }, seedFor(R));
+    await page.locator('[data-watch-category="all"]').tap();
+    await page.waitForTimeout(1200);
+    const firstRound = provCalls.length;
+    await page.locator('[data-watch-category="all"]').tap();
+    await page.waitForTimeout(800);
+    const refreshed = await page.evaluate(() => window.__liveQA.watchItemsForQa().filter((i) => i.providersUpdatedAt).length);
+    check(firstRound >= 5 && provCalls.length === firstRound && refreshed >= 5, "week-old shows refresh on view, once each a session", { firstRound, total: provCalls.length, refreshed });
+    await page.evaluate(() => { window.__liveQA.watchRefreshInDev = false; });
+
     await context.close();
   }
 } finally {
