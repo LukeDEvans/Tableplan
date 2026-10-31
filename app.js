@@ -23063,13 +23063,13 @@ function watchItemTemplate(item) {
           <div class="watch-detail-head">
             <span class="watch-detail-title">${escapeHtml(item.title)}</span>
             ${sub ? `<span class="watch-detail-sub">${escapeHtml(sub)}</span>` : ""}
+            ${providerHtml}
           </div>
           <button class="watch-detail-more" type="button" data-watch-more="${id}" aria-label="More for ${escapeHtml(item.title)}" aria-haspopup="menu">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
           </button>
         </div>
         ${isTv && WATCH_SHOW_NEXT_BOX ? watchNextEpisodeHtml(item) : ""}
-        ${providerHtml}
         ${!item.streamingProviders && !item.inTheaters && !item.theatricalReleaseDate && item.tmdbId ? `<button class="watch-load-providers-btn secondary-btn compact-btn" type="button" data-watch-load-providers="${id}">Load streaming info</button>` : ""}
         ${!item.tmdbId ? `<div class="watch-detail-unlinked"><span>No poster or services yet.</span><button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${id}">Find the right title</button></div>` : ""}
         ${episodeProgressHtml}
