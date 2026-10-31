@@ -15,3 +15,6 @@ Each entry: what shipped · PR · post-deploy steps.
   tapping (no check boxes); services start at the right with "Other services" last; the
   season menu says only "Season N" (no bar, no "All"); NEXT shows "S1 E1" beside it and a
   plain ✓. Post-deploy: open a show on the phone and cross an episode off and back.
+- **Watch: hide the NEXT box** · #204 · The show panel no longer shows the Next-episode
+  line (code kept behind `WATCH_SHOW_NEXT_BOX`); a season that's loading keeps the
+  episode list's height so the screen doesn't move. Post-deploy: open a show — no NEXT box.
