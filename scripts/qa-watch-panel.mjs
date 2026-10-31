@@ -2,7 +2,7 @@
 // Headless QA for the Watch page (Luke, 2026-10-29): the show panel opens under
 // the whole row (the row stays put), a pointer marks the open poster and slides
 // within a row, Watched · Tabs · Remove (the ⋯ menu) work by tapping, Remove has Undo, the
-// Next-episode line ticks an episode, the tracker's check boxes are small, a
+// Next-episode line ticks an episode, episodes are crossed off by tapping (no check boxes), a
 // season's open state isn't saved, "Find the right title" links a plain title
 // and tags titles already on the list, there's no "+" to add a show (the search
 // bar does that), a short list starts at the top, and services outside yours
@@ -108,6 +108,10 @@ try {
     check(geo.ptrX != null && Math.abs(geo.ptrX - geo.posterX) <= 2, "the pointer points at the open poster", geo);
     check(await page.locator(".watch-avail--stream").count() === 0, "no streaming-service bubble on the posters");
     check(await page.locator(".watch-badge").count() === 0, "no TV / M badge on the posters");
+    // Year and season count only in the open panel (Luke, 2026-10-30).
+    const subs = await page.evaluate((id) => ({ cards: document.querySelectorAll(".watch-card .watch-card-sub").length, panel: document.querySelector(`[data-watch-detail="${id}"] .watch-detail-sub`)?.textContent.trim() || "" }), `qa-m2-${globalThis.__qaR ?? R}`);
+    check(subs.cards === 0, "no year or season count under the posters", subs);
+    check(/\d{4}/.test(subs.panel), "…but the open panel still shows them", subs);
 
     // The ring around the open poster isn't cut off at either end of the row,
     // and the posters kept their size.
@@ -144,6 +148,38 @@ try {
         return b.classList.contains("discover-svc") && getComputedStyle(b).borderRadius === "999px";
       }, m2);
       check(looks, "…styled like the service buttons");
+      // Services start at the right edge, "Other services" last (furthest left),
+      // with little space above and below (Luke, 2026-10-30).
+      const svc = await page.evaluate((id) => {
+        const d = document.querySelector(`[data-watch-detail="${id}"]`);
+        const inner = d.querySelector(".watch-detail-inner");
+        const pad = parseFloat(getComputedStyle(inner).paddingRight);
+        // No mocked service counts as one of yours, so put a stand-in "yours"
+        // button where the app renders them (before "Other services").
+        const group = d.querySelector(".watch-providers .discover-svc-group");
+        const fake = document.createElement("button");
+        fake.className = "discover-svc qa-fake-svc"; fake.textContent = "Netflix";
+        group.prepend(fake);
+        const btns = [...d.querySelectorAll(".watch-providers .discover-svc")].map((b) => ({ t: b.textContent.trim(), r: b.getBoundingClientRect() }));
+        const first = btns[0], other = btns.find((b) => /Other services/.test(b.t));
+        const block = d.querySelector(".watch-providers").getBoundingClientRect();
+        const prev = d.querySelector(".watch-providers").previousElementSibling?.getBoundingClientRect();
+        const next = d.querySelector(".watch-providers").nextElementSibling?.getBoundingClientRect();
+        const top = Math.min(...btns.map((b) => b.r.top)), bottom = Math.max(...btns.map((b) => b.r.bottom));
+        return {
+          n: btns.length,
+          firstRightGap: Math.round(inner.getBoundingClientRect().right - pad - first.r.right),
+          otherLeftmost: other && btns.every((b) => b === other || b.r.left > other.r.left),
+          above: prev ? Math.round(top - prev.bottom) : null,
+          below: next ? Math.round(next.top - bottom) : Math.round(inner.getBoundingClientRect().bottom - parseFloat(getComputedStyle(inner).paddingBottom) - bottom),
+          blockH: Math.round(block.height),
+          firstLabel: first.t,
+        };
+      }, m2);
+      check(svc.n >= 2 && svc.firstLabel === "Netflix" && svc.firstRightGap <= 1, "the services start at the right edge", svc);
+      check(svc.otherLeftmost, "…with 'Other services' last", svc);
+      check(svc.above != null && svc.above <= 8 && svc.below <= 8, "…and little space above and below them", svc);
+      await page.evaluate(() => document.querySelectorAll(".qa-fake-svc").forEach((e) => e.remove()));
       await otherBtn.tap();
       await page.waitForTimeout(250);
       const win = await page.evaluate(() => {
@@ -251,12 +287,26 @@ try {
     await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).scrollIntoViewIfNeeded();
     await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).tap();
     await page.waitForTimeout(350);
-    const nextText = await page.locator(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-next-ep`).textContent().catch(() => "");
+    const nextSel = `[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-next`;
+    const nextText = await page.locator(`${nextSel} .watch-next-code`).textContent().catch(() => "");
     check(/S3 E6/.test(nextText || ""), "Next shows S3 E6", nextText);
+    // S3 E6 sits on the NEXT line; the title gets the line below; the tick is just
+    // a check mark (Luke, 2026-10-30).
+    const nextLay = await page.evaluate((sel) => {
+      const n = document.querySelector(sel);
+      const lab = n.querySelector(".watch-next-label").getBoundingClientRect();
+      const code = n.querySelector(".watch-next-code").getBoundingClientRect();
+      const ep = n.querySelector(".watch-next-ep");
+      const tick = n.querySelector(".watch-next-tick");
+      const tr = tick.getBoundingClientRect();
+      return { sameLine: Math.abs(code.top - lab.top) <= 2, epBelow: ep.getBoundingClientRect().top >= lab.bottom - 1, ep: ep.textContent.trim(), tickText: tick.textContent.trim(), round: Math.abs(tr.width - tr.height) <= 1 && getComputedStyle(tick).borderRadius === "50%" };
+    }, nextSel);
+    check(nextLay.sameLine && nextLay.epBelow && !/S3/.test(nextLay.ep) && nextLay.ep.length > 0, "S3 E6 is on the NEXT line, the title below it", nextLay);
+    check(nextLay.tickText === "" && nextLay.round, "the Next tick is just a check mark", nextLay);
     if (SHOT) await page.screenshot({ path: `${SHOT}-tv-${width}.png` });
     await page.locator("[data-watch-next-tick]").tap();
     await page.waitForTimeout(300);
-    const nextText2 = await page.locator(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-next-ep`).textContent().catch(() => "");
+    const nextText2 = await page.locator(`${nextSel} .watch-next-code`).textContent().catch(() => "");
     check(/S3 E7/.test(nextText2 || ""), "ticking it moves Next to S3 E7", nextText2);
     const pick = `[data-watch-season-select="qa-t1-${globalThis.__qaR ?? R}"]`;
     const shown = await page.evaluate((sel) => {
@@ -275,7 +325,8 @@ try {
     await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).tap(); // reopen
     await page.waitForTimeout(300);
     check(before3 === 1 && s3Calls() === 1, "…and only once", { before3, after: s3Calls() });
-    check(shown && /Season 1 · ✓/.test(shown.options[0]) && /Season 3 · 6\/8/.test(shown.options[2]), "each season shows its progress", shown && shown.options);
+    check(shown && shown.options.join() === "Season 1,Season 2,Season 3", "the season menu names only the season", shown && shown.options);
+    check(await page.locator(".watch-season-bar, .watch-season-all, [data-watch-season-toggle]").count() === 0, "no season progress bar or 'All' box");
     await page.locator(pick).scrollIntoViewIfNeeded();
     await page.waitForTimeout(150);
     const where = () => page.evaluate((sel) => ({ top: Math.round(document.querySelector(sel).getBoundingClientRect().top), list: Math.round(document.querySelector(".watch-list-panel").scrollTop), win: Math.round(scrollY) }), pick);
@@ -285,7 +336,7 @@ try {
     const w1 = await where();
     check(w0.list + w0.win > 0, "(the list is scrolled down for the next checks)", w0);
     check(Math.abs(w1.top - w0.top) <= 1, "picking a season doesn't move the screen", { w0, w1 });
-    const s1 = await page.evaluate((sel) => ({ value: document.querySelector(sel).value, eps: [...document.querySelectorAll(".watch-episode .watch-check")].map((c) => c.dataset.season) }), pick);
+    const s1 = await page.evaluate((sel) => ({ value: document.querySelector(sel).value, eps: [...document.querySelectorAll(".watch-episode")].map((c) => c.dataset.season) }), pick);
     check(s1.value === "1" && s1.eps.length === 8 && s1.eps.every((x) => x === "1"), "picking Season 1 loads and shows its episodes", s1);
     await page.selectOption(pick, "3");
     await page.waitForTimeout(300);
@@ -298,6 +349,19 @@ try {
     const w2 = await where();
     check(w1b.list + w1b.win > 0 && Math.abs(w2.top - w1b.top) <= 1, "ticking an episode doesn't move the screen", { w1b, w2 });
     check(await page.evaluate(() => window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress[3].episodes[8] === true), "…and the tick is saved");
+    const struck = () => page.evaluate(() => {
+      const b = document.querySelector(`[data-watch-episode="qa-t1-${globalThis.__qaR ?? R}"][data-episode="8"]`);
+      return { cls: b.classList.contains("is-watched"), line: getComputedStyle(b.querySelector(".watch-episode-name")).textDecorationLine };
+    });
+    const st1 = await struck();
+    check(st1.cls && st1.line === "line-through", "a watched episode is struck through", st1);
+    await ep8.tap();
+    await page.waitForTimeout(300);
+    const st2 = await struck();
+    const saved2 = await page.evaluate(() => !!window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress[3].episodes?.[8]);
+    check(!st2.cls && st2.line === "none" && !saved2, "tapping it again uncrosses it", { st2, saved2 });
+    await ep8.tap();
+    await page.waitForTimeout(300);
     const sizes = await page.evaluate(() => {
       const rows = [...document.querySelectorAll(".watch-episode")].map((e) => e.getBoundingClientRect());
       const name = document.querySelector(".watch-episode-name").getBoundingClientRect().height;
@@ -307,14 +371,13 @@ try {
     // A row is its title plus 2px; a long title still wraps to a second line.
     check(sizes.row <= Math.max(sizes.name, 20) + 3 && sizes.gap <= 1, "episodes sit close together", sizes);
     const lay = await page.evaluate(() => {
-      const cb = document.querySelector(".watch-episode .watch-check").getBoundingClientRect().width;
-      const sc = document.querySelector(".watch-season-check").getBoundingClientRect().width;
+      const boxes = document.querySelectorAll(".watch-episodes input[type=checkbox], .watch-seasons input[type=checkbox]").length;
       const name = document.querySelector(".watch-episode-name").getBoundingClientRect().width;
       const row = document.querySelector(".watch-episode").getBoundingClientRect().width;
       const head = document.querySelector(".watch-season-select").getBoundingClientRect().height;
-      return { cb, sc, name: Math.round(name), row: Math.round(row), head };
+      return { boxes, name: Math.round(name), row: Math.round(row), head };
     });
-    check(lay.cb <= 24 && lay.sc <= 24, "tracker check boxes are small", lay);
+    check(lay.boxes === 0, "no check boxes in the episode list", lay);
     check(lay.name >= lay.row * 0.55, "episode titles get most of the row's width", lay);
     check(lay.head <= 34, "'Season 3' stays on one line", lay);
     const savedOpen = await page.evaluate(() => JSON.stringify(window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress));
