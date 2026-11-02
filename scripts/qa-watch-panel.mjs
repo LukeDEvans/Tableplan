@@ -539,6 +539,36 @@ try {
     const back = await page.evaluate(() => ({ grid: !document.getElementById("watchPlannerGrid").hidden, placeholder: document.getElementById("discoverSearchInput").placeholder, filter: !document.querySelector("#watchPagePanel .discover-filter").hidden }));
     check(back.grid && back.filter && /movies, shows/.test(back.placeholder), "Watch list brings the list back", back);
 
+    // Archive on a phone: tapping a show (no right-click) opens Edit · Back to
+    // Watch list · Delete; Back to Watch list returns it (Luke, 2026-11-01).
+    await page.evaluate((r) => {
+      const items = window.__liveQA.watchItemsForQa();
+      items.push({ id: `qa-a1-${r}`, type: "movie", title: "Watched By Mistake", tmdbId: 4242, year: "2020", status: "watched", createdAt: "2026-10-06T00:00:00Z" });
+      window.__liveQA.watchSeedForQa(items);
+    }, R);
+    await page.waitForTimeout(300);
+    await openSide("archive");
+    const arch = page.locator(`#watchArchiveDialog [data-watch-archive-item="qa-a1-${R}"]`);
+    check(await arch.count() === 1, "a watched show is in the Archive");
+    await arch.locator(".watch-item-title").tap();
+    await page.waitForTimeout(250);
+    const menuItems = await page.$$eval("#watchArchiveDialog .watch-item-context-menu [role=menuitem]", (b) => b.map((x) => x.textContent.trim()));
+    check(menuItems.join() === "Edit,Back to Watch list,Delete", "tapping an archived show opens its menu", menuItems);
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(150);
+    if (!(await page.evaluate(() => document.getElementById("watchArchiveDialog").open))) await openSide("archive");
+    await page.locator(`#watchArchiveDialog [data-watch-archive-item="qa-a1-${R}"] [data-watch-archive-more]`).tap();
+    await page.waitForTimeout(250);
+    if (SHOT) await page.screenshot({ path: `${SHOT}-archive-${width}.png` });
+    await page.locator("#watchArchiveDialog [data-watch-ctx-unarchive]").tap();
+    await page.waitForTimeout(300);
+    const backOn = await page.evaluate((r) => ({
+      status: window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-a1-${r}`)?.status,
+      inArchive: !!document.querySelector(`#watchArchiveDialog [data-watch-archive-item="qa-a1-${r}"]`),
+    }), R);
+    check(backOn.status === "want" && !backOn.inArchive, "…and its ⋯ → Back to Watch list returns it to the list", backOn);
+    await page.evaluate(() => document.getElementById("watchArchiveDialog")?.close());
+
     check(errors.length === 0, "no page errors", errors.slice(0, 3));
     // Week-old where-to-watch refreshes on view, a few at a time, once each per
     // session (Luke, 2026-10-31). The seeds have no providersUpdatedAt.

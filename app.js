@@ -23953,8 +23953,14 @@ function openWatchArchive() {
       </div>`
     : `<div class="empty-state">Nothing archived yet. Mark something as Watched to send it here.</div>`;
 
+  // On a phone there's no right-click: tapping a show (or its ⋯) opens the same
+  // menu — Edit · Back to Watch list · Delete (Luke, 2026-11-01; decision 10).
   elements.watchArchiveBody.querySelectorAll("[data-watch-archive-item]").forEach((article) => {
     article.addEventListener("contextmenu", openWatchArchiveItemMenu);
+    article.addEventListener("click", (e) => {
+      if (e.target.closest("a, button:not([data-watch-archive-more])")) return; // service links keep their job
+      openWatchArchiveItemMenu(e);
+    });
   });
 
   if (!elements.watchArchiveDialog.open) elements.watchArchiveDialog.showModal();
@@ -24005,7 +24011,9 @@ function watchArchiveItemTemplate(item) {
               <span class="watch-item-title">${escapeHtml(item.title)}</span>
               ${item.year ? `<span class="watch-item-year">${escapeHtml(item.year)}</span>` : ""}
             </div>
-            <span class="watch-type-badge watch-type-${escapeHtml(item.type)}">${item.type === "tv" ? "TV" : "M"}</span>
+            <button class="watch-detail-more watch-archive-more" type="button" data-watch-archive-more aria-label="More for ${escapeHtml(item.title)}" aria-haspopup="menu">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+            </button>
           </div>
           ${watchItemMetaHtml(item)}
           ${ratingHtml}
@@ -24032,9 +24040,12 @@ function openWatchArchiveItemMenu(event) {
   event.stopPropagation();
   closeFolderMenu();
 
-  const article = event.currentTarget;
+  const article = event.currentTarget.closest?.("[data-watch-archive-item]") || event.currentTarget;
   const itemId = article.dataset.watchArchiveItem;
   if (!itemId) return;
+  // From the ⋯ button (or a keyboard click with no pointer position), open under it.
+  const more = event.target?.closest?.("[data-watch-archive-more]");
+  const anchor = more ? more.getBoundingClientRect() : null;
 
   const menu = document.createElement("div");
   menu.className = "folder-context-menu watch-item-context-menu";
@@ -24042,13 +24053,15 @@ function openWatchArchiveItemMenu(event) {
   menu.innerHTML = `
     <button type="button" role="menuitem" data-watch-ctx-edit="${escapeHtml(itemId)}">Edit</button>
     <div class="watch-context-divider"></div>
-    <button type="button" role="menuitem" data-watch-ctx-unarchive="${escapeHtml(itemId)}">Remove from Archive</button>
+    <button type="button" role="menuitem" data-watch-ctx-unarchive="${escapeHtml(itemId)}">Back to Watch list</button>
     <button type="button" role="menuitem" data-watch-ctx-delete="${escapeHtml(itemId)}" class="danger-item">Delete</button>
   `;
 
   elements.watchArchiveDialog.append(menu);
-  const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
+  const px = anchor ? anchor.right - menu.offsetWidth : (event.clientX || article.getBoundingClientRect().left + 20);
+  const py = anchor ? anchor.bottom + 4 : (event.clientY || article.getBoundingClientRect().top + 20);
+  const x = Math.min(px, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(py, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 

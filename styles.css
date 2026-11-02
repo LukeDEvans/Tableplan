@@ -11535,6 +11535,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
 
 .watch-archive-item {
   opacity: 0.85;
+  cursor: pointer; /* a tap opens Edit · Back to Watch list · Delete (2026-11-01) */
 }
 
 .watch-scheduled-badge {

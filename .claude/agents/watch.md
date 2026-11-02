@@ -143,6 +143,9 @@ changes to the Watch page only.
   wants it back; `watchNextEpisode` still picks the season the panel opens on. While a
   picked season loads, its placeholder keeps the last episode list's height so the
   screen doesn't move.
+- **Archive on the phone (Luke, 2026-11-01; decision 10, part):** tapping an archived show
+  or its ⋯ (`data-watch-archive-more`, replaces the TV/M badge there) opens Edit · **Back
+  to Watch list** (was "Remove from Archive") · Delete; right-click still works on the laptop.
 - **Seasons panel polish (Luke, 2026-10-31; second audit S1–S7):** the whole season shows
   (no scroll box inside the list); rows ~30px, one line each (long titles end in "…");
   the next episode to watch gets an accent row (`.is-next`); episodes not out yet show
