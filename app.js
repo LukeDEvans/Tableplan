@@ -50,6 +50,7 @@ import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPag
 import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes, ROW_RESET_SECTIONS, applyRowReset } from './views.js';
 import { mergeWatchItems, stampTick, stampTab, touchItem as touchWatchItem } from './watch-merge.js';
 import { watchEpisodes } from './watch-episodes.js';
+import { watchNextFrom, watchOpenSeason, watchSeasonPct } from './watch-place.js';
 import * as ExploreScope from './explore-scope.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
@@ -6382,6 +6383,9 @@ function normalizeWatchItems(items) {
       ...(item?.tickAt && typeof item.tickAt === "object" ? { tickAt: item.tickAt } : {}),
       ...(item?.tabsAt && typeof item.tabsAt === "object" ? { tabsAt: item.tabsAt } : {}),
       ...(item?.updatedAt ? { updatedAt: String(item.updatedAt) } : {}),
+      ...(item && "showType" in item ? { showType: item.showType ? String(item.showType) : null } : {}),
+      ...(Array.isArray(item?.genreIds) ? { genreIds: item.genreIds.map(Number).filter(Number.isFinite) } : {}),
+      ...(Number(item?.lastAiredSeason) > 0 ? { lastAiredSeason: Number(item.lastAiredSeason) } : {}),
       inTheaters: item?.inTheaters === true,
       theatricalReleaseDate: item?.theatricalReleaseDate || null,
       categories: Array.isArray(item?.categories) ? item.categories.filter((id) => typeof id === "string") : [],
@@ -22757,23 +22761,15 @@ function watchAvailChip(item) {
 
 // TV watch progress as a 0–100 percent (or null when nothing is tracked yet),
 // mirroring the per-season counting in watchSeasonStats.
+// The poster's bar: progress through the season you're in (watch-place.js;
+// Luke, 2026-11-01) — not the whole show, so SNL isn't stuck near 0%.
 function watchProgressPct(item) {
   if (item.type !== "tv") return null;
-  const progress = item.seasonProgress || {};
-  const seasons = item.totalSeasons
-    ? Array.from({ length: item.totalSeasons }, (_, i) => i + 1)
-    : Object.keys(progress).map(Number);
-  let watched = 0, total = 0;
-  for (const s of seasons) {
-    const sd = progress[s] || {};
-    const eps = watchEpisodes.get(item.tmdbId, s);
-    const epTotal = eps.length || Object.keys(sd.episodes || {}).length;
-    const epWatched = Object.values(sd.episodes || {}).filter(Boolean).length;
-    if (sd.watched && epTotal) { watched += epTotal; total += epTotal; }
-    else { watched += epWatched; total += epTotal; }
-  }
-  if (!total) return null;
-  return Math.round((watched / total) * 100);
+  return watchSeasonPct(item, watchPlaceContext(item));
+}
+
+function watchPlaceContext(item) {
+  return { seasons: watchSeasonNumbers(item), episodesFor: (s) => watchEpisodes.get(item.tmdbId, s) };
 }
 
 // One-line meta under the poster: year · runtime (movie) or year · seasons (tv).
@@ -23152,34 +23148,14 @@ function placeWatchPanelPointer(root) {
   }
 }
 
-// ── Next episode (Luke, 2026-10-29) ──────────────────────────────────────────
-// The first unticked episode, season by season. A season marked watched as a
-// whole is skipped. When a season's episode list isn't loaded yet, the episode
-// after the highest tick is next (the list loads on open and corrects it).
-// Returns { season, episode, name } or null when everything known is watched.
+// ── Next episode ─────────────────────────────────────────────────────────────
+// The first unticked episode after your place — the episode crossed off most
+// recently — or from the start season when nothing is (watch-place.js; Luke,
+// 2026-11-01). Earlier unticked episodes count as skipped. Returns
+// { season, episode, name } or null when you're caught up.
 function watchNextEpisode(item) {
   if (!item || item.type !== "tv") return null;
-  const progress = item.seasonProgress || {};
-  const known = Object.keys(watchEpisodes.seasons(item.tmdbId)).map(Number);
-  const tracked = Object.keys(progress).map(Number).filter((n) => n > 0);
-  const last = item.totalSeasons || Math.max(1, ...known, ...tracked);
-  for (let s = 1; s <= last; s++) {
-    const sd = progress[s] || {};
-    if (sd.watched) continue;
-    const ticked = sd.episodes || {};
-    const eps = watchEpisodes.get(item.tmdbId, s);
-    if (eps.length) {
-      const ep = eps.find((e) => !ticked[e.episodeNumber]);
-      if (ep) return { season: s, episode: ep.episodeNumber, name: ep.name || "" };
-      continue;
-    }
-    const nums = Object.keys(ticked).filter((k) => ticked[k]).map(Number);
-    let e = 1;
-    while (ticked[e]) e++;
-    // Season length unknown: if nothing is ticked past a gap, e is next.
-    if (!nums.length || e <= Math.max(...nums) + 1) return { season: s, episode: e, name: "", unsure: !!nums.length };
-  }
-  return null;
+  return watchNextFrom(item, watchPlaceContext(item));
 }
 
 function watchNextEpisodeHtml(item) {
@@ -23385,9 +23361,7 @@ function ensureWatchShownSeasonRuntimes(item) {
 function watchShownSeason(item, seasons) {
   const picked = watchSelectedSeason.get(item.id);
   if (seasons.includes(picked)) return picked;
-  const next = watchNextEpisode(item);
-  if (next && seasons.includes(next.season)) return next.season;
-  return next ? seasons[0] : seasons[seasons.length - 1];
+  return watchOpenSeason(item, { seasons, episodesFor: (n) => watchEpisodes.get(item.tmdbId, n) }) ?? seasons[seasons.length - 1];
 }
 
 function watchSeasonStats(item, seasonNum) {
@@ -24257,7 +24231,9 @@ function refreshStaleWatchShows(items) {
     if (watchRefreshRunning >= 2 || watchRefreshTried.size >= WATCH_REFRESH_PER_SESSION) return;
     if (!item?.tmdbId || watchRefreshTried.has(item.id)) continue;
     const at = Date.parse(item.providersUpdatedAt || "") || 0;
-    if (now - at < WATCH_REFRESH_AFTER_MS) continue;
+    // A TV show saved before TMDB's type was kept is refreshed once to get it.
+    const needsType = item.type === "tv" && !("showType" in item);
+    if (now - at < WATCH_REFRESH_AFTER_MS && !needsType) continue;
     watchRefreshTried.add(item.id);
     watchRefreshRunning++;
     loadWatchProviders(item.id).finally(() => { watchRefreshRunning--; refreshStaleWatchShows(items); });
@@ -24276,6 +24252,14 @@ async function loadWatchProviders(itemId) {
     if (data.runtime) item.runtime = data.runtime;
     if (data.totalSeasons) item.totalSeasons = data.totalSeasons;
     if (data.totalEpisodes) item.totalEpisodes = data.totalEpisodes;
+    // Where a never-started show opens (watch-place.js): TMDB's type, genres and
+    // latest aired season. `showType` is set (null if TMDB has none) so a show is
+    // only backfilled once.
+    if (item.type === "tv" && "showType" in data) {
+      item.showType = data.showType || null;
+      item.genreIds = Array.isArray(data.genreIds) ? data.genreIds : [];
+      item.lastAiredSeason = data.lastAiredSeason || null;
+    }
     if (data.avgEpisodeRuntime) item.avgEpisodeRuntime = data.avgEpisodeRuntime;
     if (item.type === "movie") {
       item.inTheaters = data.inTheaters === true;

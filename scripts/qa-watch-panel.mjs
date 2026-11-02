@@ -407,9 +407,17 @@ try {
       return [...document.querySelectorAll(".watch-episode-len")].every((l) => l.getBoundingClientRect().right <= box.right + 0.5);
     });
     check(lenFit, "episode lengths sit inside the box");
-    // The next episode to watch is marked: S3 has 1–6 and 8 ticked, so 7.
+    // Your place is the episode crossed off most recently (Luke, 2026-11-01): S3 E8
+    // was just ticked after E6, so E7 counts as skipped and nothing is next.
     const nextMark = await page.evaluate(() => [...document.querySelectorAll(".watch-episode.is-next")].map((b) => `${b.dataset.season}:${b.dataset.episode}`));
-    check(nextMark.join() === "3:7", "the next episode to watch is marked", nextMark);
+    check(nextMark.length === 0, "after the last episode, the skipped one isn't 'next'", nextMark);
+    // Untick E8: your place goes back to E6, so E7 is next and gets the mark.
+    await ep8.tap();
+    await page.waitForTimeout(300);
+    const nextMark2 = await page.evaluate(() => [...document.querySelectorAll(".watch-episode.is-next")].map((b) => `${b.dataset.season}:${b.dataset.episode}`));
+    check(nextMark2.join() === "3:7", "the next episode to watch is marked (the one after your place)", nextMark2);
+    await ep8.tap();
+    await page.waitForTimeout(300);
     const lay = await page.evaluate(() => {
       const boxes = document.querySelectorAll(".watch-episodes input[type=checkbox], .watch-seasons input[type=checkbox]").length;
       const name = document.querySelector(".watch-episode-name").getBoundingClientRect().width;
@@ -538,6 +546,25 @@ try {
     await openSide("list");
     const back = await page.evaluate(() => ({ grid: !document.getElementById("watchPlannerGrid").hidden, placeholder: document.getElementById("discoverSearchInput").placeholder, filter: !document.querySelector("#watchPagePanel .discover-filter").hidden }));
     check(back.grid && back.filter && /movies, shows/.test(back.placeholder), "Watch list brings the list back", back);
+
+    // A talk / reality show you haven't started opens on its latest aired season,
+    // not Season 1 (Luke, 2026-11-01).
+    await page.evaluate((r) => {
+      const items = window.__liveQA.watchItemsForQa();
+      items.push({ id: `qa-snl-${r}`, type: "tv", title: "Late Night Sketch", tmdbId: 1667, year: "1975", totalSeasons: 51, showType: "Talk Show", genreIds: [35, 10767], lastAiredSeason: 51, providersUpdatedAt: new Date().toISOString(), createdAt: "2026-10-07T00:00:00Z" });
+      window.__liveQA.watchSeedForQa(items);
+    }, R);
+    await page.waitForTimeout(300);
+    await page.locator(`[data-watch-item="qa-snl-${R}"]`).scrollIntoViewIfNeeded();
+    await page.locator(`[data-watch-item="qa-snl-${R}"]`).tap();
+    await page.waitForTimeout(700);
+    const fresh = await page.evaluate((r) => ({
+      season: document.querySelector(`[data-watch-season-select="qa-snl-${r}"]`)?.value,
+      next: [...document.querySelectorAll(`[data-watch-detail="qa-snl-${r}"] .watch-episode.is-next`)].map((b) => `${b.dataset.season}:${b.dataset.episode}`),
+    }), R);
+    check(fresh.season === "51" && fresh.next.join() === "51:1", "a talk show you haven't started opens on its latest season", fresh);
+    await page.locator(`[data-watch-item="qa-snl-${R}"]`).tap(); // close
+    await page.waitForTimeout(200);
 
     // Archive on a phone: tapping a show (no right-click) opens Edit · Back to
     // Watch list · Delete; Back to Watch list returns it (Luke, 2026-11-01).
