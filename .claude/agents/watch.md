@@ -20,7 +20,7 @@ changes to the Watch page only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `media-provider-tmdb.js`, `media-provider-youtube.js`, `media-provider-jellyfin.js`, `media-availability.js`, `media-deeplink.js`, `media-watch-adapter.js`, `media-search-scope.js`, `watch-merge.js`, `watch-episodes.js`, `media-stream-links.js`, `netlify/functions/stream-links.mjs`, `netlify/functions/tmdb-*.js`, `netlify/functions/youtube-search.js`, `netlify/functions/showtimes.js`
+- files: `media-provider-tmdb.js`, `media-provider-youtube.js`, `media-provider-jellyfin.js`, `media-availability.js`, `media-deeplink.js`, `media-watch-adapter.js`, `media-search-scope.js`, `watch-merge.js`, `watch-episodes.js`, `watch-place.js`, `media-stream-links.js`, `netlify/functions/stream-links.mjs`, `netlify/functions/tmdb-*.js`, `netlify/functions/youtube-search.js`, `netlify/functions/showtimes.js`
 - state: `watch*`, `jellyfin`, `mediaServices`
 
 ## Your scope (edit these)
@@ -143,6 +143,13 @@ changes to the Watch page only.
   wants it back; `watchNextEpisode` still picks the season the panel opens on. While a
   picked season loads, its placeholder keeps the last episode list's height so the
   screen doesn't move.
+- **Your place in a show (Luke, 2026-11-01):** `watch-place.js`. Your place is the episode
+  crossed off most recently (`tickAt`; older saves: the furthest tick). The panel opens on its
+  season, "next" (`.is-next`) is the first unticked episode after it — earlier unticked ones
+  count as skipped, never missed — and the poster bar is progress through that season. A
+  never-started show opens on Season 1, except talk / reality / news (TMDB `showType` or genre
+  10763/10764/10767), which open on `lastAiredSeason`. `tmdb-watch-providers` returns
+  `showType`, `genreIds`, `lastAiredSeason`; TV shows without `showType` refresh once to get it.
 - **Archive on the phone (Luke, 2026-11-01; decision 10, part):** tapping an archived show
   or its ⋯ (`data-watch-archive-more`, replaces the TV/M badge there) opens Edit · **Back
   to Watch list** (was "Remove from Archive") · Delete; right-click still works on the laptop.
