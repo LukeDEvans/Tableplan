@@ -150,6 +150,7 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
     const members = await membersOf(scope);
     if (!members.includes(userId)) throw new DocumentsError("NOT_MEMBER", "You can't hold this scope.");
     let v = (await localVault(scope)) || { vaultId: vault.id, scope, settled: 0, floor: 0, removed: [], keys: {} };
+    const hadKey = Boolean(v.settled && keyAt(v, v.settled));
     if (v.vaultId !== vault.id) throw new DocumentsError("VAULT_CHANGED", "This vault was replaced on the server.");
     const s = await signers();
     // Publish this device's box key on its first visit, before anything can make it
@@ -198,7 +199,38 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
     }
     await saveVault(v);
     await topUpRecovery(v);
+
+    if (s.identity) {
+      // ENDORSE: my identity signs that this vault is at the version I hold, if it
+      // hasn't yet. This is what lets the other member's NEW phone (new identity, so
+      // the old statements no longer verify for it) prove the version and take a grant
+      // from my devices once the two of us re-verify (§3.5: Household survives as long
+      // as either person has a working device). My removals ride along, cumulative.
+      if (!proven.some((p) => p.userId === userId && p.keyVersion >= v.settled)) {
+        await settle(v, v.settled, myRemovedIds(v), s);
+      }
+      // A phone that just got this vault from someone else (a new phone after a lost
+      // one): my devices not certified by my current identity that still hold the key
+      // (the lost phone, its linked browsers) are cut off with a new key at once.
+      if (!hadKey) {
+        const stale = await staleHolders(v);
+        if (stale.length) {
+          await store.set("needsNewCode", true);
+          await rotate(scope, stale);
+          return { state: "ready", vaultId: vault.id, version: (await localVault(scope)).settled, rekeyed: stale.length };
+        }
+      }
+    }
     return { state: "ready", vaultId: vault.id, version: v.settled };
+  }
+
+  // My device ids (revoked ones included) that aren't certified by my current
+  // identity but hold a grant at this vault's current version.
+  async function staleHolders(v) {
+    const [{ devices }, all, grants] = await Promise.all([trusted([userId]), server.myDeviceIds(userId), server.grantsAt(v.vaultId, v.settled)]);
+    const holders = new Set(grants.map((g) => g.device_id));
+    const s = await signers();
+    return all.filter((id) => id !== s.deviceId && !devices.has(id) && holders.has(id));
   }
 
   async function status(scope) {
@@ -401,7 +433,10 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
 
   // A new recovery code covering every vault this phone holds. Returns the code to show
   // and print once; it's never stored.
-  async function newRecoveryCode(scopes) {
+  // allowWaiting: leave out vaults this phone is waiting for (after a lost phone and a
+  // lost code). The old code stops working, so those vaults can't be restored again:
+  // the app asks first.
+  async function newRecoveryCode(scopes, { allowWaiting = false } = {}) {
     const s = await signers();
     if (!s.identity) throw new DocumentsError("NOT_PHONE", "Make the recovery code on your phone.");
     const held = [];
@@ -410,7 +445,7 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
       if (v && keyAt(v, v.settled) && v.settled >= (v.floor || 0)) { held.push(v); continue; }
       // A vault that exists but this phone is still waiting for would get no anchor
       // under the new code, and the old code stops working: neither would open it.
-      if (await server.vault(scope)) throw new DocumentsError("WAITING", "This phone is still waiting for one of your Documents vaults. Open it here first, then make the code.");
+      if (!allowWaiting && (await server.vault(scope))) throw new DocumentsError("WAITING", "This phone is still waiting for one of your Documents vaults. Open it here first, then make the code.");
     }
     if (!held.length) throw new DocumentsError("NOTHING", "Set up Documents first.");
     const code = generateRecoveryCode();

@@ -110,6 +110,47 @@ describe("creating and receiving vaults", () => {
     expect((await luke.vaults.newRecoveryCode([PERSONAL])).vaults).toEqual([PERSONAL]);
   });
 
+  it("lost phone: Marijane's phone gives Household back once they re-verify; the lost phone is cut off; Personal waits for the code", async () => {
+    const { luke, her } = await household();
+    const v1 = await keyOf(luke, GROUP);
+    // Luke's phone is lost. His new phone sets messaging up afresh: a new identity.
+    const fresh = device("luke");
+    await fresh.account.setupPhone({ replaceExisting: true });
+    expect(await fresh.vaults.open(GROUP)).toMatchObject({ state: "waiting" }); // nothing proves a version to it yet
+    await her.account.resolveDevices([USERS.luke]);
+    await her.account.markVerified(USERS.luke); // they scan each other again
+    await verify(fresh, her);
+    await her.vaults.open(GROUP); // her phone endorses the version it holds (it did on its first open too)
+    expect(await her.vaults.grantPending(GROUP)).toBeGreaterThanOrEqual(1); // the new phone (and her own, re-granted: the old grant came from the lost phone, which she no longer trusts)
+    const toLost = (await db.query(`select count(*)::int n from public.doc_vault_grants g join public.msg_devices d on d.device_id = g.device_id where g.granter_user_id = $1 and d.revoked_at is not null`, [USERS.wife])).rows[0].n;
+    expect(toLost).toBe(0); // nothing to the lost phone
+    const back = await fresh.vaults.open(GROUP);
+    expect(back).toMatchObject({ state: "ready", version: 2, rekeyed: 1 }); // and the lost phone was cut off with a new key
+    expect(await fresh.vaults.needsNewCode()).toBe(true);
+    expect(await keyOf(fresh, GROUP)).not.toEqual(v1);
+    // Marijane follows to the new key; the lost phone can't.
+    expect(await her.vaults.open(GROUP)).toMatchObject({ state: "ready", version: 2 });
+    expect(await keyOf(her, GROUP)).toEqual(await keyOf(fresh, GROUP));
+    await expect(luke.vaults.open(GROUP)).rejects.toMatchObject({ code: "REPLACED" }); // its messaging was reset
+    const lost = await luke.vaults.keysFor(GROUP).catch(() => null); // whatever it kept locally…
+    expect(lost?.keys.has(2) ?? false).toBe(false); // …never includes the new key
+    // Personal can only come back from the code; a new code without it is an explicit choice.
+    expect(await fresh.vaults.open(PERSONAL)).toMatchObject({ state: "waiting" });
+    await expect(fresh.vaults.newRecoveryCode([PERSONAL, GROUP])).rejects.toMatchObject({ code: "WAITING" });
+    expect((await fresh.vaults.newRecoveryCode([PERSONAL, GROUP], { allowWaiting: true })).vaults).toEqual([GROUP]);
+  });
+
+  it("a member's endorsement can't remove the other's devices or roll a device back", async () => {
+    const { luke, her } = await household();
+    await her.vaults.open(GROUP);
+    const statements = (await db.query(`select signer_user_id, key_version, removed_device_ids from public.doc_vault_settled where vault_id = (select id from public.doc_vaults where scope = $1)`, [GROUP])).rows;
+    const hers = statements.filter((r) => r.signer_user_id === USERS.wife);
+    expect(hers.length).toBeGreaterThan(0);
+    expect(hers.every((r) => r.key_version === 1 && r.removed_device_ids.length === 0)).toBe(true);
+    await luke.vaults.rotate(GROUP);
+    expect(await luke.vaults.open(GROUP)).toMatchObject({ state: "ready", version: 2 }); // her older endorsement doesn't pull him back
+  });
+
   it("only the phone creates vaults; a vault exists once", async () => {
     const ph = await phone("luke");
     const br = await linkedBrowser(ph);

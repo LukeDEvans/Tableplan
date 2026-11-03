@@ -543,7 +543,17 @@ export async function mountDocuments(root, deps) {
 
   async function newCode() {
     await run("Making a new code…", async () => {
-      showCode((await vaults.newRecoveryCode(allScopes())).code);
+      try {
+        showCode((await vaults.newRecoveryCode(allScopes())).code);
+      } catch (e) {
+        if (e?.code !== "WAITING") throw e;
+        // After a lost phone AND a lost code: a vault this phone can't open would be
+        // left out, and the old code stops working, so it could never come back.
+        const missing = [];
+        for (const scope of allScopes()) if ((await vaults.status(scope)).state !== "ready") missing.push(scope === deps.personalScope?.() ? "Personal Documents" : "Household Documents");
+        if (!window.confirm(`${missing.join(" and ")} can't be opened on this phone. If you still have your old recovery code, restore with it first. Make a new code without ${missing.length > 1 ? "them" : "it"}? Your old code will stop working, and ${missing.join(" and ")} can't be recovered after that.`)) return;
+        showCode((await vaults.newRecoveryCode(allScopes(), { allowWaiting: true })).code);
+      }
     });
   }
 
