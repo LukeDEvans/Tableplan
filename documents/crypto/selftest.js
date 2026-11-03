@@ -10,7 +10,8 @@ import { generateVaultKey, generateFileKey, wrapFileKey, unwrapFileKey, encryptF
 import { encryptBlob, decryptBlob } from "./file.js";
 import { encryptMeta, decryptMeta } from "./meta.js";
 import { generateBoxKey, signBoxKey, verifyBoxKey, createGrant, openGrant } from "./grants.js";
-import { generateRecoveryCode, parseRecoveryCode, newRecoveryParams, deriveRecoveryKeys, wrapAnchor, sealToRecovery, restoreVaultKey } from "./recovery.js";
+import { generateRecoveryCode, parseRecoveryCode, deriveRecoveryKeys, wrapAnchor, sealToRecovery, restoreVaultKey } from "./recovery.js";
+import { newRecoveryParams } from "./recovery-params.js";
 
 export async function runDocumentsCryptoSelfTest({ argon = true } = {}) {
   const started = Date.now();
@@ -50,7 +51,7 @@ export async function runDocumentsCryptoSelfTest({ argon = true } = {}) {
     const blob = encryptBlob(fileKey, "f1", "content", big);
     try { decryptBlob(fileKey, "f1", "content", blob.subarray(0, blob.length - 1000)); return false; } catch { return true; }
   });
-  check("metadata round trip", () => decryptMeta(fileKey, "f1", encryptMeta(fileKey, "f1", { v: 1, name: "Passport – Luke", mime: "application/pdf", pages: 2 })).name === "Passport – Luke");
+  check("metadata round trip", () => decryptMeta(fileKey, "f1", encryptMeta(fileKey, "f1", { v: 1, rev: 1, name: "Passport – Luke", mime: "application/pdf", pages: 2 })).name === "Passport – Luke");
   check("folder name round trip", () => decryptFolderName(vaultKey, encryptFolderName(vaultKey, "IDs & Records", { vaultId, scope, folderId: "d1", keyVersion: 1 }), { vaultId, scope, folderId: "d1", keyVersion: 1 }) === "IDs & Records");
 
   check("rotation keeps old version reachable", () => {
@@ -64,8 +65,8 @@ export async function runDocumentsCryptoSelfTest({ argon = true } = {}) {
   const gctx = { vaultId, scope, keyVersion: 1, recipientUserId: "u2", recipientDeviceId: "d2", recipientBoxPub: box.pub };
   check("box key signature verifies", () => verifyBoxKey(granterDev.signPub, { userId: "u2", deviceId: "d2", boxPub: box.pub }, signBoxKey(granterDev, { userId: "u2", deviceId: "d2", boxPub: box.pub })));
   check("vault grant opens on the right device", () => {
-    const g = createGrant({ granter: { userId: "u1", deviceId: "d1", device: granterDev }, vaultKey, ctx: gctx });
-    return equalBytes(openGrant({ grant: g, ctx: gctx, box, granterSignPub: granterDev.signPub }), vaultKey);
+    const g = createGrant({ granter: { userId: "u1", deviceId: "d1", device: granterDev }, vaultKey, ctx: gctx, removedDeviceIds: [] });
+    return equalBytes(openGrant({ grant: g, ctx: gctx, box, granterSignPub: granterDev.signPub, removedDeviceIds: [] }), vaultKey);
   });
 
   check("recovery code format and check", () => {
@@ -82,7 +83,7 @@ export async function runDocumentsCryptoSelfTest({ argon = true } = {}) {
       const r = rotateVault({ vaultId, scope, key: vaultKey, version: 1 });
       const sealed = [{ keyVersion: 2, sealed: sealToRecovery(keys.recoveryPub, r.key, { ...base, keyVersion: 2 }) }];
       const out = restoreVaultKey({ keys: deriveRecoveryKeys(code, params), base, anchor, sealed, oldRows: [r.oldRow] });
-      return out.version === 2 && equalBytes(out.key, r.key);
+      return out.version === 2 && out.complete && equalBytes(out.key, r.key);
     });
   }
   check("utf8 sanity", () => fromUtf8(utf8("Ü")) === "Ü");

@@ -46,8 +46,8 @@ describe("grants", () => {
   const herBox = generateBoxKey();
   const vaultKey = generateVaultKey();
   const ctx = { vaultId: "vault-h", scope: "group-1", keyVersion: 1, recipientUserId: "marijane", recipientDeviceId: "her-phone", recipientBoxPub: herBox.pub };
-  const grant = createGrant({ granter, vaultKey, ctx });
-  const openIt = (over = {}) => openGrant({ grant, ctx, box: herBox, granterSignPub: lukePhone.signPub, ...over });
+  const grant = createGrant({ granter, vaultKey, ctx, removedDeviceIds: [] });
+  const openIt = (over = {}) => openGrant({ grant, ctx, box: herBox, granterSignPub: lukePhone.signPub, removedDeviceIds: [], ...over });
 
   it("opens on the recipient's device", () => expect(openIt()).toEqual(vaultKey));
 
@@ -76,7 +76,7 @@ describe("grants", () => {
   });
 
   it("a sealed key can't move to another grant", () => {
-    const other = createGrant({ granter, vaultKey: generateVaultKey(), ctx: { ...ctx, vaultId: "vault-p", scope: "u-marijane" } });
+    const other = createGrant({ granter, vaultKey: generateVaultKey(), ctx: { ...ctx, vaultId: "vault-p", scope: "u-marijane" }, removedDeviceIds: [] });
     refuses(() => openIt({ grant: { ...grant, sealed: other.sealed } }));
   });
 
@@ -95,14 +95,24 @@ describe("grants", () => {
   });
 
   it("refuses to seal to a low-order key or a non-key", () => {
-    refuses(() => createGrant({ granter, vaultKey, ctx: { ...ctx, recipientBoxPub: LOW_ORDER } }));
-    refuses(() => createGrant({ granter, vaultKey: new Uint8Array(16), ctx }));
+    refuses(() => createGrant({ granter, vaultKey, ctx: { ...ctx, recipientBoxPub: LOW_ORDER }, removedDeviceIds: [] }));
+    refuses(() => createGrant({ granter, vaultKey: new Uint8Array(16), ctx, removedDeviceIds: [] }));
   });
 
   it("a device can grant itself (first setup)", () => {
     const myBox = generateBoxKey();
     const self = { ...ctx, recipientUserId: "luke", recipientDeviceId: "luke-phone", recipientBoxPub: myBox.pub, scope: "u-luke", vaultId: "vault-p" };
-    const g = createGrant({ granter, vaultKey, ctx: self });
-    expect(openGrant({ grant: g, ctx: self, box: myBox, granterSignPub: lukePhone.signPub })).toEqual(vaultKey);
+    const g = createGrant({ granter, vaultKey, ctx: self, removedDeviceIds: [] });
+    expect(openGrant({ grant: g, ctx: self, box: myBox, granterSignPub: lukePhone.signPub, removedDeviceIds: [] })).toEqual(vaultKey);
+  });
+
+  it("removed devices can't grant or be granted, and the list is required", () => {
+    refuses(() => createGrant({ granter, vaultKey, ctx }));
+    refuses(() => openIt({ removedDeviceIds: undefined }));
+    expect(() => createGrant({ granter, vaultKey, ctx, removedDeviceIds: ["her-phone"] })).toThrow(/removed/);
+    expect(() => createGrant({ granter, vaultKey, ctx, removedDeviceIds: ["luke-phone"] })).toThrow(/removed/);
+    // a removed device's grant fails even with a valid signature
+    expect(() => openIt({ removedDeviceIds: ["luke-phone"] })).toThrow(/removed/);
+    expect(() => openIt({ removedDeviceIds: ["her-phone"] })).toThrow(/removed/);
   });
 });

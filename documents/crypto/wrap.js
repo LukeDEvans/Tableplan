@@ -19,19 +19,25 @@ const TAG = 16;
 
 export const KEY_BYTES = 32;
 
-// Context = { label, ids: {name: id…}, nums: {name: int…} }. Names are fixed per
-// label, encoded in a fixed order, each field length-prefixed.
+// A context is a label plus [name, value] pairs. Each field's TYPE is fixed by its
+// name — the names in NUMERIC_FIELDS are u32 numbers, every other name is an id —
+// and written as a type byte, so "1" and 1 can never be confused (a version read
+// back from a database as text is refused, not quietly encoded differently).
+// Every field is length-prefixed or fixed-size, so values can't be re-split.
+const NUMERIC_FIELDS = new Set(["keyVersion", "oldVersion", "newVersion", "generation"]);
+const T_ID = 1, T_U32 = 2;
+
 export function contextBytes(label, parts) {
   if (typeof label !== "string" || !/^LiveDocs\/[a-z-]+\/v\d+$/.test(label)) throw new Error("wrap: bad label");
   const out = [field(utf8(label))];
   for (const [name, value] of parts) {
     out.push(field(utf8(name)));
-    if (typeof value === "number") {
-      if (!Number.isInteger(value) || value < 1 || value > 0xffffffff) throw new Error(`${name} must be a positive integer`);
-      out.push(u32(value));
+    if (NUMERIC_FIELDS.has(name)) {
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 0xffffffff) throw new Error(`${name} must be a positive whole number`);
+      out.push(Uint8Array.of(T_U32), u32(value));
     } else {
       requireId(name, value);
-      out.push(field(utf8(value)));
+      out.push(Uint8Array.of(T_ID), field(utf8(value)));
     }
   }
   return concat(...out);

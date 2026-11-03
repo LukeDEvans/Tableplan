@@ -18,8 +18,12 @@
 // is refused as truncated. An empty file is one FINAL chunk with nothing in it.
 //
 // Whole-buffer API: scanned documents are a few MB and the app caps uploads at
-// 50 MB (§15), so streaming isn't needed yet. MAX_PLAINTEXT is a hard ceiling so
-// a hostile header can't make a device allocate without bound.
+// 50 MB (§15), so streaming isn't needed yet. MAX_PLAINTEXT (64 MB) is a hard
+// ceiling checked before anything is allocated, and decryption writes into one
+// buffer sized from the blob, so a hostile header can't run a device out of
+// memory or stack. The encoder's last chunk is always shorter than a full chunk
+// (an exact multiple ends with an empty one), and the decoder requires that, so
+// each file has exactly one valid encoding.
 
 import { sodium } from "../../messaging/crypto/sodium.js";
 import { concat, field, utf8, u32, readU32 } from "../../messaging/crypto/bytes.js";
@@ -34,7 +38,7 @@ const ABYTES = 17;
 export const DEFAULT_CHUNK = 64 * 1024;
 const MIN_CHUNK = 4 * 1024;
 const MAX_CHUNK = 1024 * 1024;
-export const MAX_PLAINTEXT = 256 * 1024 * 1024;
+export const MAX_PLAINTEXT = 64 * 1024 * 1024;
 
 export const PARTS = Object.freeze({ content: 1, thumb: 2, meta: 3, text: 4 });
 const KDF_CTX = "LiveDocs"; // crypto_kdf context: exactly 8 bytes
@@ -94,7 +98,8 @@ export function readBlobHeader(blob) {
   return { part, chunkSize };
 }
 
-export function decryptBlob(fileKey, fileId, part, blob) {
+// maxPlaintext lowers the ceiling for small parts (metadata), checked before decrypting.
+export function decryptBlob(fileKey, fileId, part, blob, { maxPlaintext = MAX_PLAINTEXT } = {}) {
   requireId("fileId", fileId);
   const h = readBlobHeader(blob);
   if (h.part !== part) throw new Error("file: wrong part");
@@ -107,9 +112,13 @@ export function decryptBlob(fileKey, fileId, part, blob) {
   const MSG = s.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE;
   const frame = h.chunkSize + ABYTES;
   const body = blob.subarray(HEADER_LEN + SS_HEADER);
-  const parts = [];
+  const nChunks = Math.ceil(body.length / frame);
+  const outLen = body.length - nChunks * ABYTES;
+  if (outLen < 0) throw new Error("file: truncated");
+  if (outLen > Math.min(maxPlaintext, MAX_PLAINTEXT)) throw new Error("file: too large");
+  const out = new Uint8Array(outLen);
   let o = 0;
-  let total = 0;
+  let w = 0;
   let finished = false;
   while (o < body.length) {
     if (finished) throw new Error("file: data after the end");
@@ -119,15 +128,14 @@ export function decryptBlob(fileKey, fileId, part, blob) {
     if (!r) throw new Error("file: can't decrypt (wrong key, wrong file, or damaged)");
     o += c.length;
     if (r.tag === FINAL) {
-      if (o !== body.length) throw new Error("file: data after the end");
+      if (o !== body.length || c.length === frame) throw new Error("file: bad final chunk");
       finished = true;
     } else if (r.tag !== MSG || c.length !== frame) {
       throw new Error("file: bad chunk");
     }
-    total += r.message.length;
-    if (total > MAX_PLAINTEXT) throw new Error("file: too large");
-    parts.push(r.message);
+    out.set(r.message, w);
+    w += r.message.length;
   }
   if (!finished) throw new Error("file: truncated");
-  return concat(...parts);
+  return out;
 }

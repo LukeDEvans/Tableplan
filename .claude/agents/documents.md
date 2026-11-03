@@ -39,11 +39,19 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   messaging's; a change there is a messaging change too.
 - Every wrapped value names its **context** (vault, scope, file/folder id, key
   version) — never wrap without one.
-- **App-layer duties the core can't do** (top of `grants.js` and `recovery.js`):
-  check a granter's and a recovery key's signing device against a certificate
-  verified with the **pinned** identity; check the granter may hold the scope
-  (Personal: only its owner); after removing a device, rotate the vault and offer a
-  new recovery code.
+- **Removal never comes from the server** (`revoked_at` is the server's to fake).
+  Removing a device happens on the phone: rotate each vault, sign a **vault
+  settled** statement with the identity (cumulative removed list,
+  `statements.js`), and **require a new recovery code**. Devices keep the highest
+  settled version per vault and the removed list; refuse rows below it
+  (`rowVersionAllowed`) and grants to or from a removed device.
+- **App-layer duties the core can't do** (top of `grants.js`, `statements.js`,
+  `recovery.js`): check signers against certificates / identities verified with
+  the **pinned** identity; check a granter may hold the scope (Personal: only its
+  owner); pass the expected `keyVersion`, never just the server's newest; keep the
+  highest recovery-key generation and metadata `rev` seen; compare a restore's
+  version with the vault's and never re-print after a short restore; open
+  documents with the type set by the viewer (never a `blob:` page of HTML/SVG).
 - Tests: `test/documents-crypto-*.test.js` and `npm run qa:documents-crypto` (the
   self-test in headless Chromium). A crypto change isn't done until both pass and a
   planted bug in the area you touched is caught.

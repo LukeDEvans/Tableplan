@@ -11,11 +11,22 @@
 // one: it has no device's signing key, and a sealed box moved to another vault,
 // version or device fails both the signature and the sealed-context check.
 //
-// What the APP must check before calling openGrant (this module can't know):
-//   - granterSignPub comes from a device certificate that verifies against the
-//     PINNED identity of granterUserId (not one taken from the grant row);
+// What the APP must check (this module can't know):
+//   Before signing or trusting a box key: the signing key comes from a device
+//   certificate that verifies against the PINNED identity of that person, and the
+//   certificate's userId and deviceId are the ones in the box key.
+//   Before openGrant:
+//   - granterSignPub comes from a certificate verified against the PINNED identity
+//     of grant.granterUserId, whose deviceId is grant.granterDeviceId (never a key
+//     taken from the grant row);
 //   - granterUserId may hold this scope: for Personal (u-<uid>) only the owner,
-//     for Household a current member of the group.
+//     for Household a current member of the group;
+//   - ctx.keyVersion is the version this device expects — its settled version or
+//     the one a verified settled statement names (statements.js), never just the
+//     newest number the server lists.
+//
+// Both createGrant and openGrant take the device's list of REMOVED device ids
+// (from verified settled statements) and refuse a grant to or from one of them.
 
 import { sodium } from "../../messaging/crypto/sodium.js";
 import { concat, field, utf8, equalBytes } from "../../messaging/crypto/bytes.js";
@@ -80,8 +91,15 @@ function grantSigBytes(context, granterUserId, granterDeviceId, sealed) {
 
 // granter = { userId, deviceId, device: { signPriv } }. The recipient's box key
 // must already be checked with verifyBoxKey against its verified certificate.
-export function createGrant({ granter, vaultKey, ctx }) {
+function requireRemovedList(removedDeviceIds) {
+  if (!Array.isArray(removedDeviceIds)) throw new Error("grant: pass the removed devices list (empty if none)");
+  return new Set(removedDeviceIds);
+}
+
+export function createGrant({ granter, vaultKey, ctx, removedDeviceIds }) {
   requireKey("vault key", vaultKey);
+  const removed = requireRemovedList(removedDeviceIds);
+  if (removed.has(ctx.recipientDeviceId) || removed.has(granter.deviceId)) throw new Error("grant: device was removed");
   requireUsablePub(ctx.recipientBoxPub);
   const context = grantContext(ctx);
   const sealed = sodium().crypto_box_seal(concat(field(context), vaultKey), ctx.recipientBoxPub);
@@ -92,8 +110,10 @@ export function createGrant({ granter, vaultKey, ctx }) {
 // grant = { sealed, sig, granterUserId, granterDeviceId }; ctx = what this device
 // expects (its own ids and box key, the vault, scope and version it asked for);
 // box = this device's { pub, priv }. Returns the vault key or throws.
-export function openGrant({ grant, ctx, box, granterSignPub }) {
+export function openGrant({ grant, ctx, box, granterSignPub, removedDeviceIds }) {
   requireKey("granter signPub", granterSignPub);
+  const removed = requireRemovedList(removedDeviceIds);
+  if (removed.has(grant?.granterDeviceId) || removed.has(ctx.recipientDeviceId)) throw new Error("grant: device was removed");
   if (!equalBytes(box.pub, ctx.recipientBoxPub)) throw new Error("grant: not this device's box key");
   if (!(grant?.sealed instanceof Uint8Array) || !(grant?.sig instanceof Uint8Array) || grant.sig.length !== 64) throw new Error("grant: malformed");
   const s = sodium();

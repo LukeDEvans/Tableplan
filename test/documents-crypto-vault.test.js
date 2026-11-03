@@ -5,7 +5,7 @@ import { loadSodium } from "../messaging/crypto/sodium.js";
 import {
   generateVaultKey, generateFileKey, wrapFileKey, unwrapFileKey, rewrapFileKey,
   encryptFolderName, decryptFolderName, rewrapFolderName, FOLDER_NAME_MAX,
-  rotateVault, unlockKeyring,
+  rotateVault, unlockKeyring, rowVersionAllowed,
 } from "../documents/crypto/vault.js";
 import { contextBytes, seal, open } from "../documents/crypto/wrap.js";
 
@@ -24,8 +24,14 @@ describe("wrap.js", () => {
   it("rejects bad labels, ids and versions", () => {
     refuses(() => contextBytes("Other/x/v1", []));
     refuses(() => contextBytes("LiveDocs/x/v1", [["id", "a b"]]));
-    refuses(() => contextBytes("LiveDocs/x/v1", [["v", 0]]));
-    refuses(() => contextBytes("LiveDocs/x/v1", [["v", 1.5]]));
+    refuses(() => contextBytes("LiveDocs/x/v1", [["keyVersion", 0]]));
+    refuses(() => contextBytes("LiveDocs/x/v1", [["keyVersion", 1.5]]));
+  });
+  it("field types are fixed by name: a version given as text is refused", () => {
+    refuses(() => contextBytes("LiveDocs/x/v1", [["keyVersion", "1"]]));
+    refuses(() => contextBytes("LiveDocs/x/v1", [["fileId", 1]]));
+    const vk = generateVaultKey();
+    refuses(() => wrapFileKey(vk, generateFileKey(), { ...base, fileId: "f", keyVersion: "1" }));
   });
   it("seal/open: wrong key, wrong context, edits and versions are refused", () => {
     const k = generateVaultKey();
@@ -81,6 +87,10 @@ describe("folder names", () => {
     const e = encryptFolderName(vk, "Medical", ctx);
     refuses(() => decryptFolderName(vk, e, { ...ctx, folderId: "folder-2" }));
     refuses(() => decryptFolderName(vk, e, { ...ctx, keyVersion: 2 }));
+  });
+  it("direction overrides and invisible characters are removed", () => {
+    expect(decryptFolderName(vk, encryptFolderName(vk, "Tax\u202E\u200Bes\n2025", ctx), ctx)).toBe("Taxes 2025");
+    refuses(() => encryptFolderName(vk, "\u202E", ctx));
   });
   it("limits", () => {
     refuses(() => encryptFolderName(vk, "   ", ctx));
@@ -145,9 +155,20 @@ describe("rotation and the keyring", () => {
     expect([...ring3.keys()]).toEqual([3]);
   });
 
-  it("duplicate versions are refused outright", () => {
-    const { keys, rows } = chain(3);
-    refuses(() => unlockKeyring({ ...ids, current: { key: keys[3], version: 3 }, oldRows: [...rows, rows[0]] }));
+  it("duplicate and planted rows don't block the walk", () => {
+    const { keys, rows } = chain(4);
+    const junk = { version: 2, wrapped: seal(generateVaultKey(), generateVaultKey(), new Uint8Array(1)) };
+    const ring = unlockKeyring({ ...ids, current: { key: keys[4], version: 4 }, oldRows: [junk, ...rows, rows[0], { version: 999, wrapped: rows[0].wrapped }, { version: 999, wrapped: rows[1].wrapped }, null, { version: "2" }] });
+    for (let v = 1; v <= 4; v++) expect(ring.get(v)).toEqual(keys[v]);
+  });
+
+  it("rows below the settled version are refused for display", () => {
+    expect(rowVersionAllowed(2, 2)).toBe(true);
+    expect(rowVersionAllowed(3, 2)).toBe(true);
+    expect(rowVersionAllowed(1, 2)).toBe(false);
+    expect(rowVersionAllowed(1)).toBe(true);
+    expect(rowVersionAllowed("2", 2)).toBe(false);
+    expect(rowVersionAllowed(2, "2")).toBe(false);
   });
 
   it("rotation makes a different key and refuses bad input", () => {

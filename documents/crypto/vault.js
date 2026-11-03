@@ -18,6 +18,7 @@ import { utf8, fromUtf8 } from "../../messaging/crypto/bytes.js";
 import { pad, unpad } from "../../messaging/crypto/padding.js";
 import { requireKey } from "../../messaging/crypto/keys.js";
 import { contextBytes, seal, open, openKey, randomKey } from "./wrap.js";
+import { cleanName } from "./meta.js";
 
 export const generateVaultKey = randomKey;
 export const generateFileKey = randomKey;
@@ -55,7 +56,7 @@ export function rewrapFileKey(fromVaultKey, wrapped, from, toVaultKey, to) {
 export const FOLDER_NAME_MAX = 80;
 
 function cleanFolderName(name) {
-  const n = typeof name === "string" ? name.normalize("NFC").trim() : "";
+  const n = typeof name === "string" ? cleanName(name) : "";
   if (!n || [...n].length > FOLDER_NAME_MAX) throw new Error(`folder name must be 1–${FOLDER_NAME_MAX} characters`);
   return n;
 }
@@ -94,29 +95,42 @@ export function rotateVault({ vaultId, scope, key, version }) {
 }
 
 // current = { key, version }; oldRows = [{ version, wrapped }] from the server.
-// Returns Map(version → key) for every version reachable by the chain. A row that
-// doesn't open (wrong key, moved from another vault) stops the walk there — older
-// files then report "can't open" rather than opening under a planted key.
+// Returns Map(version → key) for every version reachable by the chain. For each
+// version every row offered is tried and the one that opens is used, so a planted
+// or duplicated row can't block the walk; when none opens, the walk stops there —
+// older files then report "can't open" rather than opening under a planted key.
 export function unlockKeyring({ vaultId, scope, current, oldRows = [] }) {
   requireKey("vault key", current.key);
   requireVersion(current.version);
   const byVersion = new Map();
   for (const r of oldRows) {
-    if (!r || !Number.isInteger(r.version)) continue;
-    if (byVersion.has(r.version)) throw new Error("vault: duplicate old key version");
-    byVersion.set(r.version, r.wrapped);
+    if (!r || !Number.isInteger(r.version) || r.version < 1 || r.version >= current.version) continue;
+    if (!(r.wrapped instanceof Uint8Array)) continue;
+    if (!byVersion.has(r.version)) byVersion.set(r.version, []);
+    byVersion.get(r.version).push(r.wrapped);
   }
   const ring = new Map([[current.version, current.key]]);
   let v = current.version;
   let k = current.key;
   while (v > 1 && byVersion.has(v - 1)) {
-    try {
-      k = openKey(k, byVersion.get(v - 1), oldKeyCtx({ vaultId, scope, version: v - 1 }));
-    } catch {
-      break;
+    let next = null;
+    for (const wrapped of byVersion.get(v - 1)) {
+      try { next = openKey(k, wrapped, oldKeyCtx({ vaultId, scope, version: v - 1 })); break; } catch {}
     }
+    if (!next) break;
     v -= 1;
+    k = next;
     ring.set(v, k);
   }
   return ring;
+}
+
+// After a rotation finishes re-wrapping, the vault is SETTLED at the new version
+// (grants.js signRotationSettled). From then on a file or folder row at an older
+// version is refused for display: a removed device that still holds the old key
+// can't slip in a new document under it. Old keys stay in the keyring only to
+// re-wrap rows a rotation missed. settledVersion is the highest settled version
+// this device has verified and stored — never lowered by what the server says.
+export function rowVersionAllowed(rowVersion, settledVersion = 1) {
+  return Number.isInteger(rowVersion) && Number.isInteger(settledVersion) && rowVersion >= settledVersion;
 }

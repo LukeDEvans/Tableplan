@@ -1,6 +1,6 @@
 # Documents — design & plan
 
-Status: **DESIGN DRAFT** (decisions from Luke, 2026-11-03). Read from code on `main` @ `caec00b`. Nothing built, nothing applied, nothing deployed. §15 lists the few open points, each with a default.
+Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Step 1 (crypto core) built and independently reviewed** on branch `claude/documents-crypto` (§16, §17). No tables, no UI, nothing deployed. §15 lists the few open points, each with a default.
 
 Goal: a **Documents** page in **Household** (shared with Marijane) and another in **Personal** (Luke only) for important and sensitive papers. Scan or upload on any device, open and share from any device, encrypted so that the storage provider and our own server never see a readable file. Storage starts in the cloud and moves to a home server later without a rebuild.
 
@@ -79,14 +79,25 @@ Marijane already has the TestFlight app on her phone (Luke, 2026-11-03), so she 
 
 ### 3.4 Removing a device
 
-- Revoking a device (existing Devices list) deletes its grants and **rotates the affected vault keys**: new key version, every file key re-wrapped, new grants for the remaining devices.
-- Honest limit: a removed device may already hold copies of files it opened. Rotation protects everything added afterwards.
+Removal happens **on a phone** (the person's identity key lives there; messaging already has "only the phone removes devices"):
+
+1. **Rotate** each vault the device could open: new key version, every file key and folder name re-wrapped, the old key wrapped under the new one, new grants for the remaining devices (never the removed one).
+2. **Sign a "vault settled" statement** with the identity key: vault, scope, new version, and the **cumulative list of removed devices** (`statements.js`). Every device verifies it against the pinned identity, remembers the highest settled version per vault and the removed list, and from then on:
+   - refuses file and folder rows below the settled version (a removed device still holds the old key and could otherwise add documents under it — `rowVersionAllowed`);
+   - refuses grants to or from a removed device (`createGrant` / `openGrant` require the list).
+   Removal is **never** taken from the server's `revoked_at`, which the server controls.
+3. **Print a new recovery code** (required — removal doesn't finish until it's printed, §3.5). The removed device knew the old anchor's key.
+
+Honest limits: a removed device may already hold copies of files it opened, and file keys don't change on rotation, so it could read later *renames* of files that existed before (contents of new files are safe). Re-keying a file's metadata on rotation is in §17 as later work.
 
 ### 3.5 Recovery (decision 2)
 
-- At setup, Luke's phone creates a **recovery code**: 128 random bits, shown as 8 groups of 4 characters (no 0/O, 1/I), plus a printable sheet with a QR.
-- The code is stretched with **Argon2id** (`crypto_pwhash`, moderate limits) into a recovery key. The **Personal and Household vault keys** are wrapped under it and stored in `doc_recovery`.
-- **Restore:** new phone → set up as usual → "Restore Documents" → type or scan the code → vaults unwrap → the phone grants itself. A restore also rotates the code (old sheet stops working) and prompts a new printout.
+- At setup, Luke's phone creates a **recovery code**: 32 characters (140 random bits + a 20-bit check, so a typo is reported as a typo), shown as 8 groups of 4 (no 0/O, 1/I), plus a printable sheet with a QR.
+- **Argon2id** (64 MiB, 3 passes — the most a restoring phone will accept from the server) stretches it into an **anchor key** and a **recovery key pair**.
+- Stored per person and vault: the **anchor** (the vault key at that moment, sealed with the anchor key — only the code can make it) and, after each rotation, the new vault key **sealed to the recovery public key** (any of the person's devices can add one without the code).
+- The recovery public key is **signed by the person's identity with a generation number**. Devices remember the highest generation and only seal to it, so after a re-print the old sheet's key stops receiving new vault keys.
+- **Restore:** new phone → "Restore Documents" → type or scan the code → the newest sealed key is accepted only if its old-key chain leads back to the anchor's key; two different chains that both do are refused. The result says if it came back **short** (rows missing): the app compares it with the vault's version, warns, and does **not** re-print on top of a short restore. After a full restore the phone signs a new code (old sheet stops working).
+- **Removing a device requires a new code** (§3.4), because the removed device knew the old anchor's key and, with the server's help, could build a believable chain.
 - Household survives without the code as long as either person has a working device. Personal does not: **lose all of Luke's devices and the code, and Personal Documents are gone.** The setup screen says this plainly and won't finish until the code is confirmed (re-typing two groups).
 - Marijane can print her own code for Household (optional, offered at her setup).
 
@@ -97,9 +108,10 @@ Marijane already has the TestFlight app on her phone (Luke, 2026-11-03), so she 
 - **Content:** libsodium **secretstream** (XChaCha20-Poly1305) in 64 KB chunks under the file key. Detects tampering, truncation and reordering, and large PDFs never sit fully in memory twice.
 - **Pages:** a scan is stored as **one PDF** built on the device (pages as JPEG, ~1600 px, q0.82). An upload keeps its original format (PDF, image, Office file).
 - **Thumbnail:** first page, 240 px JPEG, encrypted separately (~15 KB), so lists don't download whole files.
-- **Metadata** (encrypted JSON under the file key): `{ name, originalName, mime, pages, size, ocrText (≤ 64 KB), tags, documentDate }`.
+- **Metadata** (encrypted JSON under the file key, in the database row, ≤ 16 KB): `{ rev, folderId, name, originalName, mime, pages, size, tags, documentDate }`. `mime` is from a fixed list (PDF, images, plain text/CSV, Office) — never HTML/SVG/XML. Names lose direction overrides and invisible characters. `rev` and `folderId` let the app refuse an older copy of the metadata (keep the highest `rev` seen) and a row whose `folder_id` disagrees.
+- **Search text** (what was read from the pages): its own encrypted part in R2, padded to 1 KB steps, ≤ 256 KB.
 - **Header** (unencrypted, tiny): format version, chunk size, key version. Bound in as associated data so it can't be altered.
-- **Size limit:** 50 MB per file (open point §15).
+- **Size limit:** 50 MB per file (open point §15); the decryptor refuses anything over 64 MB before allocating.
 
 ---
 
@@ -150,24 +162,43 @@ create table public.doc_vault_grants (
   key_version int  not null,
   device_id   uuid not null references public.msg_devices on delete cascade,
   sealed      bytea not null,
+  granter_user_id   uuid not null,
   granter_device_id uuid not null,
   granter_sig bytea not null,
   primary key (vault_id, key_version, device_id)
 );
 
-create table public.doc_vault_keys_old (        -- older versions, wrapped under the newest
+create table public.doc_vault_keys_old (        -- version v, wrapped under v+1 (a chain)
   vault_id uuid not null references public.doc_vaults on delete cascade,
   key_version int not null,
   wrapped     bytea not null,
   primary key (vault_id, key_version)
 );
 
-create table public.doc_recovery (
-  user_id   uuid not null references auth.users on delete cascade,
-  vault_id  uuid not null references public.doc_vaults on delete cascade,
-  salt      bytea not null,
-  wrapped   bytea not null,
-  primary key (user_id, vault_id)
+create table public.doc_vault_settled (         -- identity-signed (§3.4)
+  vault_id    uuid not null references public.doc_vaults on delete cascade,
+  key_version int  not null,
+  signer_user_id uuid not null,
+  removed_device_ids uuid[] not null default '{}',
+  sig         bytea not null,
+  primary key (vault_id, key_version)
+);
+
+create table public.doc_recovery_keys (         -- per person: identity-signed recovery key (§3.5)
+  user_id      uuid primary key references auth.users on delete cascade,
+  generation   int  not null,
+  recovery_pub bytea not null,
+  params       bytea not null,                   -- Argon2id settings + salt
+  sig          bytea not null
+);
+
+create table public.doc_recovery_wraps (        -- per person and vault
+  user_id     uuid not null references auth.users on delete cascade,
+  vault_id    uuid not null references public.doc_vaults on delete cascade,
+  key_version int  not null,
+  kind        text not null check (kind in ('anchor','sealed')),
+  wrapped     bytea not null,
+  primary key (user_id, vault_id, key_version, kind)
 );
 
 create table public.doc_folders (
@@ -321,3 +352,57 @@ Later: home-server adapter and move (§5.3); share links; ledger linkage (§7).
 4. **Who can delete in Household:** **either of you**, with Recently deleted as the safety net.
 5. **Document dates & reminders** (e.g. passport expiry): **not in v1**; the metadata has room for it.
 6. **Where presigning runs.** The house rule is that secrets live in Netlify Functions (ARCHITECTURE §7). A **Supabase Edge Function** keeps the R2 key just as server-side and lets the whole feature be tested on TestFlight **without spending a Netlify deploy**; the trade-off is a second place where server code lives. **Default: Edge Function**, noted in ARCHITECTURE §7 as an exception (messaging §12 step 6 weighed the same choice).
+
+---
+
+## 16. Step 1 — what's built (2026-11-03)
+
+Branch `claude/documents-crypto`. Owned by `.claude/agents/documents.md`; CI's agent-coverage guard now scans `documents/`.
+
+| File | What it does |
+|---|---|
+| `documents/crypto/wrap.js` | AEAD wraps (XChaCha20-Poly1305, random nonce) bound to a typed, length-prefixed context. |
+| `documents/crypto/file.js` | Encrypted blobs: secretstream in fixed chunks, per-part subkeys, header + file id as associated data, one valid encoding per file, 64 MB ceiling. |
+| `documents/crypto/meta.js` | Metadata shape (allowed types, `rev`, `folderId`, clean names) and the padded search-text part. |
+| `documents/crypto/vault.js` | Vault and file keys, folder names, rotation, the old-key chain (`unlockKeyring`), `rowVersionAllowed`. |
+| `documents/crypto/grants.js` | Box keys and vault grants to devices; refuses removed devices. |
+| `documents/crypto/statements.js` | Identity-signed "vault settled" (with removed devices) and recovery-key (with generation) statements. |
+| `documents/crypto/recovery.js`, `recovery-params.js` | The code, Argon2id, anchor and sealed wraps, restore with chain proof and short-restore reporting. |
+| `documents/crypto/index.js`, `selftest.js` | The public API (import lazily); the self-test for any environment. |
+
+Shares libsodium (`messaging/crypto/sodium.js`, pinned 0.7.15), byte helpers, device keys and padding with messaging.
+
+**Verified:**
+- `test/documents-crypto-*.test.js` — 104 tests: blob round trips (0 B to 1 MB, exact multiples), every byte of a blob flipped, truncation (including dropping the empty final chunk), reordered/repeated/extra/foreign chunks, PUSH/REKEY tags, a full-size final chunk, size ceilings; wraps refusing every other context; typed contexts; folder names; the keyring with planted, duplicated and missing rows; grants (every field, removed devices, low-order keys, a sealed box made for elsewhere); the recovery code (every single typo and neighbour swap caught), params bounds, restore (full, short, forged seals, a fake chain reaching the anchor's version, two conflicting chains, the known limit); statements (identity vs device key, every field, generation); metadata (allowed types, invisible characters, prototype keys, padding).
+- **22 planted bugs**, one per rule, each re-introduced and caught by at least one test.
+- `npm run qa:documents-crypto` — the self-test in headless Chromium through Vite (also run by vitest).
+- **Not verified:** the iPhone's WebKit (step 3, from the page's ⋯ menu).
+
+---
+
+## 17. Independent review (2026-11-03)
+
+A separate agent that hadn't seen the code being written attacked it against this design, confirming each finding with a script.
+
+**Found correct:** the blob framing (header, file id and part bound in; reorder/drop/repeat/extend refused; chunk-size bounds before decrypting), the wrap format, the keyring walk (no cycles, a removed device can't learn a newer key from old-key rows), grant signatures and the sealed-context check, low-order key checks, the code's entropy and check value, anchor and sealed bindings, metadata rebuilding.
+
+**Fixed (each has a test that fails when the fix is reverted):**
+1. *(P0)* Removal relied on the server's `revoked_at`; a removed device's certificate still verifies, so it could sign its own recovery key or grants and receive future vault keys. → Identity-signed **vault settled** statements carry the removed devices; grants refuse them; the recovery key is identity-signed (§3.4).
+2. *(P1)* A removed device that kept the anchor's key, with the server, could make restore return its key. → A new recovery code is required on removal; restore refuses two different chains that both reach the anchor. The remaining case (legitimate rows withheld) is tested as a known limit.
+3. *(P1)* A server could silently shorten a restore (drop, duplicate or withhold rows). → Restore reports `newestOffered`, `complete` and `rejected`; duplicates no longer break the chain; no re-print after a short restore.
+4. *(P1)* After rotation, a removed device could add documents under the old key. → Rows below the settled version are refused (`rowVersionAllowed`).
+5. *(P1)* Any type string was accepted, so an HTML/SVG document could run script in a viewer. → Fixed list of types; the viewer must also set the type itself (step 4).
+6. *(P1)* An old recovery key kept working after a re-print. → A signed generation; devices refuse lower ones.
+7. *(P2)* One duplicate old-key row blocked the whole keyring. → Every row per version is tried.
+8. *(P2)* Context fields weren't typed (`"1"` vs `1`). → Field types fixed by name, with a type byte.
+9. *(P2)* Old metadata could be replayed. → `rev` and `folderId` inside the metadata; the app keeps the highest `rev` (step 4).
+10. *(P2)* The server chose the Argon2 cost at restore. → Capped at the defaults; the error no longer blames the code.
+11. *(P2)* Decryption could allocate up to 256 MB and spread thousands of chunks as arguments. → 64 MB ceiling checked first, one buffer, a 16 KB cap for metadata.
+12. *(P3)* A full-size final chunk was accepted (two encodings). → Refused.
+13. *(P3)* Names allowed direction overrides and invisible characters; the code parser didn't take pasted en dashes; small helper edges; search text unpadded. → All fixed.
+
+**Accepted for now (later work):**
+- File keys don't change on rotation or a move between scopes, so a removed device (or, after a move to Personal, Marijane's devices) could read later renames of files that existed before. Planned: a move to Personal makes a new copy under a new key; rotation re-keys metadata and text (needs a separate metadata key per file).
+- `folder_id` and `deleted_at` on a row aren't authenticated; the app checks `folder_id` against the metadata's `folderId`, and a server can always hide a file (availability is the server's).
+- The same "removal comes from the server" weakness exists in **messaging** (sending to a device the server didn't mark revoked) — logged in ISSUES.md.
+

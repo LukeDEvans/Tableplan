@@ -9,14 +9,15 @@ export {
   generateVaultKey, generateFileKey,
   wrapFileKey, unwrapFileKey, rewrapFileKey,
   encryptFolderName, decryptFolderName, rewrapFolderName, FOLDER_NAME_MAX,
-  rotateVault, unlockKeyring,
+  rotateVault, unlockKeyring, rowVersionAllowed,
 } from "./vault.js";
 
 export { encryptBlob, decryptBlob, readBlobHeader, PARTS, MAX_PLAINTEXT } from "./file.js";
-export { parseMeta, encryptMeta, decryptMeta, encryptText, decryptText, LIMITS as META_LIMITS } from "./meta.js";
+export { parseMeta, encryptMeta, decryptMeta, encryptText, decryptText, cleanName, MIME_TYPES, LIMITS as META_LIMITS } from "./meta.js";
 export { generateBoxKey, signBoxKey, verifyBoxKey, createGrant, openGrant } from "./grants.js";
 export {
-  generateRecoveryCode, parseRecoveryCode, formatRecoveryCode,
-  newRecoveryParams, encodeRecoveryParams, decodeRecoveryParams, deriveRecoveryKeys,
-  signRecoveryPub, verifyRecoveryPub, wrapAnchor, sealToRecovery, restoreVaultKey,
+  generateRecoveryCode, parseRecoveryCode, formatRecoveryCode, deriveRecoveryKeys,
+  wrapAnchor, sealToRecovery, restoreVaultKey,
 } from "./recovery.js";
+export { newRecoveryParams, encodeRecoveryParams, decodeRecoveryParams, DEFAULT_PARAMS as RECOVERY_DEFAULT_PARAMS } from "./recovery-params.js";
+export { signVaultSettled, verifyVaultSettled, signRecoveryPub, verifyRecoveryPub } from "./statements.js";
