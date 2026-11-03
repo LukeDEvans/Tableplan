@@ -146,6 +146,73 @@ body[data-palette="halloween"][data-theme="dark"] .bottom-dock {
   --dock-bg2: #0e0c0b;
 }
 
+/* Thanksgiving (Luke, 2026-11-03): the "Feast" palette — brown #4e2d0a, pumpkin #dd5705,
+   gold #ecb206, olive #5b540e, cranberry #ac2411 (warnings use a deeper #b01c2e, so they stand apart from the brown). Light leads with brown (buttons), olive
+   outlines, cranberry as danger; dark leads with gold, pumpkin outlines. */
+/* theme:thanksgiving:light */
+body[data-palette="thanksgiving"] {
+  --bg: #faf3e6;
+  --surface: #fffbf3;
+  --surface-strong: #ffffff;
+  --ink: #2a1a08;
+  --muted: #5f4f3c;
+  --line: #e4d3b8;
+  --accent: #4e2d0a;
+  --accent-dark: #3a2107;
+  --accent-soft: #f6e6cf;
+  --on-accent: #ffffff;
+  --tomato: #b01c2e;
+  --tomato-soft: #f9dde1;
+  --on-tomato: #ffffff;
+  --sun: #ecb206;
+  --sun-soft: #f8ebcf;
+  --sun-pale: #fcf5e6;
+  --blue: #a84304;
+  --window-bg: #ffffff;
+  --window-border: #5b540e;
+  --purple: #a84304;
+  --paper: #ffffff;
+  --card: #fffcf5;
+  --text-muted: #5f4f3c;
+}
+
+/* theme:thanksgiving:dark */
+body[data-palette="thanksgiving"][data-theme="dark"] {
+  --bg: #1a1208;
+  --surface: #241a0e;
+  --surface-strong: #2e2214;
+  --ink: #f7efe2;
+  --muted: #c8b9a2;
+  --line: #4a3a24;
+  --accent: #ecb206;
+  --accent-dark: #f5cc55;
+  --accent-soft: #3a2c08;
+  --on-accent: #1a1208;
+  --tomato: #ff7a63;
+  --tomato-soft: #4a1f18;
+  --on-tomato: #1a1208;
+  --sun: #dd5705;
+  --sun-soft: #2c1d10;
+  --sun-pale: #140d06;
+  --blue: #ecb206;
+  --window-bg: #241a0e;
+  --window-border: #f08a3c;
+  --purple: #c2ba64;
+  --paper: #241a0e;
+  --card: #2e2214;
+  --text-muted: #c8b9a2;
+}
+body[data-palette="thanksgiving"] .bottom-dock {
+  --dock-bg1: #6b3f10;
+  --dock-bg2: #4e2d0a;
+  --dock-ink: #ffffff;
+  border-top-color: #dd5705;
+}
+body[data-palette="thanksgiving"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #4e2d0a;
+  --dock-bg2: #140d06;
+}
+
 /* theme:household:light */
 body[data-palette="household"] {
   --bg: #f9f4f2;
@@ -15687,6 +15754,16 @@ body[data-palette="halloween"][data-theme="dark"] .mail-thread-panel {
   --tomato-soft: #f9dbe2;
   --window-border: #6a35a0;
   --line: #e2cdb3;
+}
+body[data-palette="thanksgiving"][data-theme="dark"] .mail-thread-panel {
+  --accent: #4e2d0a;
+  --accent-dark: #3a2107;
+  --accent-soft: #f6e6cf;
+  --on-accent: #ffffff;
+  --tomato: #b01c2e;
+  --tomato-soft: #f9dde1;
+  --window-border: #5b540e;
+  --line: #e4d3b8;
 }
 body[data-palette="household"][data-theme="dark"] .mail-thread-panel {
   --accent: #24395e;
