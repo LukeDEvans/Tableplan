@@ -33,6 +33,10 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
 
   async function keys(scope) { return vaults.keysFor(scope); }
 
+  // Rows from the last listing, so opening a file or a thumbnail doesn't read the
+  // table again (egress: never a read per file per row).
+  const listed = new Map(); // fileId → { scope, row }
+
   // ---- folders ------------------------------------------------------------------------
 
   async function folders(scope) {
@@ -106,7 +110,10 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
   async function files(scope, { includeDeleted = false } = {}) {
     const k = await keys(scope);
     const out = [];
-    for (const r of await server.files(scope)) {
+    const rows = await server.files(scope);
+    for (const [id, v] of listed) if (v.scope === scope) listed.delete(id);
+    for (const r of rows) listed.set(r.id, { scope, row: r });
+    for (const r of rows) {
       if (!rowVersionAllowed(r.key_version, k.settled)) continue;
       if (r.deleted_at && !includeDeleted) continue;
       let meta;
@@ -149,10 +156,20 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
 
   // ---- files: opening -------------------------------------------------------------------
 
-  async function rowFor(scope, fileId) {
-    const r = (await server.files(scope)).find((x) => x.id === fileId);
+  // fresh: read the row now (edits need its latest metadata); otherwise the listed row
+  // is used, falling back to a fresh read if it no longer opens (re-wrapped meanwhile).
+  async function rowFor(scope, fileId, { fresh = false } = {}) {
+    const cached = listed.get(fileId);
+    if (!fresh && cached && cached.scope === scope) {
+      try { return unwrapRow(scope, cached.row, await keys(scope)); } catch { /* re-read below */ }
+    }
+    const r = await server.file(scope, fileId);
     if (!r) throw new LibraryError("MISSING", "That document isn't here.");
-    const k = await keys(scope);
+    listed.set(r.id, { scope, row: r });
+    return unwrapRow(scope, r, await keys(scope));
+  }
+
+  function unwrapRow(scope, r, k) {
     if (!rowVersionAllowed(r.key_version, k.settled)) throw new LibraryError("MISSING", "That document isn't here.");
     const key = k.keys.get(r.key_version);
     if (!key) throw new LibraryError("LOCKED", "This device can't open that document yet.");
@@ -181,7 +198,7 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
   // ---- files: changing --------------------------------------------------------------------
 
   async function editMeta(scope, fileId, change) {
-    const { r, k, fileKey } = await rowFor(scope, fileId);
+    const { r, k, fileKey } = await rowFor(scope, fileId, { fresh: true });
     const current = await readMeta(k, r);
     if (current.stale) throw new LibraryError("STALE", "This document changed elsewhere; refresh and try again.");
     const { stale, ...base } = current;
@@ -208,8 +225,8 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
 
   // Gone for good, after 30 days in Recently deleted (the storage function and the
   // database both check): blobs first, so nothing is left unreferenced, then the row.
-  async function purge(scope, fileId) {
-    const r = (await server.files(scope)).find((x) => x.id === fileId);
+  async function purge(scope, fileId, row = null) {
+    const r = row && row.id === fileId ? row : await server.file(scope, fileId);
     if (!r || !r.deleted_at || Date.parse(r.deleted_at) > now() - RECENTLY_DELETED_DAYS * 24 * 3600 * 1000) return false;
     await storage.remove(scope, fileId, r.parts);
     await server.purgeFile(fileId);
@@ -222,7 +239,7 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
   async function purgeExpired(scope) {
     const cutoff = now() - RECENTLY_DELETED_DAYS * 24 * 3600 * 1000;
     const old = (await server.files(scope)).filter((r) => r.deleted_at && Date.parse(r.deleted_at) < cutoff);
-    for (const r of old) await purge(scope, r.id);
+    for (const r of old) await purge(scope, r.id, r);
     return old.length;
   }
 

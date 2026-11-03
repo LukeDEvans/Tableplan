@@ -143,6 +143,15 @@ async function pick(d, selector) {
   if ((await d.page.evaluate(() => window.innerWidth)) <= 680) await d.page.click("[data-act=toggle-sidebar]");
   await d.page.click(selector);
 }
+// The recovery panel can only be closed by re-typing the two groups it asks for.
+async function confirmCode(d, code, { wrong = false } = {}) {
+  const groups = code.trim().split("-");
+  const labels = await d.page.locator("[data-form=confirm-code] label").allInnerTexts();
+  const [a, b] = labels.map((l) => Number(/Group (\d)/.exec(l)[1]) - 1);
+  await d.page.fill("[data-form=confirm-code] [name=a]", wrong ? "ZZZZ" : groups[a].toLowerCase());
+  await d.page.fill("[data-form=confirm-code] [name=b]", groups[b]);
+  await d.page.click("[data-form=confirm-code] button[type=submit]");
+}
 const folderTabs = (d) => d.page.locator(".docs-sidebar .article-sidebar-tab span").allInnerTexts();
 
 // Files made in the page: a real PNG from a canvas, a two-page PDF, and a text file
@@ -201,7 +210,9 @@ try {
   check(/^([A-Z2-9]{4}-){7}[A-Z2-9]{4}$/.test(code.trim()), "Personal setup shows a recovery code in 8 groups of 4", code);
   await shot(phone, "3-recovery-code");
   check(await noSideScroll(phone), "the recovery screen fits a phone-width window");
-  await phone.page.click("[data-act=code-done]");
+  await confirmCode(phone, code, { wrong: true });
+  check(await phone.page.locator("[data-recovery-code]").count() === 1 && (await text(phone)).includes("don't match"), "a wrong group keeps the code on screen");
+  await confirmCode(phone, code);
   await phone.page.waitForSelector(".docs-sidebar");
   const ptabs = await folderTabs(phone);
   check(JSON.stringify(ptabs) === JSON.stringify(["All documents", "Work", "Personal", "New folder", "Recently deleted"]), "Personal starts with Work and Personal, no Receipts", ptabs.join(", "));
@@ -287,6 +298,8 @@ try {
   const herNames = await fileNames(wife);
   check(herNames.includes("Car title — Honda") && herNames.includes("Home insurance 2026"), "after verifying, Marijane sees Luke's documents", herNames.join(", "));
   check((await text(wife)).includes("added by Luke"), "…marked as added by Luke");
+  await wife.page.waitForSelector(".docs-thumb img", { timeout: 15000 });
+  check(true, "her phone fetches and decrypts the thumbnail from storage (none cached there)");
   await wife.page.click(".docs-file:has-text('Car title')");
   await wife.page.waitForSelector(".docs-view-img", { timeout: 15000 });
   check(await wife.page.locator(".docs-view-img").evaluate((i) => i.complete && i.naturalWidth === 600), "…and can open them");
@@ -321,16 +334,68 @@ try {
   await laptop.page.waitForSelector(".docs-sidebar", { timeout: 20000 });
   check((await folderTabs(laptop)).includes("Work"), "Personal reaches Luke's browser too");
 
-  console.log("Narrow phones");
-  await phone.page.setViewportSize({ width: 360, height: 740 });
-  await household(phone);
+  console.log("Switching view in the middle of an upload");
+  await personal(phone);
   await idle(phone);
-  check(await noSideScroll(phone), "the list fits a 360 px phone");
+  await phone.page.evaluate(() => { window.__toasts = []; });
+  await phone.page.evaluate(() => {
+    const dt = new DataTransfer();
+    for (let i = 1; i <= 4; i++) dt.items.add(new File([new Uint8Array(400000).fill(i)], `private-${i}.txt`, { type: "text/plain" }));
+    const input = document.querySelector("[data-file-input]");
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await phone.page.waitForFunction(() => /uploading 2 of/.test(document.querySelector("#documentsRoot").innerText), null, { timeout: 20000 });
+  await household(phone); // the view changes while files 2–4 are still going up
+  await phone.page.waitForFunction(() => window.__toasts.some((t) => t.startsWith("Added")), null, { timeout: 30000 });
+  await db.exec("reset role");
+  const placed = await db.query(`select f.scope, count(*)::int n from public.doc_files f where f.size > 400000 group by f.scope`);
+  const byScope = Object.fromEntries(placed.rows.map((r) => [r.scope, r.n]));
+  check(byScope[PERSONAL] === 4 && !byScope[GROUP], "all four files started in Personal stay in Personal", JSON.stringify(byScope));
+  await idle(phone);
+  check(!(await fileNames(phone)).some((n) => n.startsWith("private-")), "…and none show up in Household");
+
+  console.log("Removing a device and a new code");
   await phone.page.click("[data-act=settings]");
-  await phone.page.waitForFunction(() => document.querySelector(".docs-settings") && !document.querySelector(".docs-settings").innerText.includes("Loading…"), null, { timeout: 15000 });
-  check((await phone.page.locator(".docs-settings").innerText()).includes("Laptop"), "settings list Luke's devices");
-  await shot(phone, "8-settings");
-  check(await noSideScroll(phone), "settings fit a 360 px phone");
+  await phone.page.waitForSelector("[data-remove-device]", { timeout: 15000 });
+  phone.page.__answers = [undefined];
+  await phone.page.click("[data-remove-device]");
+  await phone.page.waitForSelector("[data-recovery-code]", { timeout: 60000 });
+  const code2 = await phone.page.locator("[data-recovery-code]").innerText();
+  check(code2 !== code, "removing the laptop re-keys and makes a new recovery code");
+  await confirmCode(phone, code2);
+  await household(laptop);
+  check(/removed|waiting/.test(await text(laptop)) && !(await laptop.page.locator(".docs-sidebar").count()), "the removed laptop can't open Household any more", await text(laptop));
+  await household(wife);
+  await wife.page.waitForSelector(".docs-sidebar", { timeout: 20000 });
+  check((await fileNames(wife)).includes("Car title — Honda"), "Marijane follows the new key");
+
+  console.log("Restoring on a new phone");
+  const fresh = await device("luke-newphone", USERS.luke, { native: true });
+  await fresh.page.evaluate(() => window.__msg.setupPhone({ replaceExisting: true }));
+  await personal(fresh);
+  await fresh.page.waitForSelector("[data-form=restore]", { state: "attached", timeout: 20000 });
+  await fresh.page.click(".msg-details summary");
+  await fresh.page.fill("[data-form=restore] [name=code]", code2);
+  await fresh.page.click("[data-form=restore] button[type=submit]");
+  await fresh.page.waitForSelector("[data-recovery-code]", { timeout: 90000 });
+  check(true, "the second code restores Personal on a new phone, which prints a fresh code");
+  const code3 = await fresh.page.locator("[data-recovery-code]").innerText();
+  await confirmCode(fresh, code3);
+  await fresh.page.waitForSelector(".docs-sidebar", { timeout: 20000 });
+  check((await fileNames(fresh)).some((n) => n.startsWith("private-")), "…with Personal's documents back", (await fileNames(fresh)).join(", "));
+  check(fresh.errors.length === 0, "luke-newphone: no page errors", fresh.errors.join(" | "));
+
+  console.log("Narrow phones");
+  await fresh.page.setViewportSize({ width: 360, height: 740 });
+  await household(fresh);
+  await idle(fresh);
+  check(await noSideScroll(fresh), "the list fits a 360 px phone");
+  await fresh.page.click("[data-act=settings]");
+  await fresh.page.waitForFunction(() => document.querySelector(".docs-settings") && !document.querySelector(".docs-settings").innerText.includes("Loading…"), null, { timeout: 15000 });
+  check((await fresh.page.locator(".docs-settings").innerText()).includes("this device"), "settings list Luke's devices");
+  await shot(fresh, "8-settings");
+  check(await noSideScroll(fresh), "settings fit a 360 px phone");
 
   for (const d of [phone, wife, laptop]) check(d.errors.length === 0, `${d.name}: no page errors`, d.errors.join(" | "));
 } catch (e) {

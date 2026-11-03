@@ -199,3 +199,20 @@ describe("Recently deleted", () => {
     expect([...objects.objects.keys()].filter((k) => k.includes(id))).toEqual([]);
   });
 });
+
+describe("egress", () => {
+  it("thumbnails and opening reuse the listed rows: one table read per listing, not one per file", async () => {
+    const { luke } = await household();
+    const ids = [];
+    for (let i = 0; i < 8; i++) ids.push(await luke.library.addFile(GROUP, { content: pdf, thumb: utf8(`thumb ${i}`), meta: { name: `Doc ${i}`, mime: "application/pdf" } }));
+    let listReads = 0, rowReads = 0;
+    const real = { files: luke.server.files, file: luke.server.file };
+    luke.server.files = async (...a) => { listReads++; return real.files(...a); };
+    luke.server.file = async (...a) => { rowReads++; return real.file(...a); };
+    await luke.library.files(GROUP);
+    for (const id of ids) expect(fromUtf8(await luke.library.thumbnail(GROUP, id))).toMatch(/^thumb \d$/);
+    await luke.library.open(GROUP, ids[0]);
+    expect(listReads).toBe(1);
+    expect(rowReads).toBe(0);
+  });
+});

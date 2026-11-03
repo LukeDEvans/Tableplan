@@ -99,6 +99,17 @@ describe("creating and receiving vaults", () => {
     expect(await her.vaults.open(GROUP)).toMatchObject({ state: "ready", version: 1 });
   });
 
+  it("a new recovery code is refused while this phone still waits for one of the vaults (neither code would open it)", async () => {
+    const luke = await phone("luke");
+    await luke.vaults.createVault(PERSONAL);
+    const her = await phone("wife");
+    await her.vaults.createVault(GROUP);
+    // Luke hasn't verified her, so his phone waits for Household.
+    expect(await luke.vaults.open(GROUP)).toMatchObject({ state: "waiting" });
+    await expect(luke.vaults.newRecoveryCode([PERSONAL, GROUP])).rejects.toMatchObject({ code: "WAITING" });
+    expect((await luke.vaults.newRecoveryCode([PERSONAL])).vaults).toEqual([PERSONAL]);
+  });
+
   it("only the phone creates vaults; a vault exists once", async () => {
     const ph = await phone("luke");
     const br = await linkedBrowser(ph);

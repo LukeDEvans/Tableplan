@@ -407,7 +407,10 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
     const held = [];
     for (const scope of scopes) {
       const v = await localVault(scope);
-      if (v && keyAt(v, v.settled) && v.settled >= (v.floor || 0)) held.push(v);
+      if (v && keyAt(v, v.settled) && v.settled >= (v.floor || 0)) { held.push(v); continue; }
+      // A vault that exists but this phone is still waiting for would get no anchor
+      // under the new code, and the old code stops working: neither would open it.
+      if (await server.vault(scope)) throw new DocumentsError("WAITING", "This phone is still waiting for one of your Documents vaults. Open it here first, then make the code.");
     }
     if (!held.length) throw new DocumentsError("NOTHING", "Set up Documents first.");
     const code = generateRecoveryCode();

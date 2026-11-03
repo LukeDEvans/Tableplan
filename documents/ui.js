@@ -168,9 +168,15 @@ export async function mountDocuments(root, deps) {
     if (my !== gen) return;
     ui.banners = [];
     if (ui.kind === "household") await checkVerified();
+    if (my !== gen) return;
     if (opened.state === "missing") { ui.view = "setup"; return draw(); }
     if (opened.state === "removed") { ui.view = "removed"; return draw(); }
-    if (opened.state === "waiting") { ui.view = "waiting"; ui.hasRecovery = ui.isPhone && Boolean(await server.recoveryKey(userId).catch(() => null)); return draw(); }
+    if (opened.state === "waiting") {
+      const hasRecovery = ui.isPhone && Boolean(await server.recoveryKey(userId).catch(() => null));
+      if (my !== gen) return;
+      ui.view = "waiting"; ui.hasRecovery = hasRecovery;
+      return draw();
+    }
     ui.view = "library";
     // Hand this vault to any trusted device still waiting for it (Marijane's
     // phone, a newly linked browser). One pass per open; nothing loops.
@@ -179,16 +185,19 @@ export async function mountDocuments(root, deps) {
     library.purgeExpired(scope).catch(() => {});
     await refresh(my);
     if (my !== gen) return;
-    await checkBanners();
+    await checkBanners(my);
+    if (my !== gen) return;
     draw();
   }
 
-  async function refresh(my = gen) {
-    const scope = ui.scope;
+  async function refresh(my = gen, scope = ui.scope) {
     const [folders, files] = await Promise.all([library.folders(scope), library.files(scope, { includeDeleted: true })]);
     if (my !== gen || scope !== ui.scope) return;
     if (!folders.length) {
-      ui.folders = await library.ensureStartingFolders(scope, { receipts: ui.kind === "household", names: STARTING_FOLDERS[ui.kind] });
+      const kind = ui.kind;
+      const made = await library.ensureStartingFolders(scope, { receipts: kind === "household", names: STARTING_FOLDERS[kind] });
+      if (my !== gen || scope !== ui.scope) return;
+      ui.folders = made;
     } else ui.folders = folders;
     ui.files = files;
     if (ui.folder !== "all" && ui.folder !== "trash" && !ui.folders.some((f) => f.id === ui.folder)) ui.folder = "all";
@@ -203,7 +212,8 @@ export async function mountDocuments(root, deps) {
     } catch { ui.unverified = []; }
   }
 
-  async function checkBanners() {
+  async function checkBanners(my = gen) {
+    const scope = ui.scope;
     const b = [];
     if (ui.kind === "household" && ui.unverified.length) {
       const who = esc(ui.unverified.join(" and "));
@@ -212,21 +222,25 @@ export async function mountDocuments(root, deps) {
     if (ui.isPhone) {
       if (await vaults.needsNewCode()) b.push({ warn: true, html: `A device was removed. Make a new recovery code; the old one no longer works. <button type="button" class="link-btn" data-act="new-code">Make a new code</button>` });
       else if (ui.kind === "personal" && !(await server.recoveryKey(userId).catch(() => ({})))) b.push({ warn: true, html: `Make your recovery code: it's the only way back into Personal Documents if this phone is lost. <button type="button" class="link-btn" data-act="new-code">Make it now</button>` });
-      ui.staleDevices = await staleDevices();
+      const stale = await staleDevices(scope);
+      if (my !== gen) return;
+      ui.staleDevices = stale;
       if (ui.staleDevices.length) b.push({ warn: true, html: `${esc(ui.staleDevices.map((d) => d.label).join(", "))} was removed in Messages but can still open these documents. <button type="button" class="link-btn" data-act="rekey">Lock it out</button>` });
     }
     try {
-      ui.usage = await library.usage(ui.scope);
+      const usage = await library.usage(scope);
+      if (my !== gen) return;
+      ui.usage = usage;
       if (ui.usage >= USAGE_WARN_BYTES) b.push({ warn: true, html: `Documents is using ${sizeLabel(ui.usage)} of the 10 GB that's free.` });
     } catch { /* best-effort */ }
-    ui.banners = b;
+    if (my === gen) ui.banners = b;
   }
 
   // My devices the server lists as removed (in Messages) that still hold a grant
   // at this vault's current version: they need a re-key to lose access.
-  async function staleDevices() {
+  async function staleDevices(scope) {
     try {
-      const k = await vaults.keysFor(ui.scope);
+      const k = await vaults.keysFor(scope);
       const [all, live, grants] = await Promise.all([server.myDeviceIds(userId), account.myDevices(), server.grantsAt(k.vaultId, k.version)]);
       const liveIds = new Set(live.map((d) => d.deviceId));
       const holders = new Set(grants.map((g) => g.device_id));
@@ -241,6 +255,8 @@ export async function mountDocuments(root, deps) {
     const views = { loading, "needs-messaging": needsMessaging, setup, waiting, removed, error, library: libraryView, recovery };
     root.innerHTML = (views[ui.panel === "recovery" ? "recovery" : ui.view] || loading)();
     if (ui.view === "library" && ui.panel !== "recovery") loadThumbs();
+    const pre = root.querySelector(".docs-view-text");
+    if (pre && ui.viewer?.text != null) pre.textContent = ui.viewer.text; // text, never markup
     root.querySelector("[data-autofocus]")?.focus();
   }
 
@@ -310,10 +326,14 @@ export async function mountDocuments(root, deps) {
       <p>Print this or write it down, and keep it somewhere safe and private. If you lose your phone, this code is the only way back into your documents.</p>
       <p class="docs-code" data-recovery-code>${esc(ui.code)}</p>
       <p class="msg-muted">It isn't saved anywhere you can see again. Making a new code later replaces this one.</p>
-      <div class="msg-row">
-        <button type="button" class="secondary-btn" data-act="print-code">Print</button>
-        <button type="button" class="primary-btn" data-act="code-done">I've put it somewhere safe</button>
-      </div></div>`);
+      <div class="msg-row"><button type="button" class="secondary-btn" data-act="print-code">Print</button></div>
+      <form class="msg-form" data-form="confirm-code">
+        <p>To check you have it, type groups ${ui.codeCheck[0] + 1} and ${ui.codeCheck[1] + 1} from your copy.</p>
+        <label class="msg-field">Group ${ui.codeCheck[0] + 1}<input name="a" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" required></label>
+        <label class="msg-field">Group ${ui.codeCheck[1] + 1}<input name="b" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" required></label>
+        ${errorNote()}
+        <button type="submit" class="primary-btn">I've put it somewhere safe</button>
+      </form></div>`);
   }
 
   function visibleFiles() {
@@ -426,25 +446,41 @@ export async function mountDocuments(root, deps) {
       </div></div>`;
   }
 
-  async function loadThumbs() {
+  // Thumbnails: from this device's cache, else at most THUMB_PARALLEL fetched at a
+  // time (each one row the list already read + one small blob), for the vault on screen.
+  const THUMB_PARALLEL = 3;
+  let thumbQueue = [];
+  let thumbRunning = 0;
+  function loadThumbs() {
+    const scope = ui.scope;
+    thumbQueue = [];
     for (const el of root.querySelectorAll("[data-thumb]")) {
       const id = el.dataset.thumb;
       const f = ui.files.find((x) => x.id === id);
       if (!f || !(f.parts || []).includes("thumb")) continue;
       if (thumbs.has(id)) { paintThumb(el, thumbs.get(id)); continue; }
+      thumbQueue.push({ id, scope });
+    }
+    pumpThumbs();
+  }
+  function pumpThumbs() {
+    while (thumbRunning < THUMB_PARALLEL && thumbQueue.length) {
+      const { id, scope } = thumbQueue.shift();
+      if (thumbs.has(id) || scope !== ui.scope || !visible) continue;
       thumbs.set(id, null);
+      thumbRunning++;
       (async () => {
         let bytes = await store.get(`thumb:${id}`);
         if (!bytes) {
-          try { bytes = await library.thumbnail(ui.scope, id); } catch { return; }
+          try { bytes = await library.thumbnail(scope, id); } catch { thumbs.delete(id); return; }
           if (bytes) await store.set(`thumb:${id}`, bytes);
         }
         if (!bytes) return;
         const url = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
         thumbs.set(id, url);
-        const live = root.querySelector(`[data-thumb="${CSS.escape(id)}"]`);
+        const live = scope === ui.scope && root.querySelector(`[data-thumb="${CSS.escape(id)}"]`);
         if (live) paintThumb(live, url);
-      })();
+      })().finally(() => { thumbRunning--; pumpThumbs(); });
     }
   }
   function paintThumb(el, url) {
@@ -458,29 +494,56 @@ export async function mountDocuments(root, deps) {
 
   // ---- actions ----------------------------------------------------------------------------
 
+  // An action on the vault on screen when it started. If the page moves to another
+  // vault (or is hidden) meanwhile, the action still finishes on ITS vault but no
+  // longer draws.
   async function run(label, fn) {
+    const scope = ui.scope;
+    const my = gen;
     ui.busy = label; ui.error = ""; draw();
-    try { await fn(); } catch (e) { ui.error = e?.message || "That didn't work."; }
-    ui.busy = ""; draw();
+    let err = "";
+    try { await fn(scope, my); } catch (e) { err = e?.message || "That didn't work."; }
+    if (my !== gen || scope !== ui.scope) return;
+    ui.busy = ""; ui.error = err; draw();
+  }
+
+  // Shows a new code; it can only be dismissed after re-typing two of its groups.
+  function showCode(code) {
+    const a = Math.floor(Math.random() * 8);
+    let b = Math.floor(Math.random() * 7);
+    if (b >= a) b++;
+    ui.code = code; ui.codeCheck = [Math.min(a, b), Math.max(a, b)]; ui.panel = "recovery";
+  }
+
+  function confirmCode(form) {
+    const groups = String(ui.code || "").split("-");
+    const norm = (x) => String(x || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (norm(form.a.value) !== groups[ui.codeCheck[0]] || norm(form.b.value) !== groups[ui.codeCheck[1]]) {
+      ui.error = "Those don't match the code. Check your copy and try again.";
+      draw();
+      return;
+    }
+    ui.code = null; ui.codeCheck = null; ui.panel = null; ui.error = "";
+    draw();
   }
 
   async function createVault() {
+    const scope = ui.scope;
+    const kind = ui.kind;
     await run("Setting up…", async () => {
-      await vaults.createVault(ui.scope);
-      await library.ensureStartingFolders(ui.scope, { receipts: ui.kind === "household", names: STARTING_FOLDERS[ui.kind] });
-      if (ui.kind === "personal" && !(await server.recoveryKey(userId))) {
-        const { code } = await vaults.newRecoveryCode(allScopes());
-        ui.code = code; ui.panel = "recovery";
-      }
-      await vaults.grantPending(ui.scope).catch(() => {});
-      await load();
+      await vaults.createVault(scope);
+      await library.ensureStartingFolders(scope, { receipts: kind === "household", names: STARTING_FOLDERS[kind] });
+      // A code made before this vault existed doesn't open it: Personal always gets a
+      // code now, and Household gets a new one if a code already exists.
+      if (kind === "personal" || (await server.recoveryKey(userId))) showCode((await vaults.newRecoveryCode(allScopes())).code);
+      await vaults.grantPending(scope).catch(() => {});
+      if (scope === ui.scope) await load();
     });
   }
 
   async function newCode() {
     await run("Making a new code…", async () => {
-      const { code } = await vaults.newRecoveryCode(allScopes());
-      ui.code = code; ui.panel = "recovery";
+      showCode((await vaults.newRecoveryCode(allScopes())).code);
     });
   }
 
@@ -488,7 +551,7 @@ export async function mountDocuments(root, deps) {
     await run("Restoring… this takes a few seconds.", async () => {
       const out = await vaults.restore(codeText, allScopes());
       const short = out.results.filter((r) => r.state === "short");
-      if (out.code) { ui.code = out.code; ui.panel = "recovery"; }
+      if (out.code) showCode(out.code);
       if (short.length) deps.toast?.("Restored, but some newer documents need your other devices: open Documents on one of them.");
       if (!out.results.some((r) => r.state === "restored" || r.state === "short")) throw new Error("That code doesn't cover these documents.");
       await load();
@@ -498,12 +561,16 @@ export async function mountDocuments(root, deps) {
   async function addFiles(fileList) {
     const files = [...fileList];
     if (!files.length) return;
+    // The vault and folder this batch was started in, for every file of it: switching
+    // view mid-upload must never put a Personal file in Household.
+    const scope = ui.scope;
+    const my = gen;
+    const here = () => my === gen && scope === ui.scope;
     const folderId = ui.folders.some((f) => f.id === ui.folder) ? ui.folder : null;
     let added = 0;
     const problems = [];
     for (const [i, file] of files.entries()) {
-      ui.busy = files.length > 1 ? `Encrypting and uploading ${i + 1} of ${files.length}…` : "Encrypting and uploading…";
-      ui.error = ""; draw();
+      if (here()) { ui.busy = files.length > 1 ? `Encrypting and uploading ${i + 1} of ${files.length}…` : "Encrypting and uploading…"; ui.error = ""; draw(); }
       const mime = mimeForFile(file.name, file.type);
       if (!mime) { problems.push(`${file.name}: that kind of file can't be kept here`); continue; }
       if (file.size > MAX_FILE_BYTES) { problems.push(`${file.name}: larger than 60 MB`); continue; }
@@ -511,13 +578,16 @@ export async function mountDocuments(root, deps) {
         const content = new Uint8Array(await file.arrayBuffer());
         const thumb = mime.startsWith("image/") ? await makeThumb(file) : null;
         const pages = mime === "application/pdf" ? pdfPageCount(content) : 1;
-        const id = await library.addFile(ui.scope, { content, thumb, folderId, meta: { name: displayName(file.name), originalName: file.name.slice(0, 200), mime, pages } });
+        const id = await library.addFile(scope, { content, thumb, folderId, meta: { name: displayName(file.name), originalName: file.name.slice(0, 200), mime, pages } });
         if (thumb) await store.set(`thumb:${id}`, thumb);
         added++;
       } catch (e) { problems.push(`${file.name}: ${e.message}`); }
     }
+    if (added) deps.toast?.(added === 1 ? "Added." : `Added ${added} documents.`);
+    if (!here()) return;
     ui.busy = "";
-    if (added) { await refresh(); deps.toast?.(added === 1 ? "Added." : `Added ${added} documents.`); }
+    if (added) { try { await refresh(my, scope); } catch (e) { problems.push(e.message); } }
+    if (!here()) return;
     ui.error = problems.join(". ");
     draw();
   }
@@ -527,8 +597,9 @@ export async function mountDocuments(root, deps) {
     ui.viewer = { id };
     draw();
     const my = gen;
+    const scope = ui.scope;
     try {
-      const { bytes, mime } = await library.open(ui.scope, id);
+      const { bytes, mime } = await library.open(scope, id);
       if (my !== gen || ui.viewer?.id !== id) return;
       ui.viewer.bytes = bytes;
       ui.viewer.ready = true;
@@ -542,8 +613,6 @@ export async function mountDocuments(root, deps) {
       if (ui.viewer?.id === id) ui.viewer.error = e.message || "This document couldn't be opened.";
     }
     draw();
-    const pre = root.querySelector(".docs-view-text");
-    if (pre && ui.viewer?.text != null) pre.textContent = ui.viewer.text; // text, never markup
   }
 
   function closeViewer() {
@@ -575,12 +644,12 @@ export async function mountDocuments(root, deps) {
     const folderId = form.folder.value || null;
     const date = form.date.value || null;
     const tags = form.tags.value.split(",").map((t) => t.trim()).filter(Boolean);
-    await run("Saving…", async () => {
-      if (folderId !== f.folderId) await library.move(ui.scope, id, folderId);
-      if (name && name !== f.name) await library.rename(ui.scope, id, name);
-      if ((date || null) !== (f.documentDate || null)) await library.setDocumentDate(ui.scope, id, date);
-      if (tags.join("\n") !== f.tags.join("\n")) await library.setTags(ui.scope, id, tags);
-      await refresh();
+    await run("Saving…", async (scope, my) => {
+      if (folderId !== f.folderId) await library.move(scope, id, folderId);
+      if (name && name !== f.name) await library.rename(scope, id, name);
+      if ((date || null) !== (f.documentDate || null)) await library.setDocumentDate(scope, id, date);
+      if (tags.join("\n") !== f.tags.join("\n")) await library.setTags(scope, id, tags);
+      await refresh(my, scope);
       deps.toast?.("Saved.");
     });
   }
@@ -599,8 +668,7 @@ export async function mountDocuments(root, deps) {
     await run("Removing and changing the keys…", async () => {
       await vaults.removeDevice(deviceId, allScopes());
       ui.devices = await account.myDevices().catch(() => ui.devices);
-      const { code } = await vaults.newRecoveryCode(allScopes());
-      ui.code = code; ui.panel = "recovery";
+      showCode((await vaults.newRecoveryCode(allScopes())).code);
     });
   }
 
@@ -608,8 +676,7 @@ export async function mountDocuments(root, deps) {
     if (!window.confirm("Change the keys so the removed device can't open these documents? You'll get a new recovery code.")) return;
     await run("Changing the keys…", async () => {
       for (const d of ui.staleDevices) await vaults.removeDevice(d.deviceId, allScopes());
-      const { code } = await vaults.newRecoveryCode(allScopes());
-      ui.code = code; ui.panel = "recovery";
+      showCode((await vaults.newRecoveryCode(allScopes())).code);
     });
   }
 
@@ -660,7 +727,6 @@ export async function mountDocuments(root, deps) {
     else if (act === "create") createVault();
     else if (act === "new-code") newCode();
     else if (act === "print-code") printCode();
-    else if (act === "code-done") { ui.code = null; ui.panel = null; draw(); }
     else if (act === "toggle-sidebar") {
       const sb = root.querySelector("#docsSidebar");
       if (window.innerWidth <= 680) sb?.classList.toggle("is-expanded"); else sb?.classList.toggle("is-collapsed");
@@ -672,23 +738,24 @@ export async function mountDocuments(root, deps) {
     else if (act === "rekey") rekeyStale();
     else if (act === "trash-file") {
       const id = ui.viewer?.id;
-      await run("Deleting…", async () => { await library.trash(ui.scope, id); closeViewer(); await refresh(); deps.toast?.(`Moved to Recently deleted for ${RECENTLY_DELETED_DAYS} days.`); });
+      await run("Deleting…", async (scope, my) => { await library.trash(scope, id); if (my === gen) closeViewer(); await refresh(my, scope); deps.toast?.(`Moved to Recently deleted for ${RECENTLY_DELETED_DAYS} days.`); });
     } else if (act === "restore-file") {
       const id = ui.viewer?.id;
-      await run("Putting back…", async () => { await library.restore(ui.scope, id); closeViewer(); await refresh(); });
+      await run("Putting back…", async (scope, my) => { await library.restore(scope, id); if (my === gen) closeViewer(); await refresh(my, scope); });
     } else if (act === "new-folder") {
       const name = window.prompt("Folder name")?.trim();
       if (!name) return;
-      await run("Adding the folder…", async () => { ui.folder = await library.addFolder(ui.scope, name.slice(0, 200), { sort: ui.folders.length + 1 }); await refresh(); });
+      const sort = ui.folders.length + 1;
+      await run("Adding the folder…", async (scope, my) => { const id = await library.addFolder(scope, name.slice(0, 200), { sort }); if (my === gen) ui.folder = id; await refresh(my, scope); });
     } else if (act === "rename-folder") {
       const f = ui.folders.find((x) => x.id === ui.folder);
       const name = window.prompt("Folder name", f?.name || "")?.trim();
       if (!f || !name || name === f.name) return;
-      await run("Renaming…", async () => { await library.renameFolder(ui.scope, f.id, name.slice(0, 200)); await refresh(); });
+      await run("Renaming…", async (scope, my) => { await library.renameFolder(scope, f.id, name.slice(0, 200)); await refresh(my, scope); });
     } else if (act === "delete-folder") {
       const f = ui.folders.find((x) => x.id === ui.folder);
       if (!f || !window.confirm(`Remove “${f.name}”? Its documents go to Recently deleted for ${RECENTLY_DELETED_DAYS} days.`)) return;
-      await run("Removing the folder…", async () => { await library.deleteFolder(ui.scope, f.id); ui.folder = "all"; await refresh(); });
+      await run("Removing the folder…", async (scope, my) => { await library.deleteFolder(scope, f.id); if (my === gen) ui.folder = "all"; await refresh(my, scope); });
     }
   });
 
@@ -698,6 +765,7 @@ export async function mountDocuments(root, deps) {
     e.preventDefault();
     if (form.dataset.form === "restore") restoreWith(form.code.value);
     else if (form.dataset.form === "edit") saveEdit(form);
+    else if (form.dataset.form === "confirm-code") confirmCode(form);
   });
 
   root.addEventListener("input", (e) => {
@@ -734,7 +802,7 @@ export async function mountDocuments(root, deps) {
       visible = true;
       if (scope !== ui.scope) {
         closeViewer();
-        Object.assign(ui, { scope, kind, title, view: "loading", folder: "all", query: "", folders: [], files: [], banners: [], panel: ui.panel === "recovery" ? "recovery" : null, error: "" });
+        Object.assign(ui, { scope, kind, title, view: "loading", folder: "all", query: "", folders: [], files: [], banners: [], panel: ui.panel === "recovery" ? "recovery" : null, error: "", busy: "" });
       } else Object.assign(ui, { kind, title });
       if (!scope) { ui.view = "error"; ui.error = kind === "household" ? "You're not in a household yet." : "Personal Documents isn't available."; draw(); return; }
       draw();

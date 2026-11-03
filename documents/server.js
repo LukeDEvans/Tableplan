@@ -85,6 +85,9 @@ export function createDocumentsServer(transport) {
     // Changed since `since` (ISO time), or everything. Bounded by the scope.
     files: (scope, since = null) => transport.select("doc_files",
       `scope=eq.${enc(scopeId(scope))}${since ? `&updated_at=gt.${enc(since)}` : ""}&select=id,folder_id,wrapped_key,key_version,enc_meta,parts,size,added_by,created_at,updated_at,deleted_at&order=updated_at`),
+    // One file of the scope (opening, thumbnails, edits): never the whole list per file.
+    file: async (scope, id) => (await transport.select("doc_files",
+      `scope=eq.${enc(scopeId(scope))}&id=eq.${uuid(id, "file")}&select=id,folder_id,wrapped_key,key_version,enc_meta,parts,size,added_by,created_at,updated_at,deleted_at`))[0] || null,
     addFile: (row) => transport.insert("doc_files", [row]),
     updateFile: (id, patch) => transport.update("doc_files", `id=eq.${uuid(id, "file")}`, patch),
     // Members can't hard-delete; these remove a row only once it's been in Recently

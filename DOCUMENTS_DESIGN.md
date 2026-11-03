@@ -488,9 +488,21 @@ Built everything in steps 3 and 4 that runs in the web view; the **Face ID Keych
 **Fixed while building:** a member who opened Household *before* the two of you verified never published her box key, so your phone had nothing to grant to afterwards. `vaults.open` now publishes this device's box key on every first visit (test: "a member who opens before verifying…", fails without the fix).
 
 **Verified:**
-- `npm run qa:documents-ui` — **46 checks** in Chromium with three profiles (Luke's phone, Marijane's phone, Luke's laptop) against PGlite with the real messaging + Documents migrations and row security, and a stand-in for doc-storage with the same access checks: the flow above end to end, plus the object store holding only ciphertext, no readable names in the database, markup in a text file shown as text, Marijane refused links to Luke's Personal, fits 390 px and 360 px, no page errors.
+- `npm run qa:documents-ui` — **56 checks** (after the review below) in Chromium with three profiles (Luke's phone, Marijane's phone, Luke's laptop) against PGlite with the real messaging + Documents migrations and row security, and a stand-in for doc-storage with the same access checks: the flow above end to end, plus the object store holding only ciphertext, no readable names in the database, markup in a text file shown as text, Marijane refused links to Luke's Personal, fits 390 px and 360 px, no page errors.
 - Unit suite 3425 passing; build passes; boot check passes; the real app's landing menu opens Documents (local dev mode says "Sign in", as expected).
 - R2 itself was checked live in §19.
 - **Not verified:** anything on an iPhone (the share sheet, the PDF frame in WKWebView, confirm/prompt dialogs), the real Supabase over the network for the pages (the stand-in runs the same SQL).
 
 **Still to do:** Face ID Keychain item (native) → TestFlight → scanning (step 5) → receipts hook (step 6) → the batched Netlify deploy (step 7, Luke's OK).
+
+### Third independent review (2026-11-03) — the pages
+
+A separate agent attacked the pages (ISSUES.md has each entry). **Fixed**, each with a check that fails when the fix is reverted:
+1. *(P0)* An upload of several files started in Personal could finish in Household (the page re-read the current vault per file). → Every action keeps the vault it started in; switching view clears the old vault's busy note.
+2. *(P1)* Each thumbnail re-read the whole file table (egress grew with the square of the file count). → Opening and thumbnails reuse the listed row; at most 3 thumbnails load at a time.
+3. *(P1)* A vault created after a recovery code existed was never covered by it; a new code made while the phone waited for a vault left that vault reachable by neither code. → Personal setup always makes a code, Household setup makes a new one if a code exists, and a new code is refused while this phone waits for a vault.
+4. *(P2)* Older loads could redraw the other vault; text documents emptied on redraw; a failed refresh left the busy note. → Fixed.
+5. *(P2)* The code could be dismissed without the re-type check (§3.5). → Two random groups must be re-typed.
+6. *(P2)* The browser test skipped the risky paths. → Added a mid-upload view switch, removal + new code, the removed laptop locked out, Marijane following, restore from the code on a new phone, a second device's thumbnail.
+
+**Open — decision for Luke (ISSUES.md P1):** Household doesn't come back to a new phone of Luke's from Marijane's devices without the code. A new phone has a new identity, so the old "settled" statement no longer verifies, and Marijane never signs one. §3.5 promises Household survives through either person's devices. The fix changes who signs what in the vault layer (Marijane's phone would sign statements Luke's new phone trusts once they re-verify). Today Household comes back from Luke's code (both vaults are covered).
