@@ -1,6 +1,6 @@
 # Documents — design & plan
 
-Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Step 1 (crypto core) built and independently reviewed** on branch `claude/documents-crypto` (§16, §17). No tables, no UI, nothing deployed. §15 lists the few open points, each with a default.
+Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 mostly built** (§18): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter and the `doc-storage` function (not deployed — waits on Cloudflare R2, DOCUMENTS_R2_SETUP.md). Branch `claude/documents-crypto`. No UI, nothing on Netlify.
 
 Goal: a **Documents** page in **Household** (shared with Marijane) and another in **Personal** (Luke only) for important and sensitive papers. Scan or upload on any device, open and share from any device, encrypted so that the storage provider and our own server never see a readable file. Storage starts in the cloud and moves to a home server later without a rebuild.
 
@@ -405,4 +405,31 @@ A separate agent that hadn't seen the code being written attacked it against thi
 - File keys don't change on rotation or a move between scopes, so a removed device (or, after a move to Personal, Marijane's devices) could read later renames of files that existed before. Planned: a move to Personal makes a new copy under a new key; rotation re-keys metadata and text (needs a separate metadata key per file).
 - `folder_id` and `deleted_at` on a row aren't authenticated; the app checks `folder_id` against the metadata's `folderId`, and a server can always hide a file (availability is the server's).
 - The same "removal comes from the server" weakness exists in **messaging** (sending to a device the server didn't mark revoked) — logged in ISSUES.md.
+
+---
+
+## 18. Step 2 — what's built (2026-11-03)
+
+**Live in Supabase:** `migrations/2026-11-03-documents.sql` — `doc_vaults`, `doc_device_boxes`, `doc_vault_grants`, `doc_vault_keys_old`, `doc_vault_settled`, `doc_recovery_keys`, `doc_recovery_wraps`, `doc_folders`, `doc_files`, with row security, guards and column grants. Applied by Luke's OK (additive part, then revokes, then grants); recorded in `schema_migrations` (20261103120000). Checked afterwards: row security on all nine tables, no anon access, no TRUNCATE for signed-in users, updates limited to named columns, the trigger functions not callable, `doc_scope_allows` not callable by signed-in users. The security advisor lists the four `doc_` helper functions as callable by signed-in users; that's intended (row security uses them; each answers only for the caller's own scopes).
+
+What the tables enforce (the devices still prove everything that matters):
+- A scope's rows are visible only to who may hold it: Personal to its owner, Household to the group's members. Coworkers and strangers see nothing.
+- Vault versions only move up by one; a row's id and scope never change; a file's folder must be in its scope; one Receipts folder per scope, which can't be deleted.
+- Grants only from a member's own live device, to a live device whose owner may hold the scope. Recovery keys only replaced by a higher generation.
+
+**Code** (`documents/`):
+- `server.js` — the only door to Supabase.
+- `vaults.js` — create (phone), open, grant new devices, rotate, remove a device (phone; requires a new code), recovery code, restore (re-keys under the new phone's identity and prints a new code; a short restore makes no new code).
+- `storage.js`, `s3-presign.js` — the storage adapter and SigV4 presigning (matches AWS's worked example).
+- `supabase/functions/doc-storage/index.ts` — signs URLs after checking the caller may use the scope; sizes pinned on uploads; app-only CORS; kill switch. **Not deployed** until the R2 keys exist.
+- `messaging/account.js` gained `signers()`: this device's signing key and, on the phone, the identity key, for Documents' signatures.
+
+**Verified:**
+- `test/documents-migration.test.js` — 20 access-rule checks against PGlite with the real migration (as Luke, Marijane, a coworker, a stranger and anon).
+- `test/documents-vaults.test.js` — 14 scenarios with real messaging accounts: Personal and Household created, a linked browser and Marijane's phone granted, a forged grant, hidden settled statements, a device-signed settled statement, removal (re-keyed, rows re-wrapped, browser cut off, Marijane follows), a removed device's grant after the server un-revokes it, a swapped box key, an interrupted rotation, restore on a new phone (new identity, Marijane follows), the old code dead, a wrong code, a swapped recovery key. **7 planted bugs** each caught.
+- `test/documents-storage.test.js`, `test/documents-edge-function.test.js` — presigning (AWS vector), the adapter, and the function in Node with Deno stand-ins (scope refusals, junk requests, CORS, kill switch).
+- Full suite 3400 passing; build passes.
+- **Not verified:** the function on Supabase's runtime, R2 itself (both wait for tonight), anything on the iPhone.
+
+**Still to do in step 2:** R2 bucket + keys (Luke, DOCUMENTS_R2_SETUP.md) → deploy `doc-storage` → a real encrypted upload/download round trip.
 
