@@ -1,6 +1,6 @@
 # Documents — design & plan
 
-Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 mostly built** (§18): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter and the `doc-storage` function (not deployed — waits on Cloudflare R2, DOCUMENTS_R2_SETUP.md). Branch `claude/documents-crypto`. No UI, nothing on Netlify.
+Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 built and checked live** (§18, §19): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter, and the `doc-storage` function deployed with R2 working end to end. Branch `claude/documents-crypto`. No UI, nothing on Netlify.
 
 Goal: a **Documents** page in **Household** (shared with Marijane) and another in **Personal** (Luke only) for important and sensitive papers. Scan or upload on any device, open and share from any device, encrypted so that the storage provider and our own server never see a readable file. Storage starts in the cloud and moves to a home server later without a rebuild.
 
@@ -19,6 +19,7 @@ Goal: a **Documents** page in **Household** (shared with Marijane) and another i
 | 7 | Starting folders | Household: **Receipts, IDs & Records, Home, Vehicles, Insurance, Medical.** Personal: **Work, Personal.** All renamable or removable except Receipts. |
 | 8 | Layout | **Watch's shell** (sidebar tabs, search head, card style); files shown as a list with thumbnail, date and page count. |
 | 9 | Adding on web/laptop | **Upload + drag-and-drop**, photos auto-cropped and straightened. Scanning is the phone's job. |
+| 10 | Household trust | **Verification required** (2026-11-03): Household keys go only to people verified with the QR scan whose identity hasn't changed since. |
 
 ---
 
@@ -461,5 +462,7 @@ A separate agent attacked the tables, the vault layer and the storage function, 
 
 **Storage (2026-11-03):** the R2 bucket `liv-documents` exists (made with the Cloudflare connector; Standard, private). The `doc-storage` function is **deployed** to Supabase (JWT check off at the gateway because the function checks the caller itself through `doc_can_access`; that also lets the browser's CORS preflight through). It answers "not configured" until the four `DOC_S3_*` secrets are set.
 
-**Decision for Luke:** Household sharing needs you and Marijane to **verify each other once** (scan the QR between your phones, the same check messaging offers). Messaging only *prompts* for it; Documents *requires* it, because otherwise the server could slip in a key.
+**Decided (Luke, 2026-11-03): verification is required.** Household sharing needs you and Marijane to **verify each other once** (scan the QR between your phones, the same check messaging offers). Messaging only *prompts* for it; Documents *requires* it, because otherwise the server could slip in a key. The pages must lead an unverified member to that scan (Household shows "Verify with Marijane to share" instead of her files). Decision 10 in §0.
+
+**Storage checked live (2026-11-03):** with the secrets set, from the production site as Luke: 401 without sign-in; a 200 KB PUT to R2, GET back byte for byte, DELETE, then 404; another person's scope 403; an upload whose size differs from the signed one doesn't go through. The R2 CORS policy and bucket key are therefore right. Step 2 is done.
 

@@ -31,6 +31,8 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   Medical; Personal — Work, Personal. Receipts can't be removed.
 - Layout: Watch's shell; files as a list (thumbnail, date, page count).
 - Web/laptop add documents by upload and drag-and-drop; scanning is the phone's job.
+- **Household needs verification** (decision 10): keys go only to people verified with
+  the QR scan; keep `requireVerified` on, and the pages lead an unverified member to the scan.
 
 ## Crypto core rules
 - The app imports **only `documents/crypto/index.js`**, lazily, after `loadSodium()`.
