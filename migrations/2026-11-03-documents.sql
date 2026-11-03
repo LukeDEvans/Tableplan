@@ -348,9 +348,15 @@ grant update (enc_name, key_version, sort, deleted_at) on public.doc_folders to 
 grant select, insert, delete on public.doc_files to authenticated;
 grant update (folder_id, wrapped_key, key_version, enc_meta, parts, size, backend, deleted_at) on public.doc_files to authenticated;
 
-grant all on public.doc_vaults, public.doc_device_boxes, public.doc_vault_grants, public.doc_vault_keys_old,
-  public.doc_vault_settled, public.doc_recovery_keys, public.doc_recovery_wraps, public.doc_folders, public.doc_files
-  to service_role;
+grant all on public.doc_vaults to service_role;
+grant all on public.doc_device_boxes to service_role;
+grant all on public.doc_vault_grants to service_role;
+grant all on public.doc_vault_keys_old to service_role;
+grant all on public.doc_vault_settled to service_role;
+grant all on public.doc_recovery_keys to service_role;
+grant all on public.doc_recovery_wraps to service_role;
+grant all on public.doc_folders to service_role;
+grant all on public.doc_files to service_role;
 
 -- doc_scope_allows answers for any person, so only the definer functions use it.
 revoke all on function public.doc_scope_allows(text, uuid) from public, anon, authenticated;

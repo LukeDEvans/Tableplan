@@ -56,9 +56,30 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   self-test in headless Chromium). A crypto change isn't done until both pass and a
   planted bug in the area you touched is caught.
 
+## Modules (step 2, 2026-11-03)
+- `documents/server.js` — the only door to Supabase (`createDocumentsServer(transport)`,
+  same transport as messaging). Every read names columns and is bounded to one vault
+  or scope; nothing loops.
+- `documents/vaults.js` — vault keys on this device (`createDocumentsVaults`): create
+  (phone), open (grant at the proven settled version only), grantPending, rotate,
+  removeDevice (phone; rotates and requires a new code), newRecoveryCode, restore.
+  Uses the messaging account's `resolveDevices` (pinned identities) and `signers()`.
+- `documents/storage.js` — the storage adapter: presign → direct PUT/GET/DELETE;
+  `memoryObjectStore` for tests; `edgePresigner` for the app.
+- `documents/s3-presign.js` — SigV4 query presigning on WebCrypto (AWS worked
+  example in the tests). **Copied** to `supabase/functions/doc-storage/s3-presign.js`;
+  a test fails if the copies differ.
+- `supabase/functions/doc-storage/index.ts` — the Edge Function that signs URLs after
+  `doc_can_access` (as the caller). Secrets `DOC_S3_*`; setup in DOCUMENTS_R2_SETUP.md.
+- Tables: `migrations/2026-11-03-documents.sql` — **LIVE** (applied 2026-11-03). Any
+  change is a new, gated migration. Tests: `test/documents-pglite-harness.js`,
+  `test/documents-migration.test.js` (access rules), `test/documents-vaults.test.js`
+  (devices, rotation, recovery, a lying server), `test/documents-storage.test.js`,
+  `test/documents-edge-function.test.js`.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `documents/crypto/*.js`
+- files: `documents/*.js`, `documents/crypto/*.js`
 - state: none — documents never go in tableplan_states; they live in the doc_ tables, R2 and on each device
