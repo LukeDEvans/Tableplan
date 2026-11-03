@@ -458,7 +458,22 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
     };
   }
 
+  // For Documents (DOCUMENTS_DESIGN.md §3): this device's signing key, and on the
+  // phone the person's identity key, which signs Documents statements (vault
+  // settled, recovery key). Never leaves the device; callers must not store it.
+  async function signers() {
+    const a = await account();
+    if (!a || a.state !== "ready") throw new MessagingError("NOT_READY", "Messaging isn't set up on this device.");
+    return {
+      userId, deviceId: a.deviceId, kind: a.kind,
+      device: { signPub: a.device.signPub, signPriv: a.device.signPriv },
+      identity: a.kind === "phone" && a.identity ? { signPub: a.identity.signPub, signPriv: a.identity.signPriv } : null,
+      identitySignPub: a.identitySignPub,
+    };
+  }
+
   return {
+    signers,
     status, setupPhone, startLink, approveLink, finishLink, maintain,
     prekeyState, commitPrekeyUse, resolveDevices,
     safetyNumberWith, safetyQrWith, confirmSafetyScan, markVerified, acknowledgeChange,
