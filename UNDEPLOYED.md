@@ -10,6 +10,12 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Themes: Thanksgiving; Seasonal covers November** · #211 · **TestFlight build** (client-only;
+  the laptop needs a Netlify deploy). Settings › Display › Holiday gains Thanksgiving (brown,
+  pumpkin, gold, olive, cranberry; light and dark). Seasonal now shows Thanksgiving all of
+  November, and its line names what comes next. No migration, no new env vars.
+  Post-deploy: pick Thanksgiving in Light and Dark — Calendar, Meal Plan, Shop, Finance, News
+  read clearly and the dock is brown. Anyone on Seasonal sees Thanksgiving until Dec 1.
 - **Watch: cross episodes off, services from the right, plainer seasons and Next** · #203 ·
   Posters show only the title (year/seasons stay in the panel); episodes are crossed off by
   tapping (no check boxes); services start at the right with "Other services" last; the
