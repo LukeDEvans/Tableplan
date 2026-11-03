@@ -64,6 +64,11 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   (phone), open (grant at the proven settled version only), grantPending, rotate,
   removeDevice (phone; rotates and requires a new code), newRecoveryCode, restore.
   Uses the messaging account's `resolveDevices` (pinned identities) and `signers()`.
+- `documents/library.js` — folders and files of a scope (`createDocumentsLibrary`):
+  starting folders, add/list/open/thumbnail/search text, rename/tags/date/move (each
+  bumps `rev`), Recently deleted (30 days, blobs purged first). Never shows rows below
+  the settled version; keeps the highest `rev` per file and refuses older metadata;
+  the encrypted `folderId` wins over the row's `folder_id`.
 - `documents/storage.js` — the storage adapter: presign → direct PUT/GET/DELETE;
   `memoryObjectStore` for tests; `edgePresigner` for the app.
 - `documents/s3-presign.js` — SigV4 query presigning on WebCrypto (AWS worked
@@ -75,7 +80,7 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   change is a new, gated migration. Tests: `test/documents-pglite-harness.js`,
   `test/documents-migration.test.js` (access rules), `test/documents-vaults.test.js`
   (devices, rotation, recovery, a lying server), `test/documents-storage.test.js`,
-  `test/documents-edge-function.test.js`.
+  `test/documents-edge-function.test.js`, `test/documents-library.test.js`.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are

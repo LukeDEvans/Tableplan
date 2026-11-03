@@ -68,6 +68,19 @@ export function createDocumentsServer(transport) {
     addRecoveryWrap: (row) => transport.insert("doc_recovery_wraps", [row]),
     removeRecoveryWraps: (userId, vaultId) => transport.remove("doc_recovery_wraps", `user_id=eq.${uuid(userId, "user")}&vault_id=eq.${uuid(vaultId, "vault")}`),
 
+    // ---- folders and files (the library) -------------------------------------------------------------
+    folders: (scope) => transport.select("doc_folders", `scope=eq.${enc(scopeId(scope))}&select=id,enc_name,key_version,kind,sort,updated_at,deleted_at&order=sort`),
+    addFolder: (row) => transport.insert("doc_folders", [row]),
+    updateFolder: (id, patch) => transport.update("doc_folders", `id=eq.${uuid(id, "folder")}`, patch),
+    removeFolder: (id) => transport.remove("doc_folders", `id=eq.${uuid(id, "folder")}`),
+    // Changed since `since` (ISO time), or everything. Bounded by the scope.
+    files: (scope, since = null) => transport.select("doc_files",
+      `scope=eq.${enc(scopeId(scope))}${since ? `&updated_at=gt.${enc(since)}` : ""}&select=id,folder_id,wrapped_key,key_version,enc_meta,parts,size,added_by,created_at,updated_at,deleted_at&order=updated_at`),
+    addFile: (row) => transport.insert("doc_files", [row]),
+    updateFile: (id, patch) => transport.update("doc_files", `id=eq.${uuid(id, "file")}`, patch),
+    removeFile: (id) => transport.remove("doc_files", `id=eq.${uuid(id, "file")}`),
+    usage: (scope) => transport.rpc("doc_usage", { p_scope: scopeId(scope) }),
+
     // ---- re-wrapping on rotation ---------------------------------------------------------------------
     fileKeys: (scope) => transport.select("doc_files", `scope=eq.${enc(scopeId(scope))}&select=${FILE_KEY_COLS}`),
     rewrapFile: (id, wrapped, v) => transport.update("doc_files", `id=eq.${uuid(id, "file")}`, { wrapped_key: wrapped, key_version: version(v) }),
