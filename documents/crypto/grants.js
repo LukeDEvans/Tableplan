@@ -107,6 +107,18 @@ export function createGrant({ granter, vaultKey, ctx, removedDeviceIds }) {
   return { sealed, sig, granterUserId: granter.userId, granterDeviceId: granter.deviceId };
 }
 
+// Checks only the granter's signature, for a device that isn't the recipient (to
+// tell a real grant from a junk row when deciding who still needs one).
+export function verifyGrantSignature({ grant, ctx, granterSignPub }) {
+  try {
+    requireKey("granter signPub", granterSignPub);
+    if (!(grant?.sealed instanceof Uint8Array) || !(grant?.sig instanceof Uint8Array) || grant.sig.length !== 64) return false;
+    return sodium().crypto_sign_verify_detached(grant.sig, grantSigBytes(grantContext(ctx), grant.granterUserId, grant.granterDeviceId, grant.sealed), granterSignPub);
+  } catch {
+    return false;
+  }
+}
+
 // grant = { sealed, sig, granterUserId, granterDeviceId }; ctx = what this device
 // expects (its own ids and box key, the vault, scope and version it asked for);
 // box = this device's { pub, priv }. Returns the vault key or throws.

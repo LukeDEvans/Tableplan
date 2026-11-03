@@ -433,3 +433,31 @@ What the tables enforce (the devices still prove everything that matters):
 
 **Still to do in step 2:** R2 bucket + keys (Luke, DOCUMENTS_R2_SETUP.md) → deploy `doc-storage` → a real encrypted upload/download round trip.
 
+---
+
+## 19. Second independent review (2026-11-03) — step 2
+
+A separate agent attacked the tables, the vault layer and the storage function, confirming each finding with a script against the real migration.
+
+**Found correct:** row security (strangers, coworkers and anon get nothing; Marijane can't see Personal), grants only at a proven version and bound to vault/version/device, removed devices' grants refused even if the server un-revokes them, swapped box keys caught, device-signed statements ignored, hidden statements don't roll a device back, presigned keys strictly `scope/uuid/part`, sizes pinned, privileges.
+
+**Fixed (each has a test that fails when the fix is reverted, 12 of 13 checked by planting the bug back):**
+1. *(P0)* The server decided who counts as a Household member and which identity is theirs: a faked reset or an added "member" could receive the Household key or push a key it chose. → **Only verified people are trusted** (the safety-number scan, once between your phones); a changed identity loses trust until verified again. Unverified members get nothing.
+2. *(P0)* A junk row inserted first (settled, old key, grant) could take a version's slot and silently stop a rotation. → Surrogate keys (nothing can be "taken"), and every rotation step checks for a row that **verifies**.
+3. *(P0)* One unreadable file row stopped a device removal for good. → Unreadable rows are skipped (and stay hidden); removal is resumable even if the device is already removed.
+4. *(P1)* A crash after the settled step made rotation loop and pile up versions. → Rotation resumes or finishes; the server's version is only a hint, moved one step at a time.
+5. *(P1)* A second removal during an unfinished rotation was dropped. → It joins the rotation.
+6. *(P1)* One member's statement could remove the other's devices or lock them out for good. → Removals are per signer; a higher version without a grant only makes a device wait (it keeps its keys).
+7. *(P1)* Restore could be talked out of re-keying (the server's version number), and never actually removed the old devices. → "Short" comes only from the recovery chain; every old device of yours (removed ones included) is listed in the new settled statement.
+8. *(P1)* The recovery generation could be pushed to the top, blocking new codes; deleted wraps crashed restore. → Generation moves up exactly one; restore reports "not covered".
+9. *(P2)* Members could hard-delete files and blobs and each other's grants. → No hard deletes (Recently deleted, purge after 30 days via `doc_purge_file`); blobs only deletable after that (`doc_blob_deletable` in the function); grants withdrawn only by their granter or recipient.
+11–14. *(P3)* Author and time are set by the database; the Receipts folder is checked on insert; the function no longer answers `null` origins or any localhost port, and junk items get 400; box keys are visible only to household members.
+
+**Logged, not fixed here:**
+- *(P1, finding 10)* A removed device's Supabase session keeps working until it expires — the enabler behind several findings above, now survivable but still a nuisance. ISSUES.md, with options (gated: auth).
+- The "changed identity" check is redundant while verification is required (messaging already unverifies a changed key); kept as defence in depth.
+
+**Database:** `migrations/2026-11-03b-documents-v2.sql` drops and recreates the (empty) tables. Supabase won't run a `DROP` from this session, so **Luke runs it in the SQL editor** (DOCUMENTS_R2_SETUP.md step 0); I then verify it and record it in `schema_migrations`. Until then the first version stays live and unused.
+
+**Decision for Luke:** Household sharing needs you and Marijane to **verify each other once** (scan the QR between your phones, the same check messaging offers). Messaging only *prompts* for it; Documents *requires* it, because otherwise the server could slip in a key.
+

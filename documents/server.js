@@ -46,9 +46,11 @@ export function createDocumentsServer(transport) {
     }]),
 
     // ---- grants -------------------------------------------------------------------------------
-    myGrant: async (vaultId, v, deviceId) => (await transport.select("doc_vault_grants",
-      `vault_id=eq.${uuid(vaultId, "vault")}&key_version=eq.${version(v)}&device_id=eq.${uuid(deviceId, "device")}&select=${GRANT_COLS}`))[0] || null,
-    grantsAt: (vaultId, v) => transport.select("doc_vault_grants", `vault_id=eq.${uuid(vaultId, "vault")}&key_version=eq.${version(v)}&select=device_id`),
+    // Every row for this device at this version: anyone with write access can add rows,
+    // so the device tries each and uses the one that verifies.
+    myGrants: (vaultId, v, deviceId) => transport.select("doc_vault_grants",
+      `vault_id=eq.${uuid(vaultId, "vault")}&key_version=eq.${version(v)}&device_id=eq.${uuid(deviceId, "device")}&select=${GRANT_COLS}&limit=50`),
+    grantsAt: (vaultId, v) => transport.select("doc_vault_grants", `vault_id=eq.${uuid(vaultId, "vault")}&key_version=eq.${version(v)}&select=${GRANT_COLS}&limit=500`),
     addGrants: (rows) => rows.length ? transport.insert("doc_vault_grants", rows) : Promise.resolve(null),
 
     // ---- older keys and settled statements ------------------------------------------------------
@@ -64,21 +66,31 @@ export function createDocumentsServer(transport) {
     recoveryKey: async (userId) => (await transport.select("doc_recovery_keys", `user_id=eq.${uuid(userId, "user")}&select=user_id,generation,recovery_pub,params,sig`))[0] || null,
     addRecoveryKey: (row) => transport.insert("doc_recovery_keys", [row]),
     replaceRecoveryKey: (userId, patch) => transport.update("doc_recovery_keys", `user_id=eq.${uuid(userId, "user")}`, patch),
-    recoveryWraps: (userId) => transport.select("doc_recovery_wraps", `user_id=eq.${uuid(userId, "user")}&select=vault_id,key_version,kind,wrapped`),
+    recoveryWraps: (userId) => transport.select("doc_recovery_wraps", `user_id=eq.${uuid(userId, "user")}&select=id,vault_id,key_version,kind,wrapped&limit=500`),
     addRecoveryWrap: (row) => transport.insert("doc_recovery_wraps", [row]),
-    removeRecoveryWraps: (userId, vaultId) => transport.remove("doc_recovery_wraps", `user_id=eq.${uuid(userId, "user")}&vault_id=eq.${uuid(vaultId, "vault")}`),
+    // After a new code: drop this vault's wraps except the new anchors.
+    removeRecoveryWrapsExcept: async (userId, vaultId, keepIds) => {
+      const rows = await transport.select("doc_recovery_wraps", `user_id=eq.${uuid(userId, "user")}&vault_id=eq.${uuid(vaultId, "vault")}&select=id`);
+      const keep = new Set(keepIds.map(Number));
+      for (const r of rows) if (!keep.has(Number(r.id))) await transport.remove("doc_recovery_wraps", `id=eq.${Number(r.id)}`);
+    },
+
+    // Every device of this person, removed ones included (messaging's table).
+    myDeviceIds: async (userId) => (await transport.select("msg_devices", `user_id=eq.${uuid(userId, "user")}&select=device_id`)).map((r) => r.device_id),
 
     // ---- folders and files (the library) -------------------------------------------------------------
     folders: (scope) => transport.select("doc_folders", `scope=eq.${enc(scopeId(scope))}&select=id,enc_name,key_version,kind,sort,updated_at,deleted_at&order=sort`),
     addFolder: (row) => transport.insert("doc_folders", [row]),
     updateFolder: (id, patch) => transport.update("doc_folders", `id=eq.${uuid(id, "folder")}`, patch),
-    removeFolder: (id) => transport.remove("doc_folders", `id=eq.${uuid(id, "folder")}`),
     // Changed since `since` (ISO time), or everything. Bounded by the scope.
     files: (scope, since = null) => transport.select("doc_files",
       `scope=eq.${enc(scopeId(scope))}${since ? `&updated_at=gt.${enc(since)}` : ""}&select=id,folder_id,wrapped_key,key_version,enc_meta,parts,size,added_by,created_at,updated_at,deleted_at&order=updated_at`),
     addFile: (row) => transport.insert("doc_files", [row]),
     updateFile: (id, patch) => transport.update("doc_files", `id=eq.${uuid(id, "file")}`, patch),
-    removeFile: (id) => transport.remove("doc_files", `id=eq.${uuid(id, "file")}`),
+    // Members can't hard-delete; these remove a row only once it's been in Recently
+    // deleted for 30 days (checked by the database).
+    purgeFile: (id) => transport.rpc("doc_purge_file", { p_id: uuid(id, "file") }),
+    purgeFolder: (id) => transport.rpc("doc_purge_folder", { p_id: uuid(id, "folder") }),
     usage: (scope) => transport.rpc("doc_usage", { p_scope: scopeId(scope) }),
 
     // ---- re-wrapping on rotation ---------------------------------------------------------------------

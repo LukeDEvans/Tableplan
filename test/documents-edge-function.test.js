@@ -14,6 +14,7 @@ const ENV = {
 let handler;
 let env = { ...ENV };
 let allowed = new Set();
+let deletable = new Set();
 const realFetch = globalThis.fetch;
 
 beforeAll(async () => {
@@ -23,6 +24,10 @@ beforeAll(async () => {
       const scope = JSON.parse(init.body).p_scope;
       const ok = init.headers.authorization === "Bearer good.token" && allowed.has(scope);
       return new Response(JSON.stringify(ok), { status: 200 });
+    }
+    if (String(url).endsWith("/rest/v1/rpc/doc_blob_deletable")) {
+      const { p_scope, p_file } = JSON.parse(init.body);
+      return new Response(JSON.stringify(deletable.has(`${p_scope}/${p_file}`)), { status: 200 });
     }
     throw new Error(`unexpected fetch ${url}`);
   };
@@ -64,6 +69,8 @@ describe("doc-storage", () => {
       { op: "get", items: [{ scope, fileId, part: "index.html" }] },
       { op: "put", items: [{ scope, fileId, part: "content" }] },
       { op: "put", items: [{ scope, fileId, part: "content", size: 71 * 1024 * 1024 }] },
+      { op: "get", items: [null] },
+      null,
     ]) expect((await call(bad)).status).toBe(400);
   });
 
@@ -71,10 +78,22 @@ describe("doc-storage", () => {
     allowed = new Set([scope]);
     const pre = await handler(new Request("https://x/doc-storage", { method: "OPTIONS", headers: { origin: "https://evil.example" } }));
     expect(pre.status).toBe(204);
-    expect(pre.headers.get("access-control-allow-origin")).toBe("null");
+    expect(pre.headers.get("access-control-allow-origin")).toBeNull();
+    const sandboxed = await handler(new Request("https://x/doc-storage", { method: "OPTIONS", headers: { origin: "null" } }));
+    expect(sandboxed.headers.get("access-control-allow-origin")).toBeNull();
+    const otherPort = await handler(new Request("https://x/doc-storage", { method: "OPTIONS", headers: { origin: "http://localhost:9999" } }));
+    expect(otherPort.headers.get("access-control-allow-origin")).toBeNull();
     const ok = await handler(new Request("https://x/doc-storage", { method: "OPTIONS", headers: { origin: "https://effervescent-malabi-e0af55.netlify.app" } }));
     expect(ok.headers.get("access-control-allow-origin")).toBe("https://effervescent-malabi-e0af55.netlify.app");
     expect((await call(null, { method: "GET" })).status).toBe(405);
+  });
+
+  it("deletes only blobs the database says may go (30 days in Recently deleted)", async () => {
+    allowed = new Set([scope]);
+    deletable = new Set();
+    expect((await call({ op: "delete", items: [{ scope, fileId, part: "content" }] })).status).toBe(403);
+    deletable = new Set([`${scope}/${fileId}`]);
+    expect((await call({ op: "delete", items: [{ scope, fileId, part: "content" }, { scope, fileId, part: "thumb" }] })).status).toBe(200);
   });
 
   it("is off when switched off or not configured", async () => {

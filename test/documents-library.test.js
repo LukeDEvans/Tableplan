@@ -42,6 +42,7 @@ async function household() {
   const her = device("wife");
   await her.account.setupPhone();
   await her.vaults.ensureBox();
+  for (const [a, b] of [[luke, her], [her, luke]]) { await a.account.resolveDevices([b.userId]); await a.account.markVerified(b.userId); }
   await luke.vaults.grantPending(GROUP);
   await her.vaults.open(GROUP);
   return { luke, her };
@@ -187,7 +188,12 @@ describe("Recently deleted", () => {
     expect((await luke.library.files(GROUP)).length).toBe(1);
     await luke.library.trash(GROUP, id);
     expect(await luke.library.purgeExpired(GROUP)).toBe(0);
+    expect(await luke.library.purge(GROUP, id)).toBe(false); // too early: nothing goes
+    expect((await luke.library.files(GROUP, { includeDeleted: true })).length).toBe(1);
+    expect([...objects.objects.keys()].filter((k) => k.includes(id)).length).toBe(2);
     clock += 31 * 24 * 3600 * 1000;
+    // The database checks the 30 days by its own clock: age the row there too.
+    await db.query(`update public.doc_files set deleted_at = now() - interval '31 days'`);
     expect(await luke.library.purgeExpired(GROUP)).toBe(1);
     expect((await db.query(`select count(*)::int n from public.doc_files`)).rows[0].n).toBe(0);
     expect([...objects.objects.keys()].filter((k) => k.includes(id))).toEqual([]);

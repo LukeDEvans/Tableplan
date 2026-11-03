@@ -1,5 +1,8 @@
 -- Documents: end-to-end encrypted papers (DOCUMENTS_DESIGN.md §3, §6). Step 2.
 --
+-- SUPERSEDED the same day by 2026-11-03b-documents-v2.sql, which drops these (empty)
+-- tables and creates them again with the second review's fixes. Kept as history.
+--
 -- The server holds only WRAPPED keys, ENCRYPTED names and metadata, signatures and
 -- public keys. File contents live in object storage (R2) as ciphertext. Nothing
 -- here touches tableplan_states.

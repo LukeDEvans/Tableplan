@@ -70,9 +70,10 @@ describe("device box keys", () => {
     expect(isErr(await asUser(db, luke, `insert into public.doc_device_boxes (device_id, user_id, box_pub, box_sig) values ($1, $2, $3, $4)`, [DEV.lukeOld, luke, k43("D"), s86("d")]))).toBe(true);
     expect(isErr(await asUser(db, wife, `insert into public.doc_device_boxes (device_id, user_id, box_pub, box_sig) values ($1, $2, $3, $4)`, [DEV.wife, wife, k43("E"), s86("d")]))).toBe(false);
   });
-  it("readable by contacts, not strangers; can't be edited", async () => {
+  it("readable by the household, not business contacts or strangers; can't be edited", async () => {
     expect((await asUser(db, wife, `select device_id from public.doc_device_boxes where user_id = $1`, [luke])).length).toBe(1);
     expect(await asUser(db, stranger, `select device_id from public.doc_device_boxes`)).toEqual([]);
+    expect(await asUser(db, coworker, `select device_id from public.doc_device_boxes`)).toEqual([]);
     expect(isErr(await asUser(db, luke, `update public.doc_device_boxes set box_pub = $1 where device_id = $2`, [k43("F"), DEV.luke]))).toBe(true);
   });
 });
@@ -95,6 +96,19 @@ describe("grants", () => {
     expect(isErr(await asUser(db, luke, ...grant(houseVault, 2, DEV.stranger, luke, DEV.luke)))).toBe(true);
     expect(isErr(await asUser(db, stranger, ...grant(houseVault, 2, DEV.stranger, stranger, DEV.stranger)))).toBe(true);
   });
+  it("rows can't be squatted: a second row for the same device and version is allowed", async () => {
+    expect(isErr(await asUser(db, luke, ...grant(houseVault, 1, DEV.wife, luke, DEV.luke)))).toBe(false);
+    expect((await asUser(db, wife, `select id from public.doc_vault_grants where device_id = $1`, [DEV.wife])).length).toBe(2);
+    await asUser(db, luke, `delete from public.doc_vault_grants where device_id = $1 and id = (select max(id) from public.doc_vault_grants where device_id = $1)`, [DEV.wife]);
+  });
+
+  it("only the granter or the recipient's owner can withdraw a grant", async () => {
+    // Marijane can't delete Luke's grant to Luke's own phone…
+    expect(await asUser(db, wife, `delete from public.doc_vault_grants where device_id = $1 returning id`, [DEV.luke])).toEqual([]);
+    // …but can turn down one made to her own device (and Luke can withdraw his).
+    expect(await asUser(db, luke, `select device_id from public.doc_vault_grants where device_id = $1`, [DEV.luke])).toHaveLength(1);
+  });
+
   it("members see the vault's grants; nobody else", async () => {
     expect((await asUser(db, wife, `select device_id from public.doc_vault_grants`)).length).toBe(2);
     expect(await asUser(db, stranger, `select device_id from public.doc_vault_grants`)).toEqual([]);
@@ -122,6 +136,8 @@ describe("recovery", () => {
     expect(isErr(await asUser(db, luke, ins, [luke, 1, k43("R"), b64(34), s86("r")]))).toBe(false);
     expect(isErr(await asUser(db, luke, `update public.doc_recovery_keys set generation = 1, recovery_pub = $1 where user_id = $2`, [k43("Q"), luke]))).toBe(true);
     expect(isErr(await asUser(db, luke, `update public.doc_recovery_keys set generation = 2, recovery_pub = $1 where user_id = $2`, [k43("Q"), luke]))).toBe(false);
+    // no jumping to the top (which would make the next code impossible)
+    expect(isErr(await asUser(db, luke, `update public.doc_recovery_keys set generation = 2147483647 where user_id = $1`, [luke]))).toBe(true);
     expect(await asUser(db, wife, `select user_id from public.doc_recovery_keys`)).toEqual([]);
   });
   it("own wraps, only for vaults one may use", async () => {
@@ -144,6 +160,8 @@ describe("folders and files", () => {
   };
 
   it("one Receipts folder per scope, and it stays", async () => {
+    // A Receipts folder can't be planted already deleted (it would take the one slot for good).
+    expect(isErr(await asUser(db, luke, `insert into public.doc_folders (id, scope, enc_name, key_version, kind, deleted_at) values ($1, $2, $3, 1, 'receipts', now())`, ["f0000000-0000-0000-0000-00000000000b", GROUP, b64(140)]))).toBe(true);
     expect(isErr(await asUser(db, luke, ...folder(F.rcpt, GROUP, "receipts")))).toBe(false);
     expect(isErr(await asUser(db, wife, ...folder("f0000000-0000-0000-0000-000000000009", GROUP, "receipts")))).toBe(true);
     expect(isErr(await asUser(db, wife, `update public.doc_folders set deleted_at = now() where id = $1`, [F.rcpt]))).toBe(true);
@@ -171,6 +189,32 @@ describe("folders and files", () => {
     expect(isErr(await asUser(db, luke, ...file("d0000000-0000-0000-0000-000000000008", GROUP, F.rcpt, { parts: "{content,thumb,text}" })))).toBe(false);
   });
 
+  it("author and creation time come from the database", async () => {
+    const id = "d0000000-0000-0000-0000-0000000000a1";
+    expect(isErr(await asUser(db, wife, ...file(id, GROUP, null, { added_by: luke, created_at: "2001-01-01T00:00:00Z" })))).toBe(false);
+    const [row] = await asUser(db, wife, `select added_by, created_at from public.doc_files where id = $1`, [id]);
+    expect(row.added_by).toBe(wife);
+    expect(new Date(row.created_at).getFullYear()).toBeGreaterThan(2020);
+  });
+
+  it("no hard deletes: only Recently deleted, purged after 30 days", async () => {
+    const id = "d0000000-0000-0000-0000-0000000000a1";
+    expect(isErr(await asUser(db, wife, `delete from public.doc_files where id = $1`, [id]))).toBe(true);
+    expect(isErr(await asUser(db, wife, `delete from public.doc_folders where id = $1`, [F.home]))).toBe(true);
+    expect(await asUser(db, wife, `select public.doc_purge_file($1) ok`, [id])).toEqual([{ ok: false }]); // not deleted yet
+    await asUser(db, wife, `update public.doc_files set deleted_at = now() - interval '29 days' where id = $1`, [id]);
+    expect(await asUser(db, wife, `select public.doc_purge_file($1) ok`, [id])).toEqual([{ ok: false }]);
+    expect(await asUser(db, wife, `select public.doc_blob_deletable($1, $2) ok`, [GROUP, id])).toEqual([{ ok: false }]);
+    await asUser(db, wife, `update public.doc_files set deleted_at = now() - interval '31 days' where id = $1`, [id]);
+    expect(await asUser(db, stranger, `select public.doc_purge_file($1) ok`, [id])).toEqual([{ ok: false }]);
+    expect(await asUser(db, stranger, `select public.doc_blob_deletable($1, $2) ok`, [GROUP, id])).toEqual([{ ok: false }]);
+    expect(await asUser(db, wife, `select public.doc_blob_deletable($1, $2) ok`, [GROUP, id])).toEqual([{ ok: true }]);
+    expect(await asUser(db, wife, `select public.doc_blob_deletable($1, $2) ok`, [PERSONAL, id])).toEqual([{ ok: false }]);
+    expect(await asUser(db, wife, `select public.doc_purge_file($1) ok`, [id])).toEqual([{ ok: true }]);
+    // an upload that never got a row may be cleaned up
+    expect(await asUser(db, wife, `select public.doc_blob_deletable($1, $2) ok`, [GROUP, "d0000000-0000-0000-0000-0000000000ff"])).toEqual([{ ok: true }]);
+  });
+
   it("updates bump updated_at; scope, id and author can't change; folder must stay in scope", async () => {
     const id = "d0000000-0000-0000-0000-000000000001";
     const before = (await asUser(db, luke, `select updated_at from public.doc_files where id = $1`, [id]))[0].updated_at;
@@ -188,7 +232,7 @@ describe("folders and files", () => {
     for (const u of [stranger, coworker]) {
       expect(await asUser(db, u, `select id from public.doc_files`)).toEqual([]);
       expect(await asUser(db, u, `select id from public.doc_folders`)).toEqual([]);
-      expect(await asUser(db, u, `delete from public.doc_files returning id`)).toEqual([]);
+      expect(isErr(await asUser(db, u, `delete from public.doc_files returning id`))).toBe(true);
     }
     expect(isErr(await asUser(db, null, `select id from public.doc_files`))).toBe(true);
     expect(isErr(await asUser(db, null, `insert into public.doc_folders (id, scope, enc_name, key_version) values ('f0000000-0000-0000-0000-00000000000a', $1, $2, 1)`, [GROUP, b64(140)]))).toBe(true);
@@ -217,6 +261,6 @@ describe("privileges", () => {
     const { DOC_MIGRATIONS } = await import("./documents-pglite-harness.js");
     const { readFileSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
-    await again.exec(readFileSync(fileURLToPath(new URL(`../migrations/${DOC_MIGRATIONS[0]}`, import.meta.url)), "utf8"));
+    await again.exec(readFileSync(fileURLToPath(new URL(`../migrations/${DOC_MIGRATIONS.at(-1)}`, import.meta.url)), "utf8"));
   });
 });

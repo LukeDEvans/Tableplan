@@ -1,4 +1,4 @@
-# Documents storage setup — Cloudflare R2 (about 10 minutes)
+# Documents setup for tonight — tables update + Cloudflare R2 (about 15 minutes)
 
 Goal: a private Cloudflare R2 bucket for Documents' encrypted files, and its keys stored in Supabase so the `doc-storage` function can hand out short-lived upload and download links (DOCUMENTS_DESIGN.md §5).
 
@@ -7,6 +7,14 @@ Nothing readable ever goes into the bucket: files are encrypted on your devices 
 Cloudflare's screens change now and then. If a button below has moved, the names are usually close; tell me what you see and I'll adjust.
 
 ---
+
+## 0. Update the Documents tables in Supabase (2 minutes)
+
+The second review today tightened the tables. They're still empty, so the update drops and recreates them, and Supabase only lets a person run a `DROP`, not me from here.
+
+1. Open the file on GitHub: **github.com/LukeDEvans/Tableplan/blob/claude/documents-crypto/migrations/2026-11-03b-documents-v2.sql** and click **Copy raw file** (the copy icon).
+2. **supabase.com/dashboard** → your project → **SQL Editor** → **New query** → paste → **Run**.
+3. It should say "Success. No rows returned." Tell me and I'll check it and record it.
 
 ## 1. Sign in
 

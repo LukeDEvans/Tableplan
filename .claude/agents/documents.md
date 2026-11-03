@@ -39,6 +39,15 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   messaging's; a change there is a messaging change too.
 - Every wrapped value names its **context** (vault, scope, file/folder id, key
   version) — never wrap without one.
+- **Trust = me + VERIFIED people** (safety-number scan) whose identity hasn't
+  changed. A member list or identity from the server adds no one: unverified or
+  changed people get no grants, and their grants and statements are ignored.
+- **Rows can be duplicated by anyone with write access** (surrogate keys): always look
+  for a row that verifies, never one that merely exists. Removals are per signer
+  ("user:device"); a statement never deletes another person's keys; a proven version
+  without a grant makes a device wait (old rows hidden), it never wipes it.
+- Members can't hard-delete: Recently deleted → `doc_purge_file` / `doc_purge_folder`
+  after 30 days; blob deletes are gated by `doc_blob_deletable` in doc-storage.
 - **Removal never comes from the server** (`revoked_at` is the server's to fake).
   Removing a device happens on the phone: rotate each vault, sign a **vault
   settled** statement with the identity (cumulative removed list,
@@ -76,8 +85,10 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   a test fails if the copies differ.
 - `supabase/functions/doc-storage/index.ts` — the Edge Function that signs URLs after
   `doc_can_access` (as the caller). Secrets `DOC_S3_*`; setup in DOCUMENTS_R2_SETUP.md.
-- Tables: `migrations/2026-11-03-documents.sql` — **LIVE** (applied 2026-11-03). Any
-  change is a new, gated migration. Tests: `test/documents-pglite-harness.js`,
+- Tables: `migrations/2026-11-03-documents.sql` was applied 2026-11-03 and is
+  **superseded** by `2026-11-03b-documents-v2.sql` (drop + recreate while empty;
+  needs Luke to run it in the SQL editor because of the DROPs). Any later change is a
+  new, gated migration. The test harness applies both, in order. Tests: `test/documents-pglite-harness.js`,
   `test/documents-migration.test.js` (access rules), `test/documents-vaults.test.js`
   (devices, rotation, recovery, a lying server), `test/documents-storage.test.js`,
   `test/documents-edge-function.test.js`, `test/documents-library.test.js`.

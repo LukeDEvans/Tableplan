@@ -206,14 +206,16 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
   async function trash(scope, fileId) { await server.updateFile(fileId, { deleted_at: new Date(now()).toISOString() }); }
   async function restore(scope, fileId) { await server.updateFile(fileId, { deleted_at: null }); }
 
-  // Gone for good: blobs first (so nothing is left unreferenced), then the row.
+  // Gone for good, after 30 days in Recently deleted (the storage function and the
+  // database both check): blobs first, so nothing is left unreferenced, then the row.
   async function purge(scope, fileId) {
     const r = (await server.files(scope)).find((x) => x.id === fileId);
-    if (!r) return;
+    if (!r || !r.deleted_at || Date.parse(r.deleted_at) > now() - RECENTLY_DELETED_DAYS * 24 * 3600 * 1000) return false;
     await storage.remove(scope, fileId, r.parts);
-    await server.removeFile(fileId);
+    await server.purgeFile(fileId);
     await store.remove(`rev:${fileId}`);
     await store.remove(`meta:${fileId}`);
+    return true;
   }
 
   // Recently deleted older than 30 days. Called when the page opens; bounded by the scope.

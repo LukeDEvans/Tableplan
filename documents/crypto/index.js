@@ -14,7 +14,7 @@ export {
 
 export { encryptBlob, decryptBlob, readBlobHeader, PARTS, MAX_PLAINTEXT } from "./file.js";
 export { parseMeta, encryptMeta, decryptMeta, encryptText, decryptText, cleanName, MIME_TYPES, LIMITS as META_LIMITS } from "./meta.js";
-export { generateBoxKey, signBoxKey, verifyBoxKey, createGrant, openGrant } from "./grants.js";
+export { generateBoxKey, signBoxKey, verifyBoxKey, createGrant, openGrant, verifyGrantSignature } from "./grants.js";
 export {
   generateRecoveryCode, parseRecoveryCode, formatRecoveryCode, deriveRecoveryKeys,
   wrapAnchor, sealToRecovery, restoreVaultKey,
