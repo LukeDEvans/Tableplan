@@ -34,7 +34,7 @@ import { normalizeCards as normalizeLanguageCards, mergeCards as mergeLanguageCa
 import { normalizeUserLessons, normalizeUserWords, mergeUserLessons, mergeUserWords } from './language-words.js';
 import { createNewsTickerModule } from './news-ticker.js';
 import { normalizeSportsPrefs } from './sports-model.js';
-import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonEnds } from './theme.js';
+import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
@@ -17985,8 +17985,6 @@ function displaySettingsTemplate() {
     : "";
   const now = new Date();
   const seasonNow = seasonalTheme(now);
-  const ends = seasonEnds(now);
-  const endsLabel = ends ? ends.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
   const modes = [["light", "Light"], ["dark", "Dark"], ["auto", "Auto"]];
   const themeDesc = {
     classic: "The everyday look.",
@@ -18000,9 +17998,8 @@ function displaySettingsTemplate() {
     gophers: "Maroon and gold.",
     ajax: "Red, white and black.",
     mnufc: "Black, sky blue and gray.",
-    seasonal: seasonNow === "classic"
-      ? "Halloween every October, Classic the rest of the year."
-      : `${THEMES[seasonNow].label} now, Classic from ${escapeHtml(endsLabel)}.`,
+    thanksgiving: "Brown, pumpkin, gold, olive and cranberry.",
+    seasonal: escapeHtml(seasonalSummary(now, (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" }))),
   };
   const swatch = (key) => {
     const colors = THEMES[key === "seasonal" ? (seasonNow === "classic" ? "halloween" : seasonNow) : key].swatch;

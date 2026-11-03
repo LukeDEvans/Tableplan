@@ -45,6 +45,14 @@ export const THEMES = Object.freeze({
     themeColor: Object.freeze({ light: "#111111", dark: "#0a0a0a" }),
     swatch: Object.freeze(["#111111", "#78bb34", "#7e7e7e", "#ffffff"]),
   }),
+  // Luke, 2026-11-03: the "Feast" harvest palette — brown #4e2d0a, pumpkin
+  // #dd5705, gold #ecb206, olive #5b540e, cranberry #ac2411.
+  thanksgiving: Object.freeze({
+    label: "Thanksgiving",
+    icon: "",
+    themeColor: Object.freeze({ light: "#4e2d0a", dark: "#1a1208" }),
+    swatch: Object.freeze(["#4e2d0a", "#dd5705", "#ecb206", "#5b540e", "#ac2411"]),
+  }),
   // Sports (Luke, 2026-10-25): his favorite teams, in their official colors.
   vikings: Object.freeze({
     label: "Vikings",
@@ -95,7 +103,7 @@ export const THEMES = Object.freeze({
 // "seasonal" sits with the holiday themes it switches between.
 export const THEME_GROUPS = Object.freeze([
   Object.freeze({ key: "general", label: "General", themes: Object.freeze(["classic", "household"]) }),
-  Object.freeze({ key: "holiday", label: "Holiday", themes: Object.freeze(["halloween", "seasonal"]) }),
+  Object.freeze({ key: "holiday", label: "Holiday", themes: Object.freeze(["halloween", "thanksgiving", "seasonal"]) }),
   Object.freeze({ key: "business", label: "Business", themes: Object.freeze(["urbangreens"]) }),
   Object.freeze({ key: "sports", label: "Sports", themes: Object.freeze(["vikings", "wolves", "wild", "twins", "gophers", "ajax", "mnufc"]) }),
 ]);
@@ -106,7 +114,24 @@ export const THEME_CHOICES = Object.freeze(THEME_GROUPS.flatMap((g) => g.themes)
 // month is 1–12, inclusive ranges. First match wins.
 export const SEASONS = Object.freeze([
   Object.freeze({ theme: "halloween", from: Object.freeze([10, 1]), to: Object.freeze([10, 31]) }),
+  Object.freeze({ theme: "thanksgiving", from: Object.freeze([11, 1]), to: Object.freeze([11, 30]) }),
 ]);
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// The Display screen's line for Seasonal: what it is now and what comes next
+// ("Thanksgiving now, Classic from Dec 1"), or, outside every season, the list
+// ("Halloween in October, Thanksgiving in November, Classic the rest of the year").
+export function seasonalSummary(date = new Date(), formatDate = (d) => d.toDateString()) {
+  const now = seasonalTheme(date);
+  if (now === "classic") {
+    const parts = SEASONS.map((s) => `${THEMES[s.theme]?.label || s.theme} in ${MONTHS[s.from[0] - 1]}`);
+    return `${parts.join(", ")}, Classic the rest of the year.`;
+  }
+  const ends = seasonEnds(date);
+  const next = seasonalTheme(ends);
+  return `${THEMES[now].label} now, ${THEMES[next]?.label || "Classic"} from ${formatDate(ends)}.`;
+}
 
 export function seasonalTheme(date = new Date()) {
   const md = (date.getMonth() + 1) * 100 + date.getDate();
