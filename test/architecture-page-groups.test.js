@@ -14,7 +14,7 @@ const app = readFileSync(`${root}/app.js`, "utf8");
 
 const PAGE_LABEL = {
   calendar: "Calendar", "meal-plan": "Meal Plan", tasks: "Tasks", news: "News", weather: "Weather",
-  finance: "Finance", shop: "Shop", watch: "Watch", listen: "Listen", mail: "Message",
+  finance: "Finance", shop: "Shop", documents: "Documents", watch: "Watch", listen: "Listen", mail: "Message",
   explore: "Explore", exercise: "Exercise", leisure: "Leisure", scores: "Scores",
 };
 
@@ -59,7 +59,7 @@ describe("page groups", () => {
 
   it("app.js wires every menu button (pageNavButtons)", () => {
     const ids = [...menuGroups("homePageGroups"), ...menuGroups("pageTitleMenu")].flatMap((g) => g.pages.map((p) => p.id));
-    expect(ids.length).toBe(22);
+    expect(ids.length).toBe(24);
     for (const id of ids) expect(app).toContain(`"${id}"`);
   });
 

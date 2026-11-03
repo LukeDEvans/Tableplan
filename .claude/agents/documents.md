@@ -97,6 +97,24 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   (devices, rotation, recovery, a lying server), `test/documents-storage.test.js`,
   `test/documents-edge-function.test.js`, `test/documents-library.test.js`.
 
+## The pages (steps 3–4, 2026-11-03 — DOCUMENTS_DESIGN.md §20)
+- `documents/ui.js` — `mountDocuments(root, deps)`, imported lazily by `showDocumentsApp`
+  in app.js. One module draws Household and Personal; `show(scope, { kind, title })`
+  picks the vault (Household = `userGroup.id`, Personal = `u-<uid>`), and switching
+  view re-shows it. Menus: the **Resource** group (Finance, Shop, Documents); in
+  `VIEW_PAGES` for Household and Personal.
+- Setup, linking and the verification scan stay in **Messages**; Documents sends
+  people there (`deps.openMessages`) rather than duplicating those screens.
+- Every open on a device that holds a vault **awaits `grantPending`** (hands the key
+  to trusted devices still waiting). No polling: reads on show, "Check again" and
+  after its own edits.
+- The iPhone web view ignores `window.print()` and pop-ups: Print there goes
+  through the share sheet (`save-file.js`).
+- Its own keystore is IndexedDB `live-documents` (cached metadata, thumbnails, keys),
+  deleted at sign-out with messaging's.
+- Tests: `npm run qa:documents-ui` (three Chromium profiles against PGlite with the
+  real migrations and a doc-storage stand-in; 46 checks). Run it after any page change.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

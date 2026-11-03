@@ -1,6 +1,6 @@
 # Documents — design & plan
 
-Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 built and checked live** (§18, §19): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter, and the `doc-storage` function deployed with R2 working end to end. Branch `claude/documents-crypto`. No UI, nothing on Netlify.
+Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Pages built (§20)**, not deployed. **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 built and checked live** (§18, §19): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter, and the `doc-storage` function deployed with R2 working end to end. Branch `claude/documents-crypto`. No UI, nothing on Netlify.
 
 Goal: a **Documents** page in **Household** (shared with Marijane) and another in **Personal** (Luke only) for important and sensitive papers. Scan or upload on any device, open and share from any device, encrypted so that the storage provider and our own server never see a readable file. Storage starts in the cloud and moves to a home server later without a rebuild.
 
@@ -466,3 +466,31 @@ A separate agent attacked the tables, the vault layer and the storage function, 
 
 **Storage checked live (2026-11-03):** with the secrets set, from the production site as Luke: 401 without sign-in; a 200 KB PUT to R2, GET back byte for byte, DELETE, then 404; another person's scope 403; an upload whose size differs from the signed one doesn't go through. The R2 CORS policy and bucket key are therefore right. Step 2 is done.
 
+
+---
+
+## 20. Steps 3–4 — the pages (2026-11-03)
+
+Built everything in steps 3 and 4 that runs in the web view; the **Face ID Keychain item** (native) is still to do and is the one thing that needs a TestFlight build before the pages can ship.
+
+**Built:**
+- `documents/ui.js` (`mountDocuments(root, deps)`), loaded lazily the first time the page opens. Watch's shell: the folder sidebar (a ☰ drawer on a phone, a rail on a laptop), a search head with + and ⚙, files as a list (thumbnail or a type label, date, page count, size, folder, who added it).
+- **States:** no messaging keys → "Open Messages" (setup, linking and verification stay in Messages); vault missing → set up (phone) or "set it up on your phone first" (browser); waiting for the key → "Check again", plus a verify note in Household and the recovery-code restore on a phone; removed; error.
+- **Setup:** creates the vault and the starting folders (decision 7). Personal shows the **recovery code** right away (8 groups of 4; Print on a laptop, the share sheet's Print on the iPhone, since its web view ignores `window.print()`).
+- **Adding:** + (file picker) and drag-and-drop; type checked against the allowed list (SVG/HTML refused with the reason); 60 MB cap; image thumbnails made on the device; PDF page count.
+- **Viewing:** images and PDFs from a local decrypted copy (`blob:`, type from the metadata's fixed list); text shown as text; anything else → Share. **Share** uses the share sheet (iPhone) or a download (laptop).
+- **Editing:** name, folder, document date, tags; delete → Recently deleted (30 days) → Put back; folders add / rename / remove (not Receipts).
+- **Banners:** an unverified household member (decision 10), "make a new recovery code" after a removal, a device removed in Messages that still holds a key ("Lock it out" re-keys), storage at 7 GB.
+- **Settings (⚙):** storage used, new recovery code (phone), your devices with Remove (phone; re-keys and makes a new code).
+- **Sharing the key:** every open on a device that holds a vault grants it to trusted devices still waiting (Marijane's phone once verified, a newly linked browser). Nothing polls.
+- app.js: `showDocumentsApp`, the menus (Resource group: Finance, Shop, Documents), `#documents` routes, Household and Personal in `VIEW_PAGES`, switching view swaps the vault, sign-out deletes the `live-documents` store with messaging's.
+
+**Fixed while building:** a member who opened Household *before* the two of you verified never published her box key, so your phone had nothing to grant to afterwards. `vaults.open` now publishes this device's box key on every first visit (test: "a member who opens before verifying…", fails without the fix).
+
+**Verified:**
+- `npm run qa:documents-ui` — **46 checks** in Chromium with three profiles (Luke's phone, Marijane's phone, Luke's laptop) against PGlite with the real messaging + Documents migrations and row security, and a stand-in for doc-storage with the same access checks: the flow above end to end, plus the object store holding only ciphertext, no readable names in the database, markup in a text file shown as text, Marijane refused links to Luke's Personal, fits 390 px and 360 px, no page errors.
+- Unit suite 3425 passing; build passes; boot check passes; the real app's landing menu opens Documents (local dev mode says "Sign in", as expected).
+- R2 itself was checked live in §19.
+- **Not verified:** anything on an iPhone (the share sheet, the PDF frame in WKWebView, confirm/prompt dialogs), the real Supabase over the network for the pages (the stand-in runs the same SQL).
+
+**Still to do:** Face ID Keychain item (native) → TestFlight → scanning (step 5) → receipts hook (step 6) → the batched Netlify deploy (step 7, Luke's OK).

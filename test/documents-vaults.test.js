@@ -87,6 +87,18 @@ describe("creating and receiving vaults", () => {
     expect(await keyOf(br, PERSONAL)).toEqual(await keyOf(ph, PERSONAL));
   });
 
+  it("a member who opens before verifying still gets the key once verified (her box key goes up on the first open)", async () => {
+    const luke = await phone("luke");
+    await luke.vaults.createVault(GROUP);
+    const her = await phone("wife");
+    expect(await her.vaults.open(GROUP)).toMatchObject({ state: "waiting" }); // never called ensureBox herself
+    expect(await luke.vaults.grantPending(GROUP)).toBe(0); // not verified yet: nothing for her
+    await verify(luke, her);
+    await verify(her, luke);
+    expect(await luke.vaults.grantPending(GROUP)).toBe(1);
+    expect(await her.vaults.open(GROUP)).toMatchObject({ state: "ready", version: 1 });
+  });
+
   it("only the phone creates vaults; a vault exists once", async () => {
     const ph = await phone("luke");
     const br = await linkedBrowser(ph);

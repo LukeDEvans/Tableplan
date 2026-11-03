@@ -152,6 +152,10 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
     let v = (await localVault(scope)) || { vaultId: vault.id, scope, settled: 0, floor: 0, removed: [], keys: {} };
     if (v.vaultId !== vault.id) throw new DocumentsError("VAULT_CHANGED", "This vault was replaced on the server.");
     const s = await signers();
+    // Publish this device's box key on its first visit, before anything can make it
+    // wait: a trusted device can only grant to a box key it can see (so a member who
+    // opens the page before the two of you verify still gets the key afterwards).
+    await ensureBox();
 
     const proven = await provenSettled(vault.id, scope, members);
     const removed = new Set(v.removed || []);

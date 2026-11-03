@@ -1232,6 +1232,8 @@ const elements = {
   deleteReceiptBtn: document.querySelector("#deleteReceiptBtn"),
   homeShopBtn: document.querySelector("#homeShopBtn"),
   titleShopBtn: document.querySelector("#titleShopBtn"),
+  homeDocumentsBtn: document.querySelector("#homeDocumentsBtn"),
+  titleDocumentsBtn: document.querySelector("#titleDocumentsBtn"),
   inventoryMainPage: document.querySelector("#inventoryMainPage"),
   inventoryPlannerGrid: document.querySelector("#inventoryPlannerGrid"),
   inventoryBoxDialog: document.querySelector("#inventoryBoxDialog"),
@@ -1346,6 +1348,7 @@ const elements = {
   miniPlayerInfoBtn: document.querySelector("#miniPlayerInfoBtn"),
   mediaMainPage: document.querySelector("#mediaMainPage"),
   watchMainPage: document.querySelector("#watchMainPage"),
+  documentsMainPage: document.querySelector("#documentsMainPage"),
   readingPlannerGrid: document.querySelector("#readingPlannerGrid"),
   readingSearchDialog: document.querySelector("#readingSearchDialog"),
   readingSearchDialogInput: document.querySelector("#readingSearchDialogInput"),
@@ -1767,6 +1770,9 @@ const pageNotifCounts = {};
 const MESSAGE_TAB_KEY = "liveMessageTab";
 let messagesUi = null;
 let messagesUiLoading = null;
+// The Documents pages' module once loaded (documents/ui.js; see "Documents page").
+let documentsUi = null;
+let documentsUiLoading = null;
 function setPageNotifCount(page, count) {
   pageNotifCounts[page] = count;
   // A button marks if ANY page sharing it has something (Message: Mail suggestions
@@ -3312,6 +3318,7 @@ function handleHashNavigation() {
     sweat: showPlayApp,
     shop: showShopApp,
     watch: showWatchApp,
+    documents: showDocumentsApp,
     recreate: showRecreateApp, // Recreate is a menu group now; its old hash opens Leisure
     leisure: showRecreateApp,
     exercise: showPlayApp,
@@ -8783,6 +8790,10 @@ function hideAllPages() {
   elements.playMainPage.hidden = true;
   elements.mediaMainPage.hidden = true;
   if (elements.watchMainPage) elements.watchMainPage.hidden = true;
+  if (elements.documentsMainPage && !elements.documentsMainPage.hidden) {
+    elements.documentsMainPage.hidden = true;
+    documentsUi?.hide(); // closes an open document and stops drawing
+  }
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -8862,6 +8873,64 @@ function showWatchApp(event) {
   closePageTitleMenu();
   closeAppMenu();
   renderWatchTab();
+}
+
+// Documents (DOCUMENTS_DESIGN.md, Luke 2026-11-03): end-to-end encrypted papers.
+// Household Documents is shared with the household; Personal Documents is the
+// person's own. Same page, one vault per scope; documents/ui.js draws it and is
+// imported the first time the page opens (libsodium stays off the boot path).
+function documentsScopeForView(view = currentViewKey()) {
+  const uid = authSession?.user?.id;
+  if (view === "personal") return uid ? `u-${uid}` : null;
+  return userGroup?.id || null;
+}
+
+function documentsDeps() {
+  return {
+    userId: authSession?.user?.id || "",
+    baseUrl: () => supabaseBaseUrl(),
+    headers: () => supabaseHeaders(),
+    functionsUrl: () => `${supabaseBaseUrl()}/functions/v1`,
+    getToken: async () => authSession?.access_token || "",
+    isNative: isNativeApp(),
+    nativeMessagingKeys,
+    household: () => (userGroup?.id ? { scope: userGroup.id, members: groupMembers.map((m) => ({ user_id: m.user_id, display_name: m.display_name })) } : null),
+    personalScope: () => (currentViewList().includes("personal") && authSession?.user?.id ? `u-${authSession.user.id}` : null),
+    toast: (text) => showMailToast(text),
+    openMessages: () => { localStorage.setItem(MESSAGE_TAB_KEY, "messages"); showMailApp(); },
+  };
+}
+
+async function showDocumentsApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("documents") || !elements.documentsMainPage) { showHomeApp(); return; }
+  activeAppArea = "documents";
+  hideAllPages();
+  elements.documentsMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  const view = currentViewKey();
+  const title = view === "personal" ? "Personal Documents" : "Household Documents";
+  setPageTitle("Documents");
+  setPageHash("documents");
+  closePageTitleMenu();
+  closeAppMenu();
+  const root = document.getElementById("documentsRoot");
+  if (localDevMode || !authSession?.user?.id) {
+    root.innerHTML = `<div class="msg-pane"><p class="msg-muted">Sign in to use Documents.</p></div>`;
+    return;
+  }
+  if (!groupMembers.length) await loadGroupMembers();
+  try {
+    if (!documentsUi) {
+      documentsUiLoading ||= import("./documents/ui.js").then((m) => m.mountDocuments(root, documentsDeps()));
+      documentsUi = await documentsUiLoading;
+    }
+    if (activeAppArea === "documents") await documentsUi.show(documentsScopeForView(view), { kind: view === "personal" ? "personal" : "household", title });
+  } catch (e) {
+    documentsUiLoading = null;
+    root.innerHTML = `<div class="msg-pane"><p class="msg-error">Documents couldn't open: ${escapeHtml(e?.message || String(e))}</p></div>`;
+  }
 }
 
 // Recreate is a menu group (page-groups.js) of four pages: Explore, Exercise,
@@ -9269,6 +9338,11 @@ async function purgeLocalMessaging(headersSnapshot = null) {
         messagesUi?.destroy?.();
         messagesUi = null;
         messagesUiLoading = null;
+        // Documents keeps its own store (keys, cached names and thumbnails): it goes too.
+        documentsUi?.destroy?.();
+        documentsUi = null;
+        documentsUiLoading = null;
+        try { const { deleteMessagingStore } = await import("./messaging/keystore.js"); await deleteMessagingStore("live-documents"); } catch { /* nothing stored */ }
         try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }
       },
     });
@@ -12777,6 +12851,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Shop"; // a space of the Shop page
   if (activeAppArea === "watch") return "Watch";
+  if (activeAppArea === "documents") return "Documents";
   if (activeAppArea === "media") return "Listen";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Leisure";
@@ -17356,6 +17431,8 @@ function applyView(view, { direction = 0, quiet = false, keepPage = false } = {}
     showHomeApp();
     return;
   }
+  // Documents holds a different vault in each view (Household / Personal).
+  if (changed && activeAppArea === "documents") { showDocumentsApp(); return; }
   if (activeAppArea === "home") setPageHash(""); else refreshViewHash();
 }
 
@@ -17572,6 +17649,7 @@ function pageNavButtons() {
     { home: "homeNewsBtn",     title: "titleNewsBtn",      page: "news",     areas: ["news"],               open: showNewsApp },
     { home: "homeFinanceBtn",  title: "titleFinanceBtn",   page: "finance",  areas: ["finance"],            open: showFinanceApp },
     { home: "homeShopBtn",     title: "titleShopBtn",      page: "shop",     areas: ["shop", "inventory"],  open: showShopApp },
+    { home: "homeDocumentsBtn", title: "titleDocumentsBtn", page: "documents", areas: ["documents"],        open: showDocumentsApp },
     { home: "homeWatchBtn",    title: "titleWatchBtn",     page: "watch",    areas: ["watch"],              open: showWatchApp },
     { home: "homeListenBtn",   title: "titleListenBtn",    page: "read",     areas: ["media"],              open: showListenApp },
     { home: "homeMailBtn",     title: "titleMailBtn",      page: "mail",     areas: ["mail", "contacts"],   open: showMailApp },
@@ -38301,7 +38379,7 @@ function returnToReaderOrigin(origin) {
     mail: () => showMailApp(), shop: showShopApp, inventory: showInventoryApp,
     finance: showFinanceApp, recreate: showRecreateApp, explore: showExploreApp,
     play: showPlayApp, weather: showWeatherApp, contacts: showContactsApp,
-    home: showHomeApp, watch: showWatchApp,
+    home: showHomeApp, watch: showWatchApp, documents: showDocumentsApp,
   }[origin.area];
   if (!show) return;
   // Media comes back exactly as it was left (tab, search, open show); other

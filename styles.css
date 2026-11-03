@@ -16950,24 +16950,24 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
    app-wide — it matches the Mail folder rail — and covers the Media tabs and
    Explore's trip list. */
 @media (min-width: 681px) {
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-layout { position: relative; padding-left: 60px; transition: padding-left 0.18s ease; }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-layout:has(.article-sidebar.is-collapsed) { padding-left: 0; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-layout { position: relative; padding-left: 60px; transition: padding-left 0.18s ease; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-layout:has(.article-sidebar.is-collapsed) { padding-left: 0; }
 
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar {
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar {
     position: absolute; left: 0; top: 0; bottom: 0;
     width: 60px; z-index: 15;
     background: var(--paper, #fff);
     overflow-y: auto; overflow-x: hidden;
     transition: width 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
   }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar.is-collapsed { transform: translateX(-100%); }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:hover { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar.is-collapsed { transform: translateX(-100%); }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:hover { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
 
   /* Rail state (not hovered): icons only, centered; hide text and headers. */
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
     padding-left: 0; padding-right: 0; margin-right: 0; width: 100%; justify-content: center; gap: 0; border-radius: 0;
   }
   /* Explore rail: keep each category's folder ICON visible (like Mail); hide the
@@ -25525,3 +25525,40 @@ body[data-theme="dark"] .grocery-store-app { color: var(--accent); }
 .msg-code { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
 .msg-link { display: flex; flex-direction: column; gap: 10px; }
 .msg-details summary { cursor: pointer; color: var(--link, var(--accent)); }
+
+/* ─── Documents page (documents/ui.js, DOCUMENTS_DESIGN.md §9) ──────────────────
+   Watch's shell: the shared sidebar of folders, a search head, files as a list. */
+body:has(#documentsMainPage:not([hidden])) { overflow: hidden; height: 100dvh; }
+body:has(#documentsMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#documentsMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+#documentsMainPage .article-page-inner { min-height: 0; }
+#documentsMainPage .docs-layout { flex: 1; min-height: 0; }
+#documentsMainPage .docs-panel { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; overflow-y: auto; padding-bottom: 24px; }
+#documentsMainPage .discover-head { display: flex; align-items: center; gap: 6px; }
+#documentsMainPage .discover-head .discover-search-input { flex: 1; min-width: 0; }
+#documentsMainPage .discover-head .icon-btn { flex: 0 0 auto; }
+.docs-panel.is-drop-target { outline: 2px dashed var(--accent); outline-offset: -6px; border-radius: 12px; }
+.docs-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.docs-heading { margin: 4px 0 0; font-size: 1.05rem; color: var(--ink); }
+.docs-folder-tools { gap: 12px; }
+.docs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.docs-file { appearance: none; width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; font: inherit; cursor: pointer; min-width: 0; }
+.docs-file:hover { border-color: var(--accent); }
+.docs-thumb { flex: 0 0 auto; width: 44px; height: 56px; border-radius: 6px; background: var(--surface-strong); color: var(--muted); display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; overflow: hidden; }
+.docs-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.docs-file-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.docs-file-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-file-meta { font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-empty { padding: 24px 4px; text-align: center; }
+.docs-viewer { position: absolute; inset: 0; z-index: 30; background: var(--bg); color: var(--ink); display: flex; flex-direction: column; min-height: 0; }
+.docs-viewer-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.docs-viewer-body { flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 12px; }
+.docs-view-img { max-width: 100%; height: auto; border-radius: 6px; }
+.docs-view-pdf { width: 100%; height: 100%; min-height: 60vh; border: 0; background: var(--surface); }
+.docs-view-text { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem; margin: 0; }
+.docs-viewer-foot { border-top: 1px solid var(--line); padding: 10px 14px; max-height: 45%; overflow-y: auto; }
+.docs-edit { max-width: 520px; }
+.docs-settings .msg-pane { flex: 1; }
+.docs-code { font-family: ui-monospace, Menlo, monospace; font-size: 1.15rem; font-weight: 600; letter-spacing: 0.06em; overflow-wrap: anywhere; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 4px 0; user-select: all; }
+#documentsMainPage .article-layout { position: relative; }
