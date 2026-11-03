@@ -85,10 +85,12 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   a test fails if the copies differ.
 - `supabase/functions/doc-storage/index.ts` — the Edge Function that signs URLs after
   `doc_can_access` (as the caller). Secrets `DOC_S3_*`; setup in DOCUMENTS_R2_SETUP.md.
-- Tables: `migrations/2026-11-03-documents.sql` was applied 2026-11-03 and is
-  **superseded** by `2026-11-03b-documents-v2.sql` (drop + recreate while empty;
-  needs Luke to run it in the SQL editor because of the DROPs). Any later change is a
-  new, gated migration. The test harness applies both, in order. Tests: `test/documents-pglite-harness.js`,
+- Tables: **LIVE = `2026-11-03b-documents-v2.sql`** (applied 2026-11-03 without its
+  DROP lines, after `2026-11-03c-documents-v1-aside.sql` renamed the first, empty
+  tables to `v1_doc_*` with all access revoked). Any later change is a new, gated
+  migration. The test harness applies v1 then v2.
+- `doc-storage` is **deployed** (verify_jwt off: the function checks the caller via
+  `doc_can_access`); R2 bucket `liv-documents` exists. Secrets `DOC_S3_*` set by Luke. Tests: `test/documents-pglite-harness.js`,
   `test/documents-migration.test.js` (access rules), `test/documents-vaults.test.js`
   (devices, rotation, recovery, a lying server), `test/documents-storage.test.js`,
   `test/documents-edge-function.test.js`, `test/documents-library.test.js`.

@@ -89,7 +89,7 @@ begin
   return new;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_trigger where tgname = 'doc_vaults_created') then
+  if not exists (select 1 from pg_trigger where tgname = 'doc_vaults_created' and tgrelid = 'public.doc_vaults'::regclass) then
     create trigger doc_vaults_created before insert on public.doc_vaults for each row execute function public.doc_vaults_created();
   end if;
 end $$;
@@ -108,7 +108,7 @@ begin
   return new;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_trigger where tgname = 'doc_vaults_guard') then
+  if not exists (select 1 from pg_trigger where tgname = 'doc_vaults_guard' and tgrelid = 'public.doc_vaults'::regclass) then
     create trigger doc_vaults_guard before update on public.doc_vaults for each row execute function public.doc_vaults_guard();
   end if;
 end $$;
@@ -200,7 +200,7 @@ begin
   return new;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_trigger where tgname = 'doc_recovery_keys_guard') then
+  if not exists (select 1 from pg_trigger where tgname = 'doc_recovery_keys_guard' and tgrelid = 'public.doc_recovery_keys'::regclass) then
     create trigger doc_recovery_keys_guard before update on public.doc_recovery_keys for each row execute function public.doc_recovery_keys_guard();
   end if;
 end $$;
@@ -292,10 +292,10 @@ begin
   return new;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_trigger where tgname = 'doc_folders_guard') then
+  if not exists (select 1 from pg_trigger where tgname = 'doc_folders_guard' and tgrelid = 'public.doc_folders'::regclass) then
     create trigger doc_folders_guard before insert or update on public.doc_folders for each row execute function public.doc_rows_guard();
   end if;
-  if not exists (select 1 from pg_trigger where tgname = 'doc_files_guard') then
+  if not exists (select 1 from pg_trigger where tgname = 'doc_files_guard' and tgrelid = 'public.doc_files'::regclass) then
     create trigger doc_files_guard before insert or update on public.doc_files for each row execute function public.doc_rows_guard();
   end if;
 end $$;
@@ -311,7 +311,7 @@ begin
   return old;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_trigger where tgname = 'doc_folders_keep_receipts') then
+  if not exists (select 1 from pg_trigger where tgname = 'doc_folders_keep_receipts' and tgrelid = 'public.doc_folders'::regclass) then
     create trigger doc_folders_keep_receipts before delete on public.doc_folders for each row execute function public.doc_folders_no_delete_receipts();
   end if;
 end $$;

@@ -457,7 +457,9 @@ A separate agent attacked the tables, the vault layer and the storage function, 
 - *(P1, finding 10)* A removed device's Supabase session keeps working until it expires — the enabler behind several findings above, now survivable but still a nuisance. ISSUES.md, with options (gated: auth).
 - The "changed identity" check is redundant while verification is required (messaging already unverifies a changed key); kept as defence in depth.
 
-**Database:** `migrations/2026-11-03b-documents-v2.sql` drops and recreates the (empty) tables. Supabase won't run a `DROP` from this session, so **Luke runs it in the SQL editor** (DOCUMENTS_R2_SETUP.md step 0); I then verify it and record it in `schema_migrations`. Until then the first version stays live and unused.
+**Database (applied 2026-11-03, Luke's OK):** this session can't run a `DROP`, so the first (empty) tables were **moved aside with renames** (`2026-11-03c-documents-v1-aside.sql`: tables, indexes and functions get a `v1_` prefix; all access to them revoked), then `2026-11-03b-documents-v2.sql` was applied **without its DROP lines**. Checked afterwards: row security on all nine tables, the right triggers on each, no hard deletes for signed-in users, nothing for anon, helper functions callable only as intended. Recorded in `schema_migrations` (20261103190000). The `v1_doc_*` leftovers are empty and can be dropped in the SQL editor any time (the statement is at the top of the 03c file).
+
+**Storage (2026-11-03):** the R2 bucket `liv-documents` exists (made with the Cloudflare connector; Standard, private). The `doc-storage` function is **deployed** to Supabase (JWT check off at the gateway because the function checks the caller itself through `doc_can_access`; that also lets the browser's CORS preflight through). It answers "not configured" until the four `DOC_S3_*` secrets are set.
 
 **Decision for Luke:** Household sharing needs you and Marijane to **verify each other once** (scan the QR between your phones, the same check messaging offers). Messaging only *prompts* for it; Documents *requires* it, because otherwise the server could slip in a key.
 

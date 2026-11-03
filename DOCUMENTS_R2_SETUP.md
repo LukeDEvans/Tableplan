@@ -8,13 +8,13 @@ Cloudflare's screens change now and then. If a button below has moved, the names
 
 ---
 
-## 0. Update the Documents tables in Supabase (2 minutes)
+## Already done (by Claude, 2026-11-03)
 
-The second review today tightened the tables. They're still empty, so the update drops and recreates them, and Supabase only lets a person run a `DROP`, not me from here.
+- **The tables update** — applied without needing the SQL editor (the old empty tables were renamed aside).
+- **R2 turned on** (by you) and **the bucket `liv-documents` created** (Standard, private).
+- **The `doc-storage` function deployed** to Supabase; it waits for the secrets below.
 
-1. Open the file on GitHub: **github.com/LukeDEvans/Tableplan/blob/claude/documents-crypto/migrations/2026-11-03b-documents-v2.sql** and click **Copy raw file** (the copy icon).
-2. **supabase.com/dashboard** → your project → **SQL Editor** → **New query** → paste → **Run**.
-3. It should say "Success. No rows returned." Tell me and I'll check it and record it.
+What's left is steps 4–6: the bucket's CORS policy, the access key, and the four secrets. The Cloudflare connector can't set CORS or make keys, and the secret key is best kept out of chat.
 
 ## 1. Sign in
 
