@@ -75,7 +75,7 @@ Vault key (one per scope: Household, Personal)        32 bytes, random
 | Marijane's phone set up | Any of Luke's devices that sees her new certified device grants it the **Household** vault (needs her identity pinned, as messaging already requires). |
 | Marijane's browser linked | Her phone grants Household during the link. |
 
-**Consequence:** Marijane needs the TestFlight app on her phone to hold Household Documents (browsers are linked from a phone). This matches the messaging plan.
+Marijane already has the TestFlight app on her phone (Luke, 2026-11-03), so she can hold Household Documents and link her browser from it.
 
 ### 3.4 Removing a device
 
@@ -284,7 +284,7 @@ create index doc_files_scope_updated on public.doc_files (scope, updated_at);
 | Downloads | — | any | **free on R2**; cached on device |
 | Presign calls | — | a few per session | Edge Function free tier is ample |
 
-Years of use stays inside R2's free 10 GB. No new monthly cost. The one new account is Cloudflare (free).
+The home server is expected within about two years (Luke, 2026-11-03), and the goal is **no new cost until then**. Two years is roughly 150 MB of receipts plus about 1 GB of documents, around a tenth of R2's free 10 GB, even counting a big first round of scanning. The one new account is Cloudflare (free). Guard: Settings shows storage used, and a warning appears at 7 GB so nothing is ever billed by surprise.
 
 ---
 
