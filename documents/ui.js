@@ -171,7 +171,8 @@ export async function mountDocuments(root, deps) {
     if (my !== gen) return;
     if (opened.state === "missing") { ui.view = "setup"; return draw(); }
     if (opened.state === "removed") { ui.view = "removed"; return draw(); }
-    if (opened.state === "waiting") {
+    ui.behind = opened.state === "behind";
+    if (opened.state === "waiting" || ui.behind) {
       const hasRecovery = ui.isPhone && Boolean(await server.recoveryKey(userId).catch(() => null));
       if (my !== gen) return;
       ui.view = "waiting"; ui.hasRecovery = hasRecovery;
@@ -220,7 +221,9 @@ export async function mountDocuments(root, deps) {
       b.push({ warn: false, html: `This device hasn't verified ${who} yet. Verify in Messages so this device shares these documents with ${who}. <button type="button" class="link-btn" data-act="open-messages">Open Messages</button>` });
     }
     if (ui.isPhone) {
-      if (await vaults.needsNewCode()) b.push({ warn: true, html: `A device was removed. Make a new recovery code; the old one no longer works. <button type="button" class="link-btn" data-act="new-code">Make a new code</button>` });
+      const reason = await vaults.needsNewCodeReason();
+      if (reason === "after-recovery") b.push({ warn: true, html: `This phone replaced a lost one. If you still have your old recovery code, use it first to bring back Personal Documents; then make a new code. <button type="button" class="link-btn" data-act="new-code">Make a new code</button>` });
+      else if (reason) b.push({ warn: true, html: `A device was removed. Make a new recovery code; the old one no longer works. <button type="button" class="link-btn" data-act="new-code">Make a new code</button>` });
       else if (ui.kind === "personal" && !(await server.recoveryKey(userId).catch(() => ({})))) b.push({ warn: true, html: `Make your recovery code: it's the only way back into Personal Documents if this phone is lost. <button type="button" class="link-btn" data-act="new-code">Make it now</button>` });
       const stale = await staleDevices(scope);
       if (my !== gen) return;
@@ -297,6 +300,14 @@ export async function mountDocuments(root, deps) {
             <button type="submit" class="primary-btn">Restore</button>
           </form></details>`
       : "";
+    if (ui.behind) {
+      return pane(`<div class="msg-intro">
+        <h2 class="msg-title">${esc(ui.title)}</h2>
+        <p>Your key changed after ${esc(otherNames().join(" and ") || "the other phone")} last opened ${esc(ui.title)}, so the newest documents can't come from there.</p>
+        <p class="msg-muted">Restore with your recovery code: it brings everything back and locks out your lost phone.</p>
+        ${restore.replace("<details class=\"msg-details\">", "<details class=\"msg-details\" open>")}${busyNote()}${errorNote()}
+      </div>`);
+    }
     return pane(`<div class="msg-intro">
       <h2 class="msg-title">${esc(ui.title)}</h2>
       <p>This device is waiting for the key.</p>
@@ -550,7 +561,7 @@ export async function mountDocuments(root, deps) {
         // After a lost phone AND a lost code: a vault this phone can't open would be
         // left out, and the old code stops working, so it could never come back.
         const missing = [];
-        for (const scope of allScopes()) if ((await vaults.status(scope)).state !== "ready") missing.push(scope === deps.personalScope?.() ? "Personal Documents" : "Household Documents");
+        for (const scope of allScopes()) if ((await vaults.status(scope)).state !== "ready" && (await server.vault(scope))) missing.push(scope === deps.personalScope?.() ? "Personal Documents" : "Household Documents");
         if (!window.confirm(`${missing.join(" and ")} can't be opened on this phone. If you still have your old recovery code, restore with it first. Make a new code without ${missing.length > 1 ? "them" : "it"}? Your old code will stop working, and ${missing.join(" and ")} can't be recovered after that.`)) return;
         showCode((await vaults.newRecoveryCode(allScopes(), { allowWaiting: true })).code);
       }

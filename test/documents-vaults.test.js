@@ -140,6 +140,62 @@ describe("creating and receiving vaults", () => {
     expect((await fresh.vaults.newRecoveryCode([PERSONAL, GROUP], { allowWaiting: true })).vaults).toEqual([GROUP]);
   });
 
+  async function lostPhone() {
+    const { luke, her } = await household();
+    const fresh = device("luke");
+    await fresh.account.setupPhone({ replaceExisting: true });
+    await her.account.resolveDevices([USERS.luke]);
+    await her.account.markVerified(USERS.luke);
+    await verify(fresh, her);
+    await fresh.vaults.ensureBox();
+    return { luke, her, fresh };
+  }
+
+  it("lost phone: a re-key that fails half-way is finished on the next open", async () => {
+    const { luke, her, fresh } = await lostPhone();
+    const lostKey = await keyOf(luke, GROUP);
+    await her.vaults.grantPending(GROUP);
+    const real = fresh.server.addSettled;
+    fresh.server.addSettled = async () => { throw new Error("network"); };
+    await expect(fresh.vaults.open(GROUP)).rejects.toThrow("network");
+    await expect(fresh.vaults.keysFor(GROUP)).rejects.toMatchObject({ code: "BEHIND" }); // not usable half-done
+    fresh.server.addSettled = real;
+    expect(await fresh.vaults.open(GROUP)).toMatchObject({ state: "ready", version: 2 });
+    expect(await keyOf(fresh, GROUP)).not.toEqual(lostKey);
+  });
+
+  it("lost phone: the re-key doesn't depend on the server listing the lost phone's grants", async () => {
+    const { luke, her, fresh } = await lostPhone();
+    const lostKey = await keyOf(luke, GROUP);
+    await her.vaults.grantPending(GROUP);
+    await db.exec("reset role");
+    await db.query(`delete from public.doc_vault_grants where device_id in (select device_id from public.msg_devices where user_id = $1 and revoked_at is not null)`, [USERS.luke]);
+    expect(await fresh.vaults.open(GROUP)).toMatchObject({ state: "ready", version: 2 });
+    expect(await keyOf(fresh, GROUP)).not.toEqual(lostKey);
+  });
+
+  it("lost phone when Marijane is a version behind: no forked key; the recovery code brings back the newest", async () => {
+    const { luke, her } = await household();
+    await luke.vaults.newRecoveryCode([PERSONAL, GROUP]);
+    const { code } = await luke.vaults.newRecoveryCode([PERSONAL, GROUP]);
+    await luke.vaults.rotate(GROUP); // v2; Marijane doesn't open it before the phone is lost
+    const v2 = await keyOf(luke, GROUP);
+    const fresh = device("luke");
+    await fresh.account.setupPhone({ replaceExisting: true });
+    await her.account.resolveDevices([USERS.luke]);
+    await her.account.markVerified(USERS.luke);
+    await verify(fresh, her);
+    await fresh.vaults.ensureBox();
+    await her.vaults.grantPending(GROUP, { version: 1 }).catch(() => her.vaults.grantPending(GROUP));
+    const out = await fresh.vaults.open(GROUP);
+    expect(out.state === "behind" || out.state === "waiting").toBe(true);
+    expect((await fresh.server.vault(GROUP)).key_version).toBe(2); // nothing new was made at version 2
+    expect(await count(`select count(*)::int n from public.doc_vault_keys_old where vault_id = (select id from public.doc_vaults where scope = $1)`, [GROUP])).toBe(1);
+    const restored = await fresh.vaults.restore(code, [PERSONAL, GROUP]);
+    expect(restored.results.find((r) => r.scope === GROUP)).toMatchObject({ state: "restored", version: 2 });
+    expect((await fresh.vaults.keysFor(GROUP)).keys.get(2)).toEqual(v2);
+  });
+
   it("a member's endorsement can't remove the other's devices or roll a device back", async () => {
     const { luke, her } = await household();
     await her.vaults.open(GROUP);

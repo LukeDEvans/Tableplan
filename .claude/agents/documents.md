@@ -31,6 +31,19 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   Medical; Personal — Work, Personal. Receipts can't be removed.
 - Layout: Watch's shell; files as a list (thumbnail, date, page count).
 - Web/laptop add documents by upload and drag-and-drop; scanning is the phone's job.
+- **Lost phone (Luke, 2026-11-03: build it):** Household comes back to the owner's new
+  phone from the other member's devices. Every phone ENDORSES the version it holds (an
+  identity-signed settled statement, own removals only). The owner's new phone (new
+  identity), once re-verified, proves the version from it and takes her grant; it then
+  re-keys at once (`rekeyPending`, saved with the key, cleared when the rotation
+  ends), removing every device of his not certified by the new identity — never
+  based on the server's grant rows. The trigger is "key from someone else's grant +
+  settled rows under MY user id that my identity can't verify" (her normal first open
+  has none). If anything on the server is above the proven version, the vault is
+  BEHIND: no re-key, no adding; the page sends him to the recovery code (a re-key
+  would fork the version). After the re-key the banner says to use the OLD code for
+  Personal first. A new code that leaves out a vault this phone can't open needs an
+  explicit OK (`allowWaiting`).
 - **Household needs verification** (decision 10): keys go only to people verified with
   the QR scan; keep `requireVerified` on, and the pages lead an unverified member to the scan.
 

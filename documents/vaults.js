@@ -150,7 +150,6 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
     const members = await membersOf(scope);
     if (!members.includes(userId)) throw new DocumentsError("NOT_MEMBER", "You can't hold this scope.");
     let v = (await localVault(scope)) || { vaultId: vault.id, scope, settled: 0, floor: 0, removed: [], keys: {} };
-    const hadKey = Boolean(v.settled && keyAt(v, v.settled));
     if (v.vaultId !== vault.id) throw new DocumentsError("VAULT_CHANGED", "This vault was replaced on the server.");
     const s = await signers();
     // Publish this device's box key on its first visit, before anything can make it
@@ -175,6 +174,7 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
       const grants = await server.myGrants(vault.id, want, s.deviceId);
       const { devices } = await trusted(grants.map((g) => g.granter_user_id).filter((u) => members.includes(u)));
       let key = null;
+      let from = null;
       for (const g of grants) {
         const granter = devices.get(g.granter_device_id);
         if (!granter || granter.userId !== g.granter_user_id) continue;
@@ -185,12 +185,22 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
             ctx: { vaultId: vault.id, scope, keyVersion: want, recipientUserId: userId, recipientDeviceId: s.deviceId, recipientBoxPub: box.pub },
             box, granterSignPub: granter.signPub, removedDeviceIds: [],
           });
+          from = g.granter_user_id;
           break;
         } catch { /* a junk or foreign row: try the next */ }
       }
       if (!key) { await saveVault(v); return { state: "waiting", vaultId: vault.id, version: want }; }
       v.keys = { ...v.keys, [want]: toB64(key) };
       v.settled = want;
+      // A phone of mine taking the key from someone else's grant, for a vault my
+      // identity has never signed: a new phone after a lost one. The re-key below is
+      // marked pending in the SAME write that stores the key, so a crash or a failed
+      // step is picked up on the next open (cleared only when the rotation finishes).
+      // "Never signed" alone is also true of the other member's first open, so the sign
+      // of a replaced identity is statements under MY user id that my current identity
+      // can't verify: an earlier identity of mine held this vault.
+      if (s.identity && from !== userId && !proven.some((p) => p.userId === userId)
+        && (await server.settled(vault.id)).some((r) => r.signer_user_id === userId)) v.rekeyPending = true;
     }
     // Older versions, for rows a rotation hasn't re-wrapped yet.
     if (Array.from({ length: v.settled - 1 }, (_, i) => i + 1).some((n) => !v.keys[n])) {
@@ -209,33 +219,47 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
       if (!proven.some((p) => p.userId === userId && p.keyVersion >= v.settled)) {
         await settle(v, v.settled, myRemovedIds(v), s);
       }
-      // A phone that just got this vault from someone else (a new phone after a lost
-      // one): my devices not certified by my current identity that still hold the key
-      // (the lost phone, its linked browsers) are cut off with a new key at once.
-      if (!hadKey) {
-        const stale = await staleHolders(v);
-        if (stale.length) {
-          await store.set("needsNewCode", true);
-          await rotate(scope, stale);
-          return { state: "ready", vaultId: vault.id, version: (await localVault(scope)).settled, rekeyed: stale.length };
-        }
-      }
     }
+    if (v.rekeyPending && !rekeying.has(scope)) return finishLostPhoneRekey(vault, scope, v);
     return { state: "ready", vaultId: vault.id, version: v.settled };
   }
 
-  // My device ids (revoked ones included) that aren't certified by my current
-  // identity but hold a grant at this vault's current version.
-  async function staleHolders(v) {
-    const [{ devices }, all, grants] = await Promise.all([trusted([userId]), server.myDeviceIds(userId), server.grantsAt(v.vaultId, v.settled)]);
-    const holders = new Set(grants.map((g) => g.device_id));
+  // The new phone cuts off every device of mine not certified by my current identity
+  // (the lost phone, its linked browsers), whatever the server lists as holding the
+  // key: the new version is granted only to trusted devices anyway.
+  //
+  // BEHIND: if anything on the server is above the version I could prove (the other
+  // member's phone hadn't caught up with my last rotation), a re-key now would make a
+  // SECOND, different key at the next version and strand the rows the lost phone
+  // re-wrapped. So nothing is re-keyed or added; the page sends me to the recovery
+  // code, which reaches the newest key.
+  const rekeying = new Set(); // rotate() opens the vault first; this keeps it from re-entering
+  async function finishLostPhoneRekey(vault, scope, v) {
+    const newest = await highestSeen(vault, scope);
+    if (newest > v.settled) return { state: "behind", vaultId: vault.id, version: v.settled, newest };
+    const { devices } = await trusted([userId]);
     const s = await signers();
-    return all.filter((id) => id !== s.deviceId && !devices.has(id) && holders.has(id));
+    const others = (await server.myDeviceIds(userId)).filter((id) => id !== s.deviceId && !devices.has(id));
+    await store.set("needsNewCode", "after-recovery");
+    rekeying.add(scope);
+    try {
+      const out = await rotate(scope, others);
+      await saveVault({ ...(await localVault(scope)), rekeyPending: false });
+      return { state: "ready", vaultId: vault.id, version: out.version, rekeyed: others.length };
+    } finally { rekeying.delete(scope); }
+  }
+
+  // The highest key version anything on the server shows: the vault's hint, file and
+  // folder rows. (A server that hides rows hides their documents anyway.)
+  async function highestSeen(vault, scope) {
+    const [files, folders] = await Promise.all([server.fileKeys(scope), server.folderNames(scope)]);
+    return Math.max(vault.key_version || 0, ...files.map((f) => f.key_version), ...folders.map((f) => f.key_version));
   }
 
   async function status(scope) {
     const v = await localVault(scope);
     if (!v) return { state: "none" };
+    if (keyAt(v, v.settled) && v.rekeyPending) return { state: "behind", vaultId: v.vaultId, version: v.settled };
     return keyAt(v, v.settled) && v.settled >= (v.floor || 0) ? { state: "ready", vaultId: v.vaultId, version: v.settled } : { state: "waiting", vaultId: v.vaultId };
   }
 
@@ -244,6 +268,7 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
   async function keysFor(scope) {
     const v = await localVault(scope);
     if (!v || !keyAt(v, v.settled) || v.settled < (v.floor || 0)) throw new DocumentsError("LOCKED", "This device doesn't hold this vault yet.");
+    if (v.rekeyPending) throw new DocumentsError("BEHIND", "Restore with your recovery code to finish setting up this phone.");
     const keys = new Map(Object.entries(v.keys).map(([n, k]) => [Number(n), fromB64(k)]));
     return { vaultId: v.vaultId, scope, version: v.settled, settled: v.settled, key: keys.get(v.settled), keys };
   }
@@ -346,7 +371,10 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
       const ring = new Map(Object.entries(v.keys).map(([n, k]) => [Number(n), fromB64(k)]));
       let skipped = 0;
       for (const f of await server.fileKeys(scope)) {
-        if (f.key_version === r.version) continue;
+        if (f.key_version === r.version) {
+          try { unwrapFileKey(newKey, fromB64(f.wrapped_key), { vaultId: v.vaultId, scope, fileId: f.id, keyVersion: f.key_version }); } catch { skipped++; }
+          continue;
+        }
         try {
           const fk = unwrapFileKey(ring.get(f.key_version), fromB64(f.wrapped_key), { vaultId: v.vaultId, scope, fileId: f.id, keyVersion: f.key_version });
           await server.rewrapFile(f.id, toB64(wrapFileKey(newKey, fk, { vaultId: v.vaultId, scope, fileId: f.id, keyVersion: r.version })), r.version);
@@ -524,6 +552,9 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
     ensureBox, createVault, open, status, keysFor, grantPending,
     rotate, removeDevice, newRecoveryCode, restore,
     needsNewCode: async () => Boolean(await store.get("needsNewCode")),
+    // "after-recovery" (a new phone after a lost one: the OLD code still works and is
+    // the way back to Personal) or true (a device was removed: the old code is dead).
+    needsNewCodeReason: async () => (await store.get("needsNewCode")) || null,
     personalScope: () => personalScope(userId),
   };
 }
