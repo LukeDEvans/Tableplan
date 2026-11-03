@@ -14,7 +14,9 @@ Cloudflare's screens change now and then. If a button below has moved, the names
 - **R2 turned on** (by you) and **the bucket `liv-documents` created** (Standard, private).
 - **The `doc-storage` function deployed** to Supabase; it waits for the secrets below.
 
-What's left is steps 4–6: the bucket's CORS policy, the access key, and the four secrets. The Cloudflare connector can't set CORS or make keys, and the secret key is best kept out of chat.
+- **Steps 4–6 done by Luke** (CORS, the bucket-only key, the four secrets), and **checked by Claude on 2026-11-03** from the live site as Luke's account. Results: the function answers 401 without a sign-in, so it has its secrets. A 200 KB upload to R2 worked, and the download came back byte for byte. The delete worked and a later read got 404. Asking for someone else's scope got 403. An upload whose size didn't match the signed size didn't go through.
+
+Nothing below needs doing again; it's kept for the home-server move.
 
 ## 1. Sign in
 

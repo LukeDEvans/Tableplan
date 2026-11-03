@@ -90,7 +90,7 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   tables to `v1_doc_*` with all access revoked). Any later change is a new, gated
   migration. The test harness applies v1 then v2.
 - `doc-storage` is **deployed** (verify_jwt off: the function checks the caller via
-  `doc_can_access`); R2 bucket `liv-documents` exists. Secrets `DOC_S3_*` set by Luke. Tests: `test/documents-pglite-harness.js`,
+  `doc_can_access`); R2 bucket `liv-documents` exists. Secrets `DOC_S3_*` set by Luke; live round trip (presign → PUT → GET → DELETE, other scope 403) checked 2026-11-03. Tests: `test/documents-pglite-harness.js`,
   `test/documents-migration.test.js` (access rules), `test/documents-vaults.test.js`
   (devices, rotation, recovery, a lying server), `test/documents-storage.test.js`,
   `test/documents-edge-function.test.js`, `test/documents-library.test.js`.
