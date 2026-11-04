@@ -27,6 +27,7 @@ import { createDocumentsServer } from "./server.js";
 import { createDocumentsVaults } from "./vaults.js";
 import { createDocumentsStorage, edgePresigner } from "./storage.js";
 import { createDocumentsLibrary, RECENTLY_DELETED_DAYS } from "./library.js";
+import { fileReceipts } from "./outbox.js";
 
 export const DOCUMENTS_DB = "live-documents";
 export const STARTING_FOLDERS = Object.freeze({
@@ -280,9 +281,32 @@ export async function mountDocuments(root, deps) {
     library.purgeExpired(scope).catch(() => {});
     await refresh(my);
     if (my !== gen) return;
+    if (ui.kind === "household") await fileWaitingReceipts(my, scope);
+    if (my !== gen) return;
     await checkBanners(my);
     if (my !== gen) return;
     draw();
+  }
+
+  // Receipts scanned on this device since Household was last opened (the outbox,
+  // documents/outbox.js) go into Receipts now. Tracked: a lock mid-way doesn't lose
+  // one, and each leaves the outbox only once it's stored.
+  async function fileWaitingReceipts(my, scope) {
+    const receiptsFolder = ui.folders.find((f) => f.kind === "receipts");
+    if (!deps.receiptOutbox || !receiptsFolder) return;
+    let outbox;
+    try { outbox = await deps.receiptOutbox(); } catch { return; }
+    if (!outbox || !(await outbox.entries()).length) return;
+    try {
+      const filed = await track(() => fileReceipts({
+        outbox, library, scope, folderId: receiptsFolder.id,
+        receipts: () => deps.receipts?.() || [],
+        makeThumb: (page) => makeThumb(new Blob([page.bytes], { type: page.type })),
+        mimeOk: (mime) => MIME_TYPES.includes(mime),
+      }));
+      if (filed) deps.toast?.(filed === 1 ? "1 receipt filed in Receipts." : `${filed} receipts filed in Receipts.`);
+    } catch { /* what didn't file stays in the outbox for the next open */ }
+    if (my === gen && scope === ui.scope) await refresh(my, scope);
   }
 
   async function refresh(my = gen, scope = ui.scope) {

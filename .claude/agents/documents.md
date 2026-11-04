@@ -147,6 +147,14 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
 - The Scan button exists only when the scanner does (iPhone). A scan goes into the
   open folder and opens for renaming; its text is the encrypted `text` part.
 
+## Receipts hook (step 6 — DOCUMENTS_DESIGN.md §23)
+- Decision (Luke, 2026-11-03): **file next time I open** — a receipt scan never asks for
+  Face ID. app.js `scanReceiptFromHeader` → `queueReceiptForDocuments` puts the pages in
+  `documents/outbox.js` (its own store, `live-documents-outbox`, messaging's key, bounded
+  100 / 80 MB / 60 days); opening Household Documents files them into Receipts
+  ("<store> · <date>" from the receipt's read, one PDF for several JPEG pages).
+- An entry leaves the outbox only after it's stored. Sign-out deletes the outbox.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

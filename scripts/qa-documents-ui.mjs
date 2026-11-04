@@ -127,6 +127,9 @@ async function device(name, userId, { native, width = 390 }) {
         return { key: this.key };
       },
     };
+    const { createReceiptOutbox } = await import(`${appUrl}/documents/outbox.js`);
+    window.__outbox = createReceiptOutbox(createKeystore((await import(`${appUrl}/messaging/keystore.js`)).memoryBackend()));
+    window.__receipts = [];
     const { mountDocuments } = await import(`${appUrl}/documents/ui.js`);
     window.__ui = await mountDocuments(document.getElementById("documentsRoot"), {
       userId, baseUrl: () => appUrl, headers, functionsUrl: () => `${appUrl}/functions/v1`, getToken: async () => userId,
@@ -134,6 +137,8 @@ async function device(name, userId, { native, width = 390 }) {
       // A stand-in for the iPhone's DocumentsLock (Face ID): a fixed key per profile,
       // a count of prompts, and a switch to cancel the next one.
       nativeDocumentsLock: () => (native ? window.__lock : null),
+      receiptOutbox: async () => window.__outbox,
+      receipts: () => window.__receipts,
       // A stand-in for Apple's document camera in PDF mode: three pages, a thumbnail
       // and the text read from each page.
       nativeDocumentScanner: () => (native ? {
@@ -356,6 +361,30 @@ try {
     return { found: Boolean(vaultKey), right: await tryKey(right), wrong: await tryKey(wrong) };
   });
   check(atRest.found && atRest.right && !atRest.wrong, "the vault keys on the phone are encrypted with the Face ID key", JSON.stringify(atRest));
+  console.log("Receipts scanned elsewhere in the app");
+  await phone.page.evaluate(async () => {
+    const page = async (w, h) => {
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.fillStyle = "#000"; g.fillRect(20, 20, w - 40, 30);
+      const b = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.8));
+      return { bytes: new Uint8Array(await b.arrayBuffer()), type: "image/jpeg" };
+    };
+    await window.__outbox.queue([await page(400, 900), await page(400, 600)]);
+    window.__receipts = [{ storeName: "Costco", purchaseDate: "2026-11-02", createdAt: new Date(Date.now() + 20000).toISOString(), source: "scan" }];
+    window.__toasts = [];
+    window.__ui.hide();
+  });
+  await household(phone);
+  await idle(phone);
+  check((await phone.page.evaluate(() => window.__toasts)).includes("1 receipt filed in Receipts."), "a receipt scanned in the app is filed when Household Documents opens", (await phone.page.evaluate(() => window.__toasts)).join(" | "));
+  await pick(phone, ".docs-sidebar .article-sidebar-tab:has-text('Receipts')");
+  check((await fileNames(phone)).includes("Costco · 2026-11-02") && (await text(phone)).includes("2 pages"), "…in Receipts, named from the receipt's read, one PDF of its 2 pages", (await fileNames(phone)).join(", "));
+  check((await phone.page.evaluate(async () => (await window.__outbox.entries()).length)) === 0, "…and it leaves the outbox");
+  await phone.page.click(".docs-file:has-text('Costco')");
+  await phone.page.waitForSelector(".docs-view-pdf", { timeout: 15000 });
+  await phone.page.click("[data-act=close-viewer]");
+  await pick(phone, "[data-folder=all]");
+
   console.log("Scanning (iPhone)");
   await pick(phone, ".docs-sidebar .article-sidebar-tab:has-text('Home')");
   await phone.page.evaluate(() => { window.__toasts = []; });

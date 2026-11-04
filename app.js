@@ -8896,6 +8896,8 @@ function documentsDeps() {
     nativeMessagingKeys,
     nativeDocumentsLock,
     nativeDocumentScanner,
+    receiptOutbox: () => (userGroup?.id ? receiptOutbox() : Promise.resolve(null)),
+    receipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
     household: () => (userGroup?.id ? { scope: userGroup.id, members: groupMembers.map((m) => ({ user_id: m.user_id, display_name: m.display_name })) } : null),
     personalScope: () => (currentViewList().includes("personal") && authSession?.user?.id ? `u-${authSession.user.id}` : null),
     toast: (text) => showMailToast(text),
@@ -9344,7 +9346,13 @@ async function purgeLocalMessaging(headersSnapshot = null) {
         documentsUi?.destroy?.();
         documentsUi = null;
         documentsUiLoading = null;
-        try { const { deleteMessagingStore } = await import("./messaging/keystore.js"); await deleteMessagingStore("live-documents"); } catch { /* nothing stored */ }
+        try {
+          const { deleteMessagingStore } = await import("./messaging/keystore.js");
+          await deleteMessagingStore("live-documents");
+          // The receipts waiting to be filed go too.
+          if (receiptOutboxPromise) { try { (await receiptOutboxPromise).backend.close(); } catch { /* not open */ } receiptOutboxPromise = null; }
+          await deleteMessagingStore("live-documents-outbox");
+        } catch { /* nothing stored */ }
         try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }
       },
     });
@@ -17759,6 +17767,31 @@ function scanReceiptFromHeader(files, options = {}) {
   const images = files.filter((f) => /^image\//.test(f.type || ""));
   if (!images.length) return;
   openReceiptScanWithFiles(images, options);
+  queueReceiptForDocuments(images);
+}
+
+// Every scanned receipt is also kept, encrypted, in Household Documents › Receipts
+// (DOCUMENTS_DESIGN.md §7). Filing needs Face ID, so a scan never prompts: the pages
+// wait in this device's receipts outbox (documents/outbox.js) and Household
+// Documents files them the next time it's opened (Luke, 2026-11-03). Only for
+// someone in a household with Documents on; best-effort, never in the scan's way.
+let receiptOutboxPromise = null;
+function receiptOutbox() {
+  receiptOutboxPromise ||= (async () => {
+    const [{ createReceiptOutbox, OUTBOX_DB }, { createKeystore, idbBackend }] = await Promise.all([import("./documents/outbox.js"), import("./messaging/keystore.js")]);
+    const keys = nativeMessagingKeys();
+    const getRawWrapKey = keys ? async () => { const { key } = await keys.wrapKey(); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); } : async () => null;
+    const backend = await idbBackend({ dbName: OUTBOX_DB, getRawWrapKey });
+    return { outbox: createReceiptOutbox(createKeystore(backend)), backend };
+  })().catch((e) => { receiptOutboxPromise = null; throw e; });
+  return receiptOutboxPromise.then((o) => o.outbox);
+}
+async function queueReceiptForDocuments(files) {
+  if (localDevMode || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return;
+  try {
+    const pages = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
+    await (await receiptOutbox()).queue(pages);
+  } catch { /* best-effort: the receipt itself is unaffected */ }
 }
 
 // The iPhone's text recognition → printed rows per page (receipt-reconcile.js).

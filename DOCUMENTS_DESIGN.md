@@ -1,6 +1,6 @@
 # Documents — design & plan
 
-Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Pages built (§20), Face ID lock built (§21), scanning built (§22)**, not deployed. **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 built and checked live** (§18, §19): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter, and the `doc-storage` function deployed with R2 working end to end. Branch `claude/documents-crypto`. No UI, nothing on Netlify.
+Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Pages built (§20), Face ID lock (§21), scanning (§22) and the receipts hook (§23) built**, not deployed. **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 built and checked live** (§18, §19): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter, and the `doc-storage` function deployed with R2 working end to end. Branch `claude/documents-crypto`. No UI, nothing on Netlify.
 
 Goal: a **Documents** page in **Household** (shared with Marijane) and another in **Personal** (Luke only) for important and sensitive papers. Scan or upload on any device, open and share from any device, encrypted so that the storage provider and our own server never see a readable file. Storage starts in the cloud and moves to a home server later without a rebuild.
 
@@ -540,3 +540,25 @@ After a review (ISSUES.md, 2026-11-03): the re-key is marked pending in the same
 **Verified:** `qa:documents-ui` (72 checks) with a stand-in camera: the options sent (PDF, 30 pages, text), the scan opening ready to rename, listed in the open folder with its page count, its text stored and decrypted back, no Scan button on a laptop.
 **Not verified:** the real camera, the PDF it builds, and memory use at 30 pages: the TestFlight build.
 **Not done:** searching inside the page text (search still matches names and tags); the review sheet from §9 (rename and folder are done in the viewer right after).
+
+
+---
+
+## 23. Receipts hook (step 6, 2026-11-03)
+
+**Decided (Luke, 2026-11-03): "file next time I open".** A receipt scan never asks for Face ID. Its pages wait in this device's **receipts outbox** and are filed into Household › Receipts the next time Household Documents is opened.
+
+**Built:**
+- `documents/outbox.js`: the outbox, its own IndexedDB store `live-documents-outbox`, encrypted like messaging's: the iPhone's Keychain key, or the browser's non-extractable key. It is not behind Face ID, so a scan never prompts. It is bounded: 100 receipts, 80 MB and 60 days, oldest dropped first.
+  - `jpegsToPdf` joins a multi-page receipt's JPEGs into one PDF, embedding each page as it is.
+  - `receiptLabel` names it "<store> · <purchase date>" from the scan receipt the app read within minutes of it, else "Receipt · <date>".
+  - `fileReceipts` removes an entry only after it's stored.
+- app.js: `scanReceiptFromHeader` (the header scanner's camera and photo routes) also queues the pages, only for someone in a household with Documents on; best-effort, never in the scan's way. Sign-out deletes the outbox with the other stores.
+- `documents/ui.js`: opening Household files whatever is waiting (tracked, so a lock mid-way loses nothing), tags it "receipt", and shows "N receipts filed in Receipts".
+
+**Verified:**
+- `test/documents-outbox.test.js` (8): the bounds, names (never from an emailed receipt or another day), each PDF object found where the cross-reference table says, one PDF for JPEG pages and one document per page otherwise, nothing lost when filing fails.
+- A PDF built from real JPEGs opens in pypdf in strict mode: 2 pages at the images' sizes, RGB and greyscale.
+- `qa:documents-ui` (75 checks): a queued two-page receipt filed on opening Household, named from the receipt's read, 2 pages, out of the outbox, opens.
+
+**Not covered:** receipts that arrive by email, browser extension or share sheet. Those have no scan, and their images (where any) live in the receipt stores, as §7 says. Receipts scanned in Finance's own receipt flow, if it doesn't go through the header scanner: check when the receipts ledger work starts.
