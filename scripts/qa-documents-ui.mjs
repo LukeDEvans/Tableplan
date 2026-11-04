@@ -138,6 +138,8 @@ async function device(name, userId, { native, width = 390 }) {
       // a count of prompts, and a switch to cancel the next one.
       nativeDocumentsLock: () => (native ? window.__lock : null),
       receiptOutbox: async () => window.__outbox,
+      nativeAttachmentPreview: () => (native ? { openData: async (a) => { window.__ql = a; return { opened: true }; } } : null),
+      signOutOtherSessions: async () => { window.__signOuts = (window.__signOuts || 0) + 1; return true; },
       receipts: () => window.__receipts,
       // A stand-in for Apple's document camera in PDF mode: three pages, a thumbnail
       // and the text read from each page.
@@ -291,6 +293,9 @@ try {
   await phone.page.click(".docs-file:has-text('Home insurance')");
   await phone.page.waitForSelector(".docs-view-pdf", { timeout: 15000 });
   check((await phone.page.locator(".docs-view-pdf").getAttribute("src")).startsWith("blob:"), "the PDF opens in a frame from a local, decrypted copy");
+  await phone.page.click("[data-act=quicklook]");
+  const ql = await phone.page.evaluate(() => window.__ql && { sensitive: window.__ql.sensitive, mime: window.__ql.mimeType, name: window.__ql.filename, head: atob(window.__ql.data).slice(0, 5) });
+  check(ql?.sensitive === true && ql.mime === "application/pdf" && ql.head === "%PDF-" && ql.name === "Home insurance 2026.pdf", "Open shows the decrypted PDF in Apple's viewer, as a protected copy", JSON.stringify(ql));
   await phone.page.click("[data-act=trash-file]");
   await phone.page.waitForFunction(() => window.__toasts.some((t) => t.startsWith("Moved to Recently deleted")), null, { timeout: 15000 });
   check(!(await fileNames(phone)).includes("Home insurance 2026"), "deleting takes it out of the list");
@@ -447,6 +452,10 @@ try {
   await laptop.page.waitForSelector(".docs-sidebar", { timeout: 20000 });
   check((await fileNames(laptop)).includes("Car title — Honda"), "after the phone opens the page, the browser has the documents");
   check(await laptop.page.locator("[data-act=scan]").count() === 0, "a laptop browser has no Scan button");
+  await laptop.page.click(".docs-file:has-text('Car title')");
+  await laptop.page.waitForSelector(".docs-view-img", { timeout: 15000 });
+  check(await laptop.page.locator("[data-act=quicklook]").count() === 0, "…nor Apple's viewer (Open)");
+  await laptop.page.click("[data-act=close-viewer]");
   await laptop.page.evaluate(() => { window.__toasts = []; });
   await addFiles(laptop, "drop");
   check((await fileNames(laptop)).filter((n) => n === "notes").length === 2, "files dropped on the laptop page are added");
@@ -489,6 +498,7 @@ try {
   await phone.page.waitForSelector("[data-recovery-code]", { timeout: 60000 });
   const code2 = await phone.page.locator("[data-recovery-code]").innerText();
   check(code2 !== code, "removing the laptop re-keys and makes a new recovery code");
+  check((await phone.page.evaluate(() => window.__signOuts || 0)) === 1, "…and ends the other Live sign-ins (the removed laptop's included)");
   await confirmCode(phone, code2);
   await household(laptop);
   check(/removed|waiting/.test(await text(laptop)) && !(await laptop.page.locator(".docs-sidebar").count()), "the removed laptop can't open Household any more", await text(laptop));
@@ -506,6 +516,7 @@ try {
   await fresh.page.click("[data-form=restore] button[type=submit]");
   await fresh.page.waitForSelector("[data-recovery-code]", { timeout: 90000 });
   check(true, "the second code restores Personal on a new phone, which prints a fresh code");
+  check((await fresh.page.evaluate(() => window.__signOuts || 0)) >= 1, "…and the restore signs the old devices out of Live");
   const code3 = await fresh.page.locator("[data-recovery-code]").innerText();
   await confirmCode(fresh, code3);
   await fresh.page.waitForSelector(".docs-sidebar", { timeout: 20000 });

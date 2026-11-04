@@ -37,6 +37,8 @@ export const STARTING_FOLDERS = Object.freeze({
 export const USAGE_WARN_BYTES = 7 * 1024 ** 3; // decision 5: warn at 7 GB of the 10 GB free
 const MAX_FILE_BYTES = 60 * 1024 * 1024;
 const SCAN_TEXT_MAX = 100000; // characters of page text kept for search
+const CACHE_FILE_MAX = 20 * 1024 * 1024; // recently opened files kept on the device (encrypted)
+const CACHE_TOTAL_MAX = 200 * 1024 * 1024;
 const THUMB_PX = 320;
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -144,6 +146,34 @@ export async function mountDocuments(root, deps) {
   const household = () => deps.household?.() || null;
   const storage = createDocumentsStorage({ presign: edgePresigner({ functionsUrl: deps.functionsUrl(), getToken: deps.getToken }) });
 
+  // Recently opened files, kept ENCRYPTED in this device's (locked) store: a file of
+  // at most CACHE_FILE_MAX, CACHE_TOTAL_MAX in all, the least recently opened dropped
+  // first. Index: "blobidx" → [{ key, size, at }].
+  function openedFilesCache(s) {
+    const index = async () => (await s.get("blobidx")) || [];
+    return {
+      async get(key) {
+        const bytes = await s.get(`blob:${key}`);
+        if (!bytes) return null;
+        const list = await index();
+        const e = list.find((x) => x.key === key);
+        if (e) { e.at = Date.now(); await s.set("blobidx", list); }
+        return bytes;
+      },
+      async set(key, bytes) {
+        if (!(bytes instanceof Uint8Array) || bytes.length > CACHE_FILE_MAX) return;
+        let list = (await index()).filter((x) => x.key !== key);
+        list.push({ key, size: bytes.length, at: Date.now() });
+        list.sort((a, b) => a.at - b.at);
+        let total = list.reduce((n, x) => n + x.size, 0);
+        while (total > CACHE_TOTAL_MAX && list.length) { const old = list.shift(); total -= old.size; await s.remove(`blob:${old.key}`); }
+        if (!list.some((x) => x.key === key)) return;
+        await s.set(`blob:${key}`, bytes);
+        await s.set("blobidx", list);
+      },
+    };
+  }
+
   // Opens Documents' store (the Face ID prompt on the iPhone). Throws a LockError-like
   // { code } when the person cancels or the phone has no passcode.
   function unlock() {
@@ -174,7 +204,7 @@ export async function mountDocuments(root, deps) {
         server, store, account, userId,
         scopeMembers: async (scope) => { const h = household(); return h && h.scope === scope ? h.members.map((m) => m.user_id) : []; },
       });
-      library = createDocumentsLibrary({ server, storage, vaults, store, userId });
+      library = createDocumentsLibrary({ server, storage, vaults, store, userId, blobCache: openedFilesCache(s) });
       session = { backend };
     })().finally(() => { unlocking = null; });
     return unlocking;
@@ -267,6 +297,7 @@ export async function mountDocuments(root, deps) {
     if (my !== gen) return;
     if (opened.state === "missing") { ui.view = "setup"; return draw(); }
     if (opened.state === "removed") { ui.view = "removed"; return draw(); }
+    if (opened.rekeyed) deps.signOutOtherSessions?.(); // a new phone just cut off the lost one: its sign-in goes too
     ui.behind = opened.state === "behind";
     if (opened.state === "waiting" || ui.behind) {
       const hasRecovery = ui.isPhone && Boolean(await server.recoveryKey(userId).catch(() => null));
@@ -594,13 +625,16 @@ export async function mountDocuments(root, deps) {
     else if (v.url && f.mime.startsWith("image/")) body = `<img class="docs-view-img" src="${esc(v.url)}" alt="${esc(f.name)}">`;
     else if (v.url && f.mime === "application/pdf") body = `<iframe class="docs-view-pdf" src="${esc(v.url)}" title="${esc(f.name)}"></iframe>`;
     else if (v.text != null) body = `<pre class="docs-view-text"></pre>`;
-    else if (v.ready) body = `<p class="msg-muted">This kind of file can't be shown here. Use Share to open it in another app.</p>`;
+    else if (v.ready) body = quickLook
+      ? `<p class="msg-muted">Tap Open to view it.</p>`
+      : `<p class="msg-muted">This kind of file can't be shown here. Use Share to open it in another app.</p>`;
     const inTrash = Boolean(f.deletedAt);
     const folderOptions = ui.folders.map((x) => `<option value="${esc(x.id)}"${x.id === f.folderId ? " selected" : ""}>${esc(x.name)}</option>`).join("");
     return `<div class="docs-viewer" role="dialog" aria-modal="true" aria-label="${esc(f.name)}">
       <div class="docs-viewer-head">
         <button type="button" class="msg-icon-btn" data-act="close-viewer" aria-label="Close">‹</button>
         <h3 class="msg-title">${esc(f.name)}</h3>
+        ${v.ready && quickLook ? `<button type="button" class="secondary-btn" data-act="quicklook">Open</button>` : ""}
         ${v.ready && !inTrash ? `<button type="button" class="secondary-btn" data-act="share">Share</button>` : ""}
       </div>
       <div class="docs-viewer-body">${body}</div>
@@ -749,6 +783,7 @@ export async function mountDocuments(root, deps) {
   async function restoreWith(codeText) {
     await run("Restoring… this takes a few seconds.", async () => {
       const out = await vaults.restore(codeText, allScopes());
+      if (out.results.some((r) => r.state === "restored")) await deps.signOutOtherSessions?.(); // every old device was removed
       const short = out.results.filter((r) => r.state === "short");
       if (out.code) showCode(out.code);
       if (short.length) deps.toast?.("Restored, but some newer documents need your other devices: open Documents on one of them.");
@@ -874,6 +909,22 @@ export async function mountDocuments(root, deps) {
     ui.viewer = null;
   }
 
+  // iPhone: Apple's viewer (Quick Look) for the decrypted file: every page of a PDF,
+  // Word/Excel/PowerPoint, zoom. Its temp copy has complete file protection and is
+  // deleted when the viewer closes or the app goes to the background.
+  const quickLook = deps.nativeAttachmentPreview?.() || null;
+  async function openQuickLook() {
+    const v = ui.viewer;
+    const f = ui.files.find((x) => x.id === v?.id);
+    if (!f || !v.bytes || !quickLook) return;
+    let bin = "";
+    for (let i = 0; i < v.bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, v.bytes.subarray(i, i + 0x8000));
+    const ext = Object.entries(EXT_MIME).find(([, m]) => m === f.mime)?.[0] || "";
+    const filename = /\.[a-z0-9]{1,5}$/i.test(f.name) || !ext ? f.name : `${f.name}.${ext}`;
+    try { await quickLook.openData({ data: btoa(bin), filename, mimeType: f.mime, sensitive: true }); }
+    catch (e) { ui.error = e?.message || "It couldn't be opened."; draw(); }
+  }
+
   async function share() {
     const v = ui.viewer;
     const f = ui.files.find((x) => x.id === v?.id);
@@ -918,9 +969,10 @@ export async function mountDocuments(root, deps) {
 
   async function removeDevice(deviceId) {
     const d = ui.devices.find((x) => x.deviceId === deviceId) || ui.staleDevices.find((x) => x.deviceId === deviceId);
-    if (!window.confirm(`Remove ${d?.label || "this device"}? It won't be able to open Documents or Messages, and you'll get a new recovery code.`)) return;
+    if (!window.confirm(`Remove ${d?.label || "this device"}? It won't be able to open Documents or Messages, and you'll get a new recovery code. Your other devices are also signed out of Live and sign in again once.`)) return;
     await run("Removing and changing the keys…", async () => {
       await vaults.removeDevice(deviceId, allScopes());
+      await deps.signOutOtherSessions?.(); // the removed device's Live sign-in ends too
       ui.devices = await account.myDevices().catch(() => ui.devices);
       showCode((await vaults.newRecoveryCode(allScopes())).code);
     });
@@ -930,6 +982,7 @@ export async function mountDocuments(root, deps) {
     if (!window.confirm("Change the keys so the removed device can't open these documents? You'll get a new recovery code.")) return;
     await run("Changing the keys…", async () => {
       for (const d of ui.staleDevices) await vaults.removeDevice(d.deviceId, allScopes());
+      await deps.signOutOtherSessions?.();
       showCode((await vaults.newRecoveryCode(allScopes())).code);
     });
   }
@@ -991,6 +1044,7 @@ export async function mountDocuments(root, deps) {
     else if (act === "close-panel") { ui.panel = null; ui.error = ""; draw(); }
     else if (act === "close-viewer") { closeViewer(); ui.error = ""; draw(); }
     else if (act === "share") share();
+    else if (act === "quicklook") openQuickLook();
     else if (act === "rekey") rekeyStale();
     else if (act === "trash-file") {
       const id = ui.viewer?.id;

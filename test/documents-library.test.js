@@ -216,3 +216,25 @@ describe("egress", () => {
     expect(rowReads).toBe(0);
   });
 });
+
+describe("recently opened files", () => {
+  it("a second open uses the device's encrypted copy; a damaged copy is downloaded again", async () => {
+    const { luke } = await household();
+    const id = await luke.library.addFile(GROUP, { content: pdf, meta: { name: "Lease", mime: "application/pdf" } });
+    const kept = new Map();
+    const cache = { async get(k) { return kept.get(k) || null; }, async set(k, b) { kept.set(k, b); } };
+    let downloads = 0;
+    const storage = createDocumentsStorage(objects);
+    const real = storage.get;
+    storage.get = async (...a) => { downloads++; return real(...a); };
+    const lib = createDocumentsLibrary({ server: luke.server, storage, vaults: luke.vaults, store: createKeystore(memoryBackend()), userId: luke.userId, blobCache: cache });
+    await lib.files(GROUP);
+    expect(fromUtf8((await lib.open(GROUP, id)).bytes)).toBe(fromUtf8(pdf));
+    expect(fromUtf8((await lib.open(GROUP, id)).bytes)).toBe(fromUtf8(pdf));
+    expect(downloads).toBe(1);
+    const [k] = kept.keys();
+    const bad = kept.get(k).slice(); bad[bad.length - 1] ^= 1; kept.set(k, bad);
+    expect(fromUtf8((await lib.open(GROUP, id)).bytes)).toBe(fromUtf8(pdf));
+    expect(downloads).toBe(2);
+  });
+});

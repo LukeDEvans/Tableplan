@@ -8896,6 +8896,8 @@ function documentsDeps() {
     nativeMessagingKeys,
     nativeDocumentsLock,
     nativeDocumentScanner,
+    nativeAttachmentPreview,
+    signOutOtherSessions,
     receiptOutbox: () => (userGroup?.id ? receiptOutbox() : Promise.resolve(null)),
     receipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
     household: () => (userGroup?.id ? { scope: userGroup.id, members: groupMembers.map((m) => ({ user_id: m.user_id, display_name: m.display_name })) } : null),
@@ -9242,8 +9244,18 @@ function showMessagePanes(tab) {
   if (inner) inner.hidden = tab === "messages";
 }
 
+// Removing a device (Messages, Documents) also ends every other Live sign-in, so a
+// lost or removed device can't keep reading app data until its session expires
+// (Luke, 2026-11-03). Supabase revokes the other sessions' refresh tokens; this one
+// stays signed in, the others sign in again once. Best-effort: never blocks removal.
+async function signOutOtherSessions() {
+  if (!supabaseClient || localDevMode) return false;
+  try { const { error } = await supabaseClient.auth.signOut({ scope: "others" }); return !error; } catch { return false; }
+}
+
 function messagingDeps() {
   return {
+    signOutOtherSessions,
     userId: authSession?.user?.id || "",
     baseUrl: () => supabaseBaseUrl(),
     headers: () => supabaseHeaders(),
