@@ -18,7 +18,9 @@ import LocalAuthentication
 //   • unlock({ reason }) → { key: "<base64>" } — creates the key the first time;
 //       rejects CANCELLED (you closed the prompt), FAILED, NO_PASSCODE, KEYCHAIN
 //   • destroy() → deletes it; Documents' store on this phone becomes unreadable
-//       (the vault keys come back from this phone's own grants)
+//       (the phone then gets the vaults again from another device, or restores them
+//       with the recovery code — its old grants are sealed to a key it no longer has)
+// available() and destroy() aren't called by the app yet (kept for Settings later).
 @objc(DocumentsLockPlugin)
 public class DocumentsLockPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "DocumentsLockPlugin"

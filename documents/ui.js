@@ -146,17 +146,26 @@ export async function mountDocuments(root, deps) {
   function unlock() {
     if (session) return Promise.resolve();
     unlocking ||= (async () => {
+      const started = epoch;
       const getKey = lockPlugin
         ? async () => { const { key } = await lockPlugin.unlock({ reason: "Open your documents" }); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); }
         : getRawWrapKey;
       const backend = await idbBackend({ dbName: DOCUMENTS_DB, getRawWrapKey: getKey });
+      // Locked again while Face ID was up (the page left, the app backgrounded): what
+      // was just opened is closed, not kept for the next visit.
+      if (epoch !== started) { backend.close(); throw Object.assign(new Error("Locked"), { code: "CANCELLED" }); }
       const s = createKeystore(backend);
       // Another account used Documents here before, or the store was written under a
       // key this phone no longer has (the lock key replaced, the passcode turned off):
-      // start empty. The vault keys come back from this device's own grants.
+      // start empty. This device then gets a new box key and is granted the vaults
+      // again by another device, or restores them with the recovery code. Only a
+      // failed DECRYPTION means a lost key; any other error leaves the store alone.
       let owner = null;
-      try { owner = await s.get("owner"); } catch { owner = null; }
+      try { owner = await s.get("owner"); } catch (e) {
+        if (e?.name !== "OperationError") { backend.close(); throw e; }
+      }
       if (owner !== userId) { await s.clear(); await s.set("owner", userId); }
+      if (epoch !== started) { backend.close(); throw Object.assign(new Error("Locked"), { code: "CANCELLED" }); }
       store = s;
       vaults = createDocumentsVaults({
         server, store, account, userId,
@@ -168,21 +177,47 @@ export async function mountDocuments(root, deps) {
     return unlocking;
   }
 
+  // Actions that change things (uploads, edits, removals, restores) are tracked so a
+  // lock never cuts one off half-way: the page locks at once (nothing shown, nothing
+  // drawn), and the store closes when the last running action finishes.
+  let epoch = 0; // bumped by every lock; an unlock it overtook closes what it opened
+  let inflight = 0;
+  let drained = null; // resolves when inflight reaches 0 after a deferred lock
+  let releaseDrained = null;
+  async function track(work) {
+    inflight++;
+    try { return await work(); } finally {
+      inflight--;
+      if (inflight === 0 && releaseDrained) { closeSession(); releaseDrained(); releaseDrained = null; drained = null; }
+    }
+  }
+  function closeSession() {
+    try { session?.backend.close(); } catch { /* already closed */ }
+    session = null; store = null; vaults = null; library = null;
+  }
+
   // Forget everything opened (iPhone only): keys, decrypted thumbnails, the open
-  // document. Anything still running for the old session stops drawing (gen).
+  // document, and the page's markup (it would otherwise sit in the hidden page).
+  // Anything still drawing for the old session stops (gen).
   function lock() {
-    if (!lockPlugin || !session) return;
+    if (!lockPlugin) return;
+    epoch++;
     gen++;
     closeViewer();
     for (const url of thumbs.values()) if (url) URL.revokeObjectURL(url);
     thumbs.clear();
     thumbQueue = [];
-    try { session.backend.close(); } catch { /* already closed */ }
-    session = null; store = null; vaults = null; library = null;
-    ui.files = []; ui.folders = []; ui.banners = []; ui.busy = "";
+    ui.files = []; ui.folders = []; ui.banners = []; ui.busy = ""; ui.devices = []; ui.staleDevices = [];
     // A recovery code on screen is already in force: keep it (in memory only) so it's
     // shown again after unlocking, rather than lost unseen.
     if (ui.panel !== "recovery") { ui.code = null; ui.panel = null; }
+    if (visible) { ui.view = "locked"; ui.lockError = ""; draw(); } else root.innerHTML = "";
+    if (!session) return;
+    if (inflight > 0) {
+      drained ||= new Promise((r) => { releaseDrained = r; });
+      return;
+    }
+    closeSession();
   }
 
   const ui = {
@@ -201,11 +236,13 @@ export async function mountDocuments(root, deps) {
 
   // ---- loading -------------------------------------------------------------------------
 
+  let loadGen = 0;
   async function load() {
     const my = ++gen;
-    if (!session) {
+    loadGen = my;
+    if (!session || drained) {
       ui.view = "locked"; draw();
-      try { await unlock(); } catch (e) {
+      try { if (drained) await drained; await unlock(); } catch (e) {
         if (my !== gen) return;
         ui.lockError = e?.code === "NO_PASSCODE" ? "Set a passcode on this iPhone to use Documents." : e?.code === "CANCELLED" ? "" : (e?.message || "Couldn't unlock.");
         return draw();
@@ -578,7 +615,7 @@ export async function mountDocuments(root, deps) {
     const my = gen;
     ui.busy = label; ui.error = ""; draw();
     let err = "";
-    try { await fn(scope, my); } catch (e) { err = e?.message || "That didn't work."; }
+    try { await track(() => fn(scope, my)); } catch (e) { err = e?.message || "That didn't work."; }
     if (my !== gen || scope !== ui.scope) return;
     ui.busy = ""; ui.error = err; draw();
   }
@@ -644,7 +681,10 @@ export async function mountDocuments(root, deps) {
     });
   }
 
-  async function addFiles(fileList) {
+  // Tracked: leaving the page or the app going to the background mid-upload doesn't
+  // cut the batch off; it finishes, then the store closes.
+  const addFiles = (fileList) => track(() => addFilesNow(fileList));
+  async function addFilesNow(fileList) {
     const files = [...fileList];
     if (!files.length) return;
     // The vault and folder this batch was started in, for every file of it: switching
@@ -670,7 +710,10 @@ export async function mountDocuments(root, deps) {
       } catch (e) { problems.push(`${file.name}: ${e.message}`); }
     }
     if (added) deps.toast?.(added === 1 ? "Added." : `Added ${added} documents.`);
-    if (!here()) return;
+    if (!here()) {
+      if (problems.length) deps.toast?.(`${problems.length} ${problems.length === 1 ? "file wasn't" : "files weren't"} added. Open Documents to try again.`);
+      return;
+    }
     ui.busy = "";
     if (added) { try { await refresh(my, scope); } catch (e) { problems.push(e.message); } }
     if (!here()) return;
@@ -886,9 +929,8 @@ export async function mountDocuments(root, deps) {
 
   // The app going to the background (switching apps, locking the phone) re-locks too.
   function onVisibility() {
-    if (document.visibilityState !== "hidden" || !lockPlugin || !session) return;
-    lock();
-    if (visible) { ui.view = "locked"; ui.lockError = ""; draw(); }
+    if (document.visibilityState !== "hidden" || !lockPlugin) return;
+    lock(); // draws the locked screen (or empties the hidden page)
   }
   document.addEventListener("visibilitychange", onVisibility);
 
@@ -901,7 +943,10 @@ export async function mountDocuments(root, deps) {
       } else Object.assign(ui, { kind, title });
       if (!scope) { ui.view = "error"; ui.error = kind === "household" ? "You're not in a household yet." : "Personal Documents isn't available."; draw(); return; }
       draw();
-      await load();
+      try { await load(); } catch (e) {
+        if (gen !== loadGen) return; // a lock or another show took over: never draw over it
+        ui.view = "error"; ui.error = e?.message || "Something went wrong."; draw();
+      }
     },
     hide() {
       visible = false;

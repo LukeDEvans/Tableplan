@@ -119,9 +119,10 @@ async function device(name, userId, { native, width = 390 }) {
     window.__opened = [];
     const lockKey = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
     window.__lock = {
-      key: lockKey, prompts: 0, cancelNext: false,
+      key: lockKey, prompts: 0, cancelNext: false, delayMs: 0,
       async unlock() {
         this.prompts++;
+        if (this.delayMs) await new Promise((r) => setTimeout(r, this.delayMs)); // Face ID on screen
         if (this.cancelNext) { this.cancelNext = false; throw Object.assign(new Error("Cancelled"), { code: "CANCELLED" }); }
         return { key: this.key };
       },
@@ -309,12 +310,28 @@ try {
   const lockedText = await text(phone);
   check(lockedText.includes("Locked") && !lockedText.includes("Car title") && await phone.page.locator(".docs-file, .docs-thumb img").count() === 0, "the app going to the background locks the page, showing no names", lockedText);
   await phone.page.evaluate(() => { Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true }); window.__lock.cancelNext = true; });
+  const promptsBefore = await prompts();
   await phone.page.click("[data-act=unlock]");
-  await phone.page.waitForFunction(() => window.__lock.prompts > 0 && !window.__lock.cancelNext, null, { timeout: 10000 });
-  check((await text(phone)).includes("Locked") && await phone.page.locator(".docs-file").count() === 0, "cancelling Face ID keeps it locked");
+  await phone.page.waitForFunction((n) => window.__lock.prompts === n + 1 && !window.__lock.cancelNext, promptsBefore, { timeout: 10000 });
+  await phone.page.waitForTimeout(1500); // let anything that would open it finish
+  check((await text(phone)).includes("Locked") && await phone.page.locator(".docs-file").count() === 0
+    && (await phone.page.evaluate(() => window.__ui._debug.locked)), "cancelling Face ID keeps it locked (the store stays closed)");
   await phone.page.click("[data-act=unlock]");
   await phone.page.waitForSelector(".docs-file", { timeout: 20000 });
   check(true, "Unlock opens it again");
+  await phone.page.evaluate(() => window.__ui.hide());
+  check((await phone.page.evaluate(() => document.getElementById("documentsRoot").innerHTML)) === "", "after leaving, nothing of the page is left in the hidden markup");
+  const p0 = await prompts();
+  await phone.page.evaluate(() => { window.__lock.delayMs = 800; });
+  await phone.page.evaluate((s) => { window.__ui.show(s, { kind: "household", title: "Household Documents" }); }, GROUP);
+  await phone.page.waitForTimeout(100);
+  await phone.page.evaluate(() => window.__ui.hide()); // leaves while Face ID is still up
+  await phone.page.waitForTimeout(1200);
+  await phone.page.evaluate(() => { window.__lock.delayMs = 0; });
+  check(await phone.page.evaluate(() => window.__ui._debug.locked), "leaving while Face ID is up doesn't leave Documents open");
+  await household(phone);
+  await idle(phone);
+  check((await prompts()) === p0 + 2 && (await fileNames(phone)).length > 0, "…and the next open asks again", `${p0} → ${await prompts()}`);
   const atRest = await phone.page.evaluate(async () => {
     const req = indexedDB.open("live-documents");
     const db = await new Promise((r) => { req.onsuccess = () => r(req.result); });
@@ -388,8 +405,10 @@ try {
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
   await phone.page.waitForFunction(() => /uploading 2 of/.test(document.querySelector("#documentsRoot").innerText), null, { timeout: 20000 });
+  await phone.page.evaluate(() => window.__ui.hide()); // as app.js does: leaving the page locks it
   await household(phone); // the view changes while files 2–4 are still going up
   await phone.page.waitForFunction(() => window.__toasts.some((t) => t.startsWith("Added")), null, { timeout: 30000 });
+  check((await phone.page.evaluate(() => window.__toasts)).includes("Added 4 documents."), "the upload finishes even though the page locked mid-way", (await phone.page.evaluate(() => window.__toasts)).join(" | "));
   await db.exec("reset role");
   const placed = await db.query(`select f.scope, count(*)::int n from public.doc_files f where f.size > 400000 group by f.scope`);
   const byScope = Object.fromEntries(placed.rows.map((r) => [r.scope, r.n]));
