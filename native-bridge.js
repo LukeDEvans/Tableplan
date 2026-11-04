@@ -164,6 +164,24 @@ export function nativeMessagingKeys() {
   return _messagingKeys;
 }
 
+// The Documents lock (DocumentsLockPlugin.swift): a Keychain key only Face ID or the
+// passcode releases; it encrypts Documents' store on the phone. null in a
+// browser/PWA or a build from before the plugin (Documents then uses the messaging
+// store key and has no lock).
+let _documentsLock;
+export function nativeDocumentsLock() {
+  if (_documentsLock !== undefined) return _documentsLock;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _documentsLock = null;
+      return _documentsLock;
+    }
+    const p = registerPlugin("DocumentsLock");
+    _documentsLock = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("DocumentsLock")) ? p : null;
+  } catch { _documentsLock = null; }
+  return _documentsLock;
+}
+
 // One-shot QR scanner (QrScanPlugin.swift) for linking devices and verifying a
 // contact's security code. null in a browser/PWA or an older build → the
 // messaging UI offers paste instead.

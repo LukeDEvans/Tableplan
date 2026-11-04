@@ -62,7 +62,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
@@ -1232,6 +1232,8 @@ const elements = {
   deleteReceiptBtn: document.querySelector("#deleteReceiptBtn"),
   homeShopBtn: document.querySelector("#homeShopBtn"),
   titleShopBtn: document.querySelector("#titleShopBtn"),
+  homeDocumentsBtn: document.querySelector("#homeDocumentsBtn"),
+  titleDocumentsBtn: document.querySelector("#titleDocumentsBtn"),
   inventoryMainPage: document.querySelector("#inventoryMainPage"),
   inventoryPlannerGrid: document.querySelector("#inventoryPlannerGrid"),
   inventoryBoxDialog: document.querySelector("#inventoryBoxDialog"),
@@ -1346,6 +1348,7 @@ const elements = {
   miniPlayerInfoBtn: document.querySelector("#miniPlayerInfoBtn"),
   mediaMainPage: document.querySelector("#mediaMainPage"),
   watchMainPage: document.querySelector("#watchMainPage"),
+  documentsMainPage: document.querySelector("#documentsMainPage"),
   readingPlannerGrid: document.querySelector("#readingPlannerGrid"),
   readingSearchDialog: document.querySelector("#readingSearchDialog"),
   readingSearchDialogInput: document.querySelector("#readingSearchDialogInput"),
@@ -1767,6 +1770,9 @@ const pageNotifCounts = {};
 const MESSAGE_TAB_KEY = "liveMessageTab";
 let messagesUi = null;
 let messagesUiLoading = null;
+// The Documents pages' module once loaded (documents/ui.js; see "Documents page").
+let documentsUi = null;
+let documentsUiLoading = null;
 function setPageNotifCount(page, count) {
   pageNotifCounts[page] = count;
   // A button marks if ANY page sharing it has something (Message: Mail suggestions
@@ -3312,6 +3318,7 @@ function handleHashNavigation() {
     sweat: showPlayApp,
     shop: showShopApp,
     watch: showWatchApp,
+    documents: showDocumentsApp,
     recreate: showRecreateApp, // Recreate is a menu group now; its old hash opens Leisure
     leisure: showRecreateApp,
     exercise: showPlayApp,
@@ -8783,6 +8790,10 @@ function hideAllPages() {
   elements.playMainPage.hidden = true;
   elements.mediaMainPage.hidden = true;
   if (elements.watchMainPage) elements.watchMainPage.hidden = true;
+  if (elements.documentsMainPage && !elements.documentsMainPage.hidden) {
+    elements.documentsMainPage.hidden = true;
+    documentsUi?.hide(); // closes an open document and stops drawing
+  }
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -8862,6 +8873,68 @@ function showWatchApp(event) {
   closePageTitleMenu();
   closeAppMenu();
   renderWatchTab();
+}
+
+// Documents (DOCUMENTS_DESIGN.md, Luke 2026-11-03): end-to-end encrypted papers.
+// Household Documents is shared with the household; Personal Documents is the
+// person's own. Same page, one vault per scope; documents/ui.js draws it and is
+// imported the first time the page opens (libsodium stays off the boot path).
+function documentsScopeForView(view = currentViewKey()) {
+  const uid = authSession?.user?.id;
+  if (view === "personal") return uid ? `u-${uid}` : null;
+  return userGroup?.id || null;
+}
+
+function documentsDeps() {
+  return {
+    userId: authSession?.user?.id || "",
+    baseUrl: () => supabaseBaseUrl(),
+    headers: () => supabaseHeaders(),
+    functionsUrl: () => `${supabaseBaseUrl()}/functions/v1`,
+    getToken: async () => authSession?.access_token || "",
+    isNative: isNativeApp(),
+    nativeMessagingKeys,
+    nativeDocumentsLock,
+    nativeDocumentScanner,
+    receiptOutbox: () => (userGroup?.id ? receiptOutbox() : Promise.resolve(null)),
+    receipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
+    household: () => (userGroup?.id ? { scope: userGroup.id, members: groupMembers.map((m) => ({ user_id: m.user_id, display_name: m.display_name })) } : null),
+    personalScope: () => (currentViewList().includes("personal") && authSession?.user?.id ? `u-${authSession.user.id}` : null),
+    toast: (text) => showMailToast(text),
+    openMessages: () => { localStorage.setItem(MESSAGE_TAB_KEY, "messages"); showMailApp(); },
+  };
+}
+
+async function showDocumentsApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("documents") || !elements.documentsMainPage) { showHomeApp(); return; }
+  activeAppArea = "documents";
+  hideAllPages();
+  elements.documentsMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  const view = currentViewKey();
+  const title = view === "personal" ? "Personal Documents" : "Household Documents";
+  setPageTitle("Documents");
+  setPageHash("documents");
+  closePageTitleMenu();
+  closeAppMenu();
+  const root = document.getElementById("documentsRoot");
+  if (localDevMode || !authSession?.user?.id) {
+    root.innerHTML = `<div class="msg-pane"><p class="msg-muted">Sign in to use Documents.</p></div>`;
+    return;
+  }
+  if (!groupMembers.length) await loadGroupMembers();
+  try {
+    if (!documentsUi) {
+      documentsUiLoading ||= import("./documents/ui.js").then((m) => m.mountDocuments(root, documentsDeps()));
+      documentsUi = await documentsUiLoading;
+    }
+    if (activeAppArea === "documents") await documentsUi.show(documentsScopeForView(view), { kind: view === "personal" ? "personal" : "household", title });
+  } catch (e) {
+    documentsUiLoading = null;
+    root.innerHTML = `<div class="msg-pane"><p class="msg-error">Documents couldn't open: ${escapeHtml(e?.message || String(e))}</p></div>`;
+  }
 }
 
 // Recreate is a menu group (page-groups.js) of four pages: Explore, Exercise,
@@ -9269,6 +9342,17 @@ async function purgeLocalMessaging(headersSnapshot = null) {
         messagesUi?.destroy?.();
         messagesUi = null;
         messagesUiLoading = null;
+        // Documents keeps its own store (keys, cached names and thumbnails): it goes too.
+        documentsUi?.destroy?.();
+        documentsUi = null;
+        documentsUiLoading = null;
+        try {
+          const { deleteMessagingStore } = await import("./messaging/keystore.js");
+          await deleteMessagingStore("live-documents");
+          // The receipts waiting to be filed go too.
+          if (receiptOutboxPromise) { try { (await receiptOutboxPromise).backend.close(); } catch { /* not open */ } receiptOutboxPromise = null; }
+          await deleteMessagingStore("live-documents-outbox");
+        } catch { /* nothing stored */ }
         try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }
       },
     });
@@ -12777,6 +12861,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Shop"; // a space of the Shop page
   if (activeAppArea === "watch") return "Watch";
+  if (activeAppArea === "documents") return "Documents";
   if (activeAppArea === "media") return "Listen";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Leisure";
@@ -17356,6 +17441,8 @@ function applyView(view, { direction = 0, quiet = false, keepPage = false } = {}
     showHomeApp();
     return;
   }
+  // Documents holds a different vault in each view (Household / Personal).
+  if (changed && activeAppArea === "documents") { showDocumentsApp(); return; }
   if (activeAppArea === "home") setPageHash(""); else refreshViewHash();
 }
 
@@ -17572,6 +17659,7 @@ function pageNavButtons() {
     { home: "homeNewsBtn",     title: "titleNewsBtn",      page: "news",     areas: ["news"],               open: showNewsApp },
     { home: "homeFinanceBtn",  title: "titleFinanceBtn",   page: "finance",  areas: ["finance"],            open: showFinanceApp },
     { home: "homeShopBtn",     title: "titleShopBtn",      page: "shop",     areas: ["shop", "inventory"],  open: showShopApp },
+    { home: "homeDocumentsBtn", title: "titleDocumentsBtn", page: "documents", areas: ["documents"],        open: showDocumentsApp },
     { home: "homeWatchBtn",    title: "titleWatchBtn",     page: "watch",    areas: ["watch"],              open: showWatchApp },
     { home: "homeListenBtn",   title: "titleListenBtn",    page: "read",     areas: ["media"],              open: showListenApp },
     { home: "homeMailBtn",     title: "titleMailBtn",      page: "mail",     areas: ["mail", "contacts"],   open: showMailApp },
@@ -17668,7 +17756,7 @@ async function openReceiptCamera() {
     // older builds ignore it and the read goes ahead without it).
     const result = await scanner.scan({ maxPages: 4, maxDimension: 1600, quality: 0.82, ocr: true });
     if (result?.cancelled) return;
-    scanReceiptFromHeader(scannedPagesToFiles(result?.pages), { ocrPages: ocrPagesFromNative(result?.text) });
+    scanReceiptFromHeader(scannedPagesToFiles(result?.pages), { ocrPages: ocrPagesFromNative(result?.text), camera: true });
   } catch (e) {
     // No fallback click here: iOS only opens a file picker from a direct tap.
     showMailToast(`Couldn't open the camera: ${e?.message || "unknown error"} — try Photo instead`);
@@ -17678,7 +17766,34 @@ async function openReceiptCamera() {
 function scanReceiptFromHeader(files, options = {}) {
   const images = files.filter((f) => /^image\//.test(f.type || ""));
   if (!images.length) return;
-  openReceiptScanWithFiles(images, options);
+  const { camera = false, ...scanOptions } = options;
+  openReceiptScanWithFiles(images, scanOptions);
+  queueReceiptForDocuments(images, { camera });
+}
+
+// Every scanned receipt is also kept, encrypted, in Household Documents › Receipts
+// (DOCUMENTS_DESIGN.md §7). Filing needs Face ID, so a scan never prompts: the pages
+// wait in this device's receipts outbox (documents/outbox.js) and Household
+// Documents files them the next time it's opened (Luke, 2026-11-03). Only for
+// someone in a household with Documents on; best-effort, never in the scan's way.
+let receiptOutboxPromise = null;
+function receiptOutbox() {
+  receiptOutboxPromise ||= (async () => {
+    const [{ createReceiptOutbox, OUTBOX_DB }, { createKeystore, idbBackend }] = await Promise.all([import("./documents/outbox.js"), import("./messaging/keystore.js")]);
+    const keys = nativeMessagingKeys();
+    const getRawWrapKey = keys ? async () => { const { key } = await keys.wrapKey(); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); } : async () => null;
+    const backend = await idbBackend({ dbName: OUTBOX_DB, getRawWrapKey });
+    return { outbox: createReceiptOutbox(createKeystore(backend)), backend };
+  })().catch((e) => { receiptOutboxPromise = null; throw e; });
+  return receiptOutboxPromise.then((o) => o.outbox);
+}
+async function queueReceiptForDocuments(files, { camera = false } = {}) {
+  if (localDevMode || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return;
+  const scope = userGroup.id; // filed only into the household it was scanned in
+  try {
+    const pages = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
+    await (await receiptOutbox()).queue(pages, { scope, camera });
+  } catch { /* best-effort: the receipt itself is unaffected */ }
 }
 
 // The iPhone's text recognition → printed rows per page (receipt-reconcile.js).
@@ -38301,7 +38416,7 @@ function returnToReaderOrigin(origin) {
     mail: () => showMailApp(), shop: showShopApp, inventory: showInventoryApp,
     finance: showFinanceApp, recreate: showRecreateApp, explore: showExploreApp,
     play: showPlayApp, weather: showWeatherApp, contacts: showContactsApp,
-    home: showHomeApp, watch: showWatchApp,
+    home: showHomeApp, watch: showWatchApp, documents: showDocumentsApp,
   }[origin.area];
   if (!show) return;
   // Media comes back exactly as it was left (tab, search, open show); other

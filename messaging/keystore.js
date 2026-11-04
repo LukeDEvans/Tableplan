@@ -72,10 +72,12 @@ function openDb(name = "live-messaging") {
 // IndexedDB, every value AES-GCM encrypted. getRawWrapKey: async () => Uint8Array(32)
 // | null — the iPhone's Keychain key; when null, a browser key is created and kept.
 export async function idbBackend({ dbName = "live-messaging", getRawWrapKey = async () => null } = {}) {
+  // The key first: a refused or cancelled key (Documents' Face ID prompt) then leaves
+  // no database connection open behind it.
+  const raw = await getRawWrapKey();
   const db = await openDb(dbName);
   const tx = (store, mode) => db.transaction(store, mode).objectStore(store);
   let key;
-  const raw = await getRawWrapKey();
   if (raw) {
     key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
   } else {
