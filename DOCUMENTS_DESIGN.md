@@ -567,3 +567,37 @@ After a review (ISSUES.md, 2026-11-03): the re-key is marked pending in the same
 **Worth knowing:** every image sent through the header scanner is kept in the shared Household › Receipts, including a photo picked by mistake. Delete it there (Recently deleted, 30 days).
 
 **TestFlight (2026-11-03, Luke):** "seems to be working well" on the build with everything above (run 41767628047, commit 169d27a). Not yet reported item by item: Face ID re-lock on app switch, a 30-page scan, restore from the recovery code, Marijane's side.
+
+
+---
+
+## 24. The "left for later" list (2026-11-03, late)
+
+**Decisions (Luke, 2026-11-03):** web lock = **passkey, real encryption**; removing a device = **sign out all other sessions**.
+
+**Built:**
+- **Sign out other sessions.** Removing a device (in Messages or Documents), resetting Messages, a restore from the code, and the lost-phone re-key also call `supabase.auth.signOut({ scope: "others" })`. That revokes every other Live session's refresh token; their current access token runs out within the hour. The confirm text says the other devices sign in again once. No function and no deploy: it's Supabase Auth's own endpoint.
+- **Apple's viewer on the iPhone.** The viewer's **Open** shows the decrypted file in Quick Look (`AttachmentPreviewPlugin.openData` with `sensitive: true`): up to 70 MB, every PDF page, Word/Excel/PowerPoint. The temporary copy is written with complete file protection. It's deleted when the viewer closes, and the viewer is closed when the app goes to the background (so nothing stays on screen after Documents locks). Leftover copies are cleared at launch. Needs the TestFlight build.
+- **Recently opened files are kept** encrypted in Documents' locked store on the device: 20 MB per file, 200 MB in all, least recently opened dropped first. A damaged copy is downloaded again. Blobs never change once stored, so a kept copy is never stale.
+- **The web lock** (`documents/web-lock.js`). In a browser, ⚙ offers **Lock with a passkey**. It makes a passkey (Touch ID or Windows Hello) with the WebAuthn PRF extension. HKDF over its PRF output is the key for Documents' store in that browser, a separate database (`live-documents-pk`). Turning it on moves the store there and deletes the old one; turning it off moves it back.
+  - Every open asks, like the iPhone: leaving the page or the tab going to the background locks it.
+  - Kept in plain storage: only the credential id and salt (not secret).
+  - A browser without PRF or a platform authenticator isn't offered it. There's no password fallback, because Live signs in by email code or Google.
+  - A deleted passkey: "Start over on this browser" deletes the locked copy. The keys come back by grant from the phone.
+  - Sign-out deletes the locked store and the setup.
+
+**Verified:**
+- `qa:documents-ui`, 88 checks. They now cover:
+  - the passkey lock in Chromium with a virtual authenticator that does PRF: on, the store moved and the old one deleted, a lock on leaving, the passkey asked again on return (sign count up), no key kept beside the store, off and back;
+  - Quick Look getting the decrypted PDF as a protected copy (and no Open button in a browser);
+  - sign-out of other sessions after a removal and after a restore.
+- `test/documents-web-lock.test.js` (8): the same key every unlock, PRF only enabled at creation, no PRF refused with nothing kept, cancel, the key never in plain storage, HKDF, no IP-address relying party.
+- `test/documents-library.test.js`: a second open uses the kept copy, a damaged copy is downloaded again (caught when planted).
+- Unit suite 3457, build, boot check.
+
+**Not verified:** Touch ID on a real Mac or Windows Hello; Quick Look on the phone (TestFlight). The browser pages, and so the web lock, need the deploy.
+
+**Looked at, not built:**
+- Emailed and browser-extension receipts have no images to file (text only).
+- Share-sheet order screenshots are read by `share-receipt` and not kept anywhere. Keeping them would need the share extension to hand them to the app (an App Group handoff, then the outbox): a question for Luke.
+- The home server waits for the hardware.

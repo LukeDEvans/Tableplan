@@ -155,6 +155,18 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   ("<store> · <date>" from the receipt's read, one PDF for several JPEG pages).
 - An entry leaves the outbox only after it's stored. Sign-out deletes the outbox.
 
+## The web lock, sign-out, Quick Look, cache (DOCUMENTS_DESIGN.md §24)
+- **Web lock (Luke, 2026-11-03: passkey, real encryption):** `documents/web-lock.js`. A
+  passkey's PRF output → HKDF → the key of a separate store `live-documents-pk`; turned on
+  and off in ⚙ (`moveStore` copies, then deletes the old database: always pass the source
+  and target names). No password fallback (Live has none). Same lock rules as the iPhone.
+- **Removing a device ends every other Live session (Luke, 2026-11-03):**
+  `deps.signOutOtherSessions` (`supabase.auth.signOut({ scope: "others" })`) after a
+  removal, a Messages reset, a restore and the lost-phone re-key.
+- **iPhone viewer:** Open → `AttachmentPreviewPlugin.openData({ sensitive: true })`
+  (protected temp copy, closed on background). Shared with Mail's attachments plugin.
+- **Kept copies:** recently opened ENCRYPTED blobs in the locked store (20 MB / 200 MB).
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

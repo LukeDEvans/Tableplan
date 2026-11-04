@@ -28,6 +28,8 @@ import { createDocumentsVaults } from "./vaults.js";
 import { createDocumentsStorage, edgePresigner } from "./storage.js";
 import { createDocumentsLibrary, RECENTLY_DELETED_DAYS } from "./library.js";
 import { fileReceipts, OUTBOX_LOCK } from "./outbox.js";
+import { createPasskeyLock, copyStore, WEB_LOCKED_DB } from "./web-lock.js";
+import { deleteMessagingStore } from "../messaging/keystore.js";
 
 export const DOCUMENTS_DB = "live-documents";
 export const STARTING_FOLDERS = Object.freeze({
@@ -135,7 +137,14 @@ export async function mountDocuments(root, deps) {
   // the page is left or the app goes to the background, so every open asks again.
   // In a browser (or an app build without the plugin) there's no lock: the store uses
   // the same key as messaging's and stays open while the page is.
-  const lockPlugin = deps.nativeDocumentsLock?.() || null;
+  // iPhone: Face ID (DocumentsLock). Browser: a passkey, once turned on in ⚙ (Luke,
+  // 2026-11-03); its store is a separate database encrypted with the passkey's key.
+  const nativeLock = deps.nativeDocumentsLock?.() || null;
+  const passkey = nativeLock || deps.isNative ? null : createPasskeyLock({ userId, userName: deps.userName || "Live" });
+  let lockPlugin = nativeLock || (passkey?.configured() ? passkey : null);
+  const storeDb = () => (!nativeLock && lockPlugin === passkey && passkey ? WEB_LOCKED_DB : DOCUMENTS_DB);
+  let passkeySupported = false;
+  passkey?.supported().then((ok) => { passkeySupported = ok; if (ui.panel === "settings") draw(); }).catch(() => {});
   let session = null; // { backend } while unlocked
   let store = null, vaults = null, library = null;
   let unlocking = null;
@@ -183,7 +192,7 @@ export async function mountDocuments(root, deps) {
       const getKey = lockPlugin
         ? async () => { const { key } = await lockPlugin.unlock({ reason: "Open your documents" }); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); }
         : getRawWrapKey;
-      const backend = await idbBackend({ dbName: DOCUMENTS_DB, getRawWrapKey: getKey });
+      const backend = await idbBackend({ dbName: storeDb(), getRawWrapKey: getKey });
       // Locked again while Face ID was up (the page left, the app backgrounded): what
       // was just opened is closed, not kept for the next visit.
       if (epoch !== started) { backend.close(); throw Object.assign(new Error("Locked"), { code: "CANCELLED" }); }
@@ -433,6 +442,7 @@ export async function mountDocuments(root, deps) {
       <p>Locked.</p>
       ${ui.lockError ? `<p class="msg-error" role="alert">${esc(ui.lockError)}</p>` : ""}
       <button type="button" class="primary-btn" data-act="unlock">Unlock</button>
+      ${lockPlugin === passkey && passkey ? `<p class="msg-muted">Removed the passkey from this computer? <button type="button" class="link-btn" data-act="passkey-reset">Start over on this browser</button> (your documents stay safe; this browser gets the keys again from your phone).</p>` : ""}
     </div>`);
   }
 
@@ -660,6 +670,10 @@ export async function mountDocuments(root, deps) {
       <div class="msg-pane">
         <h4 class="msg-sub">Storage</h4>
         <p class="msg-muted">${esc(ui.title)} uses ${esc(sizeLabel(ui.usage) || "nothing yet")}. The first 10 GB is free; you'll see a note here at 7 GB.</p>
+        ${passkey && (passkeySupported || lockPlugin === passkey) ? `<h4 class="msg-sub">Lock</h4>
+          ${lockPlugin === passkey
+            ? `<p class="msg-muted">Documents in this browser are locked with a passkey: Touch ID or Windows Hello opens them each time.</p><button type="button" class="secondary-btn" data-act="passkey-off">Turn off the passkey lock</button>`
+            : `<p class="msg-muted">Lock Documents in this browser with a passkey (Touch ID or Windows Hello). It encrypts what's kept here, and asks every time you open Documents.</p><button type="button" class="primary-btn" data-act="passkey-on">Lock with a passkey</button>`}` : ""}
         <h4 class="msg-sub">Recovery code</h4>
         ${ui.isPhone ? `<p class="msg-muted">Making a new code replaces the old one, which stops working.</p><button type="button" class="secondary-btn" data-act="new-code">Make a new recovery code</button>` : `<p class="msg-muted">Recovery codes are made on your phone.</p>`}
         <h4 class="msg-sub">Your devices</h4>
@@ -925,6 +939,58 @@ export async function mountDocuments(root, deps) {
     catch (e) { ui.error = e?.message || "It couldn't be opened."; draw(); }
   }
 
+  // Turning the passkey lock on or off moves Documents' store in this browser to a
+  // database encrypted with the other key, then deletes the old one. Needs the store
+  // open (it is, in ⚙).
+  async function moveStore(fromDb, toDb, getRawWrapKey) {
+    if (fromDb === toDb) throw new Error("documents: moving the store onto itself");
+    const backend = await idbBackend({ dbName: toDb, getRawWrapKey });
+    const next = createKeystore(backend);
+    await next.clear();
+    await copyStore(store, next);
+    try { session.backend.close(); } catch { /* already closed */ }
+    session = { backend };
+    store = next;
+    vaults = createDocumentsVaults({
+      server, store, account, userId,
+      scopeMembers: async (scope) => { const h = household(); return h && h.scope === scope ? h.members.map((m) => m.user_id) : []; },
+    });
+    library = createDocumentsLibrary({ server, storage, vaults, store, userId, blobCache: openedFilesCache(store) });
+    await deleteMessagingStore(fromDb);
+  }
+  async function passkeyOn() {
+    await run("Making the passkey…", async () => {
+      const { key } = await passkey.setup();
+      const raw = Uint8Array.from(atob(key), (c) => c.charCodeAt(0));
+      await moveStore(DOCUMENTS_DB, WEB_LOCKED_DB, async () => raw);
+      lockPlugin = passkey;
+      deps.toast?.("Documents in this browser are now locked with a passkey.");
+    });
+  }
+  // The passkey is gone (deleted from the computer): this browser's locked store can
+  // never be opened again, so it's deleted and Documents starts over here. Nothing
+  // is lost: the files are in storage and the keys come back by grant.
+  async function passkeyReset() {
+    if (!window.confirm("Start over on this browser? Its locked copy of Documents is deleted; your documents stay safe and this browser gets the keys again after you open Documents on your phone.")) return;
+    gen++;
+    try { session?.backend.close(); } catch { /* not open */ }
+    session = null; store = null; vaults = null; library = null;
+    await deleteMessagingStore(WEB_LOCKED_DB);
+    passkey.forget();
+    lockPlugin = null;
+    ui.lockError = "";
+    await load();
+  }
+  async function passkeyOff() {
+    if (!window.confirm("Turn off the passkey lock? Documents in this browser will open without Touch ID.")) return;
+    await run("Turning off the lock…", async () => {
+      await moveStore(WEB_LOCKED_DB, DOCUMENTS_DB, getRawWrapKey);
+      lockPlugin = null;
+      passkey.forget();
+      deps.toast?.("The passkey lock is off.");
+    });
+  }
+
   async function share() {
     const v = ui.viewer;
     const f = ui.files.find((x) => x.id === v?.id);
@@ -963,6 +1029,7 @@ export async function mountDocuments(root, deps) {
     ui.panel = "settings";
     ui.devices = [];
     draw();
+    if (passkey) { try { passkeySupported = await passkey.supported(); } catch { passkeySupported = false; } }
     try { ui.devices = await account.myDevices(); } catch (e) { ui.error = e.message; }
     draw();
   }
@@ -1045,6 +1112,9 @@ export async function mountDocuments(root, deps) {
     else if (act === "close-viewer") { closeViewer(); ui.error = ""; draw(); }
     else if (act === "share") share();
     else if (act === "quicklook") openQuickLook();
+    else if (act === "passkey-on") passkeyOn();
+    else if (act === "passkey-reset") passkeyReset();
+    else if (act === "passkey-off") passkeyOff();
     else if (act === "rekey") rekeyStale();
     else if (act === "trash-file") {
       const id = ui.viewer?.id;

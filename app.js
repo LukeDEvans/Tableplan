@@ -8897,6 +8897,7 @@ function documentsDeps() {
     nativeDocumentsLock,
     nativeDocumentScanner,
     nativeAttachmentPreview,
+    userName: authSession?.user?.email || "Live",
     signOutOtherSessions,
     receiptOutbox: () => (userGroup?.id ? receiptOutbox() : Promise.resolve(null)),
     receipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
@@ -9364,6 +9365,9 @@ async function purgeLocalMessaging(headersSnapshot = null) {
           // The receipts waiting to be filed go too.
           if (receiptOutboxPromise) { try { (await receiptOutboxPromise).backend.close(); } catch { /* not open */ } receiptOutboxPromise = null; }
           await deleteMessagingStore("live-documents-outbox");
+          // The browser's passkey-locked store, and the passkey's (non-secret) id and salt.
+          await deleteMessagingStore("live-documents-pk");
+          try { for (const k of Object.keys(localStorage)) if (k.startsWith("liveDocumentsPasskey:")) localStorage.removeItem(k); } catch { /* storage blocked */ }
         } catch { /* nothing stored */ }
         try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }
       },
