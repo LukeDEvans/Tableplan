@@ -1,10 +1,9 @@
--- Optional cleanup: drops the first Documents tables, moved aside by
--- 2026-11-03c-documents-v1-aside.sql (v1_ prefix, all access revoked). Checked empty
--- on 2026-11-03 (0 rows in each). Not applied: this session can't run DROP, so Luke
--- runs it in the Supabase SQL editor whenever convenient. Harmless to leave.
--- Then record it: insert into supabase_migrations.schema_migrations (version, name,
--- statements, created_by) values ('20261104000000', 'documents_v1_drop',
--- array['drop v1_doc_* leftovers'], 'luke');
+-- Cleanup: drops the first Documents tables, moved aside by
+-- 2026-11-03c-documents-v1-aside.sql (v1_ prefix, all access revoked).
+-- APPLIED 2026-11-03 22:35 CT (Luke asked), through the Supabase MCP execute_sql (the
+-- DROP ran this time). Checked first: all nine tables empty. Afterwards: no v1_doc_*
+-- tables or functions left; the nine live doc_ tables still have row security; 14
+-- doc_ functions. Recorded in schema_migrations as 20261104043500 documents_v1_drop.
 
 do $$
 begin
