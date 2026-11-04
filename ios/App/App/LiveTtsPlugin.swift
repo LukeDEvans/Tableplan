@@ -113,6 +113,10 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     private var liveItemId = ""
     private var liveUrlIdx = 0
     private var liveRetries = 0
+    // Why the last live stream attempt stopped (AVFoundation error, HTTP status),
+    // sent with the final ttsFinish so the app can say why a station won't play.
+    private var liveLastError = ""
+    private var liveStartedId = ""
 
     // Apple Music state (appleMusic items). musicToken changes on every start so a
     // late callback from an earlier song is ignored.
@@ -485,7 +489,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         case .speech: startSpeech(item, from: speechOffset)
         case .audio: startAudio(item, at: audioPosition ?? item.startPosition)
         case .live:
-            if item.id != liveItemId { liveItemId = item.id; liveUrlIdx = 0; liveRetries = 0 }
+            if item.id != liveItemId { liveItemId = item.id; liveUrlIdx = 0; liveRetries = 0; liveLastError = ""; liveStartedId = "" }
             let urls = [item.url].compactMap { $0 } + item.fallbackUrls
             startAudio(item, at: 0, url: urls[min(liveUrlIdx, urls.count - 1)])
         case .appleMusic:
@@ -665,18 +669,22 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             forName: .AVPlayerItemDidPlayToEndTime, object: playerItem, queue: .main
         ) { [weak self] _ in
             guard let self = self, self.player?.currentItem === playerItem else { return }
+            if self.current?.kind == .live { self.noteLiveError(playerItem, nil, url: url, ended: true) }
             self.itemFinished(failed: false)
         }
         failObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime, object: playerItem, queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
             guard let self = self, self.player?.currentItem === playerItem else { return }
+            let err = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+            self.noteLiveError(playerItem, err, url: url)
             self.itemFinished(failed: true)
         }
         statusObservation = playerItem.observe(\.status, options: [.new]) { [weak self] obs, _ in
             guard obs.status == .failed else { return }
             DispatchQueue.main.async {
                 guard let self = self, self.player?.currentItem === obs else { return }
+                self.noteLiveError(obs, obs.error, url: url)
                 self.itemFinished(failed: true)
             }
         }
@@ -689,6 +697,22 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             p.seek(to: CMTime(seconds: position, preferredTimescale: 600))
         }
         p.playImmediately(atRate: max(0.5, min(3.0, rate)))
+    }
+
+    // Live only: keep a short, readable reason for the last stream that stopped.
+    private func noteLiveError(_ playerItem: AVPlayerItem, _ err: Error?, url: URL, ended: Bool = false) {
+        guard current?.kind == .live else { return }
+        var parts: [String] = []
+        if let e = (err ?? playerItem.error) as NSError? {
+            parts.append("\(e.localizedDescription) (\(e.domain) \(e.code))")
+        }
+        if let ev = playerItem.errorLog()?.events.last {
+            if ev.errorStatusCode != 0 { parts.append("HTTP \(ev.errorStatusCode)") }
+            if let c = ev.errorComment, !c.isEmpty { parts.append(c) }
+        }
+        if parts.isEmpty && ended { parts.append("stream ended right away") }
+        liveLastError = "\(url.host ?? url.absoluteString): " + (parts.isEmpty ? "failed" : parts.joined(separator: " · "))
+        NSLog("[LiveTts] live stream stopped — %@", liveLastError)
     }
 
     private func currentAudioPosition() -> Double {
@@ -706,6 +730,12 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         if item.kind == .live {
             // Playing again after a reconnect → reset the retry budget.
             if (player?.rate ?? 0) > 0 && seconds > 5 { liveRetries = 0 }
+            // Tell the app once that this station really is playing (it only
+            // falls back to the web player for a station that never started).
+            if (player?.rate ?? 0) > 0 && seconds > 1 && liveStartedId != item.id {
+                liveStartedId = item.id
+                notifyListeners("ttsLiveStarted", data: ["id": item.id])
+            }
             return
         }
         guard item.kind == .audio else { return }
@@ -791,7 +821,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
                 liveRetries = 0
             } else {
                 liveItemId = ""
-                return finishCurrent(failed: true)
+                return finishCurrent(failed: true, error: liveLastError)
             }
             teardownPlayer()
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -803,14 +833,15 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         finishCurrent(failed: failed)
     }
 
-    private func finishCurrent(failed: Bool) {
+    private func finishCurrent(failed: Bool, error: String = "") {
         let finished = current
         let hasNext = !upcoming.isEmpty
         notifyListeners("ttsFinish", data: [
             "id": finished?.id ?? "",
             "kind": finished?.kind.rawValue ?? "",
             "hasNext": hasNext,
-            "failed": failed
+            "failed": failed,
+            "error": error
         ])
         if hasNext {
             advance(skipping: false)
