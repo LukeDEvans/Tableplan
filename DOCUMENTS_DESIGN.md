@@ -565,3 +565,5 @@ After a review (ISSUES.md, 2026-11-03): the re-key is marked pending in the same
 
 **After a review (ISSUES.md, 2026-11-03):** filing runs one at a time (Web Locks across tabs) and picks its document ids before uploading, so nothing is filed twice, even after a crash. Each receipt is filed only into the household it was scanned in. One bad receipt no longer blocks the rest (dropped after 5 attempts). Photo-library pages stay separate images (a PDF would ignore their rotation). The scanner builds the PDF a page at a time to keep memory down at 30 pages.
 **Worth knowing:** every image sent through the header scanner is kept in the shared Household › Receipts, including a photo picked by mistake. Delete it there (Recently deleted, 30 days).
+
+**TestFlight (2026-11-03, Luke):** "seems to be working well" on the build with everything above (run 41767628047, commit 169d27a). Not yet reported item by item: Face ID re-lock on app switch, a 30-page scan, restore from the recovery code, Marijane's side.
