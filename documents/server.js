@@ -41,6 +41,9 @@ export function createDocumentsServer(transport) {
     boxes: (userIds) => userIds.length
       ? transport.select("doc_device_boxes", `user_id=in.${inList(userIds)}&select=device_id,user_id,box_pub,box_sig`)
       : Promise.resolve([]),
+    // This device's own row only (row security: "remove own"); used when its box key
+    // was lost with its local store and a new one replaces it.
+    removeBox: (deviceId) => transport.remove("doc_device_boxes", `device_id=eq.${uuid(deviceId, "device")}`),
     addBox: (row) => transport.insert("doc_device_boxes", [{
       device_id: uuid(row.device_id, "device"), user_id: uuid(row.user_id, "user"), box_pub: row.box_pub, box_sig: row.box_sig,
     }]),

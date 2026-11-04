@@ -128,6 +128,18 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
 - Tests: `npm run qa:documents-ui` (three Chromium profiles against PGlite with the
   real migrations and a doc-storage stand-in; 46 checks). Run it after any page change.
 
+## The lock (decision 6 — DOCUMENTS_DESIGN.md §21)
+- iPhone: `ios/App/App/DocumentsLockPlugin.swift` ("DocumentsLock", `nativeDocumentsLock()`
+  in native-bridge.js): a `.userPresence`, `WhenPasscodeSetThisDeviceOnly` Keychain key;
+  reading it is the Face ID prompt. It encrypts Documents' store (`live-documents`).
+- `documents/ui.js` opens the store only after `unlock()` and `lock()`s on `hide()` and
+  on `visibilitychange` → hidden. Never keep vault keys, thumbnails or a decrypted
+  document past a lock; the locked screen shows no names or counts.
+- A lost Keychain key resets the store; `ensureBox` replaces this device's own box row
+  and the vaults come back by grant or recovery code. Don't move the box key out of
+  the locked store: it opens the grants, so that would bypass the lock.
+- Web has no lock yet (§15 open point 1).
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

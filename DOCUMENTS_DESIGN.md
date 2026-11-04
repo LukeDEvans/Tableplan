@@ -1,6 +1,6 @@
 # Documents — design & plan
 
-Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Pages built (§20)**, not deployed. **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 built and checked live** (§18, §19): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter, and the `doc-storage` function deployed with R2 working end to end. Branch `claude/documents-crypto`. No UI, nothing on Netlify.
+Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Pages built (§20), Face ID lock built (§21)**, not deployed. **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 built and checked live** (§18, §19): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter, and the `doc-storage` function deployed with R2 working end to end. Branch `claude/documents-crypto`. No UI, nothing on Netlify.
 
 Goal: a **Documents** page in **Household** (shared with Marijane) and another in **Personal** (Luke only) for important and sensitive papers. Scan or upload on any device, open and share from any device, encrypted so that the storage provider and our own server never see a readable file. Storage starts in the cloud and moves to a home server later without a rebuild.
 
@@ -510,3 +510,18 @@ A separate agent attacked the pages (ISSUES.md has each entry). **Fixed**, each 
 **Lost phone, built (2026-11-03):** every phone that opens a vault it holds signs a *settled* statement for that version if its identity hasn't yet (an **endorsement**, with its own removals only, so it can't remove the other person's devices). When Luke's new phone (new identity) and Marijane re-verify, the new phone proves the version from her statement, takes her phone's grant, and at once **re-keys** the vault, removing every device of Luke's not certified by his new identity that still holds the key (the lost phone, its browsers), then asks for a new recovery code. Personal still needs the code. If the code is lost too, making a new one that leaves Personal out needs an explicit OK, because the old code stops working.
 After a review (ISSUES.md, 2026-11-03): the re-key is marked pending in the same write as the key and finished on the next open if anything fails; it removes every device not certified by the new identity, whatever the server lists; and it only runs when the server shows nothing above the proven version.
 **Behind:** if Luke had changed Household's key just before losing the phone and Marijane hadn't opened it since, the new phone can't prove the newest version from her. A re-key would then fork the version, so nothing is re-keyed or added and the page asks for the recovery code, which reaches the newest key. Without the code, Household stays usable on Marijane's devices but not on Luke's new phone (open question for Luke).
+
+
+---
+
+## 21. The lock — Face ID on every open (2026-11-03)
+
+**Built (decision 6, §8):**
+- `ios/App/App/DocumentsLockPlugin.swift` ("DocumentsLock", registered in `MainViewController`, in the Xcode project; `NSFaceIDUsageDescription` added): one random 32-byte key in the Keychain with access control `.userPresence` and `WhenPasscodeSetThisDeviceOnly`. Reading it is the Face ID prompt (passcode as fallback); a fresh `LAContext` with no reuse window, so every read asks. No passcode on the phone → "Set a passcode to use Documents".
+- `documents/ui.js`: on the iPhone, Documents' own store (vault keys, box key, cached names, thumbnails) is encrypted with that key. The store is opened only after unlocking and **forgotten on leaving the page or the app going to the background** (keys dropped, thumbnails revoked, the open document closed). The locked screen shows the page's title only: no names, no counts. Cancelling leaves it locked with an Unlock button.
+- A recovery code on screen when the app goes to the background is kept in memory and shown again after unlocking (it's already in force; losing it unseen would be worse).
+- **If the Keychain key is lost** (passcode turned off, app data cleared): the store starts empty and the phone publishes a new box key in place of its old one (`ensureBox` replaces its own row, which row security allows). It then gets its vaults back from another device holding them, or from the recovery code. Test: "a phone whose Documents store was reset…".
+- **Web / laptop:** unchanged — no lock yet (open point 1 in §15: passkey with Touch ID where supported). The store there uses the browser's non-extractable key, as messaging's does.
+
+**Verified:** `qa:documents-ui` (now 63 checks) drives the page with a stand-in for the plugin: each open after leaving asks again; going to the background locks with no names left on the page; cancelling stays locked; Unlock opens; the vault keys in IndexedDB decrypt with the Face ID key and not another; a lost key leads to "waiting" with the recovery code offered. Unit suite 3433, build, boot check pass.
+**Not verified:** the Swift itself (no compiler here; the iOS compile check runs on the pull request) and anything on an iPhone: the real Face ID prompt, passcode fallback, `visibilitychange` firing on background in WKWebView. That needs the TestFlight build.

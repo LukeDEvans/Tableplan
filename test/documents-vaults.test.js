@@ -207,6 +207,22 @@ describe("creating and receiving vaults", () => {
     expect(await luke.vaults.open(GROUP)).toMatchObject({ state: "ready", version: 2 }); // her older endorsement doesn't pull him back
   });
 
+  it("a phone whose Documents store was reset (Face ID key lost) gets a new box key and is granted again", async () => {
+    const ph = await phone("luke");
+    await ph.vaults.createVault(PERSONAL);
+    const br = await linkedBrowser(ph);
+    await br.vaults.ensureBox();
+    await ph.vaults.grantPending(PERSONAL);
+    await br.vaults.open(PERSONAL);
+    const key = await keyOf(ph, PERSONAL);
+    // The phone's store is wiped (same messaging account and device keys).
+    const again = createDocumentsVaults({ server: ph.server, store: createKeystore(memoryBackend()), account: ph.account, userId: ph.userId, scopeMembers });
+    expect(await again.open(PERSONAL)).toMatchObject({ state: "waiting" }); // its old grant is sealed to a key it no longer has
+    expect(await br.vaults.grantPending(PERSONAL)).toBe(1); // the browser hands it over to the new box key
+    expect(await again.open(PERSONAL)).toMatchObject({ state: "ready", version: 1 });
+    expect((await again.keysFor(PERSONAL)).key).toEqual(key);
+  });
+
   it("only the phone creates vaults; a vault exists once", async () => {
     const ph = await phone("luke");
     const br = await linkedBrowser(ph);

@@ -118,6 +118,11 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
     }
     const rows = await server.boxes([userId]);
     if (!rows.some((r) => r.device_id === s.deviceId && r.box_pub === toB64(box.pub))) {
+      // A row for this device with another key: this device's store was reset (on the
+      // iPhone, the Face ID key was lost: passcode turned off, app data cleared). That
+      // key is gone for good, so its row is replaced; grants to it can't be opened, and
+      // the other devices (or the recovery code) give this one the vaults again.
+      if (rows.some((r) => r.device_id === s.deviceId)) await server.removeBox(s.deviceId);
       const sig = signBoxKey(s.device, { userId, deviceId: s.deviceId, boxPub: box.pub });
       await server.addBox({ device_id: s.deviceId, user_id: userId, box_pub: toB64(box.pub), box_sig: toB64(sig) });
     }

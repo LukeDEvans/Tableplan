@@ -117,10 +117,22 @@ async function device(name, userId, { native, width = 390 }) {
     window.__msg = createMessagingAccount({ server: createMessagingServer(createRestTransport({ baseUrl: () => appUrl, headers })), store: createKeystore(await idbBackend()), userId });
     window.__toasts = [];
     window.__opened = [];
+    const lockKey = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    window.__lock = {
+      key: lockKey, prompts: 0, cancelNext: false,
+      async unlock() {
+        this.prompts++;
+        if (this.cancelNext) { this.cancelNext = false; throw Object.assign(new Error("Cancelled"), { code: "CANCELLED" }); }
+        return { key: this.key };
+      },
+    };
     const { mountDocuments } = await import(`${appUrl}/documents/ui.js`);
     window.__ui = await mountDocuments(document.getElementById("documentsRoot"), {
       userId, baseUrl: () => appUrl, headers, functionsUrl: () => `${appUrl}/functions/v1`, getToken: async () => userId,
       isNative: native, nativeMessagingKeys: () => null,
+      // A stand-in for the iPhone's DocumentsLock (Face ID): a fixed key per profile,
+      // a count of prompts, and a switch to cancel the next one.
+      nativeDocumentsLock: () => (native ? window.__lock : null),
       household: () => ({ scope: "7aa1feaf-4c11-4b20-a1b4-234082e90c97", members }),
       personalScope: () => personal,
       toast: (t) => window.__toasts.push(t),
@@ -286,6 +298,36 @@ try {
   await idle(phone);
   check(!(await folderTabs(phone)).includes("Taxes"), "…and removed");
 
+  console.log("The lock (Face ID on every open)");
+  const prompts = () => phone.page.evaluate(() => window.__lock.prompts);
+  const before = await prompts();
+  await phone.page.evaluate(() => window.__ui.hide());
+  await household(phone);
+  await idle(phone);
+  check((await prompts()) === before + 1 && (await fileNames(phone)).length > 0, "leaving and coming back asks for Face ID again", `${before} → ${await prompts()}`);
+  await phone.page.evaluate(() => { Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
+  const lockedText = await text(phone);
+  check(lockedText.includes("Locked") && !lockedText.includes("Car title") && await phone.page.locator(".docs-file, .docs-thumb img").count() === 0, "the app going to the background locks the page, showing no names", lockedText);
+  await phone.page.evaluate(() => { Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true }); window.__lock.cancelNext = true; });
+  await phone.page.click("[data-act=unlock]");
+  await phone.page.waitForFunction(() => window.__lock.prompts > 0 && !window.__lock.cancelNext, null, { timeout: 10000 });
+  check((await text(phone)).includes("Locked") && await phone.page.locator(".docs-file").count() === 0, "cancelling Face ID keeps it locked");
+  await phone.page.click("[data-act=unlock]");
+  await phone.page.waitForSelector(".docs-file", { timeout: 20000 });
+  check(true, "Unlock opens it again");
+  const atRest = await phone.page.evaluate(async () => {
+    const req = indexedDB.open("live-documents");
+    const db = await new Promise((r) => { req.onsuccess = () => r(req.result); });
+    const keys = await new Promise((r) => { const q = db.transaction("kv").objectStore("kv").getAllKeys(); q.onsuccess = () => r(q.result); });
+    const vaultKey = keys.find((k) => String(k).startsWith("vault:"));
+    const box = await new Promise((r) => { const q = db.transaction("kv").objectStore("kv").get(vaultKey); q.onsuccess = () => r(q.result); });
+    db.close();
+    const wrong = await crypto.subtle.importKey("raw", crypto.getRandomValues(new Uint8Array(32)), "AES-GCM", false, ["decrypt"]);
+    const right = await crypto.subtle.importKey("raw", Uint8Array.from(atob(window.__lock.key), (c) => c.charCodeAt(0)), "AES-GCM", false, ["decrypt"]);
+    const tryKey = async (k) => { try { await crypto.subtle.decrypt({ name: "AES-GCM", iv: box.iv, additionalData: new TextEncoder().encode(vaultKey) }, k, box.ct); return true; } catch { return false; } };
+    return { found: Boolean(vaultKey), right: await tryKey(right), wrong: await tryKey(wrong) };
+  });
+  check(atRest.found && atRest.right && !atRest.wrong, "the vault keys on the phone are encrypted with the Face ID key", JSON.stringify(atRest));
   console.log("Marijane");
   await household(wife);
   check((await text(wife)).includes("waiting for the key") && (await text(wife)).includes("verify each other"), "before verifying, Marijane waits and is told to verify", await text(wife));
@@ -396,6 +438,13 @@ try {
   check((await fresh.page.locator(".docs-settings").innerText()).includes("this device"), "settings list Luke's devices");
   await shot(fresh, "8-settings");
   check(await noSideScroll(fresh), "settings fit a 360 px phone");
+
+  console.log("Losing the Face ID key");
+  await fresh.page.evaluate(() => { window.__ui.hide(); window.__lock.key = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))); });
+  await personal(fresh);
+  await fresh.page.waitForSelector("[data-form=restore]", { state: "attached", timeout: 20000 });
+  check((await text(fresh)).includes("waiting for the key"), "a phone whose Face ID key was lost starts over safely: it waits, and offers the recovery code");
+  check(fresh.errors.length === 0, "…without errors", fresh.errors.join(" | "));
 
   for (const d of [phone, wife, laptop]) check(d.errors.length === 0, `${d.name}: no page errors`, d.errors.join(" | "));
 } catch (e) {

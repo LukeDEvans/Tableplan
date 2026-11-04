@@ -123,22 +123,67 @@ export async function mountDocuments(root, deps) {
     ? async () => { const { key } = await keyPlugin.wrapKey(); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); }
     : async () => null;
   const msgBackend = await idbBackend({ getRawWrapKey });
-  const docBackend = await idbBackend({ dbName: DOCUMENTS_DB, getRawWrapKey });
   const msgStore = createKeystore(msgBackend);
-  const store = createKeystore(docBackend);
-  // Another account used Documents in this browser before: nothing of theirs stays.
-  if ((await store.get("owner")) !== userId) { await store.clear(); await store.set("owner", userId); }
+  // THE LOCK (decision 6, §8). On the iPhone, Documents' own store (vault keys, cached
+  // names, thumbnails) is encrypted with a Keychain key that only Face ID or the
+  // passcode releases (DocumentsLock). It's opened on each visit and forgotten when
+  // the page is left or the app goes to the background, so every open asks again.
+  // In a browser (or an app build without the plugin) there's no lock: the store uses
+  // the same key as messaging's and stays open while the page is.
+  const lockPlugin = deps.nativeDocumentsLock?.() || null;
+  let session = null; // { backend } while unlocked
+  let store = null, vaults = null, library = null;
+  let unlocking = null;
 
   const transport = createRestTransport({ baseUrl: deps.baseUrl, headers: deps.headers });
   const server = createDocumentsServer(transport);
   const account = createMessagingAccount({ server: createMessagingServer(transport), store: msgStore, userId });
   const household = () => deps.household?.() || null;
-  const vaults = createDocumentsVaults({
-    server, store, account, userId,
-    scopeMembers: async (scope) => { const h = household(); return h && h.scope === scope ? h.members.map((m) => m.user_id) : []; },
-  });
   const storage = createDocumentsStorage({ presign: edgePresigner({ functionsUrl: deps.functionsUrl(), getToken: deps.getToken }) });
-  const library = createDocumentsLibrary({ server, storage, vaults, store, userId });
+
+  // Opens Documents' store (the Face ID prompt on the iPhone). Throws a LockError-like
+  // { code } when the person cancels or the phone has no passcode.
+  function unlock() {
+    if (session) return Promise.resolve();
+    unlocking ||= (async () => {
+      const getKey = lockPlugin
+        ? async () => { const { key } = await lockPlugin.unlock({ reason: "Open your documents" }); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); }
+        : getRawWrapKey;
+      const backend = await idbBackend({ dbName: DOCUMENTS_DB, getRawWrapKey: getKey });
+      const s = createKeystore(backend);
+      // Another account used Documents here before, or the store was written under a
+      // key this phone no longer has (the lock key replaced, the passcode turned off):
+      // start empty. The vault keys come back from this device's own grants.
+      let owner = null;
+      try { owner = await s.get("owner"); } catch { owner = null; }
+      if (owner !== userId) { await s.clear(); await s.set("owner", userId); }
+      store = s;
+      vaults = createDocumentsVaults({
+        server, store, account, userId,
+        scopeMembers: async (scope) => { const h = household(); return h && h.scope === scope ? h.members.map((m) => m.user_id) : []; },
+      });
+      library = createDocumentsLibrary({ server, storage, vaults, store, userId });
+      session = { backend };
+    })().finally(() => { unlocking = null; });
+    return unlocking;
+  }
+
+  // Forget everything opened (iPhone only): keys, decrypted thumbnails, the open
+  // document. Anything still running for the old session stops drawing (gen).
+  function lock() {
+    if (!lockPlugin || !session) return;
+    gen++;
+    closeViewer();
+    for (const url of thumbs.values()) if (url) URL.revokeObjectURL(url);
+    thumbs.clear();
+    thumbQueue = [];
+    try { session.backend.close(); } catch { /* already closed */ }
+    session = null; store = null; vaults = null; library = null;
+    ui.files = []; ui.folders = []; ui.banners = []; ui.busy = "";
+    // A recovery code on screen is already in force: keep it (in memory only) so it's
+    // shown again after unlocking, rather than lost unseen.
+    if (ui.panel !== "recovery") { ui.code = null; ui.panel = null; }
+  }
 
   const ui = {
     scope: null, kind: "household", title: "Documents", view: "loading", error: "", busy: "",
@@ -158,6 +203,16 @@ export async function mountDocuments(root, deps) {
 
   async function load() {
     const my = ++gen;
+    if (!session) {
+      ui.view = "locked"; draw();
+      try { await unlock(); } catch (e) {
+        if (my !== gen) return;
+        ui.lockError = e?.code === "NO_PASSCODE" ? "Set a passcode on this iPhone to use Documents." : e?.code === "CANCELLED" ? "" : (e?.message || "Couldn't unlock.");
+        return draw();
+      }
+      if (my !== gen) return;
+      ui.lockError = "";
+    }
     const scope = ui.scope;
     const st = await account.status();
     if (my !== gen) return;
@@ -255,8 +310,8 @@ export async function mountDocuments(root, deps) {
 
   function draw() {
     if (!visible) return;
-    const views = { loading, "needs-messaging": needsMessaging, setup, waiting, removed, error, library: libraryView, recovery };
-    root.innerHTML = (views[ui.panel === "recovery" ? "recovery" : ui.view] || loading)();
+    const views = { loading, locked, "needs-messaging": needsMessaging, setup, waiting, removed, error, library: libraryView, recovery };
+    root.innerHTML = (views[ui.view === "locked" ? "locked" : ui.panel === "recovery" ? "recovery" : ui.view] || loading)();
     if (ui.view === "library" && ui.panel !== "recovery") loadThumbs();
     const pre = root.querySelector(".docs-view-text");
     if (pre && ui.viewer?.text != null) pre.textContent = ui.viewer.text; // text, never markup
@@ -267,6 +322,16 @@ export async function mountDocuments(root, deps) {
   const busyNote = () => (ui.busy ? `<p class="msg-muted" role="status">${esc(ui.busy)}</p>` : "");
 
   function loading() { return pane(`<p class="msg-muted">Opening ${esc(ui.title)}…</p>`); }
+
+  // Nothing about the documents shows while locked: no names, no counts.
+  function locked() {
+    return pane(`<div class="msg-intro docs-locked">
+      <h2 class="msg-title">${esc(ui.title)}</h2>
+      <p>Locked.</p>
+      ${ui.lockError ? `<p class="msg-error" role="alert">${esc(ui.lockError)}</p>` : ""}
+      <button type="button" class="primary-btn" data-act="unlock">Unlock</button>
+    </div>`);
+  }
 
   function needsMessaging() {
     return pane(`<div class="msg-intro">
@@ -744,6 +809,7 @@ export async function mountDocuments(root, deps) {
     const act = t.closest("[data-act]")?.dataset.act;
     if (!act) return;
     if (act === "open-messages") deps.openMessages?.();
+    else if (act === "unlock") { ui.lockError = ""; load(); }
     else if (act === "reload") { ui.error = ""; ui.view = "loading"; draw(); load(); }
     else if (act === "create") createVault();
     else if (act === "new-code") newCode();
@@ -818,6 +884,14 @@ export async function mountDocuments(root, deps) {
     addFiles(e.dataTransfer.files);
   });
 
+  // The app going to the background (switching apps, locking the phone) re-locks too.
+  function onVisibility() {
+    if (document.visibilityState !== "hidden" || !lockPlugin || !session) return;
+    lock();
+    if (visible) { ui.view = "locked"; ui.lockError = ""; draw(); }
+  }
+  document.addEventListener("visibilitychange", onVisibility);
+
   return {
     async show(scope, { kind = "household", title = "Documents" } = {}) {
       visible = true;
@@ -833,16 +907,19 @@ export async function mountDocuments(root, deps) {
       visible = false;
       closeViewer();
       gen++;
+      lock(); // leaving the page re-locks it (no grace period)
     },
     destroy() {
       visible = false;
       gen++;
       closeViewer();
+      document.removeEventListener("visibilitychange", onVisibility);
       for (const url of thumbs.values()) if (url) URL.revokeObjectURL(url);
       thumbs.clear();
       root.innerHTML = "";
-      try { msgBackend.close(); docBackend.close(); } catch { /* already closed */ }
+      try { msgBackend.close(); session?.backend.close(); } catch { /* already closed */ }
+      session = null;
     },
-    _debug: { vaults, library, ui },
+    get _debug() { return { vaults, library, ui, locked: !session }; },
   };
 }
