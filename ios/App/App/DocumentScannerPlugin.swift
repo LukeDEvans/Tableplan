@@ -20,6 +20,10 @@ import Capacitor
 //     uses the exact digits to check the AI's read (RECEIPTS.md, "Reading a receipt").
 //   • recognizeText({ images: [base64 JPEG…] }) — the same text recognition for
 //     photos picked from the library; resolves { text: [[…] per image] }.
+//   • scan({ …, pdf: true }) — for Documents (DOCUMENTS_DESIGN.md §9): up to 30
+//     pages, joined on the phone into one PDF; resolves { pdf: base64, pageCount,
+//     thumb: small JPEG of page 1, pageText: [string per page] (with ocr), cancelled }.
+//     No page images are returned and nothing touches Photos or the disk.
 @objc(DocumentScannerPlugin)
 public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCameraViewControllerDelegate {
     public let identifier = "DocumentScannerPlugin"
@@ -35,6 +39,7 @@ public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCamer
     private var maxDimension: CGFloat = 1600
     private var quality: CGFloat = 0.82
     private var wantsText = false
+    private var wantsPdf = false
 
     @objc func isAvailable(_ call: CAPPluginCall) {
         call.resolve(["available": VNDocumentCameraViewController.isSupported])
@@ -45,7 +50,8 @@ public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCamer
             call.reject("The document camera isn't available on this device.")
             return
         }
-        maxPages = max(1, min(call.getInt("maxPages") ?? 4, 10))
+        wantsPdf = call.getBool("pdf") ?? false
+        maxPages = max(1, min(call.getInt("maxPages") ?? 4, wantsPdf ? 30 : 10))
         maxDimension = CGFloat(max(600, min(call.getInt("maxDimension") ?? 1600, 4000)))
         quality = CGFloat(max(0.3, min(call.getDouble("quality") ?? 0.82, 1.0)))
         wantsText = call.getBool("ocr") ?? false
@@ -72,7 +78,22 @@ public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCamer
         let maxDimension = self.maxDimension
         let quality = self.quality
         let wantsText = self.wantsText
+        let wantsPdf = self.wantsPdf
         controller.dismiss(animated: true)
+        if wantsPdf {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                var result: [String: Any] = ["cancelled": false, "pageCount": images.count]
+                result["pdf"] = DocumentScannerPlugin.pdfBase64(images, maxDimension: maxDimension, quality: quality)
+                if let first = images.first {
+                    result["thumb"] = DocumentScannerPlugin.jpegBase64(first, maxDimension: 320, quality: 0.72)
+                }
+                if wantsText {
+                    result["pageText"] = images.map { DocumentScannerPlugin.recognize($0.cgImage).compactMap { $0["text"] as? String }.joined(separator: "\n") }
+                }
+                DispatchQueue.main.async { self?.finish(result) }
+            }
+            return
+        }
         // Resize + encode (and read the text) off the main thread; a multi-page
         // scan can take a moment.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -139,6 +160,26 @@ public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCamer
         let call = pendingCall
         pendingCall = nil
         call?.resolve(result)
+    }
+
+    // One PDF, a page per scanned image, each page the image's own size (points =
+    // pixels at the capped dimension), images JPEG-compressed inside.
+    private static func pdfBase64(_ images: [UIImage], maxDimension: CGFloat, quality: CGFloat) -> String? {
+        guard !images.isEmpty else { return nil }
+        let data = NSMutableData()
+        UIGraphicsBeginPDFContextToData(data, .zero, [kCGPDFContextCreator as String: "Live"])
+        for image in images {
+            let size = image.size
+            let longest = max(size.width, size.height)
+            let scale = longest > maxDimension && longest > 0 ? maxDimension / longest : 1
+            let target = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
+            guard let jpeg = jpegBase64(image, maxDimension: maxDimension, quality: quality),
+                  let bytes = Data(base64Encoded: jpeg), let compressed = UIImage(data: bytes) else { continue }
+            UIGraphicsBeginPDFPageWithInfo(CGRect(origin: .zero, size: target), nil)
+            compressed.draw(in: CGRect(origin: .zero, size: target))
+        }
+        UIGraphicsEndPDFContext()
+        return data.length > 0 ? (data as Data).base64EncodedString() : nil
     }
 
     private static func jpegBase64(_ image: UIImage, maxDimension: CGFloat, quality: CGFloat) -> String? {

@@ -134,6 +134,17 @@ async function device(name, userId, { native, width = 390 }) {
       // A stand-in for the iPhone's DocumentsLock (Face ID): a fixed key per profile,
       // a count of prompts, and a switch to cancel the next one.
       nativeDocumentsLock: () => (native ? window.__lock : null),
+      // A stand-in for Apple's document camera in PDF mode: three pages, a thumbnail
+      // and the text read from each page.
+      nativeDocumentScanner: () => (native ? {
+        async scan(opts) {
+          window.__scanOpts = opts;
+          const pdf = "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Count 3 >> endobj\n3 0 obj << /Type /Page >> endobj\n4 0 obj << /Type /Page >> endobj\n5 0 obj << /Type /Page >> endobj\n%%EOF";
+          const c = document.createElement("canvas"); c.width = 240; c.height = 320; c.getContext("2d").fillRect(0, 0, 240, 320);
+          const thumb = c.toDataURL("image/jpeg").split(",")[1];
+          return { cancelled: false, pdf: btoa(pdf), pageCount: 3, thumb, pageText: ["LEASE AGREEMENT", "Page two", "Signed"] };
+        },
+      } : null),
       household: () => ({ scope: "7aa1feaf-4c11-4b20-a1b4-234082e90c97", members }),
       personalScope: () => personal,
       toast: (t) => window.__toasts.push(t),
@@ -345,6 +356,23 @@ try {
     return { found: Boolean(vaultKey), right: await tryKey(right), wrong: await tryKey(wrong) };
   });
   check(atRest.found && atRest.right && !atRest.wrong, "the vault keys on the phone are encrypted with the Face ID key", JSON.stringify(atRest));
+  console.log("Scanning (iPhone)");
+  await pick(phone, ".docs-sidebar .article-sidebar-tab:has-text('Home')");
+  await phone.page.evaluate(() => { window.__toasts = []; });
+  await phone.page.click("[data-act=scan]");
+  await phone.page.waitForSelector(".docs-view-pdf", { timeout: 20000 });
+  const scanOpts = await phone.page.evaluate(() => window.__scanOpts);
+  check(scanOpts.pdf === true && scanOpts.maxPages === 30 && scanOpts.ocr === true, "Scan asks the camera for one PDF of up to 30 pages, with the text", JSON.stringify(scanOpts));
+  check((await phone.page.locator(".docs-viewer [name=name]").inputValue()).startsWith("Scan "), "the scan opens straight away, ready to rename");
+  await phone.page.click("[data-act=close-viewer]");
+  check((await text(phone)).includes("3 pages") && (await fileNames(phone)).some((n) => n.startsWith("Scan ")), "it's listed in the open folder (Home) with its page count");
+  const scanText = await phone.page.evaluate(async (scope) => {
+    const d = window.__ui._debug;
+    const f = d.ui.files.find((x) => x.name.startsWith("Scan "));
+    return f ? d.library.searchText(scope, f.id) : null;
+  }, GROUP);
+  check(scanText === "LEASE AGREEMENT\n\nPage two\n\nSigned", "the page text is kept, encrypted with the file", String(scanText));
+
   console.log("Marijane");
   await household(wife);
   check((await text(wife)).includes("waiting for the key") && (await text(wife)).includes("verify each other"), "before verifying, Marijane waits and is told to verify", await text(wife));
@@ -382,6 +410,7 @@ try {
   await laptop.page.click("[data-act=reload]");
   await laptop.page.waitForSelector(".docs-sidebar", { timeout: 20000 });
   check((await fileNames(laptop)).includes("Car title — Honda"), "after the phone opens the page, the browser has the documents");
+  check(await laptop.page.locator("[data-act=scan]").count() === 0, "a laptop browser has no Scan button");
   await laptop.page.evaluate(() => { window.__toasts = []; });
   await addFiles(laptop, "drop");
   check((await fileNames(laptop)).filter((n) => n === "notes").length === 2, "files dropped on the laptop page are added");

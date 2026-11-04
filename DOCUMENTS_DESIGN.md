@@ -1,6 +1,6 @@
 # Documents — design & plan
 
-Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Pages built (§20), Face ID lock built (§21)**, not deployed. **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 built and checked live** (§18, §19): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter, and the `doc-storage` function deployed with R2 working end to end. Branch `claude/documents-crypto`. No UI, nothing on Netlify.
+Status: **DESIGN AGREED** (decisions from Luke, 2026-11-03). **Pages built (§20), Face ID lock built (§21), scanning built (§22)**, not deployed. **Step 1 (crypto core) built and independently reviewed** (§16, §17). **Step 2 built and checked live** (§18, §19): the `doc_` tables are **LIVE** (applied 2026-11-03 with Luke's OK), vault keys across devices, storage adapter, and the `doc-storage` function deployed with R2 working end to end. Branch `claude/documents-crypto`. No UI, nothing on Netlify.
 
 Goal: a **Documents** page in **Household** (shared with Marijane) and another in **Personal** (Luke only) for important and sensitive papers. Scan or upload on any device, open and share from any device, encrypted so that the storage provider and our own server never see a readable file. Storage starts in the cloud and moves to a home server later without a rebuild.
 
@@ -527,3 +527,16 @@ After a review (ISSUES.md, 2026-11-03): the re-key is marked pending in the same
 
 **Verified:** `qa:documents-ui` (now 67 checks) drives the page with a stand-in for the plugin: each open after leaving asks again; going to the background locks with no names left on the page; cancelling stays locked; Unlock opens; the vault keys in IndexedDB decrypt with the Face ID key and not another; a lost key leads to "waiting" with the recovery code offered. Unit suite 3433, build, boot check pass.
 **Not verified:** the Swift itself (no compiler here; the iOS compile check runs on the pull request) and anything on an iPhone: the real Face ID prompt, passcode fallback, `visibilitychange` firing on background in WKWebView. That needs the TestFlight build.
+
+
+---
+
+## 22. Scanning (step 5, 2026-11-03)
+
+**Built:**
+- `DocumentScannerPlugin.swift` gains a PDF mode, `scan({ pdf: true, … })`: Apple's document camera, **up to 30 pages** (receipts stay capped at 10), joined on the phone into one PDF (`UIGraphicsBeginPDFContextToData`, a page per image, JPEG inside, longest side 2000 px). It returns `{ pdf, pageCount, thumb, pageText }` and no page images. Nothing goes to Photos or the disk; the text is read on the phone (Vision, as receipts already do).
+- `documents/ui.js`: a **Scan** button on the iPhone (not in a browser), next to +. The scan is named "Scan <date>", dated today, put in the open folder, encrypted and uploaded, then **opened straight away** so it can be renamed and filed. The page text is kept encrypted with the file (`text` part) for search later. Tracked like an upload: a lock while the camera is up doesn't lose the scan.
+
+**Verified:** `qa:documents-ui` (72 checks) with a stand-in camera: the options sent (PDF, 30 pages, text), the scan opening ready to rename, listed in the open folder with its page count, its text stored and decrypted back, no Scan button on a laptop.
+**Not verified:** the real camera, the PDF it builds, and memory use at 30 pages: the TestFlight build.
+**Not done:** searching inside the page text (search still matches names and tags); the review sheet from §9 (rename and folder are done in the viewer right after).

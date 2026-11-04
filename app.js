@@ -8895,6 +8895,7 @@ function documentsDeps() {
     isNative: isNativeApp(),
     nativeMessagingKeys,
     nativeDocumentsLock,
+    nativeDocumentScanner,
     household: () => (userGroup?.id ? { scope: userGroup.id, members: groupMembers.map((m) => ({ user_id: m.user_id, display_name: m.display_name })) } : null),
     personalScope: () => (currentViewList().includes("personal") && authSession?.user?.id ? `u-${authSession.user.id}` : null),
     toast: (text) => showMailToast(text),

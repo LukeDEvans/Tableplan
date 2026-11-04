@@ -35,6 +35,7 @@ export const STARTING_FOLDERS = Object.freeze({
 });
 export const USAGE_WARN_BYTES = 7 * 1024 ** 3; // decision 5: warn at 7 GB of the 10 GB free
 const MAX_FILE_BYTES = 60 * 1024 * 1024;
+const SCAN_TEXT_MAX = 100000; // characters of page text kept for search
 const THUMB_PX = 320;
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -96,6 +97,7 @@ const ICON = {
   menu: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   gear: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   add: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  scan: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg>',
 };
 const FILE_GLYPH = { "application/pdf": "PDF", "text/plain": "TXT", "text/csv": "CSV" };
 const glyphFor = (mime) => FILE_GLYPH[mime] || (mime.startsWith("image/") ? "IMG" : mime.includes("sheet") || mime.includes("excel") ? "XLS" : mime.includes("presentation") || mime.includes("powerpoint") ? "PPT" : "DOC");
@@ -495,7 +497,8 @@ export async function mountDocuments(root, deps) {
         <div class="discover-head">
           <button class="icon-btn mail-sidebar-toggle" type="button" data-act="toggle-sidebar" title="Folders" aria-label="Show folders" aria-controls="docsSidebar">${ICON.menu}</button>
           <input type="search" class="discover-search-input" data-search placeholder="Search ${esc(ui.title)}…" aria-label="Search documents" autocomplete="off" value="${esc(ui.query)}" />
-          <button class="icon-btn" type="button" data-act="add" title="Add a document" aria-label="Add a document">${ICON.add}</button>
+          ${scanner ? `<button class="icon-btn" type="button" data-act="scan" title="Scan a document" aria-label="Scan a document">${ICON.scan}</button>` : ""}
+          <button class="icon-btn" type="button" data-act="add" title="${scanner ? "Add a file" : "Add a document"}" aria-label="${scanner ? "Add a file" : "Add a document"}">${ICON.add}</button>
           <button class="icon-btn" type="button" data-act="settings" title="Documents settings" aria-label="Documents settings">${ICON.gear}</button>
           <input type="file" data-file-input multiple hidden accept="${esc(MIME_TYPES.join(","))},.heic,.heif" />
         </div>
@@ -681,6 +684,50 @@ export async function mountDocuments(root, deps) {
     });
   }
 
+  // ---- scanning (iPhone: Apple's document camera, §9) ----------------------------------
+  // Up to 30 pages, joined into one PDF on the phone, with the page text read on the
+  // phone (kept encrypted with the file, for search). It goes into the open folder and
+  // opens, so it can be renamed and filed at once. Tracked like an upload: a lock while
+  // the camera is up doesn't lose the scan.
+  const scanner = deps.nativeDocumentScanner?.() || null;
+  const fromB64Std = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const scanDocument = () => track(async () => {
+    const scope = ui.scope;
+    const my = gen;
+    const here = () => my === gen && scope === ui.scope;
+    const folderId = ui.folders.some((f) => f.id === ui.folder) ? ui.folder : null;
+    let r;
+    try {
+      r = await scanner.scan({ pdf: true, maxPages: 30, maxDimension: 2000, quality: 0.8, ocr: true });
+    } catch (e) {
+      if (here()) { ui.error = e?.message || "The camera couldn't open."; draw(); }
+      return;
+    }
+    if (!r || r.cancelled || !r.pdf) return;
+    const today = new Date();
+    const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const name = `Scan ${today.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+    if (here()) { ui.busy = "Encrypting and uploading the scan…"; ui.error = ""; draw(); }
+    let id;
+    try {
+      const content = fromB64Std(r.pdf);
+      if (content.length > MAX_FILE_BYTES) throw new Error("That scan is larger than 60 MB. Try fewer pages.");
+      const thumb = r.thumb ? fromB64Std(r.thumb) : null;
+      const text = (Array.isArray(r.pageText) ? r.pageText : []).join("\n\n").slice(0, SCAN_TEXT_MAX);
+      id = await library.addFile(scope, { content, thumb, text, folderId, meta: { name, originalName: `${name}.pdf`, mime: "application/pdf", pages: Math.max(1, Number(r.pageCount) || 1), documentDate: iso } });
+      if (thumb) await store.set(`thumb:${id}`, thumb);
+    } catch (e) {
+      if (here()) { ui.busy = ""; ui.error = e?.message || "The scan couldn't be saved."; draw(); }
+      else deps.toast?.("The scan couldn't be saved. Open Documents to try again.");
+      return;
+    }
+    deps.toast?.("Scan added.");
+    if (!here()) return;
+    ui.busy = "";
+    try { await refresh(my, scope); } catch { /* the list catches up next open */ }
+    if (here()) { draw(); openFile(id); }
+  });
+
   // Tracked: leaving the page or the app going to the background mid-upload doesn't
   // cut the batch off; it finishes, then the store closes.
   const addFiles = (fileList) => track(() => addFilesNow(fileList));
@@ -861,6 +908,7 @@ export async function mountDocuments(root, deps) {
       const sb = root.querySelector("#docsSidebar");
       if (window.innerWidth <= 680) sb?.classList.toggle("is-expanded"); else sb?.classList.toggle("is-collapsed");
     } else if (act === "add") root.querySelector("[data-file-input]")?.click();
+    else if (act === "scan") scanDocument();
     else if (act === "settings") settings();
     else if (act === "close-panel") { ui.panel = null; ui.error = ""; draw(); }
     else if (act === "close-viewer") { closeViewer(); ui.error = ""; draw(); }

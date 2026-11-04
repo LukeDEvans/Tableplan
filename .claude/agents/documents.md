@@ -140,6 +140,13 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   the locked store: it opens the grants, so that would bypass the lock.
 - Web has no lock yet (§15 open point 1).
 
+## Scanning (step 5 — DOCUMENTS_DESIGN.md §22)
+- `DocumentScannerPlugin.swift` `scan({ pdf: true })` is Documents' mode: up to 30 pages,
+  one PDF built on the phone, `{ pdf, pageCount, thumb, pageText }`. The receipts mode
+  (no `pdf`) is unchanged and stays capped at 10 pages; it belongs to Shop.
+- The Scan button exists only when the scanner does (iPhone). A scan goes into the
+  open folder and opens for renaming; its text is the encrypted `text` part.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
