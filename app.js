@@ -76,7 +76,7 @@ import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGr
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { SETTING_STAMP_KEYS, settingsSnapshot, stampSettingChanges, mergeTrackedSettings, localSettingsAhead } from './settings-sync.js';
-import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
+import { clearLocalAccountState, accountTransitionKind, signOutWasExplicit } from './auth-account-reset.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
 import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnostics.js';
 import { describeCapabilities } from './platform-capabilities.js';
@@ -3412,13 +3412,17 @@ async function initializeSupabaseAuth() {
       window.clearTimeout(sharedStorageRetryTimer);
       sharedStorageReady = false;
       activeSharedStorageProvider = null;
+      // Only the person's own sign-out (or a different account) deletes this device's
+      // secure messages and Documents keys. A session ended from another device (a
+      // device removal signs out the others) keeps them (auth-account-reset.js).
+      const keepSecureStores = kind === "signout" && !signOutWasExplicit(localStorage);
       clearLocalAccountState(localStorage);
       await Promise.allSettled([
         purgeLocalArticleContent(),
         purgeLocalCadenceContent(),
         purgeLocalMusicContent(),
         purgeLocalFinanceTxnStore(),
-        purgeLocalMessaging(), // the old session is already gone here, so only the local wipe happens
+        keepSecureStores ? Promise.resolve() : purgeLocalMessaging(), // the old session is already gone here, so only the local wipe happens
         syncShareTokenForSession(false),
       ]);
       window.location.reload();

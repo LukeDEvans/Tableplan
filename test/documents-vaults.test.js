@@ -214,13 +214,41 @@ describe("creating and receiving vaults", () => {
     await br.vaults.ensureBox();
     await ph.vaults.grantPending(PERSONAL);
     await br.vaults.open(PERSONAL);
+    expect(await br.vaults.grantPending(PERSONAL)).toBe(0); // as every open does: the browser sees the phone holding the key
     const key = await keyOf(ph, PERSONAL);
     // The phone's store is wiped (same messaging account and device keys).
     const again = createDocumentsVaults({ server: ph.server, store: createKeystore(memoryBackend()), account: ph.account, userId: ph.userId, scopeMembers });
     expect(await again.open(PERSONAL)).toMatchObject({ state: "waiting" }); // its old grant is sealed to a key it no longer has
-    expect(await br.vaults.grantPending(PERSONAL)).toBe(1); // the browser hands it over to the new box key
+    // The browser has seen this phone holding the key with its OLD box key: a reset
+    // needs a yes (Luke, 2026-11-03), so nothing goes out automatically.
+    expect(await br.vaults.grantPending(PERSONAL)).toBe(0);
+    expect((await br.vaults.pendingApprovals(PERSONAL)).map((a) => a.deviceId)).toEqual([(await ph.account.status()).deviceId]);
+    expect(await br.vaults.grantPending(PERSONAL, { approve: [(await ph.account.status()).deviceId] })).toBe(1);
+    expect(await br.vaults.pendingApprovals(PERSONAL)).toEqual([]);
     expect(await again.open(PERSONAL)).toMatchObject({ state: "ready", version: 1 });
     expect((await again.keysFor(PERSONAL)).key).toEqual(key);
+  });
+
+  it("a browser whose Documents was reset (passkey skipped) gets the keys again only after the phone says yes; a newly linked one needs no yes", async () => {
+    const ph = await phone("luke");
+    await ph.vaults.createVault(PERSONAL);
+    const br = await linkedBrowser(ph);
+    await br.vaults.ensureBox();
+    expect(await ph.vaults.grantPending(PERSONAL)).toBe(1); // first sight: granted
+    await br.vaults.open(PERSONAL);
+    expect(await ph.vaults.grantPending(PERSONAL)).toBe(0); // the phone sees it holding the key
+    // Someone at the unlocked laptop wipes Documents' store (Start over / clear site data).
+    const wiped = createDocumentsVaults({ server: br.server, store: createKeystore(memoryBackend()), account: br.account, userId: br.userId, scopeMembers });
+    expect(await wiped.open(PERSONAL)).toMatchObject({ state: "waiting" }); // publishes a new box key
+    expect(await ph.vaults.grantPending(PERSONAL)).toBe(0);
+    const [waiting] = await ph.vaults.pendingApprovals(PERSONAL);
+    expect(waiting).toMatchObject({ userId: USERS.luke });
+    expect(await wiped.open(PERSONAL)).toMatchObject({ state: "waiting" }); // still nothing for it
+    expect(await ph.vaults.grantPending(PERSONAL, { approve: [waiting.deviceId] })).toBe(1);
+    expect(await wiped.open(PERSONAL)).toMatchObject({ state: "ready" });
+    const second = await linkedBrowser(ph);
+    await second.vaults.ensureBox();
+    expect(await ph.vaults.grantPending(PERSONAL)).toBe(1); // a new device: no question
   });
 
   it("only the phone creates vaults; a vault exists once", async () => {

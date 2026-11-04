@@ -10,6 +10,7 @@ import { toB64, utf8, fromUtf8 } from "../messaging/crypto/bytes.js";
 import { createDocumentsServer } from "../documents/server.js";
 import { createDocumentsVaults } from "../documents/vaults.js";
 import { createDocumentsLibrary } from "../documents/library.js";
+import { createBlobCache } from "../documents/blob-cache.js";
 import { createDocumentsStorage, memoryObjectStore } from "../documents/storage.js";
 import { generateFileKey, wrapFileKey, encryptMeta } from "../documents/crypto/index.js";
 import { createDocumentsDatabase, pgliteTransport, USERS, GROUP } from "./documents-pglite-harness.js";
@@ -236,5 +237,20 @@ describe("recently opened files", () => {
     const bad = kept.get(k).slice(); bad[bad.length - 1] ^= 1; kept.set(k, bad);
     expect(fromUtf8((await lib.open(GROUP, id)).bytes)).toBe(fromUtf8(pdf));
     expect(downloads).toBe(2);
+  });
+
+  it("purging a file removes its kept copy from the device", async () => {
+    const { luke } = await household();
+    const id = await luke.library.addFile(GROUP, { content: pdf, meta: { name: "Old lease", mime: "application/pdf" } });
+    const store = createKeystore(memoryBackend());
+    const lib = createDocumentsLibrary({ server: luke.server, storage: createDocumentsStorage(objects), vaults: luke.vaults, store, userId: luke.userId, blobCache: createBlobCache(store) });
+    await lib.files(GROUP);
+    await lib.open(GROUP, id);
+    expect((await store.keys("blob:")).length).toBe(1);
+    await lib.trash(GROUP, id);
+    await db.query(`update public.doc_files set deleted_at = now() - interval '31 days'`);
+    expect(await lib.purge(GROUP, id)).toBe(true);
+    expect(await store.keys("blob:")).toEqual([]);
+    expect(await store.get("blobidx")).toEqual([]);
   });
 });

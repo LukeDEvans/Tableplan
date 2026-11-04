@@ -14,11 +14,14 @@ import UniformTypeIdentifiers
 //       live yet → the app falls back to openData), "TOO_LARGE" on 413.
 //   • openData({ data, filename, mimeType, sensitive })
 //       The same viewer for bytes the web side already has (base64). sensitive:
-//       a decrypted Documents file (DOCUMENTS_DESIGN.md §9) — up to 70 MB, its temp
-//       copy written with complete file protection, and the viewer is closed (and
-//       the copy deleted) the moment the app goes to the background, so nothing
-//       stays on screen after Documents locks. Leftover copies from a crash are
-//       cleared when the app starts.
+//       a decrypted Documents file (DOCUMENTS_DESIGN.md §9) — up to 40 MB (the
+//       bytes cross the bridge as base64, so the cap keeps memory in check), its
+//       temp copy written with complete file protection, and the viewer is closed
+//       (and the copy deleted) the moment the app stops being active (the app
+//       switcher, Control Centre, a call, the background), so nothing stays on
+//       screen or in the switcher's snapshot after Documents locks. A request that
+//       arrives while the app isn't active is refused ("INACTIVE") and nothing is
+//       written. Leftover copies from a crash are cleared when the app starts.
 //
 // Quick Look renders PDF, images, Word/Excel/PowerPoint, Pages/Numbers/Keynote,
 // text, CSV, RTF, audio/video and more, outside the web view (so sender-supplied
@@ -37,20 +40,21 @@ public class AttachmentPreviewPlugin: CAPPlugin, CAPBridgedPlugin, QLPreviewCont
     private var previewSensitive = false
     private weak var previewController: QLPreviewController?
     private static let maxBytes = 20_000_000
-    private static let maxSensitiveBytes = 70_000_000
+    private static let maxSensitiveBytes = 40_000_000
 
     override public func load() {
         // Copies left behind if the app was killed with a preview open.
         try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent("attachments", isDirectory: true))
-        NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appStoppedBeingActive), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appStoppedBeingActive), name: UIApplication.didEnterBackgroundNotification, object: nil)
     }
 
-    @objc private func appDidEnterBackground() {
+    // Posted on the main thread: closes a sensitive viewer at once (no animation), so
+    // the switcher's snapshot never shows it.
+    @objc private func appStoppedBeingActive() {
         guard previewSensitive else { return }
-        DispatchQueue.main.async {
-            self.previewController?.dismiss(animated: false)
-            self.cleanUp()
-        }
+        previewController?.dismiss(animated: false)
+        cleanUp()
     }
 
     @objc func open(_ call: CAPPluginCall) {
@@ -107,11 +111,30 @@ public class AttachmentPreviewPlugin: CAPPlugin, CAPBridgedPlugin, QLPreviewCont
             call.reject("data (base64) is required", "INVALID")
             return
         }
+        let filename = call.getString("filename") ?? "attachment"
+        let mimeType = call.getString("mimeType") ?? ""
+        // Sensitive: decided, written and shown in one go on the main thread, with the
+        // app active, so a lock can't fall between the check and the viewer appearing.
+        if sensitive {
+            DispatchQueue.main.async {
+                guard UIApplication.shared.applicationState == .active else {
+                    call.reject("The app isn't open", "INACTIVE")
+                    return
+                }
+                do {
+                    let dest = try self.prepareDestination(filename: filename, mimeType: mimeType)
+                    try data.write(to: dest, options: [.atomic, .completeFileProtection])
+                    self.present(dest, call, sensitive: true)
+                } catch {
+                    call.reject(error.localizedDescription, "FAILED")
+                }
+            }
+            return
+        }
         do {
-            let dest = try prepareDestination(filename: call.getString("filename") ?? "attachment",
-                                              mimeType: call.getString("mimeType") ?? "")
-            try data.write(to: dest, options: sensitive ? [.atomic, .completeFileProtection] : .atomic)
-            present(dest, call, sensitive: sensitive)
+            let dest = try prepareDestination(filename: filename, mimeType: mimeType)
+            try data.write(to: dest, options: .atomic)
+            present(dest, call)
         } catch {
             call.reject(error.localizedDescription, "FAILED")
         }
@@ -136,7 +159,7 @@ public class AttachmentPreviewPlugin: CAPPlugin, CAPBridgedPlugin, QLPreviewCont
     }
 
     private func present(_ url: URL, _ call: CAPPluginCall, sensitive: Bool = false) {
-        DispatchQueue.main.async {
+        let show = {
             guard let presenter = self.bridge?.viewController else {
                 try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
                 call.reject("No view to present from", "FAILED")
@@ -155,6 +178,7 @@ public class AttachmentPreviewPlugin: CAPPlugin, CAPBridgedPlugin, QLPreviewCont
                 call.resolve(["opened": true])
             }
         }
+        if Thread.isMainThread { show() } else { DispatchQueue.main.async(execute: show) }
     }
 
     private func cleanUp() {

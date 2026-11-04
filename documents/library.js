@@ -27,7 +27,7 @@ export class LibraryError extends Error {
 
 export const RECENTLY_DELETED_DAYS = 30;
 
-// blobCache (optional): { get(key) → bytes | null, set(key, bytes) } — recently opened
+// blobCache (optional): { get(key) → bytes | null, set(key, bytes), drop(prefix) } — recently opened
 // files' ENCRYPTED blobs kept on the device (the page backs it with its locked store),
 // so reopening doesn't download again. A blob never changes once stored (a re-key
 // re-wraps the file key, not the blob), so a cached copy is never stale.
@@ -247,6 +247,7 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
     await server.purgeFile(fileId);
     await store.remove(`rev:${fileId}`);
     await store.remove(`meta:${fileId}`);
+    if (blobCache?.drop) await Promise.resolve(blobCache.drop(`${scope}/${fileId}/`)).catch(() => {});
     return true;
   }
 

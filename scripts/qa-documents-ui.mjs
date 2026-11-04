@@ -97,9 +97,10 @@ const browser = await chromium.launch({ ...ARGS, channel: "chrome" }).catch(() =
 const MEMBERS = [{ user_id: USERS.luke, display_name: "Luke" }, { user_id: USERS.wife, display_name: "Marijane" }];
 const PERSONAL = `u-${USERS.luke}`;
 
-async function device(name, userId, { native, width = 390, host = null }) {
+async function device(name, userId, { native, width = 390, host = null, ctx: sameBrowser = null }) {
   const appUrl = host ? appUrlBase.replace("127.0.0.1", host) : appUrlBase; // passkeys need a domain, not an IP
-  const ctx = await browser.newContext({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
+  // sameBrowser: another tab of an existing profile (shares its IndexedDB).
+  const ctx = sameBrowser || await browser.newContext({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -479,10 +480,19 @@ try {
   await laptop.page.click("[data-act=settings]");
   await laptop.page.waitForSelector("[data-act=passkey-on]", { timeout: 15000 });
   check(true, "a browser with a passkey authenticator is offered the passkey lock");
+  // A second tab with Documents open, on the unlocked store.
+  const tab2 = await device("luke-browser-tab2", USERS.luke, { native: false, width: 1280, host: "localhost", ctx: laptop.ctx });
+  await household(tab2);
+  await tab2.page.waitForSelector(".docs-file", { timeout: 20000 });
+  await laptop.page.bringToFront(); // a passkey prompt needs the focused tab
   await laptop.page.evaluate(() => { window.__toasts = []; });
   await laptop.page.click("[data-act=passkey-on]");
   await laptop.page.waitForFunction(() => window.__toasts.some((t) => t.includes("locked with a passkey")), null, { timeout: 20000 });
-  check((await dbNames()) === "live-documents-pk", "turning it on moves the store to one encrypted with the passkey's key, and deletes the old one", await dbNames());
+  check((await dbNames()) === "live-documents-pk", "turning it on moves the store to one encrypted with the passkey's key, and deletes the old one (another tab had it open)", await dbNames());
+  await tab2.page.waitForFunction(() => window.__ui._debug.locked && !document.querySelector(".docs-file"), null, { timeout: 10000 }).catch(() => {});
+  check(await tab2.page.evaluate(() => window.__ui._debug.locked && !document.querySelector(".docs-file")), "…and the other tab lets go of it: it shows the locked screen, no documents");
+  check(tab2.errors.length === 0, "…without errors", tab2.errors.join(" | "));
+  await tab2.page.close();
   await laptop.page.click("[data-act=close-panel]");
   const credsBefore = (await cdp.send("WebAuthn.getCredentials", { authenticatorId })).credentials;
   await laptop.page.evaluate(() => window.__ui.hide());

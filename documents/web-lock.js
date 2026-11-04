@@ -51,7 +51,7 @@ export function createPasskeyLock({ userId, userName = "Live", storage = globalT
   const prfResult = (cred) => cred?.getClientExtensionResults?.()?.prf;
 
   // Makes the passkey (one Touch ID prompt; a second for the first key if the
-  // authenticator only reports PRF as enabled at creation). Returns { key }.
+  // authenticator only reports PRF as enabled at creation). Returns { key, commit }.
   async function setup() {
     const salt = crypto.getRandomValues(new Uint8Array(32));
     let cred;
@@ -73,15 +73,20 @@ export function createPasskeyLock({ userId, userName = "Live", storage = globalT
     const prf = prfResult(cred);
     if (!prf || (prf.enabled !== true && !prf.results?.first)) throw new WebLockError("NO_PRF", "This browser can't lock Documents with a passkey.");
     const config = { credentialId: b64u(cred.rawId), salt: b64u(salt), at: Date.now() };
-    if (prf.results?.first) { writeConfig(config); return { key: b64(await keyFromPrf(prf.results.first)) }; }
-    writeConfig(config);
-    return unlock();
+    // Nothing is saved yet: commit() does that, once the store is copied under the
+    // new key. A setup that fails half way leaves the browser as it was.
+    const commit = () => writeConfig(config);
+    if (prf.results?.first) return { key: b64(await keyFromPrf(prf.results.first)), commit };
+    return { ...(await unlockWith(config)), commit };
   }
 
   // The Touch ID prompt. Throws CANCELLED when the person closes it.
   async function unlock() {
     const config = readConfig();
     if (!config) throw new WebLockError("NOT_SET_UP", "No passkey lock on this browser.");
+    return unlockWith(config);
+  }
+  async function unlockWith(config) {
     let cred;
     try {
       cred = await credentials.get({
