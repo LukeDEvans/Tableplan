@@ -539,7 +539,7 @@ After a review (ISSUES.md, 2026-11-03): the re-key is marked pending in the same
 
 **Verified:** `qa:documents-ui` (72 checks) with a stand-in camera: the options sent (PDF, 30 pages, text), the scan opening ready to rename, listed in the open folder with its page count, its text stored and decrypted back, no Scan button on a laptop.
 **Not verified:** the real camera, the PDF it builds, and memory use at 30 pages: the TestFlight build.
-**Not done:** searching inside the page text (search still matches names and tags); the review sheet from §9 (rename and folder are done in the viewer right after).
+**Search inside the text (built 2026-11-03, later the same night):** typing two or more letters also searches the text read from scans. Each file's text is fetched once, 3 at a time, and kept on the device (in the locked store) for the next search. qa: "lease agr" finds the scan. **Not done:** the review sheet from §9 (rename and folder are done in the viewer right after the scan).
 
 
 ---

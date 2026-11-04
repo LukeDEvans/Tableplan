@@ -402,6 +402,12 @@ try {
     return f ? d.library.searchText(scope, f.id) : null;
   }, GROUP);
   check(scanText === "LEASE AGREEMENT\n\nPage two\n\nSigned", "the page text is kept, encrypted with the file", String(scanText));
+  await pick(phone, "[data-folder=all]");
+  await phone.page.fill("[data-search]", "lease agr");
+  await phone.page.waitForFunction(() => [...document.querySelectorAll(".docs-file-name")].some((n) => n.textContent.startsWith("Scan ")), null, { timeout: 15000 });
+  check(JSON.stringify((await fileNames(phone)).map((n) => n.slice(0, 5))) === JSON.stringify(["Scan "]), "search finds a scan by the text on its pages", (await fileNames(phone)).join(", "));
+  check((await phone.page.evaluate(() => document.activeElement?.matches?.("[data-search]"))), "…and the search box keeps its place while results come in");
+  await phone.page.fill("[data-search]", "");
 
   console.log("Marijane");
   await household(wife);

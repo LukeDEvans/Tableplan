@@ -210,6 +210,7 @@ export async function mountDocuments(root, deps) {
     for (const url of thumbs.values()) if (url) URL.revokeObjectURL(url);
     thumbs.clear();
     thumbQueue = [];
+    texts.clear();
     ui.files = []; ui.folders = []; ui.banners = []; ui.busy = ""; ui.devices = []; ui.staleDevices = [];
     // A recovery code on screen is already in force: keep it (in memory only) so it's
     // shown again after unlocking, rather than lost unseen.
@@ -489,8 +490,48 @@ export async function mountDocuments(root, deps) {
       if (ui.folder === "trash") { if (!f.deletedAt) return false; } else if (f.deletedAt) return false;
       if (ui.folder !== "all" && ui.folder !== "trash" && f.folderId !== ui.folder) return false;
       if (!q) return true;
-      return f.name.toLowerCase().includes(q) || f.tags.some((t) => t.toLowerCase().includes(q));
+      return f.name.toLowerCase().includes(q) || f.tags.some((t) => t.toLowerCase().includes(q))
+        || (texts.get(f.id) || "").includes(q);
     });
+  }
+
+  // SEARCH INSIDE DOCUMENTS: the text read from a scan's pages (the encrypted "text"
+  // part). Fetched only when someone searches, at most TEXT_PARALLEL at a time, each
+  // file once: kept lower-cased in memory and, encrypted, in this device's store, so
+  // the next search costs nothing. Dropped from memory on lock.
+  const texts = new Map(); // fileId → lower-cased text
+  const TEXT_PARALLEL = 3;
+  let textsLoading = null;
+  function loadTexts() {
+    if (textsLoading || !session) return;
+    const scope = ui.scope;
+    const my = gen;
+    const todo = ui.files.filter((f) => (f.parts || []).includes("text") && !texts.has(f.id));
+    if (!todo.length) return;
+    textsLoading = (async () => {
+      let found = false;
+      const worker = async () => {
+        for (let f = todo.shift(); f; f = todo.shift()) {
+          if (my !== gen || scope !== ui.scope) return;
+          try {
+            let t = await store.get(`text:${f.id}`);
+            if (typeof t !== "string") { t = (await library.searchText(scope, f.id)).toLowerCase(); await store.set(`text:${f.id}`, t); }
+            texts.set(f.id, t);
+            found = true;
+          } catch { texts.set(f.id, ""); } // unreadable: not searched again this session
+        }
+      };
+      await Promise.all(Array.from({ length: TEXT_PARALLEL }, worker));
+      if (found && my === gen && scope === ui.scope && ui.query.trim()) redrawSearch();
+    })().finally(() => { textsLoading = null; });
+  }
+  function redrawSearch() {
+    const box = root.querySelector("[data-search]");
+    const pos = box?.selectionStart ?? null;
+    const focused = box && document.activeElement === box;
+    draw();
+    const again = root.querySelector("[data-search]");
+    if (again && focused) { again.focus(); try { if (pos !== null) again.setSelectionRange(pos, pos); } catch { /* search boxes in some browsers */ } }
   }
 
   function sidebar() {
@@ -990,6 +1031,7 @@ export async function mountDocuments(root, deps) {
     draw();
     const box = root.querySelector("[data-search]");
     if (box) { box.focus(); try { box.setSelectionRange(pos, pos); } catch { /* search boxes in some browsers */ } }
+    if (ui.query.trim().length >= 2) loadTexts();
   });
 
   root.addEventListener("change", (e) => {
