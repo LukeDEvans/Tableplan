@@ -369,8 +369,9 @@ try {
       const b = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.8));
       return { bytes: new Uint8Array(await b.arrayBuffer()), type: "image/jpeg" };
     };
-    await window.__outbox.queue([await page(400, 900), await page(400, 600)]);
-    window.__receipts = [{ storeName: "Costco", purchaseDate: "2026-11-02", createdAt: new Date(Date.now() + 20000).toISOString(), source: "scan" }];
+    await window.__outbox.queue([await page(400, 900), await page(400, 600)], { scope: "7aa1feaf-4c11-4b20-a1b4-234082e90c97", camera: true });
+    await window.__outbox.queue([await page(300, 300)], { scope: "99999999-9999-4999-8999-999999999999" }); // another household's
+    window.__receipts = [{ id: "rc1", storeName: "Costco", purchaseDate: "2026-11-02", createdAt: new Date(Date.now() + 20000).toISOString(), source: "scan" }];
     window.__toasts = [];
     window.__ui.hide();
   });
@@ -379,7 +380,7 @@ try {
   check((await phone.page.evaluate(() => window.__toasts)).includes("1 receipt filed in Receipts."), "a receipt scanned in the app is filed when Household Documents opens", (await phone.page.evaluate(() => window.__toasts)).join(" | "));
   await pick(phone, ".docs-sidebar .article-sidebar-tab:has-text('Receipts')");
   check((await fileNames(phone)).includes("Costco · 2026-11-02") && (await text(phone)).includes("2 pages"), "…in Receipts, named from the receipt's read, one PDF of its 2 pages", (await fileNames(phone)).join(", "));
-  check((await phone.page.evaluate(async () => (await window.__outbox.entries()).length)) === 0, "…and it leaves the outbox");
+  check((await phone.page.evaluate(async () => (await window.__outbox.entries()).map((e) => e.scope).join(","))) === "99999999-9999-4999-8999-999999999999", "…and it leaves the outbox; a receipt scanned for another household stays out of this one");
   await phone.page.click(".docs-file:has-text('Costco')");
   await phone.page.waitForSelector(".docs-view-pdf", { timeout: 15000 });
   await phone.page.click("[data-act=close-viewer]");

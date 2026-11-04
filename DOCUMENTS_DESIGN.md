@@ -562,3 +562,6 @@ After a review (ISSUES.md, 2026-11-03): the re-key is marked pending in the same
 - `qa:documents-ui` (75 checks): a queued two-page receipt filed on opening Household, named from the receipt's read, 2 pages, out of the outbox, opens.
 
 **Not covered:** receipts that arrive by email, browser extension or share sheet. Those have no scan, and their images (where any) live in the receipt stores, as §7 says. Receipts scanned in Finance's own receipt flow, if it doesn't go through the header scanner: check when the receipts ledger work starts.
+
+**After a review (ISSUES.md, 2026-11-03):** filing runs one at a time (Web Locks across tabs) and picks its document ids before uploading, so nothing is filed twice, even after a crash. Each receipt is filed only into the household it was scanned in. One bad receipt no longer blocks the rest (dropped after 5 attempts). Photo-library pages stay separate images (a PDF would ignore their rotation). The scanner builds the PDF a page at a time to keep memory down at 30 pages.
+**Worth knowing:** every image sent through the header scanner is kept in the shared Household › Receipts, including a photo picked by mistake. Delete it there (Recently deleted, 30 days).

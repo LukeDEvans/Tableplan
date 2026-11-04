@@ -4,9 +4,11 @@
 
 import { describe, it, expect } from "vitest";
 import { createKeystore, memoryBackend } from "../messaging/keystore.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   createReceiptOutbox, receiptLabel, jpegSize, jpegsToPdf, receiptDocuments, fileReceipts,
-  OUTBOX_MAX, OUTBOX_MAX_AGE_DAYS,
+  OUTBOX_MAX, OUTBOX_MAX_AGE_DAYS, OUTBOX_MAX_ATTEMPTS, OUTBOX_DB,
 } from "../documents/outbox.js";
 
 // A minimal JPEG: SOI, an APP0 segment, a baseline frame header (SOF0) and EOI.
@@ -41,24 +43,31 @@ describe("JPEG pages → PDF", () => {
     expect(pdf.subarray(9, 15)).toEqual(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
   });
 
-  it("several JPEG pages become one PDF; other kinds stay one document per page", () => {
+  it("camera JPEG pages become one PDF; photos (which may carry a rotation tag) and other kinds stay one document per page", () => {
     const jpg = { bytes: fakeJpeg(10, 10), type: "image/jpeg" };
     const png = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2]), type: "image/png" };
-    expect(receiptDocuments({ pages: [jpg, jpg] })).toMatchObject([{ mime: "application/pdf", pages: 2 }]);
-    expect(receiptDocuments({ pages: [jpg] })).toMatchObject([{ mime: "image/jpeg", pages: 1 }]);
-    expect(receiptDocuments({ pages: [jpg, png] }).map((d) => d.mime)).toEqual(["image/jpeg", "image/png"]);
+    expect(receiptDocuments({ camera: true, pages: [jpg, jpg] })).toMatchObject([{ mime: "application/pdf", pages: 2 }]);
+    expect(receiptDocuments({ camera: false, pages: [jpg, jpg] }).map((d) => d.mime)).toEqual(["image/jpeg", "image/jpeg"]);
+    expect(receiptDocuments({ camera: true, pages: [jpg] })).toMatchObject([{ mime: "image/jpeg", pages: 1 }]);
+    expect(receiptDocuments({ camera: true, pages: [jpg, png] }).map((d) => d.mime)).toEqual(["image/jpeg", "image/png"]);
   });
 });
 
 describe("names", () => {
   const at = Date.parse("2026-11-03T18:00:00Z");
   const receipts = [
-    { storeName: "Costco", purchaseDate: "2026-11-02", createdAt: "2026-11-03T18:01:10Z", source: "scan" },
-    { storeName: "Amazon", purchaseDate: "2026-11-03", createdAt: "2026-11-03T18:00:30Z", source: "email" },
-    { storeName: "Aldi", purchaseDate: "2026-10-01", createdAt: "2026-10-01T10:00:00Z", source: "scan" },
+    { id: "c", storeName: "Costco", purchaseDate: "2026-11-02", createdAt: "2026-11-03T18:01:10Z", source: "scan" },
+    { id: "a", storeName: "Amazon", purchaseDate: "2026-11-03", createdAt: "2026-11-03T18:00:30Z", source: "email" },
+    { id: "l", storeName: "Aldi", purchaseDate: "2026-10-01", createdAt: "2026-10-01T10:00:00Z", source: "scan" },
+    { id: "t", storeName: "Target", purchaseDate: "2026-11-03", createdAt: "2026-11-03T17:55:00Z", source: "scan" },
   ];
-  it("takes the store and date from the scan read right after it", () => {
+  it("takes the store and date from the scan read right after it (not one saved before)", () => {
     expect(receiptLabel(at, receipts)).toEqual({ name: "Costco · 2026-11-02", documentDate: "2026-11-02" });
+  });
+  it("a read names only one receipt in a run", () => {
+    const used = new Set();
+    expect(receiptLabel(at, receipts, used).name).toBe("Costco · 2026-11-02");
+    expect(receiptLabel(at + 1000, receipts, used).name).toMatch(/^Receipt · /);
   });
   it("falls back to 'Receipt · <date>' (never an emailed receipt, never one from another day)", () => {
     expect(receiptLabel(at, receipts.slice(1)).name).toMatch(/^Receipt · 2026-11-0[34]$/);
@@ -71,42 +80,119 @@ describe("the outbox", () => {
   it("keeps entries in order and only images", async () => {
     let clock = 1000;
     const box = createReceiptOutbox(createKeystore(memoryBackend()), { now: () => clock });
-    expect(await box.queue([{ bytes: new Uint8Array([1]), type: "text/html" }])).toBe(null);
-    await box.queue([page()]); clock += 10;
-    await box.queue([page(), page()]);
+    expect(await box.queue([{ bytes: new Uint8Array([1]), type: "text/html" }], { scope: "g" })).toBe(null);
+    expect(await box.queue([page()])).toBe(null); // no household: nothing kept
+    await box.queue([page()], { scope: "g" }); clock += 10;
+    await box.queue([page(), { ...page(), type: "image/jpg" }], { scope: "g" });
     const list = await box.entries();
     expect(list.map((e) => e.pages.length)).toEqual([1, 2]);
+    expect(list[1].pages[1].type).toBe("image/jpeg");
   });
 
   it("is bounded: at most OUTBOX_MAX entries, nothing older than the age limit", async () => {
     let clock = Date.parse("2026-01-01T00:00:00Z");
     const box = createReceiptOutbox(createKeystore(memoryBackend()), { now: () => clock });
-    for (let i = 0; i < OUTBOX_MAX + 5; i++) { await box.queue([page(10)]); clock += 1000; }
+    for (let i = 0; i < OUTBOX_MAX + 5; i++) { await box.queue([page(10)], { scope: "g" }); clock += 1000; }
     expect((await box.entries()).length).toBe(OUTBOX_MAX);
     clock += (OUTBOX_MAX_AGE_DAYS + 1) * 24 * 3600 * 1000;
-    await box.queue([page(10)]);
+    await box.queue([page(10)], { scope: "g" });
     expect((await box.entries()).length).toBe(1);
   });
 
-  it("files each receipt into the folder and removes it only once stored", async () => {
-    const box = createReceiptOutbox(createKeystore(memoryBackend()));
-    await box.queue([{ bytes: fakeJpeg(10, 10), type: "image/jpeg" }, { bytes: fakeJpeg(10, 12), type: "image/jpeg" }]);
-    await box.queue([{ bytes: fakeJpeg(10, 10), type: "image/jpeg" }]);
-    const added = [];
-    let failNext = true;
-    const library = {
+  // A library stand-in that stores by id (like the real one) and can fail on demand.
+  function fakeLibrary() {
+    const stored = new Map();
+    const lib = {
+      stored, failIf: () => false, failOnce: 0,
+      async has(scope, id) { return stored.has(`${scope}/${id}`); },
       async addFile(scope, args) {
-        if (failNext) { failNext = false; throw new Error("network"); }
-        added.push({ scope, ...args });
-        return "id";
+        if (lib.failOnce > 0) { lib.failOnce--; throw new Error("network"); }
+        if (lib.failIf(args)) throw new Error("too large");
+        if (stored.has(`${scope}/${args.id}`)) throw new Error("duplicate key"); // as the table's primary key does
+        stored.set(`${scope}/${args.id}`, args);
+        return args.id;
       },
     };
-    await expect(fileReceipts({ outbox: box, library, scope: "g", folderId: "rf" })).rejects.toThrow("network");
-    expect((await box.entries()).length).toBe(2); // nothing lost
-    expect(await fileReceipts({ outbox: box, library, scope: "g", folderId: "rf" })).toBe(2);
-    expect((await box.entries()).length).toBe(0);
-    expect(added.map((a) => [a.folderId, a.meta.mime, a.meta.pages])).toEqual([["rf", "application/pdf", 2], ["rf", "image/jpeg", 1]]);
-    expect(added[0].meta.name).toMatch(/^Receipt · \d{4}-\d{2}-\d{2}$/);
+    return lib;
+  }
+  const jpg = (w, h) => ({ bytes: fakeJpeg(w, h), type: "image/jpeg" });
+  let n = 0;
+  const ids = () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
+
+  it("files each receipt into the folder of ITS household, and removes it only once stored", async () => {
+    const box = createReceiptOutbox(createKeystore(memoryBackend()));
+    await box.queue([jpg(10, 10), jpg(10, 12)], { scope: "g", camera: true });
+    await box.queue([jpg(10, 10)], { scope: "g" });
+    await box.queue([jpg(10, 10)], { scope: "other-household" });
+    const lib = fakeLibrary();
+    lib.failOnce = 1;
+    expect(await fileReceipts({ outbox: box, library: lib, scope: "g", folderId: "rf", newId: ids })).toEqual({ filed: 1, failed: 1, dropped: 0 });
+    expect((await box.entries()).length).toBe(2); // the failed one waits; the other household's is untouched
+    expect(await fileReceipts({ outbox: box, library: lib, scope: "g", folderId: "rf", newId: ids })).toEqual({ filed: 1, failed: 0, dropped: 0 });
+    expect((await box.entries()).map((e) => e.scope)).toEqual(["other-household"]);
+    const added = [...lib.stored.values()];
+    expect(added.map((a) => [a.folderId, a.meta.mime, a.meta.pages])).toEqual([["rf", "image/jpeg", 1], ["rf", "application/pdf", 2]]);
     expect(added[0].meta.tags).toEqual(["receipt"]);
+  });
+
+  it("a run after a crash between storing and removing files nothing twice", async () => {
+    const box = createReceiptOutbox(createKeystore(memoryBackend()));
+    await box.queue([jpg(10, 10)], { scope: "g" });
+    const lib = fakeLibrary();
+    const realRemove = box.remove;
+    box.remove = async () => { throw new Error("crash"); }; // stored, then the app died
+    await fileReceipts({ outbox: box, library: lib, scope: "g", folderId: "rf", newId: ids });
+    box.remove = realRemove;
+    expect(lib.stored.size).toBe(1);
+    await fileReceipts({ outbox: box, library: lib, scope: "g", folderId: "rf", newId: ids });
+    expect(lib.stored.size).toBe(1);
+    expect((await box.entries()).length).toBe(0);
+  });
+
+  it("two runs at once (two tabs) file each receipt once", async () => {
+    const box = createReceiptOutbox(createKeystore(memoryBackend()));
+    for (let i = 0; i < 3; i++) await box.queue([jpg(10, 10)], { scope: "g" });
+    const lib = fakeLibrary();
+    let chain = Promise.resolve();
+    const lock = (fn) => (chain = chain.then(fn, fn)); // what Web Locks does in the app
+    await Promise.all([
+      fileReceipts({ outbox: box, library: lib, scope: "g", folderId: "rf", lock, newId: ids }),
+      fileReceipts({ outbox: box, library: lib, scope: "g", folderId: "rf", lock, newId: ids }),
+    ]);
+    expect(lib.stored.size).toBe(3);
+  });
+
+  it("one receipt that keeps failing doesn't block the others, and is dropped after the attempt limit", async () => {
+    let clock = 1000;
+    const box = createReceiptOutbox(createKeystore(memoryBackend()), { now: () => (clock += 1000) });
+    const bad = fakeJpeg(10, 10, 3, 50); // a different size marks the one that always fails
+    await box.queue([{ bytes: bad, type: "image/jpeg" }], { scope: "g" });
+    await box.queue([jpg(10, 10)], { scope: "g" });
+    const lib = fakeLibrary();
+    lib.failIf = (args) => args.content.length === bad.length;
+    expect(await fileReceipts({ outbox: box, library: lib, scope: "g", folderId: "rf", newId: ids })).toMatchObject({ filed: 1, failed: 1 });
+    for (let i = 1; i < OUTBOX_MAX_ATTEMPTS; i++) await fileReceipts({ outbox: box, library: lib, scope: "g", folderId: "rf", newId: ids });
+    expect((await box.entries()).length).toBe(0);
+  });
+
+  it("pages Documents can't keep are dropped and reported, never counted as filed", async () => {
+    const box = createReceiptOutbox(createKeystore(memoryBackend()));
+    await box.queue([{ bytes: new Uint8Array([1, 2, 3]), type: "image/tiff" }], { scope: "g" });
+    const out = await fileReceipts({ outbox: box, library: fakeLibrary(), scope: "g", folderId: "rf", mimeOk: (m) => m !== "image/tiff", newId: ids });
+    expect(out).toEqual({ filed: 0, failed: 0, dropped: 1 });
+    expect((await box.entries()).length).toBe(0);
+  });
+});
+
+describe("the app's side (app.js)", () => {
+  const app = readFileSync(fileURLToPath(new URL("../app.js", import.meta.url)), "utf8");
+  it("the header scanner queues every scan with its household, and the camera's as camera pages", () => {
+    const fn = app.slice(app.indexOf("function scanReceiptFromHeader("), app.indexOf("let receiptOutboxPromise"));
+    expect(fn).toMatch(/queueReceiptForDocuments\(images, \{ camera \}\)/);
+    expect(app).toMatch(/scanReceiptFromHeader\(scannedPagesToFiles\(result\?\.pages\), \{[^}]*camera: true \}\)/);
+    expect(app).toMatch(/\.queue\(pages, \{ scope, camera \}\)/);
+  });
+  it("sign-out deletes the outbox", () => {
+    expect(app).toContain(`deleteMessagingStore("${OUTBOX_DB}")`);
   });
 });

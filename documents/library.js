@@ -134,10 +134,13 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
   // content: bytes of the file (a scanned PDF or the original upload); meta: { name,
   // mime, pages, documentDate, tags, originalName }; thumb: small JPEG bytes; text:
   // what was read from the pages, for search.
-  async function addFile(scope, { content, meta, thumb = null, text = "", folderId = null }) {
+  // id: optional, chosen by the caller (the receipts outbox picks it before uploading,
+  // so a retry can see what was already stored).
+  async function addFile(scope, { content, meta, thumb = null, text = "", folderId = null, id: givenId = null }) {
     const k = await keys(scope);
     if (folderId && !(await folders(scope)).some((f) => f.id === folderId)) throw new LibraryError("MISSING", "That folder isn't here.");
-    const id = newId();
+    if (givenId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(givenId)) throw new LibraryError("BAD_ID", "Bad document id.");
+    const id = givenId || newId();
     const fileKey = generateFileKey();
     const full = parseMeta({ v: 1, rev: 1, folderId, size: content.length, ...meta });
     const parts = { content: encryptBlob(fileKey, id, "content", content) };
@@ -243,11 +246,14 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
     return old.length;
   }
 
+  // Whether a document with this id is stored in the scope (Recently deleted included).
+  async function has(scope, fileId) { return Boolean(await server.file(scope, fileId)); }
+
   async function usage(scope) { return Number(await server.usage(scope)) || 0; }
 
   return {
     folders, addFolder, ensureStartingFolders, renameFolder, deleteFolder,
-    files, addFile, open, thumbnail, searchText,
+    files, addFile, has, open, thumbnail, searchText,
     rename, setTags, setDocumentDate, move, trash, restore, purge, purgeExpired, usage,
   };
 }

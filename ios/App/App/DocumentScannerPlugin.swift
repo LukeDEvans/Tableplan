@@ -74,26 +74,26 @@ public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCamer
 
     public func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
         let count = min(scan.pageCount, maxPages)
-        let images = (0..<count).map { scan.imageOfPage(at: $0) }
         let maxDimension = self.maxDimension
         let quality = self.quality
         let wantsText = self.wantsText
         let wantsPdf = self.wantsPdf
         controller.dismiss(animated: true)
         if wantsPdf {
+            // One page at a time, each inside its own autorelease pool: load it, shrink
+            // it, write it into the PDF, read its text from the shrunk copy, let it go.
+            // Holding 30 full-resolution pages at once could run the phone out of memory.
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                var result: [String: Any] = ["cancelled": false, "pageCount": images.count]
-                result["pdf"] = DocumentScannerPlugin.pdfBase64(images, maxDimension: maxDimension, quality: quality)
-                if let first = images.first {
-                    result["thumb"] = DocumentScannerPlugin.jpegBase64(first, maxDimension: 320, quality: 0.72)
-                }
-                if wantsText {
-                    result["pageText"] = images.map { DocumentScannerPlugin.recognize($0.cgImage).compactMap { $0["text"] as? String }.joined(separator: "\n") }
-                }
+                let built = DocumentScannerPlugin.buildPdf(scan, count: count, maxDimension: maxDimension, quality: quality, wantsText: wantsText)
+                var result: [String: Any] = ["cancelled": false, "pageCount": built.pages]
+                if let pdf = built.pdf { result["pdf"] = pdf.base64EncodedString() }
+                if let thumb = built.thumb { result["thumb"] = thumb.base64EncodedString() }
+                if wantsText { result["pageText"] = built.text }
                 DispatchQueue.main.async { self?.finish(result) }
             }
             return
         }
+        let images = (0..<count).map { scan.imageOfPage(at: $0) }
         // Resize + encode (and read the text) off the main thread; a multi-page
         // scan can take a moment.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -162,24 +162,39 @@ public class DocumentScannerPlugin: CAPPlugin, CAPBridgedPlugin, VNDocumentCamer
         call?.resolve(result)
     }
 
-    // One PDF, a page per scanned image, each page the image's own size (points =
-    // pixels at the capped dimension), images JPEG-compressed inside.
-    private static func pdfBase64(_ images: [UIImage], maxDimension: CGFloat, quality: CGFloat) -> String? {
-        guard !images.isEmpty else { return nil }
+    private static func shrink(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let size = image.size
+        let longest = max(size.width, size.height)
+        guard longest > maxDimension, longest > 0 else { return image }
+        let scale = maxDimension / longest
+        let target = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
+    }
+
+    // One PDF, a page per scanned page (page size = the shrunk image's pixels in
+    // points, the image JPEG-compressed inside), plus a small JPEG of page 1 and the
+    // text read from each page.
+    private static func buildPdf(_ scan: VNDocumentCameraScan, count: Int, maxDimension: CGFloat, quality: CGFloat, wantsText: Bool) -> (pdf: Data?, thumb: Data?, text: [String], pages: Int) {
         let data = NSMutableData()
+        var thumb: Data?
+        var text: [String] = []
+        var pages = 0
         UIGraphicsBeginPDFContextToData(data, .zero, [kCGPDFContextCreator as String: "Live"])
-        for image in images {
-            let size = image.size
-            let longest = max(size.width, size.height)
-            let scale = longest > maxDimension && longest > 0 ? maxDimension / longest : 1
-            let target = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
-            guard let jpeg = jpegBase64(image, maxDimension: maxDimension, quality: quality),
-                  let bytes = Data(base64Encoded: jpeg), let compressed = UIImage(data: bytes) else { continue }
-            UIGraphicsBeginPDFPageWithInfo(CGRect(origin: .zero, size: target), nil)
-            compressed.draw(in: CGRect(origin: .zero, size: target))
+        for index in 0..<count {
+            autoreleasepool {
+                let small = shrink(scan.imageOfPage(at: index), maxDimension: maxDimension)
+                guard let jpeg = small.jpegData(compressionQuality: quality), let compressed = UIImage(data: jpeg) else { return }
+                UIGraphicsBeginPDFPageWithInfo(CGRect(origin: .zero, size: small.size), nil)
+                compressed.draw(in: CGRect(origin: .zero, size: small.size))
+                pages += 1
+                if index == 0 { thumb = shrink(small, maxDimension: 320).jpegData(compressionQuality: 0.72) }
+                if wantsText { text.append(recognize(small.cgImage).compactMap { $0["text"] as? String }.joined(separator: "\n")) }
+            }
         }
         UIGraphicsEndPDFContext()
-        return data.length > 0 ? (data as Data).base64EncodedString() : nil
+        return (pages > 0 && data.length > 0 ? data as Data : nil, thumb, text, pages)
     }
 
     private static func jpegBase64(_ image: UIImage, maxDimension: CGFloat, quality: CGFloat) -> String? {

@@ -17756,7 +17756,7 @@ async function openReceiptCamera() {
     // older builds ignore it and the read goes ahead without it).
     const result = await scanner.scan({ maxPages: 4, maxDimension: 1600, quality: 0.82, ocr: true });
     if (result?.cancelled) return;
-    scanReceiptFromHeader(scannedPagesToFiles(result?.pages), { ocrPages: ocrPagesFromNative(result?.text) });
+    scanReceiptFromHeader(scannedPagesToFiles(result?.pages), { ocrPages: ocrPagesFromNative(result?.text), camera: true });
   } catch (e) {
     // No fallback click here: iOS only opens a file picker from a direct tap.
     showMailToast(`Couldn't open the camera: ${e?.message || "unknown error"} — try Photo instead`);
@@ -17766,8 +17766,9 @@ async function openReceiptCamera() {
 function scanReceiptFromHeader(files, options = {}) {
   const images = files.filter((f) => /^image\//.test(f.type || ""));
   if (!images.length) return;
-  openReceiptScanWithFiles(images, options);
-  queueReceiptForDocuments(images);
+  const { camera = false, ...scanOptions } = options;
+  openReceiptScanWithFiles(images, scanOptions);
+  queueReceiptForDocuments(images, { camera });
 }
 
 // Every scanned receipt is also kept, encrypted, in Household Documents › Receipts
@@ -17786,11 +17787,12 @@ function receiptOutbox() {
   })().catch((e) => { receiptOutboxPromise = null; throw e; });
   return receiptOutboxPromise.then((o) => o.outbox);
 }
-async function queueReceiptForDocuments(files) {
+async function queueReceiptForDocuments(files, { camera = false } = {}) {
   if (localDevMode || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return;
+  const scope = userGroup.id; // filed only into the household it was scanned in
   try {
     const pages = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
-    await (await receiptOutbox()).queue(pages);
+    await (await receiptOutbox()).queue(pages, { scope, camera });
   } catch { /* best-effort: the receipt itself is unaffected */ }
 }
 

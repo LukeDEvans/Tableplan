@@ -21,13 +21,13 @@
 
 import { loadSodium, MIME_TYPES } from "./crypto/index.js";
 import { createMessagingServer, createRestTransport } from "../messaging/server.js";
-import { createKeystore, idbBackend } from "../messaging/keystore.js";
+import { createKeystore, idbBackend, withLock } from "../messaging/keystore.js";
 import { createMessagingAccount } from "../messaging/account.js";
 import { createDocumentsServer } from "./server.js";
 import { createDocumentsVaults } from "./vaults.js";
 import { createDocumentsStorage, edgePresigner } from "./storage.js";
 import { createDocumentsLibrary, RECENTLY_DELETED_DAYS } from "./library.js";
-import { fileReceipts } from "./outbox.js";
+import { fileReceipts, OUTBOX_LOCK } from "./outbox.js";
 
 export const DOCUMENTS_DB = "live-documents";
 export const STARTING_FOLDERS = Object.freeze({
@@ -291,20 +291,28 @@ export async function mountDocuments(root, deps) {
   // Receipts scanned on this device since Household was last opened (the outbox,
   // documents/outbox.js) go into Receipts now. Tracked: a lock mid-way doesn't lose
   // one, and each leaves the outbox only once it's stored.
+  let filing = null;
   async function fileWaitingReceipts(my, scope) {
     const receiptsFolder = ui.folders.find((f) => f.kind === "receipts");
     if (!deps.receiptOutbox || !receiptsFolder) return;
     let outbox;
     try { outbox = await deps.receiptOutbox(); } catch { return; }
-    if (!outbox || !(await outbox.entries()).length) return;
+    if (!outbox || !(await outbox.entries()).some((e) => e.scope === scope)) return;
+    // One run at a time on this page; Web Locks keep a second tab out too.
+    filing ||= track(() => fileReceipts({
+      outbox, library, scope, folderId: receiptsFolder.id,
+      receipts: () => deps.receipts?.() || [],
+      makeThumb: (page) => makeThumb(new Blob([page.bytes], { type: page.type })),
+      mimeOk: (mime) => MIME_TYPES.includes(mime),
+      lock: (fn) => withLock(OUTBOX_LOCK, fn),
+    })).finally(() => { filing = null; });
     try {
-      const filed = await track(() => fileReceipts({
-        outbox, library, scope, folderId: receiptsFolder.id,
-        receipts: () => deps.receipts?.() || [],
-        makeThumb: (page) => makeThumb(new Blob([page.bytes], { type: page.type })),
-        mimeOk: (mime) => MIME_TYPES.includes(mime),
-      }));
-      if (filed) deps.toast?.(filed === 1 ? "1 receipt filed in Receipts." : `${filed} receipts filed in Receipts.`);
+      const { filed, failed, dropped } = await filing;
+      const notes = [];
+      if (filed) notes.push(filed === 1 ? "1 receipt filed in Receipts." : `${filed} receipts filed in Receipts.`);
+      if (failed) notes.push(`${failed} couldn't be filed yet; Documents will try again.`);
+      if (dropped) notes.push(`${dropped} receipt ${dropped === 1 ? "page wasn't" : "pages weren't"} a kind Documents keeps.`);
+      if (notes.length) deps.toast?.(notes.join(" "));
     } catch { /* what didn't file stays in the outbox for the next open */ }
     if (my === gen && scope === ui.scope) await refresh(my, scope);
   }
@@ -714,7 +722,12 @@ export async function mountDocuments(root, deps) {
   // opens, so it can be renamed and filed at once. Tracked like an upload: a lock while
   // the camera is up doesn't lose the scan.
   const scanner = deps.nativeDocumentScanner?.() || null;
-  const fromB64Std = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const fromB64Std = (b64) => { // an indexed loop: Uint8Array.from with a mapper is ~45× slower on a big scan
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  };
   const scanDocument = () => track(async () => {
     const scope = ui.scope;
     const my = gen;
