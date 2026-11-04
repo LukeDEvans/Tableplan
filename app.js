@@ -76,7 +76,7 @@ import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGr
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { SETTING_STAMP_KEYS, settingsSnapshot, stampSettingChanges, mergeTrackedSettings, localSettingsAhead } from './settings-sync.js';
-import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
+import { clearLocalAccountState, accountTransitionKind, signOutWasExplicit } from './auth-account-reset.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
 import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnostics.js';
 import { describeCapabilities } from './platform-capabilities.js';
@@ -3412,13 +3412,17 @@ async function initializeSupabaseAuth() {
       window.clearTimeout(sharedStorageRetryTimer);
       sharedStorageReady = false;
       activeSharedStorageProvider = null;
+      // Only the person's own sign-out (or a different account) deletes this device's
+      // secure messages and Documents keys. A session ended from another device (a
+      // device removal signs out the others) keeps them (auth-account-reset.js).
+      const keepSecureStores = kind === "signout" && !signOutWasExplicit(localStorage);
       clearLocalAccountState(localStorage);
       await Promise.allSettled([
         purgeLocalArticleContent(),
         purgeLocalCadenceContent(),
         purgeLocalMusicContent(),
         purgeLocalFinanceTxnStore(),
-        purgeLocalMessaging(), // the old session is already gone here, so only the local wipe happens
+        keepSecureStores ? Promise.resolve() : purgeLocalMessaging(), // the old session is already gone here, so only the local wipe happens
         syncShareTokenForSession(false),
       ]);
       window.location.reload();
@@ -8896,6 +8900,9 @@ function documentsDeps() {
     nativeMessagingKeys,
     nativeDocumentsLock,
     nativeDocumentScanner,
+    nativeAttachmentPreview,
+    userName: authSession?.user?.email || "Live",
+    signOutOtherSessions,
     receiptOutbox: () => (userGroup?.id ? receiptOutbox() : Promise.resolve(null)),
     receipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
     household: () => (userGroup?.id ? { scope: userGroup.id, members: groupMembers.map((m) => ({ user_id: m.user_id, display_name: m.display_name })) } : null),
@@ -9242,8 +9249,18 @@ function showMessagePanes(tab) {
   if (inner) inner.hidden = tab === "messages";
 }
 
+// Removing a device (Messages, Documents) also ends every other Live sign-in, so a
+// lost or removed device can't keep reading app data until its session expires
+// (Luke, 2026-11-03). Supabase revokes the other sessions' refresh tokens; this one
+// stays signed in, the others sign in again once. Best-effort: never blocks removal.
+async function signOutOtherSessions() {
+  if (!supabaseClient || localDevMode) return false;
+  try { const { error } = await supabaseClient.auth.signOut({ scope: "others" }); return !error; } catch { return false; }
+}
+
 function messagingDeps() {
   return {
+    signOutOtherSessions,
     userId: authSession?.user?.id || "",
     baseUrl: () => supabaseBaseUrl(),
     headers: () => supabaseHeaders(),
@@ -9352,6 +9369,9 @@ async function purgeLocalMessaging(headersSnapshot = null) {
           // The receipts waiting to be filed go too.
           if (receiptOutboxPromise) { try { (await receiptOutboxPromise).backend.close(); } catch { /* not open */ } receiptOutboxPromise = null; }
           await deleteMessagingStore("live-documents-outbox");
+          // The browser's passkey-locked store, and the passkey's (non-secret) id and salt.
+          await deleteMessagingStore("live-documents-pk");
+          try { for (const k of Object.keys(localStorage)) if (k.startsWith("liveDocumentsPasskey:")) localStorage.removeItem(k); } catch { /* storage blocked */ }
         } catch { /* nothing stored */ }
         try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }
       },

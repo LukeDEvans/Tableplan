@@ -27,7 +27,11 @@ export class LibraryError extends Error {
 
 export const RECENTLY_DELETED_DAYS = 30;
 
-export function createDocumentsLibrary({ server, storage, vaults, store, userId, now = () => Date.now(), newId = () => crypto.randomUUID() }) {
+// blobCache (optional): { get(key) → bytes | null, set(key, bytes), drop(prefix) } — recently opened
+// files' ENCRYPTED blobs kept on the device (the page backs it with its locked store),
+// so reopening doesn't download again. A blob never changes once stored (a re-key
+// re-wraps the file key, not the blob), so a cached copy is never stale.
+export function createDocumentsLibrary({ server, storage, vaults, store, userId, now = () => Date.now(), newId = () => crypto.randomUUID(), blobCache = null }) {
   const ctxFile = (k, fileId, keyVersion) => ({ vaultId: k.vaultId, scope: k.scope, fileId, keyVersion });
   const ctxFolder = (k, folderId, keyVersion) => ({ vaultId: k.vaultId, scope: k.scope, folderId, keyVersion });
 
@@ -182,7 +186,15 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
   async function open(scope, fileId) {
     const { r, k, fileKey } = await rowFor(scope, fileId);
     const meta = await readMeta(k, r);
-    const bytes = decryptBlob(fileKey, fileId, "content", await storage.get(scope, fileId, "content"));
+    const key = `${scope}/${fileId}/content`;
+    let bytes = null;
+    const cached = blobCache ? await blobCache.get(key).catch(() => null) : null;
+    if (cached) { try { bytes = decryptBlob(fileKey, fileId, "content", cached); } catch { bytes = null; } } // a bad copy: download again
+    if (!bytes) {
+      const blob = await storage.get(scope, fileId, "content");
+      bytes = decryptBlob(fileKey, fileId, "content", blob);
+      if (blobCache) await Promise.resolve(blobCache.set(key, blob)).catch(() => {});
+    }
     return { bytes, name: meta.name, mime: meta.mime };
   }
 
@@ -235,6 +247,7 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
     await server.purgeFile(fileId);
     await store.remove(`rev:${fileId}`);
     await store.remove(`meta:${fileId}`);
+    if (blobCache?.drop) await Promise.resolve(blobCache.drop(`${scope}/${fileId}/`)).catch(() => {});
     return true;
   }
 

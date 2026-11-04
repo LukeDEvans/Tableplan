@@ -567,3 +567,45 @@ After a review (ISSUES.md, 2026-11-03): the re-key is marked pending in the same
 **Worth knowing:** every image sent through the header scanner is kept in the shared Household › Receipts, including a photo picked by mistake. Delete it there (Recently deleted, 30 days).
 
 **TestFlight (2026-11-03, Luke):** "seems to be working well" on the build with everything above (run 41767628047, commit 169d27a). Not yet reported item by item: Face ID re-lock on app switch, a 30-page scan, restore from the recovery code, Marijane's side.
+
+
+---
+
+## 24. The "left for later" list (2026-11-03, late)
+
+**Decisions (Luke, 2026-11-03):** web lock = **passkey, real encryption**; removing a device = **sign out all other sessions**.
+
+**Built:**
+- **Sign out other sessions.** Removing a device (in Messages or Documents), resetting Messages, a restore from the code, and the lost-phone re-key also call `supabase.auth.signOut({ scope: "others" })`. That revokes every other Live session's refresh token; their current access token runs out within the hour. The confirm text says the other devices sign in again once. No function and no deploy: it's Supabase Auth's own endpoint.
+- **Apple's viewer on the iPhone.** The viewer's **Open** shows the decrypted file in Quick Look (`AttachmentPreviewPlugin.openData` with `sensitive: true`): up to 40 MB (the bytes cross the bridge as base64), every PDF page, Word/Excel/PowerPoint. The check that the app is active, the write and the viewer appearing happen in one step on the main thread; a request while the app isn't active is refused and nothing is written. The temporary copy is written with complete file protection. It's deleted when the viewer closes, and the viewer is closed (without animation) the moment the app stops being active: the app switcher, Control Centre, a call, the background. So the switcher's snapshot never shows it. Leftover copies are cleared at launch. Needs the TestFlight build.
+- **Recently opened files are kept** encrypted in Documents' locked store on the device (`documents/blob-cache.js`): 20 MB per file, 200 MB in all, counted as the bytes the store holds; least recently opened dropped first. A damaged copy is downloaded again. Purging a file drops its copy. Blobs never change once stored, so a kept copy is never stale.
+- **The web lock** (`documents/web-lock.js`). In a browser, ⚙ offers **Lock with a passkey**. It makes a passkey (Touch ID or Windows Hello) with the WebAuthn PRF extension. HKDF over its PRF output is the key for Documents' store in that browser, a separate database (`live-documents-pk`). Turning it on moves the store there and deletes the old one; turning it off moves it back.
+  - Every open asks, like the iPhone: leaving the page or the tab going to the background locks it.
+  - Kept in plain storage: only the credential id and salt (not secret).
+  - A browser without PRF or a platform authenticator isn't offered it. There's no password fallback, because Live signs in by email code or Google.
+  - A deleted passkey: "Start over on this browser" deletes the locked copy. The keys come back by grant from the phone.
+  - Sign-out deletes the locked store and the setup.
+  - The setup is saved only once the store has been copied under the new key, and before the old one is deleted (turning off: forgotten before the locked one is deleted). So a stop at any point leaves one whole store that the setting points at. A failed copy deletes the half-made one, and unlocking deletes a leftover of the other kind.
+  - Another open tab lets go when the store moves or is deleted: it shows the locked screen, and every unlock reads the setting again.
+
+**After the review (Luke, 2026-11-03):**
+- **Keep data when signed out remotely.** Only the **Sign out** button wipes a device (`live_signed_out_explicitly`, `signOutWasExplicit` in auth-account-reset.js). A device signed out by another one, or whose session simply ended, keeps its Messages and Documents keys and copies; signing in again opens them. Without this, removing one device would have wiped every other one.
+- **The phone asks first.** A device that comes back with a new box key (its Documents store was reset, e.g. "Start over on this browser" or cleared site data) gets the vault keys again only after someone taps **Allow** on a banner on a device that holds them ("Your Laptop had its Documents reset on that device. Give it the keys again?"). Each device remembers the box key it last granted to (`boxesSeen`); `pendingApprovals(scope)` lists the ones waiting. A newly linked device is granted with no question, as before. Without this, anyone at an unlocked laptop could skip the passkey lock by resetting it.
+
+**Verified:**
+- `qa:documents-ui`, 90 checks. They now cover:
+  - the passkey lock in Chromium with a virtual authenticator that does PRF: on, the store moved and the old one deleted, a lock on leaving, the passkey asked again on return (sign count up), no key kept beside the store, off and back;
+  - Quick Look getting the decrypted PDF as a protected copy (and no Open button in a browser);
+  - sign-out of other sessions after a removal and after a restore;
+  - a second tab: turning the lock on with it open still deletes the unlocked store, and that tab shows the locked screen (caught when planted).
+- `test/documents-web-lock.test.js` (10): the same key every unlock, PRF only enabled at creation, nothing saved until `commit()`, no PRF refused with nothing kept, cancel, the key never in plain storage, HKDF, no IP-address relying party, another browser's passkey can't unlock. The fake authenticator answers only for its own credential and relying party, and requires user verification.
+- `test/documents-blob-cache.test.js` (5) and `test/documents-library.test.js`: a second open uses the kept copy, a damaged copy is downloaded again, purging drops it, least recently opened go first, stored sizes.
+- `test/documents-vaults.test.js`: a reset browser waits for Allow; a new one doesn't (caught when planted). `test/auth-account-reset.test.js`: only an explicit sign-out wipes.
+- Unit suite 3468, `qa:messaging-ui`, build, boot check.
+
+**Not verified:** Touch ID on a real Mac or Windows Hello; Quick Look on the phone (TestFlight). The browser pages, and so the web lock, need the deploy.
+
+**Looked at, not built:**
+- Emailed and browser-extension receipts have no images to file (text only).
+- Share-sheet order screenshots are read by `share-receipt` and not kept anywhere. Keeping them would need the share extension to hand them to the app (an App Group handoff, then the outbox): a question for Luke.
+- The home server waits for the hardware.

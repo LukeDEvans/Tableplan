@@ -57,25 +57,32 @@ function idbRequest(req) {
   });
 }
 
-function openDb(name = "live-messaging") {
+// Another tab deleting this database (sign-out, Documents' store moving to or from
+// the passkey lock) gets it at once: this connection closes instead of holding the
+// delete up until the tab is closed. onVersionChange tells the owner it's gone.
+function openDb(name = "live-messaging", onVersionChange = null) {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(name, 1);
     req.onupgradeneeded = () => {
       req.result.createObjectStore("kv");
       req.result.createObjectStore("meta");
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); try { onVersionChange?.(); } catch { /* the owner's problem */ } };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
 }
 
 // IndexedDB, every value AES-GCM encrypted. getRawWrapKey: async () => Uint8Array(32)
 // | null — the iPhone's Keychain key; when null, a browser key is created and kept.
-export async function idbBackend({ dbName = "live-messaging", getRawWrapKey = async () => null } = {}) {
+export async function idbBackend({ dbName = "live-messaging", getRawWrapKey = async () => null, onVersionChange = null } = {}) {
   // The key first: a refused or cancelled key (Documents' Face ID prompt) then leaves
   // no database connection open behind it.
   const raw = await getRawWrapKey();
-  const db = await openDb(dbName);
+  const db = await openDb(dbName, onVersionChange);
   const tx = (store, mode) => db.transaction(store, mode).objectStore(store);
   let key;
   if (raw) {

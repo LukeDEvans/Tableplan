@@ -104,3 +104,19 @@ export function clearLocalAccountState(storage) {
     }
   }
 }
+
+// Was this sign-out the person's own (the Sign out button, in this tab or another)?
+// The explicit sign-out stamps SIGN_OUT_INTENT_KEY just before it signs out; a
+// sign-out without a recent stamp came from elsewhere: another device ended this
+// session (removing a device signs out the others, Luke 2026-11-03) or it expired.
+// Only the person's own sign-out deletes this device's secure messages and
+// Documents keys; a remote one keeps them, so signing in again picks up where it
+// was (those stores still wipe themselves if a DIFFERENT account signs in).
+export const SIGN_OUT_INTENT_KEY = "live_signed_out_explicitly";
+export const SIGN_OUT_INTENT_WINDOW_MS = 2 * 60 * 1000;
+export function signOutWasExplicit(storage, now = Date.now()) {
+  let stamp = null;
+  try { stamp = storage?.getItem?.(SIGN_OUT_INTENT_KEY) ?? null; } catch { return false; }
+  const t = Date.parse(stamp || "");
+  return Number.isFinite(t) && now - t >= -5000 && now - t <= SIGN_OUT_INTENT_WINDOW_MS;
+}

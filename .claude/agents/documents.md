@@ -125,8 +125,8 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   through the share sheet (`save-file.js`).
 - Its own keystore is IndexedDB `live-documents` (cached metadata, thumbnails, keys),
   deleted at sign-out with messaging's.
-- Tests: `npm run qa:documents-ui` (three Chromium profiles against PGlite with the
-  real migrations and a doc-storage stand-in; 46 checks). Run it after any page change.
+- Tests: `npm run qa:documents-ui` (three Chromium profiles and a second tab against PGlite
+  with the real migrations and a doc-storage stand-in; 90 checks). Run it after any page change.
 
 ## The lock (decision 6 — DOCUMENTS_DESIGN.md §21)
 - iPhone: `ios/App/App/DocumentsLockPlugin.swift` ("DocumentsLock", `nativeDocumentsLock()`
@@ -138,7 +138,7 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
 - A lost Keychain key resets the store; `ensureBox` replaces this device's own box row
   and the vaults come back by grant or recovery code. Don't move the box key out of
   the locked store: it opens the grants, so that would bypass the lock.
-- Web has no lock yet (§15 open point 1).
+- Web: the passkey lock (below).
 
 ## Scanning (step 5 — DOCUMENTS_DESIGN.md §22)
 - `DocumentScannerPlugin.swift` `scan({ pdf: true })` is Documents' mode: up to 30 pages,
@@ -154,6 +154,30 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   100 / 80 MB / 60 days); opening Household Documents files them into Receipts
   ("<store> · <date>" from the receipt's read, one PDF for several JPEG pages).
 - An entry leaves the outbox only after it's stored. Sign-out deletes the outbox.
+
+## The web lock, sign-out, Quick Look, cache (DOCUMENTS_DESIGN.md §24)
+- **Web lock (Luke, 2026-11-03: passkey, real encryption):** `documents/web-lock.js`. A
+  passkey's PRF output → HKDF → the key of a separate store `live-documents-pk`; turned on
+  and off in ⚙ (`moveStore` copies, then deletes the old database: always pass the source
+  and target names). No password fallback (Live has none). Same lock rules as the iPhone.
+  The setup is saved (`commit()`) only after the copy and before the old store is
+  deleted; another tab lets go on `versionchange` (`storeTakenAway`); every unlock
+  re-reads the setting.
+- **Removing a device ends every other Live session (Luke, 2026-11-03):**
+  `deps.signOutOtherSessions` (`supabase.auth.signOut({ scope: "others" })`) after a
+  removal, a Messages reset, a restore and the lost-phone re-key.
+- **Keep data when signed out remotely (Luke, 2026-11-03):** only the Sign out button
+  wipes a device's Messages/Documents stores (`signOutWasExplicit`, app.js
+  `keepSecureStores`). Never make a remote or expired session purge them.
+- **The phone asks first (Luke, 2026-11-03):** a device whose box key changed since its
+  last grant (its store was reset) is held in `pendingApprovals` until someone taps
+  Allow (`grantPending(scope, { approve })`); new devices are granted as before. This
+  is what stops a reset from skipping the passkey lock — don't auto-grant it.
+- **iPhone viewer:** Open → `AttachmentPreviewPlugin.openData({ sensitive: true })`
+  (40 MB cap; active-check + write + present in one main-thread step; closed on
+  willResignActive and background). Shared with Mail's attachments plugin.
+- **Kept copies:** `documents/blob-cache.js` — recently opened ENCRYPTED blobs in the
+  locked store (20 MB / 200 MB of stored bytes); `purge` drops a file's copies.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are

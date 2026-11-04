@@ -392,13 +392,15 @@ export async function mountMessages(root, deps) {
       await go("list", { convId: null });
     }),
     "remove-device": (el) => guarded(async () => {
-      if (!window.confirm("Remove this device? It stops receiving messages and must be linked again to use them.")) return;
+      if (!window.confirm("Remove this device? It stops receiving messages and must be linked again to use them. Your other devices are also signed out of Live and sign in again once.")) return;
       await account.removeDevice(el.dataset.id);
+      if (await deps.signOutOtherSessions?.()) deps.toast?.("Removed. Your other devices are signed out of Live.");
       await refresh();
     }),
     reset: () => guarded(async () => {
       if (!window.confirm("Reset secure messages? This makes a new security code, removes all your other devices and ends every conversation's encryption session. People you message will see your security code changed.")) return;
       await account.reset(); // clears the store; the Keychain key stays (the open store still uses it)
+      await deps.signOutOtherSessions?.(); // every other device was removed: end their sign-ins too
       deps.toast?.("Messaging was reset. Link your other devices again.");
       await refresh();
     }),

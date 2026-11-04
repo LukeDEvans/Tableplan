@@ -28,6 +28,9 @@ import { createDocumentsVaults } from "./vaults.js";
 import { createDocumentsStorage, edgePresigner } from "./storage.js";
 import { createDocumentsLibrary, RECENTLY_DELETED_DAYS } from "./library.js";
 import { fileReceipts, OUTBOX_LOCK } from "./outbox.js";
+import { createPasskeyLock, copyStore, WEB_LOCKED_DB } from "./web-lock.js";
+import { createBlobCache } from "./blob-cache.js";
+import { deleteMessagingStore } from "../messaging/keystore.js";
 
 export const DOCUMENTS_DB = "live-documents";
 export const STARTING_FOLDERS = Object.freeze({
@@ -37,6 +40,7 @@ export const STARTING_FOLDERS = Object.freeze({
 export const USAGE_WARN_BYTES = 7 * 1024 ** 3; // decision 5: warn at 7 GB of the 10 GB free
 const MAX_FILE_BYTES = 60 * 1024 * 1024;
 const SCAN_TEXT_MAX = 100000; // characters of page text kept for search
+const QUICKLOOK_MAX = 40 * 1000 * 1000; // AttachmentPreviewPlugin's cap for Documents' files
 const THUMB_PX = 320;
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -133,7 +137,14 @@ export async function mountDocuments(root, deps) {
   // the page is left or the app goes to the background, so every open asks again.
   // In a browser (or an app build without the plugin) there's no lock: the store uses
   // the same key as messaging's and stays open while the page is.
-  const lockPlugin = deps.nativeDocumentsLock?.() || null;
+  // iPhone: Face ID (DocumentsLock). Browser: a passkey, once turned on in ⚙ (Luke,
+  // 2026-11-03); its store is a separate database encrypted with the passkey's key.
+  const nativeLock = deps.nativeDocumentsLock?.() || null;
+  const passkey = nativeLock || deps.isNative ? null : createPasskeyLock({ userId, userName: deps.userName || "Live" });
+  let lockPlugin = nativeLock || (passkey?.configured() ? passkey : null);
+  const storeDb = () => (!nativeLock && lockPlugin === passkey && passkey ? WEB_LOCKED_DB : DOCUMENTS_DB);
+  let passkeySupported = false;
+  passkey?.supported().then((ok) => { passkeySupported = ok; if (ui.panel === "settings") draw(); }).catch(() => {});
   let session = null; // { backend } while unlocked
   let store = null, vaults = null, library = null;
   let unlocking = null;
@@ -150,10 +161,12 @@ export async function mountDocuments(root, deps) {
     if (session) return Promise.resolve();
     unlocking ||= (async () => {
       const started = epoch;
+      // The setting as it is now: another tab may have turned the passkey lock on or off.
+      if (!nativeLock && passkey) lockPlugin = passkey.configured() ? passkey : null;
       const getKey = lockPlugin
         ? async () => { const { key } = await lockPlugin.unlock({ reason: "Open your documents" }); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); }
         : getRawWrapKey;
-      const backend = await idbBackend({ dbName: DOCUMENTS_DB, getRawWrapKey: getKey });
+      const backend = await idbBackend({ dbName: storeDb(), getRawWrapKey: getKey, onVersionChange: storeTakenAway });
       // Locked again while Face ID was up (the page left, the app backgrounded): what
       // was just opened is closed, not kept for the next visit.
       if (epoch !== started) { backend.close(); throw Object.assign(new Error("Locked"), { code: "CANCELLED" }); }
@@ -169,12 +182,16 @@ export async function mountDocuments(root, deps) {
       }
       if (owner !== userId) { await s.clear(); await s.set("owner", userId); }
       if (epoch !== started) { backend.close(); throw Object.assign(new Error("Locked"), { code: "CANCELLED" }); }
+      // A move to or from the passkey lock that stopped before deleting the old store
+      // (the tab closed): the copy in use is complete, so the other one goes now. With
+      // the lock on, an unlocked copy must not stay behind.
+      if (!nativeLock && !deps.isNative) deleteMessagingStore(storeDb() === WEB_LOCKED_DB ? DOCUMENTS_DB : WEB_LOCKED_DB).catch(() => {});
       store = s;
       vaults = createDocumentsVaults({
         server, store, account, userId,
         scopeMembers: async (scope) => { const h = household(); return h && h.scope === scope ? h.members.map((m) => m.user_id) : []; },
       });
-      library = createDocumentsLibrary({ server, storage, vaults, store, userId });
+      library = createDocumentsLibrary({ server, storage, vaults, store, userId, blobCache: createBlobCache(s) });
       session = { backend };
     })().finally(() => { unlocking = null; });
     return unlocking;
@@ -194,6 +211,22 @@ export async function mountDocuments(root, deps) {
       if (inflight === 0 && releaseDrained) { closeSession(); releaseDrained(); releaseDrained = null; drained = null; }
     }
   }
+  // Another tab moved or deleted this store (the passkey lock turned on or off, Start
+  // over, sign-out): this tab lets go and shows the locked screen; the next open reads
+  // the lock setting again.
+  function storeTakenAway() {
+    epoch++;
+    gen++;
+    closeViewer();
+    for (const url of thumbs.values()) if (url) URL.revokeObjectURL(url);
+    thumbs.clear();
+    texts.clear();
+    session = null; store = null; vaults = null; library = null; unlocking = null;
+    if (!nativeLock) lockPlugin = passkey?.configured() ? passkey : null;
+    ui.files = []; ui.folders = []; ui.banners = []; ui.busy = ""; ui.panel = null; ui.code = null;
+    if (visible) { ui.view = "locked"; ui.lockError = ""; draw(); } else root.innerHTML = "";
+  }
+
   function closeSession() {
     try { session?.backend.close(); } catch { /* already closed */ }
     session = null; store = null; vaults = null; library = null;
@@ -267,6 +300,7 @@ export async function mountDocuments(root, deps) {
     if (my !== gen) return;
     if (opened.state === "missing") { ui.view = "setup"; return draw(); }
     if (opened.state === "removed") { ui.view = "removed"; return draw(); }
+    if (opened.rekeyed) deps.signOutOtherSessions?.(); // a new phone just cut off the lost one: its sign-in goes too
     ui.behind = opened.state === "behind";
     if (opened.state === "waiting" || ui.behind) {
       const hasRecovery = ui.isPhone && Boolean(await server.recoveryKey(userId).catch(() => null));
@@ -279,6 +313,7 @@ export async function mountDocuments(root, deps) {
     // phone, a newly linked browser). One pass per open; nothing loops.
     await vaults.grantPending(scope).catch(() => {});
     if (my !== gen) return;
+    ui.approvals = await vaults.pendingApprovals(scope).catch(() => []);
     library.purgeExpired(scope).catch(() => {});
     await refresh(my);
     if (my !== gen) return;
@@ -343,6 +378,10 @@ export async function mountDocuments(root, deps) {
   async function checkBanners(my = gen) {
     const scope = ui.scope;
     const b = [];
+    for (const a of ui.approvals || []) {
+      const whose = a.userId === userId ? "Your" : `${esc(nameOf(a.userId))}'s`;
+      b.push({ warn: true, html: `${whose} ${esc(a.label || "device")} had its Documents reset on that device. Give it the keys again? Only allow it if you (or they) just did that. <button type="button" class="link-btn" data-approve="${esc(a.deviceId)}">Allow</button>` });
+    }
     if (ui.kind === "household" && ui.unverified.length) {
       const who = esc(ui.unverified.join(" and "));
       b.push({ warn: false, html: `This device hasn't verified ${who} yet. Verify in Messages so this device shares these documents with ${who}. <button type="button" class="link-btn" data-act="open-messages">Open Messages</button>` });
@@ -402,6 +441,7 @@ export async function mountDocuments(root, deps) {
       <p>Locked.</p>
       ${ui.lockError ? `<p class="msg-error" role="alert">${esc(ui.lockError)}</p>` : ""}
       <button type="button" class="primary-btn" data-act="unlock">Unlock</button>
+      ${lockPlugin === passkey && passkey ? `<p class="msg-muted">Removed the passkey from this computer? <button type="button" class="link-btn" data-act="passkey-reset">Start over on this browser</button> (your documents stay safe; this browser gets the keys again from your phone).</p>` : ""}
     </div>`);
   }
 
@@ -594,13 +634,16 @@ export async function mountDocuments(root, deps) {
     else if (v.url && f.mime.startsWith("image/")) body = `<img class="docs-view-img" src="${esc(v.url)}" alt="${esc(f.name)}">`;
     else if (v.url && f.mime === "application/pdf") body = `<iframe class="docs-view-pdf" src="${esc(v.url)}" title="${esc(f.name)}"></iframe>`;
     else if (v.text != null) body = `<pre class="docs-view-text"></pre>`;
-    else if (v.ready) body = `<p class="msg-muted">This kind of file can't be shown here. Use Share to open it in another app.</p>`;
+    else if (v.ready) body = quickLook
+      ? `<p class="msg-muted">Tap Open to view it.</p>`
+      : `<p class="msg-muted">This kind of file can't be shown here. Use Share to open it in another app.</p>`;
     const inTrash = Boolean(f.deletedAt);
     const folderOptions = ui.folders.map((x) => `<option value="${esc(x.id)}"${x.id === f.folderId ? " selected" : ""}>${esc(x.name)}</option>`).join("");
     return `<div class="docs-viewer" role="dialog" aria-modal="true" aria-label="${esc(f.name)}">
       <div class="docs-viewer-head">
         <button type="button" class="msg-icon-btn" data-act="close-viewer" aria-label="Close">‹</button>
         <h3 class="msg-title">${esc(f.name)}</h3>
+        ${v.ready && quickLook && v.bytes?.length <= QUICKLOOK_MAX ? `<button type="button" class="secondary-btn" data-act="quicklook">Open</button>` : ""}
         ${v.ready && !inTrash ? `<button type="button" class="secondary-btn" data-act="share">Share</button>` : ""}
       </div>
       <div class="docs-viewer-body">${body}</div>
@@ -626,6 +669,10 @@ export async function mountDocuments(root, deps) {
       <div class="msg-pane">
         <h4 class="msg-sub">Storage</h4>
         <p class="msg-muted">${esc(ui.title)} uses ${esc(sizeLabel(ui.usage) || "nothing yet")}. The first 10 GB is free; you'll see a note here at 7 GB.</p>
+        ${passkey && (passkeySupported || lockPlugin === passkey) ? `<h4 class="msg-sub">Lock</h4>
+          ${lockPlugin === passkey
+            ? `<p class="msg-muted">Documents in this browser are locked with a passkey: Touch ID or Windows Hello opens them each time.</p><button type="button" class="secondary-btn" data-act="passkey-off">Turn off the passkey lock</button>`
+            : `<p class="msg-muted">Lock Documents in this browser with a passkey (Touch ID or Windows Hello). It encrypts what's kept here, and asks every time you open Documents.</p><button type="button" class="primary-btn" data-act="passkey-on">Lock with a passkey</button>`}` : ""}
         <h4 class="msg-sub">Recovery code</h4>
         ${ui.isPhone ? `<p class="msg-muted">Making a new code replaces the old one, which stops working.</p><button type="button" class="secondary-btn" data-act="new-code">Make a new recovery code</button>` : `<p class="msg-muted">Recovery codes are made on your phone.</p>`}
         <h4 class="msg-sub">Your devices</h4>
@@ -749,6 +796,7 @@ export async function mountDocuments(root, deps) {
   async function restoreWith(codeText) {
     await run("Restoring… this takes a few seconds.", async () => {
       const out = await vaults.restore(codeText, allScopes());
+      if (out.results.some((r) => r.state === "restored")) await deps.signOutOtherSessions?.(); // every old device was removed
       const short = out.results.filter((r) => r.state === "short");
       if (out.code) showCode(out.code);
       if (short.length) deps.toast?.("Restored, but some newer documents need your other devices: open Documents on one of them.");
@@ -874,6 +922,84 @@ export async function mountDocuments(root, deps) {
     ui.viewer = null;
   }
 
+  // iPhone: Apple's viewer (Quick Look) for the decrypted file: every page of a PDF,
+  // Word/Excel/PowerPoint, zoom. Its temp copy has complete file protection and is
+  // deleted when the viewer closes or the app stops being active. Up to QUICKLOOK_MAX
+  // (the bytes cross the bridge as base64).
+  const quickLook = deps.nativeAttachmentPreview?.() || null;
+  async function openQuickLook() {
+    const v = ui.viewer;
+    const f = ui.files.find((x) => x.id === v?.id);
+    if (!f || !v.bytes || !quickLook || v.bytes.length > QUICKLOOK_MAX) return;
+    let bin = "";
+    for (let i = 0; i < v.bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, v.bytes.subarray(i, i + 0x8000));
+    const ext = Object.entries(EXT_MIME).find(([, m]) => m === f.mime)?.[0] || "";
+    const filename = /\.[a-z0-9]{1,5}$/i.test(f.name) || !ext ? f.name : `${f.name}.${ext}`;
+    try { await quickLook.openData({ data: btoa(bin), filename, mimeType: f.mime, sensitive: true }); }
+    catch (e) { if (e?.code === "INACTIVE") return; ui.error = e?.message || "It couldn't be opened."; draw(); }
+  }
+
+  // Turning the passkey lock on or off moves Documents' store in this browser to a
+  // database encrypted with the other key, then deletes the old one. Needs the store
+  // open (it is, in ⚙).
+  // afterCopy (saving or forgetting the passkey setting) runs once the copy is
+  // complete and before the old store is deleted, so a stop at any point leaves one
+  // whole store that the setting points at. A failed copy deletes the half-made one.
+  async function moveStore(fromDb, toDb, getRawWrapKey, afterCopy) {
+    if (fromDb === toDb) throw new Error("documents: moving the store onto itself");
+    const backend = await idbBackend({ dbName: toDb, getRawWrapKey, onVersionChange: storeTakenAway });
+    const next = createKeystore(backend);
+    try {
+      await next.clear();
+      await copyStore(store, next);
+      await afterCopy();
+    } catch (e) {
+      try { backend.close(); } catch { /* closed */ }
+      await deleteMessagingStore(toDb);
+      throw e;
+    }
+    try { session.backend.close(); } catch { /* already closed */ }
+    session = { backend };
+    store = next;
+    vaults = createDocumentsVaults({
+      server, store, account, userId,
+      scopeMembers: async (scope) => { const h = household(); return h && h.scope === scope ? h.members.map((m) => m.user_id) : []; },
+    });
+    library = createDocumentsLibrary({ server, storage, vaults, store, userId, blobCache: createBlobCache(store) });
+    await deleteMessagingStore(fromDb);
+  }
+  async function passkeyOn() {
+    await run("Making the passkey…", async () => {
+      const { key, commit } = await passkey.setup();
+      const raw = Uint8Array.from(atob(key), (c) => c.charCodeAt(0));
+      await moveStore(DOCUMENTS_DB, WEB_LOCKED_DB, async () => raw, commit);
+      lockPlugin = passkey;
+      deps.toast?.("Documents in this browser are now locked with a passkey.");
+    });
+  }
+  // The passkey is gone (deleted from the computer): this browser's locked store can
+  // never be opened again, so it's deleted and Documents starts over here. Nothing
+  // is lost: the files are in storage and the keys come back by grant.
+  async function passkeyReset() {
+    if (!window.confirm("Start over on this browser? Its locked copy of Documents is deleted; your documents stay safe and this browser gets the keys again after you open Documents on your phone.")) return;
+    gen++;
+    try { session?.backend.close(); } catch { /* not open */ }
+    session = null; store = null; vaults = null; library = null;
+    await deleteMessagingStore(WEB_LOCKED_DB);
+    passkey.forget();
+    lockPlugin = null;
+    ui.lockError = "";
+    await load();
+  }
+  async function passkeyOff() {
+    if (!window.confirm("Turn off the passkey lock? Documents in this browser will open without Touch ID.")) return;
+    await run("Turning off the lock…", async () => {
+      await moveStore(WEB_LOCKED_DB, DOCUMENTS_DB, getRawWrapKey, () => passkey.forget());
+      lockPlugin = null;
+      deps.toast?.("The passkey lock is off.");
+    });
+  }
+
   async function share() {
     const v = ui.viewer;
     const f = ui.files.find((x) => x.id === v?.id);
@@ -912,15 +1038,17 @@ export async function mountDocuments(root, deps) {
     ui.panel = "settings";
     ui.devices = [];
     draw();
+    if (passkey) { try { passkeySupported = await passkey.supported(); } catch { passkeySupported = false; } }
     try { ui.devices = await account.myDevices(); } catch (e) { ui.error = e.message; }
     draw();
   }
 
   async function removeDevice(deviceId) {
     const d = ui.devices.find((x) => x.deviceId === deviceId) || ui.staleDevices.find((x) => x.deviceId === deviceId);
-    if (!window.confirm(`Remove ${d?.label || "this device"}? It won't be able to open Documents or Messages, and you'll get a new recovery code.`)) return;
+    if (!window.confirm(`Remove ${d?.label || "this device"}? It won't be able to open Documents or Messages, and you'll get a new recovery code. Your other devices are also signed out of Live and sign in again once.`)) return;
     await run("Removing and changing the keys…", async () => {
       await vaults.removeDevice(deviceId, allScopes());
+      await deps.signOutOtherSessions?.(); // the removed device's Live sign-in ends too
       ui.devices = await account.myDevices().catch(() => ui.devices);
       showCode((await vaults.newRecoveryCode(allScopes())).code);
     });
@@ -930,6 +1058,7 @@ export async function mountDocuments(root, deps) {
     if (!window.confirm("Change the keys so the removed device can't open these documents? You'll get a new recovery code.")) return;
     await run("Changing the keys…", async () => {
       for (const d of ui.staleDevices) await vaults.removeDevice(d.deviceId, allScopes());
+      await deps.signOutOtherSessions?.();
       showCode((await vaults.newRecoveryCode(allScopes())).code);
     });
   }
@@ -972,6 +1101,16 @@ export async function mountDocuments(root, deps) {
     }
     const openBtn = t.closest("[data-open]");
     if (openBtn) { openFile(openBtn.dataset.open); return; }
+    const ok = t.closest("[data-approve]");
+    if (ok) {
+      const deviceId = ok.dataset.approve;
+      await run("Giving it the keys…", async (scope, my) => {
+        await vaults.grantPending(scope, { approve: [deviceId] });
+        if (my === gen) { ui.approvals = await vaults.pendingApprovals(scope); await checkBanners(my); }
+        deps.toast?.("Done. It can open these documents again.");
+      });
+      return;
+    }
     const rm = t.closest("[data-remove-device]");
     if (rm) { removeDevice(rm.dataset.removeDevice); return; }
     const act = t.closest("[data-act]")?.dataset.act;
@@ -991,6 +1130,10 @@ export async function mountDocuments(root, deps) {
     else if (act === "close-panel") { ui.panel = null; ui.error = ""; draw(); }
     else if (act === "close-viewer") { closeViewer(); ui.error = ""; draw(); }
     else if (act === "share") share();
+    else if (act === "quicklook") openQuickLook();
+    else if (act === "passkey-on") passkeyOn();
+    else if (act === "passkey-reset") passkeyReset();
+    else if (act === "passkey-off") passkeyOff();
     else if (act === "rekey") rekeyStale();
     else if (act === "trash-file") {
       const id = ui.viewer?.id;

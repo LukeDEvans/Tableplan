@@ -36,7 +36,7 @@ async function docStorage(uid, body) {
   if (!["put", "get", "delete"].includes(op) || !Array.isArray(items) || !items.length || items.length > 25) return [400, { error: "request" }];
   for (const s of new Set(items.map((i) => i.scope))) if ((await t.rpc("doc_can_access", { p_scope: s })) !== true) return [403, { error: "scope" }];
   if (op === "delete") for (const i of items) if ((await t.rpc("doc_blob_deletable", { p_scope: i.scope, p_file: i.fileId })) !== true) return [403, { error: "not deletable yet" }];
-  return [200, { urls: items.map((i) => ({ url: `${appUrl}/blob/${i.scope}/${i.fileId}/${i.part}?op=${op}`, headers: {} })) }];
+  return [200, { urls: items.map((i) => ({ url: `/blob/${i.scope}/${i.fileId}/${i.part}?op=${op}`, headers: {} })) }]; // relative: each page's own origin
 }
 
 const api = createHttp(async (req, res) => {
@@ -90,14 +90,17 @@ const apiUrl = `http://127.0.0.1:${api.address().port}`;
 const vite = await createVite({ root, configFile: false, logLevel: "error", server: { port: 0, host: "127.0.0.1", proxy: { "/rest": apiUrl, "/functions": apiUrl, "/blob": apiUrl } } });
 await vite.listen();
 appUrl = `http://127.0.0.1:${vite.httpServer.address().port}`;
+const appUrlBase = appUrl;
 const ARGS = { headless: true, args: ["--no-proxy-server", "--proxy-bypass-list=*"] };
 const browser = await chromium.launch({ ...ARGS, channel: "chrome" }).catch(() => chromium.launch(ARGS)).catch(() => chromium.launch({ ...ARGS, executablePath: "/opt/pw-browsers/chromium" }));
 
 const MEMBERS = [{ user_id: USERS.luke, display_name: "Luke" }, { user_id: USERS.wife, display_name: "Marijane" }];
 const PERSONAL = `u-${USERS.luke}`;
 
-async function device(name, userId, { native, width = 390 }) {
-  const ctx = await browser.newContext({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
+async function device(name, userId, { native, width = 390, host = null, ctx: sameBrowser = null }) {
+  const appUrl = host ? appUrlBase.replace("127.0.0.1", host) : appUrlBase; // passkeys need a domain, not an IP
+  // sameBrowser: another tab of an existing profile (shares its IndexedDB).
+  const ctx = sameBrowser || await browser.newContext({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -138,6 +141,8 @@ async function device(name, userId, { native, width = 390 }) {
       // a count of prompts, and a switch to cancel the next one.
       nativeDocumentsLock: () => (native ? window.__lock : null),
       receiptOutbox: async () => window.__outbox,
+      nativeAttachmentPreview: () => (native ? { openData: async (a) => { window.__ql = a; return { opened: true }; } } : null),
+      signOutOtherSessions: async () => { window.__signOuts = (window.__signOuts || 0) + 1; return true; },
       receipts: () => window.__receipts,
       // A stand-in for Apple's document camera in PDF mode: three pages, a thumbnail
       // and the text read from each page.
@@ -291,6 +296,9 @@ try {
   await phone.page.click(".docs-file:has-text('Home insurance')");
   await phone.page.waitForSelector(".docs-view-pdf", { timeout: 15000 });
   check((await phone.page.locator(".docs-view-pdf").getAttribute("src")).startsWith("blob:"), "the PDF opens in a frame from a local, decrypted copy");
+  await phone.page.click("[data-act=quicklook]");
+  const ql = await phone.page.evaluate(() => window.__ql && { sensitive: window.__ql.sensitive, mime: window.__ql.mimeType, name: window.__ql.filename, head: atob(window.__ql.data).slice(0, 5) });
+  check(ql?.sensitive === true && ql.mime === "application/pdf" && ql.head === "%PDF-" && ql.name === "Home insurance 2026.pdf", "Open shows the decrypted PDF in Apple's viewer, as a protected copy", JSON.stringify(ql));
   await phone.page.click("[data-act=trash-file]");
   await phone.page.waitForFunction(() => window.__toasts.some((t) => t.startsWith("Moved to Recently deleted")), null, { timeout: 15000 });
   check(!(await fileNames(phone)).includes("Home insurance 2026"), "deleting takes it out of the list");
@@ -435,7 +443,7 @@ try {
   check(herPersonal === 403, "Marijane can't get links to Luke's Personal documents");
 
   console.log("Luke's laptop browser");
-  const laptop = await device("luke-browser", USERS.luke, { native: false, width: 1280 });
+  const laptop = await device("luke-browser", USERS.luke, { native: false, width: 1280, host: "localhost" });
   const link = await laptop.page.evaluate(() => window.__msg.startLink({ label: "Laptop" }));
   await phone.page.evaluate((c) => window.__msg.approveLink(c), link);
   await laptop.page.evaluate(() => window.__msg.finishLink());
@@ -447,6 +455,10 @@ try {
   await laptop.page.waitForSelector(".docs-sidebar", { timeout: 20000 });
   check((await fileNames(laptop)).includes("Car title — Honda"), "after the phone opens the page, the browser has the documents");
   check(await laptop.page.locator("[data-act=scan]").count() === 0, "a laptop browser has no Scan button");
+  await laptop.page.click(".docs-file:has-text('Car title')");
+  await laptop.page.waitForSelector(".docs-view-img", { timeout: 15000 });
+  check(await laptop.page.locator("[data-act=quicklook]").count() === 0, "…nor Apple's viewer (Open)");
+  await laptop.page.click("[data-act=close-viewer]");
   await laptop.page.evaluate(() => { window.__toasts = []; });
   await addFiles(laptop, "drop");
   check((await fileNames(laptop)).filter((n) => n === "notes").length === 2, "files dropped on the laptop page are added");
@@ -457,6 +469,58 @@ try {
   await laptop.page.click("[data-act=reload]").catch(() => {});
   await laptop.page.waitForSelector(".docs-sidebar", { timeout: 20000 });
   check((await folderTabs(laptop)).includes("Work"), "Personal reaches Luke's browser too");
+
+  console.log("The passkey lock in the laptop browser");
+  const cdp = await laptop.ctx.newCDPSession(laptop.page);
+  await cdp.send("WebAuthn.enable");
+  const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", ctap2Version: "ctap2_1", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true, hasPrf: true } });
+  const dbNames = () => laptop.page.evaluate(async () => (await indexedDB.databases()).map((d) => d.name).filter((n) => n.startsWith("live-documents")).sort().join(","));
+  await household(laptop);
+  await idle(laptop);
+  await laptop.page.click("[data-act=settings]");
+  await laptop.page.waitForSelector("[data-act=passkey-on]", { timeout: 15000 });
+  check(true, "a browser with a passkey authenticator is offered the passkey lock");
+  // A second tab with Documents open, on the unlocked store.
+  const tab2 = await device("luke-browser-tab2", USERS.luke, { native: false, width: 1280, host: "localhost", ctx: laptop.ctx });
+  await household(tab2);
+  await tab2.page.waitForSelector(".docs-file", { timeout: 20000 });
+  await laptop.page.bringToFront(); // a passkey prompt needs the focused tab
+  await laptop.page.evaluate(() => { window.__toasts = []; });
+  await laptop.page.click("[data-act=passkey-on]");
+  await laptop.page.waitForFunction(() => window.__toasts.some((t) => t.includes("locked with a passkey")), null, { timeout: 20000 });
+  check((await dbNames()) === "live-documents-pk", "turning it on moves the store to one encrypted with the passkey's key, and deletes the old one (another tab had it open)", await dbNames());
+  await tab2.page.waitForFunction(() => window.__ui._debug.locked && !document.querySelector(".docs-file"), null, { timeout: 10000 }).catch(() => {});
+  check(await tab2.page.evaluate(() => window.__ui._debug.locked && !document.querySelector(".docs-file")), "…and the other tab lets go of it: it shows the locked screen, no documents");
+  check(tab2.errors.length === 0, "…without errors", tab2.errors.join(" | "));
+  await tab2.page.close();
+  await laptop.page.click("[data-act=close-panel]");
+  const credsBefore = (await cdp.send("WebAuthn.getCredentials", { authenticatorId })).credentials;
+  await laptop.page.evaluate(() => window.__ui.hide());
+  check((await laptop.page.evaluate(() => window.__ui._debug.locked)) === true, "leaving the page locks it in the browser too");
+  await household(laptop);
+  await laptop.page.waitForSelector(".docs-file", { timeout: 20000 });
+  const credsAfter = (await cdp.send("WebAuthn.getCredentials", { authenticatorId })).credentials;
+  check(credsBefore.length === 1 && credsAfter[0].signCount > credsBefore[0].signCount, "coming back asks the passkey again, and the documents open", `${credsBefore[0]?.signCount} → ${credsAfter[0]?.signCount}`);
+  const atRestPk = await laptop.page.evaluate(async () => {
+    const req = indexedDB.open("live-documents-pk");
+    const db = await new Promise((r) => { req.onsuccess = () => r(req.result); });
+    const v = await new Promise((r) => { const q = db.transaction("meta").objectStore("meta").get("wrapKey"); q.onsuccess = () => r(q.result); });
+    db.close();
+    return v === undefined;
+  });
+  check(atRestPk, "no key is kept next to the locked store (the passkey holds it)");
+  await laptop.page.click("[data-act=settings]");
+  await laptop.page.waitForSelector("[data-act=passkey-off]", { timeout: 15000 });
+  await laptop.page.evaluate(() => { window.__toasts = []; });
+  laptop.page.__answers = [undefined];
+  await laptop.page.click("[data-act=passkey-off]");
+  await laptop.page.waitForFunction(() => window.__toasts.some((t) => t.includes("passkey lock is off")), null, { timeout: 20000 });
+  check((await dbNames()) === "live-documents", "turning it off moves the store back and deletes the locked one", await dbNames());
+  await laptop.page.click("[data-act=close-panel]");
+  await laptop.page.evaluate(() => window.__ui.hide());
+  await household(laptop);
+  await laptop.page.waitForSelector(".docs-file", { timeout: 20000 });
+  check(true, "…and Documents opens without the passkey");
 
   console.log("Switching view in the middle of an upload");
   await personal(phone);
@@ -489,6 +553,7 @@ try {
   await phone.page.waitForSelector("[data-recovery-code]", { timeout: 60000 });
   const code2 = await phone.page.locator("[data-recovery-code]").innerText();
   check(code2 !== code, "removing the laptop re-keys and makes a new recovery code");
+  check((await phone.page.evaluate(() => window.__signOuts || 0)) === 1, "…and ends the other Live sign-ins (the removed laptop's included)");
   await confirmCode(phone, code2);
   await household(laptop);
   check(/removed|waiting/.test(await text(laptop)) && !(await laptop.page.locator(".docs-sidebar").count()), "the removed laptop can't open Household any more", await text(laptop));
@@ -506,6 +571,7 @@ try {
   await fresh.page.click("[data-form=restore] button[type=submit]");
   await fresh.page.waitForSelector("[data-recovery-code]", { timeout: 90000 });
   check(true, "the second code restores Personal on a new phone, which prints a fresh code");
+  check((await fresh.page.evaluate(() => window.__signOuts || 0)) >= 1, "…and the restore signs the old devices out of Live");
   const code3 = await fresh.page.locator("[data-recovery-code]").innerText();
   await confirmCode(fresh, code3);
   await fresh.page.waitForSelector(".docs-sidebar", { timeout: 20000 });

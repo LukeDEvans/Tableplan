@@ -295,7 +295,14 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
 
   // Trusted members' certified devices without a VALID grant at `version`: verified
   // box key, not removed. Returns how many were granted.
-  async function grantPending(scope, { version, key, removed: extraRemoved = [] } = {}) {
+  // RESETS NEED A YES (Luke, 2026-11-03). This device remembers the box key of every
+  // device it has seen holding a valid grant ("boxesSeen"). A device that comes back
+  // with a DIFFERENT box key had its Documents storage reset: someone at an unlocked
+  // laptop could do that to skip its passkey lock. It isn't granted automatically;
+  // it's listed in pendingApprovals(scope) and granted only once the person here
+  // approves it (approve: [deviceId]). A device seen for the first time (just linked)
+  // is granted as before.
+  async function grantPending(scope, { version, key, removed: extraRemoved = [], approve = [] } = {}) {
     const s = await signers();
     const v = await localVault(scope);
     const ver = version || v?.settled;
@@ -325,9 +332,27 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
       });
       if (ok) valid.add(g.device_id);
     }
-    const recipients = [...boxOf].filter(([deviceId]) => !valid.has(deviceId)).map(([deviceId, boxPub]) => ({ userId: devices.get(deviceId).userId, deviceId, boxPub }));
+    const seen = (await store.get("boxesSeen")) || {};
+    for (const deviceId of valid) seen[deviceId] = toB64(boxOf.get(deviceId));
+    const waiting = [];
+    const recipients = [];
+    for (const [deviceId, boxPub] of boxOf) {
+      if (valid.has(deviceId) || deviceId === s.deviceId) continue;
+      const d = devices.get(deviceId);
+      if (seen[deviceId] && seen[deviceId] !== toB64(boxPub) && !approve.includes(deviceId)) {
+        waiting.push({ deviceId, userId: d.userId, label: d.label || (d.kind === "phone" ? "iPhone" : "Browser") });
+        continue;
+      }
+      recipients.push({ userId: d.userId, deviceId, boxPub });
+      seen[deviceId] = toB64(boxPub);
+    }
+    await store.set("boxesSeen", seen);
+    await store.set(`approvals:${scope}`, waiting);
     return recipients.length ? grantTo(v, k, ver, recipients, s) : 0;
   }
+
+  // Devices whose Documents storage was reset and that wait for this device's yes.
+  const pendingApprovals = async (scope) => (await store.get(`approvals:${scope}`)) || [];
 
   // ---- settled statements and rotation (phone) -----------------------------------------------------
 
@@ -555,7 +580,7 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
 
   return {
     ensureBox, createVault, open, status, keysFor, grantPending,
-    rotate, removeDevice, newRecoveryCode, restore,
+    rotate, removeDevice, newRecoveryCode, restore, pendingApprovals,
     needsNewCode: async () => Boolean(await store.get("needsNewCode")),
     // "after-recovery" (a new phone after a lost one: the OLD code still works and is
     // the way back to Personal) or true (a device was removed: the old code is dead).
