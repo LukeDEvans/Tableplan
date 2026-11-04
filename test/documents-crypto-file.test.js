@@ -192,9 +192,13 @@ describe("one encoding per file", () => {
     }
   });
 
+  // A megabyte compared with toEqual goes value by value (seconds on CI's runners);
+  // compare the bytes directly.
+  const sameBytes = (a, b) => a.length === b.length && Buffer.from(a.buffer, a.byteOffset, a.length).equals(Buffer.from(b.buffer, b.byteOffset, b.length));
+
   it("the largest chunk size works", () => {
     const p = rand(1024 * 1024 + 3);
-    expect(decryptBlob(key, "f", "content", encryptBlob(key, "f", "content", p, { chunkSize: 1024 * 1024 }))).toEqual(p);
+    expect(sameBytes(decryptBlob(key, "f", "content", encryptBlob(key, "f", "content", p, { chunkSize: 1024 * 1024 })), p)).toBe(true);
   });
 
   it("a size ceiling is checked before decrypting", () => {
@@ -205,7 +209,7 @@ describe("one encoding per file", () => {
 
   it("many small chunks decrypt without spreading them as arguments", () => {
     const p = rand(4096 * 300);
-    expect(decryptBlob(key, "f", "content", encryptBlob(key, "f", "content", p, { chunkSize: 4096 }))).toEqual(p);
+    expect(sameBytes(decryptBlob(key, "f", "content", encryptBlob(key, "f", "content", p, { chunkSize: 4096 })), p)).toBe(true);
   });
 });
 
