@@ -31066,6 +31066,9 @@ let radioReconnectTries = 0;   // guards live-stream reconnect loops
 // "live"), which handles lock-screen / AirPods controls and reconnects itself.
 // { stationId, playing, subs } while active, else null. radioAudio stays null.
 let radioNative = null;
+// Why the native player gave up on the current station (from the plugin), so the
+// web-player fallback's "unavailable" toast can say what went wrong. "" = none.
+let radioNativeError = "";
 let radioMod = null, radioRegistry = null, radioCatalog = null, radioPrograms = null;
 let radioPanelWired = false;
 let radioSearchQuery = "";
@@ -36474,7 +36477,7 @@ function playRadioStation(station) {
   teardownNativeRadio(false); // switching stations natively: the new play() replaces the old stream
   radioCurStation = station;
   radioStreamCandidates = (radioMod ? radioMod.streamCandidates(station) : (station.streams || [])).map((s) => s.url).filter(Boolean);
-  radioStreamIdx = 0; radioReconnectTries = 0;
+  radioStreamIdx = 0; radioReconnectTries = 0; radioNativeError = "";
   if (!radioStreamCandidates.length) { showVoiceToast("This station has no playable stream."); return; }
   if (nativeTts()) startNativeRadio(station);
   else radioLoadCurrentStream();
@@ -36485,7 +36488,8 @@ function playRadioStation(station) {
 // player. Falls back to the web player if the plugin won't start it.
 async function startNativeRadio(station) {
   const tts = nativeTts();
-  const rn = { stationId: station.id, playing: true, subs: [] };
+  const rn = { stationId: station.id, playing: true, everPlayed: false, subs: [] };
+  radioNativeError = "";
   radioNative = rn;
   clearWebMediaSession();
   setMiniPlayer(station.name, radioStationSubtitle(station), station.logoUrl || "");
@@ -36495,10 +36499,21 @@ async function startNativeRadio(station) {
   const refresh = () => { updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel(); };
   try {
     rn.subs.push(await tts.addListener("ttsState", (e) => { if (!live()) return; rn.playing = !!(e && e.playing); refresh(); }));
+    rn.subs.push(await tts.addListener("ttsLiveStarted", (e) => { if (live() && e && e.id === station.id) rn.everPlayed = true; }));
     rn.subs.push(await tts.addListener("ttsFinish", (e) => {
       if (!live() || !e || e.kind !== "live") return;
       // The plugin already reconnected and tried every stream.
-      showVoiceToast(`${radioCurStation ? radioCurStation.name : "Station"} is unavailable right now.`);
+      radioNativeError = (e && e.error) || "";
+      if (radioNativeError) console.warn("[radio] native player gave up:", radioNativeError);
+      if (!rn.everPlayed && radioCurStation) {
+        // Never got going natively → try the station in the web view's player
+        // before giving up (onRadioError toasts, with the native reason, if it fails too).
+        teardownNativeRadio(false);
+        radioStreamIdx = 0; radioReconnectTries = 0;
+        radioLoadCurrentStream();
+        return;
+      }
+      radioUnavailableToast();
       stopRadio();
     }));
     if (!live()) return;
@@ -36534,7 +36549,20 @@ function onRadioEnded() { // a live stream "ending" = a dropped connection → r
   if (radioReconnectTries < 2) { radioReconnectTries++; radioLoadCurrentStream(); return; }
   if (!radioTryNextStream()) stopRadio();
 }
-function onRadioError() { if (!radioTryNextStream()) { showVoiceToast(`${radioCurStation ? radioCurStation.name : "Station"} is unavailable right now.`); stopRadio(); } }
+function radioUnavailableToast() {
+  const name = radioCurStation ? radioCurStation.name : "Station";
+  const why = radioNativeError ? ` (${radioNativeError.slice(0, 140)})` : "";
+  showVoiceToast(`${name} is unavailable right now.${why}`);
+}
+function onRadioError() {
+  const el = radioAudio;
+  const code = el && el.error ? el.error.code : null;
+  console.warn("[radio] web player failed on", radioStreamCandidates[radioStreamIdx], "MediaError", code);
+  if (!radioTryNextStream()) {
+    if (!radioNativeError && code) radioNativeError = `web player error ${code}`;
+    radioUnavailableToast(); stopRadio();
+  }
+}
 
 function stopRadio() {
   teardownNativeRadio();
