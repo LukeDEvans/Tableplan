@@ -10,6 +10,10 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **The Amplifier (iPhone): keeps going after a song with the phone locked** · #217 · **TestFlight
+  build only** (Swift; nothing for Netlify). A silent mixable keep-alive holds the app awake while a
+  show's song plays, so the next write-up starts when the song ends. Post-TestFlight: play a show
+  through two songs with the phone locked; pause and resume from the lock screen during a song.
 - **Radio (iPhone): web-player fallback and failure reason** · #216 · **TestFlight build**
   (client + native; the laptop's web player is unchanged apart from a clearer toast). A station
   the native player can't start is retried in the web view's player before the "unavailable"
