@@ -10,6 +10,10 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Radio (iPhone): web-player fallback and failure reason** · #216 · **TestFlight build**
+  (client + native; the laptop's web player is unchanged apart from a clearer toast). A station
+  the native player can't start is retried in the web view's player before the "unavailable"
+  toast, and the toast says why. Post-deploy: on the laptop, play MPR News and The Current.
 - **Themes: Thanksgiving; Seasonal covers November** · #211 · **TestFlight build** (client-only;
   the laptop needs a Netlify deploy). Settings › Display › Holiday gains Thanksgiving (brown,
   pumpkin, gold, olive, cranberry; light and dark). Seasonal now shows Thanksgiving all of
