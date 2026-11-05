@@ -88,6 +88,21 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
   ApplicationMusicPlayer), so it runs with the phone locked. Finishing or dismissing
   marks the article read. Outside the iPhone app Play opens it to read. Pure helpers
   and matching: `media-music-show.js`. See AMPLIFIER_DESIGN.md.
+  While a show's song plays, a silent mixable keep-alive keeps the app awake so the
+  next write-up starts (2026-11-04; Luke played a whole show locked, 2026-11-05).
+- **An interrupted read carries on (Luke, 2026-11-05).** A text, Siri reading a
+  message or any interruption of 30 s or less resumes the article by itself (longer
+  ones only when iOS says "should resume"). After any interruption the plugin
+  re-speaks from the last word on a fresh synthesizer (`resetSynth`), never trusting
+  a paused `AVSpeechSynthesizer` to continue, and a resume with no words within 3 s
+  restarts once more. Don't reinstate "isSpeaking && !isPaused means playing" — that
+  is what left reads stuck (`test/tts-plugin-contract.test.js`).
+- **Skip within an article (Luke, 2026-11-05).** On the iPhone, the Now Playing back
+  / forward buttons, the lock screen's ±skip and the seek bar move within the
+  article by sentences (`skipSpeech` / `seekSpeech`; ≈15 characters a second at
+  normal speed); forward past the end finishes the article. A skip while paused
+  stays paused. Every `tts.<method>()` call must be registered in the plugin's
+  `pluginMethods` (checked by the same test).
 
 ## Shared infrastructure you steward (flag cross-domain effects)
 `playback-engine.js`, `playback-coordinator.js`, `playback-speed.js` (one speed for

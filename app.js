@@ -37285,6 +37285,12 @@ function nowPlayingSeekFraction(f) {
     if (dur) musicPlaybackProvider.seek(Math.max(0, Math.min(1, f)) * dur);
     return;
   }
+  if (listenSpeechSynth && listenSpeechSynth.native && listenSpeechSynth.kind === "speech") {
+    // An article the iPhone's voice is reading: the plugin jumps to the sentence there.
+    const tts = nativeTts();
+    if (tts) tts.seekSpeech({ fraction: Math.max(0, Math.min(1, f)) }).catch(() => {});
+    return;
+  }
   if (nowPlayingKind() === "nativeAudio") { // the plugin's AVPlayer owns the transport
     const total = listenSpeechSynth?.audioDur || 0;
     const tts = nativeTts();
@@ -40803,17 +40809,11 @@ function systemVoiceSkip(seconds) {
     return;
   }
   if (s.native) {
-    // AVSpeechSynthesizer can't seek within an utterance; skip forward advances
-    // to the next article, skip back restarts the current one.
-    if (seconds > 0) {
-      const tts = nativeTts();
-      Promise.resolve(tts ? tts.next() : null).catch(() => null).then((r) => {
-        if (r && r.advanced) return; // ttsItemStart syncs the UI
-        if (s.genId !== listenGenId) return;
-        teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen();
-      });
-    }
-    else { startListenNativeTts(s.article); }
+    // The plugin moves within the article by sentences (skipSpeech); a build
+    // without it falls back to: forward = next article, back = start again.
+    const tts = nativeTts();
+    if (tts) { tts.skipSpeech({ seconds }).catch(() => nativeSpeechSkipFallback(s, seconds)); return; }
+    nativeSpeechSkipFallback(s, seconds);
     return;
   }
   const target = Math.max(0, Math.min(s.chunks.length - 1, s.idx + (seconds > 0 ? 1 : -1)));
@@ -40823,6 +40823,22 @@ function systemVoiceSkip(seconds) {
   s.charsBefore = s.chunks.slice(0, target).reduce((a, c) => a + c.length, 0);
   s.charIndex = 0;
   speakSystemChunk();
+}
+
+// Older iPhone builds (no skipSpeech): forward = the next article, back = this
+// article from the start.
+function nativeSpeechSkipFallback(s, seconds) {
+  if (s.genId !== listenGenId) return;
+  if (seconds > 0) {
+    const tts = nativeTts();
+    Promise.resolve(tts ? tts.next() : null).catch(() => null).then((r) => {
+      if (r && r.advanced) return; // ttsItemStart syncs the UI
+      if (s.genId !== listenGenId) return;
+      teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen();
+    });
+  } else {
+    startListenNativeTts(s.article);
+  }
 }
 
 async function startListenTTS(article) {
