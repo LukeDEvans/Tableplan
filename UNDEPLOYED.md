@@ -10,6 +10,11 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Listen (iPhone): an interrupted read carries on; skip within an article** · #220 · **TestFlight
+  build** (native + bundled web code; the laptop's web voice is unchanged). After a text or other short
+  interruption the article resumes by itself, and play always works (fresh synthesizer from the last
+  word). Now Playing back/forward, the seek bar and the lock screen's ±skip move within the article by
+  sentences. Post-TestFlight: text yourself mid-article; skip back and forward; drag the bar.
 - **Display: each view's own logo and name; plain theme cards; holiday and game-day themes** ·
   #219 · **TestFlight build** (client-only; the laptop needs a Netlify deploy). Settings ›
   Display per view: upload a logo that replaces the sailboat (stored like the profile photo) and
