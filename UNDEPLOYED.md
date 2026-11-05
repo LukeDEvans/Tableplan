@@ -15,10 +15,9 @@ Each entry: what shipped · PR · post-deploy steps.
   Display per view: upload a logo that replaces the sailboat (stored like the profile photo) and
   rename the view; theme cards lose the color-name lines; new Automatic section — Holidays (the
   holiday's theme all day) and Game days (a switched-on favorite's colors while it plays, higher
-  rank wins; favorites reorderable). **Migration not yet applied:**
-  `migrations/2026-11-04-view-logos.sql` (lets the `avatars` bucket take PNGs) — logo upload shows
-  a "storage update hasn't been applied" message until it runs. No new env vars. Post-deploy: run
-  the migration, upload a logo in Household and rename it; turn on Game days with one team and
+  rank wins; favorites reorderable). Migration `migrations/2026-11-04-view-logos.sql` (the
+  `avatars` bucket takes PNGs) **applied to prod 2026-11-05**. No new env vars. Post-deploy:
+  upload a logo in Household and rename it; turn on Game days with one team and
   check its colors during a live game, and that they go away after the final.
 - **The Amplifier (iPhone): keeps going after a song with the phone locked** · #217 · **TestFlight
   build only** (Swift; nothing for Netlify). A silent mixable keep-alive holds the app awake while a
