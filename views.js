@@ -127,7 +127,7 @@ export function viewHash(view, rest) {
 // Personal uses the person's existing state.displayPrefs (so nothing they've
 // chosen changes, and someone with Household only keeps theirs there too).
 // The admin's Household and Business looks live in state.viewDisplayPrefs:
-//   { household: { mode?, theme? }, business: { mode?, theme? } }
+//   { household: { mode?, theme?, name?, holidays?, gameday? }, business: { … } }
 // each view's object stamped on its own (settings-sync.js "fields").
 
 // The view whose look is kept in displayPrefs: Personal when the person has
@@ -147,6 +147,10 @@ export function cleanViewDisplayPrefs(prefs, { modes = [], themes = [] } = {}) {
     const entry = {};
     if (modes.includes(v.mode)) entry.mode = v.mode;
     if (themes.includes(v.theme)) entry.theme = v.theme;
+    // name · holidays · gameday (theme.js cleanViewExtras), when given.
+    if (typeof v.name === "string") entry.name = String(v.name).replace(/\s+/g, " ").trim().slice(0, 40);
+    if (typeof v.holidays === "boolean") entry.holidays = v.holidays;
+    if (typeof v.gameday === "boolean") entry.gameday = v.gameday;
     if (Object.keys(entry).length) out[view] = entry;
   }
   return out;
@@ -165,6 +169,12 @@ export function displayPrefsForView(view, { base, viewPrefs, available } = {}) {
     mode: own.mode || b.mode,
     theme: own.theme || VIEW_DEFAULT_THEME[view] || b.theme,
     icon: false,
+    // The view's own name and automatic changes; off until switched on here.
+    name: typeof own.name === "string" ? own.name : "",
+    holidays: own.holidays === true,
+    gameday: own.gameday === true,
+    // Which teams, and their rank, are the person's — the same in every view.
+    gamedayTeams: b.gamedayTeams || [],
   };
 }
 

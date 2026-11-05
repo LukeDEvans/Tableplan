@@ -17,6 +17,7 @@ import { ocrRowsFromObservations } from './receipt-reconcile.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { DIET_OPTIONS, ALLERGEN_OPTIONS, normalizeMemberDiets, normalizeDietEntry, mergeMemberDiets, isEmptyDiet, describeDiets, describeAllergies, foodRestrictionsContext } from './food-restrictions.js';
+import { logoVersion, readCachedLogo, writeCachedLogo, loadLogo, resizeImageToLogo, uploadLogo, removeLogo } from './view-logo.js';
 import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, loadAvatar, resizeImageToAvatar, uploadAvatar, removeAvatar } from './profile.js';
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule, isNewsletterBriefing } from './news-ui.js';
@@ -33,8 +34,9 @@ import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions, n
 import { normalizeCards as normalizeLanguageCards, mergeCards as mergeLanguageCards } from './language-srs.js';
 import { normalizeUserLessons, normalizeUserWords, mergeUserLessons, mergeUserWords } from './language-words.js';
 import { createNewsTickerModule } from './news-ticker.js';
-import { normalizeSportsPrefs } from './sports-model.js';
-import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
+import { normalizeSportsPrefs, dateKeyOf, shiftDateKey } from './sports-model.js';
+import { dynamicTheme, rankedGamedayTeams, nextGamedayCheckMs, teamTheme, nextHoliday } from './theme-dynamic.js';
+import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanViewName, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
@@ -1865,6 +1867,9 @@ const _scores = createScoresModule({
   getActiveAppArea: () => activeAppArea,
 });
 const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed: seedScores, getBoard: getScoresBoard, showGame: showScoresGame } = _scores;
+// The game-day theme reads today's board through here (theme-dynamic.js); set
+// now, because applyThemeMode first runs at module load, before this factory.
+refreshGamedayTheme.getBoard = (...a) => getScoresBoard(...a);
 
 // ── News domain (news-ui.js, NEWS_PAGE_DESIGN.md) ──────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showNewsApp stays in
@@ -4365,6 +4370,14 @@ function setupDiagnostics() {
     tickerNext: () => { if (!localDevMode) return null; _newsTicker.next(); return _newsTicker.current(); },
     // Favorite teams for the Scores view and the ticker (state.sportsPrefs).
     sportsSetPrefs: (prefs) => { if (!localDevMode) return null; state.sportsPrefs = prefs; return true; },
+    // Dynamic display (theme-dynamic.js): look at today's board again now, and
+    // report what's showing.
+    gamedayRecheck: async () => {
+      if (!localDevMode) return null;
+      clearTimeout(refreshGamedayTheme.timer); refreshGamedayTheme.timer = null; refreshGamedayTheme.at = 0;
+      await refreshGamedayTheme();
+      return { shown: applyThemeMode.shown, palette: document.body.dataset.palette || "classic", timer: refreshGamedayTheme.timerKind || "" };
+    },
     mpSetSuggestions: (recipes) => {
       if (!localDevMode) return null;
       mealPlanRecipes = recipes;
@@ -6726,11 +6739,21 @@ function applyThemeMode() {
   const prefs = currentViewDisplayPrefs();
   const systemDark = Boolean(window.matchMedia?.("(prefers-color-scheme: dark)")?.matches);
   const now = new Date();
-  const resolved = resolveTheme(prefs, { systemDark, now });
+  // Dynamic display (theme-dynamic.js): a chosen team's colors while it plays,
+  // a holiday's theme on the day, otherwise the view's own theme.
+  const games = applyThemeMode.games || [];
+  const ranked = gamedayRankedTeams(base);
+  const shown = dynamicTheme(prefs, { now, games, ranked });
+  applyThemeMode.shown = shown;
+  const resolved = resolveTheme({ ...prefs, theme: shown.theme }, { systemDark, now });
   applyResolvedTheme(resolved, document);
+  // What a cold start should open in: today's look without a game (a game
+  // that's over by the next launch mustn't flash its colors first).
+  const calm = shown.reason === "game" ? resolveTheme({ ...prefs, theme: dynamicTheme({ ...prefs, gameday: false }, { now }).theme }, { systemDark, now }) : resolved;
   // The iPhone icon follows the primary view only, so switching views never
-  // makes iOS announce an icon change.
-  const iconTheme = resolveTheme(base, { systemDark, now });
+  // makes iOS announce an icon change — and it follows a holiday, never a game
+  // (two icon notices a game would be too many).
+  const iconTheme = resolveTheme({ ...base, theme: dynamicTheme({ ...base, gameday: false }, { now }).theme }, { systemDark, now });
   elements.themeModeInputs?.forEach((input) => {
     input.checked = input.value === prefs.mode;
   });
@@ -6741,9 +6764,72 @@ function applyThemeMode() {
     try { window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => applyThemeMode()); } catch { /* old WebKit */ }
     document.addEventListener("visibilitychange", () => { if (!document.hidden) applyThemeMode(); });
   }
-  if (syncAppIcon.ready) writeDisplayCache(base, resolved);
+  if (syncAppIcon.ready) writeDisplayCache(base, calm);
   syncAppIcon(iconTheme.icon);
+  // Look at today's games again when they're due (game days on, a chosen team).
+  // Deferred: this also runs at module load, before the Scores module exists.
+  // (A midnight-only timer — set before sign-in, say — doesn't hold this back.)
+  if (wantsGamedayCheck(prefs, ranked) && !(refreshGamedayTheme.timer && refreshGamedayTheme.timerKind === "game") && !refreshGamedayTheme.running && !refreshGamedayTheme.queued
+    && Date.now() - (refreshGamedayTheme.at || 0) > 55_000) {
+    refreshGamedayTheme.queued = true;
+    setTimeout(() => { refreshGamedayTheme.queued = false; refreshGamedayTheme(); }, 0);
+  } else if ((prefs.holidays || prefs.gameday) && !refreshGamedayTheme.timer && !refreshGamedayTheme.running && !refreshGamedayTheme.queued) {
+    // Holidays only: just turn over at midnight if the app is left open.
+    scheduleGamedayCheck(null);
+  }
   return resolved;
+}
+
+// The person's switched-on favorites with a theme, in their favorites' order.
+function gamedayRankedTeams(base = currentDisplayPrefs()) {
+  return rankedGamedayTeams(normalizeSportsPrefs(state?.sportsPrefs).teams, base.gamedayTeams);
+}
+function wantsGamedayCheck(prefs, ranked) {
+  return !!prefs?.gameday && ranked.length > 0 && !document.hidden && (!!authSession?.access_token || localDevMode);
+}
+
+// Today's games for the game-day theme, from the Scores board — the same
+// CDN-cached request the dock ticker makes (never the database). Foreground
+// only: every minute while a chosen team plays, else at its next start, else
+// at midnight. Nothing runs unless game days are on with a team chosen.
+async function refreshGamedayTheme() {
+  const self = refreshGamedayTheme;
+  clearTimeout(self.timer); self.timer = null;
+  const ranked = gamedayRankedTeams();
+  if (!wantsGamedayCheck(currentViewDisplayPrefs(), ranked)) {
+    if (applyThemeMode.games?.length) { applyThemeMode.games = []; applyThemeMode(); }
+    return;
+  }
+  if (self.running) return;
+  self.running = true;
+  let games = applyThemeMode.games || [];
+  try {
+    const now = new Date();
+    const today = dateKeyOf(now);
+    // A late game runs past midnight: until 4am, yesterday's board too.
+    const keys = now.getHours() < 4 ? [shiftDateKey(today, -1), today] : [today];
+    const boards = await Promise.all(keys.map((k) => Promise.resolve(self.getBoard?.(k, { maxAgeMs: 55_000 })).catch(() => null)));
+    if (boards.some(Array.isArray)) games = boards.filter(Array.isArray).flat();
+  } finally {
+    self.running = false;
+    self.at = Date.now();
+  }
+  applyThemeMode.games = games;
+  applyThemeMode();
+  scheduleGamedayCheck(nextGamedayCheckMs(games, ranked, Date.now()));
+}
+function scheduleGamedayCheck(delay) {
+  const self = refreshGamedayTheme;
+  clearTimeout(self.timer);
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 30) - now;
+  self.timerKind = delay == null || delay >= midnight ? "midnight" : "game";
+  self.timer = setTimeout(() => {
+    self.timer = null;
+    if (document.hidden) return; // coming back to the front checks again
+    self.at = 0;
+    applyThemeMode();
+  }, Math.min(delay ?? midnight, midnight));
 }
 
 // iPhone only: point the home-screen icon at the active theme's icon. iOS shows
@@ -6766,7 +6852,9 @@ function syncAppIcon(name) {
 function setDisplayPref(key, value) {
   syncAppIcon.ready = true; // a choice made here is this person's
   const view = currentViewKey();
-  if ((key === "mode" || key === "theme") && view !== primaryView(currentViewList())) {
+  // mode · theme · name · holidays · gameday are each view's own; the icon and
+  // the game-day teams are the person's.
+  if (["mode", "theme", "name", "holidays", "gameday"].includes(key) && view !== primaryView(currentViewList())) {
     // The admin's Household / Business look (views.js).
     const own = { ...((state.viewDisplayPrefs || {})[view] || {}), [key]: value };
     state.viewDisplayPrefs = cleanViewDisplayPrefs({ ...(state.viewDisplayPrefs || {}), [view]: own }, { modes: ["light", "dark", "auto"], themes: THEME_CHOICES });
@@ -6774,7 +6862,17 @@ function setDisplayPref(key, value) {
     state.displayPrefs = cleanDisplayPrefs({ ...(state.displayPrefs || {}), [key]: value });
   }
   applyThemeMode();
+  if (key === "name") renderViewBands();
   persist();
+}
+
+// The view's name: the person's own ("The Evanses") or the default.
+// Read straight from state (it's called per event when the calendar draws
+// layers): the primary view's name is in displayPrefs, the others' in
+// viewDisplayPrefs — the same split as displayPrefsForView (views.js).
+function viewLabel(view) {
+  const own = view === primaryView(currentViewList()) ? state.displayPrefs?.name : state.viewDisplayPrefs?.[view]?.name;
+  return cleanViewName(own) || VIEW_LABELS[view] || "";
 }
 
 function setThemeMode(mode) {
@@ -8646,13 +8744,96 @@ function migrateLegacyAutoRuleTarget(rule) {
 
 
 
+// ── View logos (view-logo.js, Luke 2026-11-04) ──────────────────────────────
+// Each view's landing logo: the person's own picture, or the sailboat. Kept on
+// functions (not module lets) — render() can run early in boot.
+function viewLogoUrl(view = currentViewKey()) {
+  const known = paintHomeLogo.urls || {};
+  if (view in known) return known[view];
+  const userId = authSession?.user?.id;
+  return userId ? readCachedLogo(userId, view)?.dataUrl || "" : "";
+}
+
+function paintHomeLogo() {
+  const img = elements.homeMainPage?.querySelector(".home-logo");
+  if (!img) return;
+  const url = viewLogoUrl();
+  const src = url || "./home-logo.png";
+  if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+  img.classList.toggle("is-custom", !!url);
+  img.alt = url ? viewLabel(currentViewKey()) || getAppName() : getAppName();
+}
+
+// Bring each view's logo up to date with the versions in the person's auth
+// metadata — a download only when a version changed (one per device per
+// change). Deduped on the versions, so calling it from render() is cheap.
+function ensureViewLogos() {
+  const userId = authSession?.user?.id;
+  if (!userId) return;
+  const versions = authSession.user.user_metadata?.logo_v || {};
+  const views = currentViewList();
+  const key = `${userId}|${views.join(",")}|${localDevMode ? "local" : JSON.stringify(versions)}`;
+  if (ensureViewLogos.key === key) return;
+  ensureViewLogos.key = key;
+  if (localDevMode) { // no Storage locally: the device copy is the logo
+    paintHomeLogo.urls = Object.fromEntries(views.map((v) => [v, readCachedLogo(userId, v)?.dataUrl || ""]));
+    paintHomeLogo();
+    return;
+  }
+  Promise.all(views.map((v) => loadLogo({ baseUrl: supabaseBaseUrl(), userId, view: v, version: logoVersion(authSession.user.user_metadata, v) }).then((url) => [v, url])))
+    .then((pairs) => {
+      if (authSession?.user?.id !== userId) return;
+      paintHomeLogo.urls = Object.fromEntries(pairs);
+      paintHomeLogo();
+      if (elements.contextSettingsDialog?.open && contextSettingsKind === "display") renderContextSettingsDialog("display");
+    })
+    .catch(() => { ensureViewLogos.key = ""; });
+}
+
+// Settings › Display: replace or remove this view's logo. Saved straight away
+// (Display has no Save button); the status line says what's happening.
+async function setViewLogo(file) {
+  const view = currentViewKey();
+  const userId = authSession?.user?.id;
+  const status = (text) => { const el = document.getElementById("displayLogoStatus"); if (el) el.textContent = text; };
+  if (!userId) { status("Sign in to add a logo."); return; }
+  try {
+    let url = "";
+    if (file) {
+      status("Preparing logo…");
+      const picked = await resizeImageToLogo(file);
+      url = picked.dataUrl;
+      if (localDevMode) writeCachedLogo(userId, view, "local", url);
+      else {
+        status("Uploading logo…");
+        const { version, logo_v } = await uploadLogo({ supabaseClient, userId, view, blob: picked.blob, metadata: authSession.user.user_metadata });
+        authSession.user.user_metadata = { ...(authSession.user.user_metadata || {}), logo_v };
+        writeCachedLogo(userId, view, version, url);
+      }
+    } else {
+      status("Removing logo…");
+      if (localDevMode) writeCachedLogo(userId, view, "", "");
+      else {
+        const { logo_v } = await removeLogo({ supabaseClient, userId, view, metadata: authSession.user.user_metadata });
+        authSession.user.user_metadata = { ...(authSession.user.user_metadata || {}), logo_v };
+        writeCachedLogo(userId, view, "", "");
+      }
+    }
+    paintHomeLogo.urls = { ...(paintHomeLogo.urls || {}), [view]: url };
+    ensureViewLogos.key = `${userId}|${currentViewList().join(",")}|${localDevMode ? "local" : JSON.stringify(authSession.user.user_metadata?.logo_v || {})}`;
+    paintHomeLogo();
+    if (contextSettingsKind === "display") renderContextSettingsDialog("display");
+  } catch (err) {
+    status(err?.message || "Couldn't save the logo.");
+  }
+}
+
 function render() {
-  const name = getAppName();
-  // The home title is the logo image now; a custom app name shows in the tab
-  // title and the logo's alt text (there is no h2 to update anymore).
-  const homeLogo = elements.homeMainPage.querySelector(".home-logo");
-  if (homeLogo) homeLogo.alt = name;
-  document.title = name;
+  // The home title is the logo image (the view's own logo, or the sailboat); a
+  // custom app name shows in the tab title and the logo's alt text.
+  ensureViewLogos();
+  paintHomeLogo();
+  document.title = getAppName();
   updatePageVisibility();
   musicShows.updateBadge(); // the Listen bell (synced shows arrive through here)
   const week = weekState();
@@ -13367,7 +13548,7 @@ function householdLayerTaskGroupHtml(dayId) {
   if (!tasks.length) return "";
   return `
     <div class="do-layer-group" aria-label="Household tasks">
-      <div class="do-layer-head">${escapeHtml(VIEW_LABELS.household || "Household")}</div>
+      <div class="do-layer-head">${escapeHtml(viewLabel("household"))}</div>
       ${tasks.map((task) => {
         const timeLabel = formatTaskTime(task.time);
         return `
@@ -17406,7 +17587,7 @@ function openTasksInView(view) {
 }
 
 function openEventInItsView(view, eventId, dateKey) {
-  if (!currentViewList().includes(view)) { showMailToast(`That event is in the ${VIEW_LABELS[view] || view} view.`); return; }
+  if (!currentViewList().includes(view)) { showMailToast(`That event is in the ${viewLabel(view) || view} view.`); return; }
   currentViewKey.chosen = true;
   applyView(view, { keepPage: true });
   alignScopesToView().then(() => {
@@ -17554,10 +17735,11 @@ function scrollsSideways(el, stop) {
 // header band the view the open menu shows; chevrons (header only) for someone
 // who can switch. The name slides out the way the finger went and the next slides in.
 function renderViewBands(direction = 0) {
+  paintHomeLogo(); // each view has its own logo
   const switchable = viewIsSwitchable();
   for (const band of [elements.homeViewBand, elements.headerViewBand]) {
     if (!band) continue;
-    const name = VIEW_LABELS[band === elements.headerViewBand ? menuViewKey() : currentViewKey()] || "";
+    const name = viewLabel(band === elements.headerViewBand ? menuViewKey() : currentViewKey());
     band.classList.toggle("is-switchable", switchable);
     band.setAttribute("aria-label", switchable ? `View: ${name}. ${band === elements.homeViewBand ? "Swipe the page" : "Swipe or use the arrows"} to switch.` : `View: ${name}`);
     const label = band.querySelector(".view-band-name");
@@ -18146,29 +18328,19 @@ async function previewVoice(voiceId, btn) {
 
 function displaySettingsTemplate() {
   // The view on screen (views.js): each of the admin's views keeps its own look.
+  const view = currentViewKey();
   const prefs = currentViewDisplayPrefs();
-  const viewName = VIEW_LABELS[currentViewKey()] || "";
+  const viewName = viewLabel(view);
+  const defaultName = VIEW_LABELS[view] || "";
   const viewNote = viewIsSwitchable()
     ? `<p class="display-hint">This is the look for your <strong>${escapeHtml(viewName)}</strong> view. Each view keeps its own; switch views to set another.</p>`
     : "";
   const now = new Date();
   const seasonNow = seasonalTheme(now);
   const modes = [["light", "Light"], ["dark", "Dark"], ["auto", "Auto"]];
-  const themeDesc = {
-    classic: "The everyday look.",
-    halloween: "Orange, black and purple.",
-    household: "Navy, dusty blue, blush and sage.",
-    urbangreens: "Urban Greens green and gray, with black and white.",
-    vikings: "Purple and gold.",
-    wolves: "Midnight, lake blue, aurora green and grey.",
-    wild: "Forest green, red, harvest gold and wheat.",
-    twins: "Navy, scarlet and Kasota gold.",
-    gophers: "Maroon and gold.",
-    ajax: "Red, white and black.",
-    mnufc: "Black, sky blue and gray.",
-    thanksgiving: "Brown, pumpkin, gold, olive and cranberry.",
-    seasonal: escapeHtml(seasonalSummary(now, (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" }))),
-  };
+  // The swatch and the name say enough (Luke, 2026-11-04); only Seasonal, which
+  // changes by itself, says what it's showing.
+  const seasonalLine = escapeHtml(seasonalSummary(now, (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" })));
   const swatch = (key) => {
     const colors = THEMES[key === "seasonal" ? (seasonNow === "classic" ? "halloween" : seasonNow) : key].swatch;
     return `<span class="display-swatch" aria-hidden="true">${colors.map((c) => `<i style="background:${c}"></i>`).join("")}</span>`;
@@ -18181,9 +18353,84 @@ function displaySettingsTemplate() {
         </div>
         <input type="checkbox" class="live-toggle" aria-label="Change the app icon with the theme" data-display-icon ${prefs.icon ? "checked" : ""}>
       </div>` : "";
+
+  // This view's logo and name.
+  const logo = viewLogoUrl(view);
+  const identity = `
+      <section class="display-group display-identity">
+        <h3 class="display-group-title">Logo &amp; name</h3>
+        <div class="display-logo-row">
+          <span class="display-logo-preview${logo ? " is-custom" : ""}"><img src="${logo ? escapeHtml(logo) : "./home-logo.png"}" alt="" /></span>
+          <div class="display-logo-actions">
+            <button type="button" class="secondary-btn compact-btn" data-display-logo-pick>${logo ? "Change logo" : "Upload a logo"}</button>
+            ${logo ? `<button type="button" class="secondary-btn compact-btn" data-display-logo-remove>Use the sailboat</button>` : ""}
+            <input type="file" accept="image/*" hidden data-display-logo-input />
+          </div>
+        </div>
+        <p class="display-hint" id="displayLogoStatus" aria-live="polite"></p>
+        <label class="display-name-field">
+          <span class="display-name-label">Name</span>
+          <input type="text" maxlength="40" autocomplete="off" data-display-name value="${escapeHtml(prefs.name || "")}" placeholder="${escapeHtml(defaultName)}" />
+        </label>
+        <p class="display-hint">Shown under the logo and wherever the app names this view. Leave it empty for “${escapeHtml(defaultName)}”.</p>
+      </section>`;
+
+  // Automatic changes: holidays, and game days for the teams switched on below.
+  const sports = normalizeSportsPrefs(state.sportsPrefs);
+  const onTeams = new Set(prefs.gamedayTeams || []);
+  const next = nextHoliday(now);
+  const shown = applyThemeMode.shown;
+  const nowLine = shown?.reason === "game" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} colors — ${escapeHtml(shown.team?.short || shown.team?.name || "")} are playing.`
+    : shown?.reason === "holiday" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} today.` : "";
+  const teamRows = sports.teams.map((t, i) => {
+    const theme = teamTheme(t);
+    const label = escapeHtml(t.name || t.short);
+    return `
+          <li class="display-team${theme ? "" : " is-unthemed"}" data-display-team="${escapeHtml(t.key)}">
+            <span class="display-team-rank">${i + 1}</span>
+            ${theme ? `<span class="display-team-swatch" aria-hidden="true">${THEMES[theme].swatch.slice(0, 3).map((c) => `<i style="background:${c}"></i>`).join("")}</span>` : `<span class="display-team-swatch is-empty" aria-hidden="true"></span>`}
+            <span class="display-team-text">
+              <span class="display-team-name">${label}</span>
+              ${theme ? "" : `<span class="display-team-note">No team colors yet</span>`}
+            </span>
+            <span class="display-team-move">
+              <button type="button" class="display-team-btn" data-display-team-move="-1" aria-label="Rank ${label} higher" ${i === 0 ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>
+              <button type="button" class="display-team-btn" data-display-team-move="1" aria-label="Rank ${label} lower" ${i === sports.teams.length - 1 ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6"/></svg></button>
+            </span>
+            <input type="checkbox" class="live-toggle" aria-label="Show ${label} colors while they play" data-display-team-on ${theme && onTeams.has(t.key) ? "checked" : ""} ${theme ? "" : "disabled"}>
+          </li>`;
+  }).join("");
+  const dynamicGroup = `
+      <section class="display-group display-dynamic">
+        <h3 class="display-group-title">Automatic</h3>
+        <div class="mail-ai-feature-row">
+          <div class="mail-ai-feature-text">
+            <span class="mail-ai-feature-label">Holidays</span>
+            <span class="mail-ai-feature-desc">On a holiday, its theme shows all day.${next ? ` Next: ${escapeHtml(next.label)}, ${escapeHtml(next.date.toLocaleDateString(undefined, { month: "short", day: "numeric" }))}.` : ""}</span>
+          </div>
+          <input type="checkbox" class="live-toggle" aria-label="Holiday themes" data-display-holidays ${prefs.holidays ? "checked" : ""}>
+        </div>
+        <div class="mail-ai-feature-row">
+          <div class="mail-ai-feature-text">
+            <span class="mail-ai-feature-label">Game days</span>
+            <span class="mail-ai-feature-desc">While a team switched on below is playing, its colors show. If two play at once, the higher one wins.</span>
+          </div>
+          <input type="checkbox" class="live-toggle" aria-label="Team colors on game days" data-display-gameday ${prefs.gameday ? "checked" : ""}>
+        </div>
+        ${nowLine ? `<p class="display-hint display-now">${nowLine}</p>` : ""}
+        <div class="display-teams-block${prefs.gameday ? "" : " is-off"}">
+          <h4 class="display-theme-group-title">Your teams</h4>
+          ${sports.teams.length ? `
+          <ol class="display-teams">${teamRows}</ol>
+          <p class="display-hint">Ranked top to bottom. The order is your favorites' order everywhere, and the teams you switch on are the same in every view.</p>`
+          : `<p class="display-hint">Star teams in News › Sports to choose them here.</p>`}
+        </div>
+      </section>`;
+
   return `
     <div class="display-settings">
       ${viewNote}
+      ${identity}
       <section class="display-group">
         <h3 class="display-group-title">Mode</h3>
         <div class="display-seg" role="radiogroup" aria-label="Mode">
@@ -18207,15 +18454,59 @@ function displaySettingsTemplate() {
                   ${swatch(key)}
                   <span class="display-theme-text">
                     <span class="display-theme-name">${key === "seasonal" ? "Seasonal" : escapeHtml(THEMES[key].label)}</span>
-                    <span class="display-theme-desc">${themeDesc[key] || ""}</span>
+                    ${key === "seasonal" ? `<span class="display-theme-desc">${seasonalLine}</span>` : ""}
                   </span>
                 </label>`).join("")}
             </div>
           </div>`).join("")}
       </section>
-      ${currentViewKey() === primaryView(currentViewList()) ? iconRow : ""}
-      <p class="display-hint">Your mode and theme are just yours. They don't change what anyone else in the household sees.</p>
+      ${dynamicGroup}
+      ${view === primaryView(currentViewList()) ? iconRow : ""}
+      <p class="display-hint">Your logos, names, mode and theme are just yours. They don't change what anyone else in the household sees.</p>
     </div>`;
+}
+
+// Settings › Display: the controls the change handler doesn't cover (logo
+// buttons, the name box, team ranking). Wired after each render.
+function wireDisplaySettings(body) {
+  const fileInput = body.querySelector("[data-display-logo-input]");
+  body.querySelector("[data-display-logo-pick]")?.addEventListener("click", () => fileInput?.click());
+  fileInput?.addEventListener("change", (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // the same picture can be picked again
+    if (file) setViewLogo(file);
+  });
+  body.querySelector("[data-display-logo-remove]")?.addEventListener("click", () => setViewLogo(null));
+  const nameInput = body.querySelector("[data-display-name]");
+  nameInput?.addEventListener("change", () => setDisplayPref("name", cleanViewName(nameInput.value)));
+  nameInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); } });
+  body.querySelectorAll("[data-display-team-move]").forEach((btn) => btn.addEventListener("click", () => {
+    const key = btn.closest("[data-display-team]")?.dataset.displayTeam;
+    moveFavoriteTeam(key, Number(btn.dataset.displayTeamMove));
+  }));
+}
+
+// Move a favorite up or down; the order is the favorites' rank everywhere.
+function moveFavoriteTeam(key, delta) {
+  const prefs = normalizeSportsPrefs(state.sportsPrefs);
+  const i = prefs.teams.findIndex((t) => t.key === key);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= prefs.teams.length) return;
+  const teams = [...prefs.teams];
+  [teams[i], teams[j]] = [teams[j], teams[i]];
+  state.sportsPrefs = { ...prefs, teams };
+  persist();
+  applyThemeMode();
+  renderContextSettingsDialog("display");
+  const moved = elements.contextSettingsBody?.querySelector(`[data-display-team="${CSS.escape(key)}"] [data-display-team-move="${delta}"]:not([disabled])`)
+    || elements.contextSettingsBody?.querySelector(`[data-display-team="${CSS.escape(key)}"] [data-display-team-move]:not([disabled])`);
+  moved?.focus();
+}
+
+function setGamedayTeam(key, on) {
+  const now = new Set(currentDisplayPrefs().gamedayTeams || []);
+  if (on) now.add(key); else now.delete(key);
+  setDisplayPref("gamedayTeams", [...now]);
 }
 
 const LINK_TEST_KEY = "live-link-test-v1";
@@ -18427,7 +18718,12 @@ function renderContextSettingsDialog(kind) {
     const body = elements.contextSettingsBody;
     const kept = {};
     body.querySelectorAll("[data-theme-group]").forEach((row) => { kept[row.dataset.themeGroup] = row.scrollLeft; });
+    // Keep the page where it was (a team moved, a switch flipped).
+    const scroller = body.closest(".settings-scroll, dialog") || body;
+    const top = scroller.scrollTop;
     body.innerHTML = displaySettingsTemplate();
+    wireDisplaySettings(body);
+    scroller.scrollTop = top;
     body.querySelectorAll("[data-theme-group]").forEach((row) => {
       if (row.dataset.themeGroup in kept) { row.scrollLeft = kept[row.dataset.themeGroup]; return; }
       const card = row.querySelector("input:checked")?.closest(".display-theme-card");
@@ -19233,6 +19529,13 @@ function handleContextSettingsChange(event) {
   }
   const displayIconInput = event.target.closest?.("[data-display-icon]");
   if (displayIconInput) setDisplayPref("icon", displayIconInput.checked);
+  const displayAuto = event.target.closest?.("[data-display-holidays], [data-display-gameday]");
+  if (displayAuto) {
+    setDisplayPref(displayAuto.hasAttribute("data-display-holidays") ? "holidays" : "gameday", displayAuto.checked);
+    renderContextSettingsDialog("display");
+  }
+  const displayTeamInput = event.target.closest?.("[data-display-team-on]");
+  if (displayTeamInput) setGamedayTeam(displayTeamInput.closest("[data-display-team]")?.dataset.displayTeam, displayTeamInput.checked);
   const pageVisibilityInput = event.target.closest?.("[data-page-visibility]");
   if (pageVisibilityInput) setPageVisibility(pageVisibilityInput.dataset.pageVisibility, pageVisibilityInput.checked);
   const adminPageInput = event.target.closest?.("[data-admin-page-visibility]");
@@ -27423,7 +27726,7 @@ function getPlanEventsForRange(startKey, endKey) {
         if (seen.has(e.id)) return;
         const color = e.color || ((data.calendarSources || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
         eventInstancesInRange(e, startKey, endKey).forEach((inst) => {
-          events.push({ ...e, ...inst, source: "layer", layerView: layer, color, calendarName: VIEW_LABELS[layer] });
+          events.push({ ...e, ...inst, source: "layer", layerView: layer, color, calendarName: viewLabel(layer) });
         });
       });
       // That view's Tasks come with its calendar (decision 20), as task chips.
@@ -27435,7 +27738,7 @@ function getPlanEventsForRange(startKey, endKey) {
           const title = task?.title || task?.text || task?.name;
           if (!(key && title) || key < startKey || key > endKey) return;
           const scheduled = taskIsScheduled(task);
-          events.push({ id: `layer-do-${layer}-${task.id || title}`, title, date: key, color: PLAN_APP_COLORS.do, source: "layer-task", layerView: layer, calendarName: `${VIEW_LABELS[layer]} tasks`, isTask: true, done: Boolean(task?.done), allDay: !scheduled, startTime: scheduled ? task.time : null, endTime: null, taskState: scheduled ? "scheduled" : "due" });
+          events.push({ id: `layer-do-${layer}-${task.id || title}`, title, date: key, color: PLAN_APP_COLORS.do, source: "layer-task", layerView: layer, calendarName: `${viewLabel(layer)} tasks`, isTask: true, done: Boolean(task?.done), allDay: !scheduled, startTime: scheduled ? task.time : null, endTime: null, taskState: scheduled ? "scheduled" : "due" });
         });
       }
     });
@@ -28199,7 +28502,7 @@ function renderPlanEventDetail(ev) {
     const synced = src?.lastFetched ? ` · synced ${new Date(src.lastFetched).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";
     sourceText = `Read-only — from “${calName}”${synced}`;
   } else if (ev.source === "layer") {
-    sourceText = `From your ${VIEW_LABELS[ev.layerView] || ""} calendar`;
+    sourceText = `From your ${viewLabel(ev.layerView)} calendar`;
   } else {
     sourceText = "Personal event";
   }
@@ -28220,7 +28523,7 @@ function renderPlanEventDetail(ev) {
 
   const personal = !ev.source || ev.source === "personal";
   const layerAction = ev.source === "layer" && viewIsSwitchable()
-    ? `<button type="button" class="primary-btn" data-plan-detail-layer="${escapeHtml(ev.layerView)}">Open in ${escapeHtml(VIEW_LABELS[ev.layerView] || "")}</button>`
+    ? `<button type="button" class="primary-btn" data-plan-detail-layer="${escapeHtml(ev.layerView)}">Open in ${escapeHtml(viewLabel(ev.layerView))}</button>`
     : "";
   actionsEl.innerHTML = layerAction || (personal
     ? `<button type="button" class="secondary-btn" data-plan-detail-delete>Delete</button><button type="button" class="primary-btn" data-plan-detail-edit>Edit</button>`

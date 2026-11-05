@@ -161,6 +161,36 @@ export function cleanDisplayPrefs(prefs) {
   if (THEME_MODES.includes(p.mode)) out.mode = p.mode;
   if (THEME_CHOICES.includes(p.theme)) out.theme = p.theme;
   if (typeof p.icon === "boolean") out.icon = p.icon;
+  Object.assign(out, cleanViewExtras(p));
+  if (Array.isArray(p.gamedayTeams)) out.gamedayTeams = cleanGamedayTeams(p.gamedayTeams);
+  return out;
+}
+
+// Per view (Luke, 2026-11-04), stored beside mode/theme:
+//   name      the view's own name ("The Evanses" for Household); "" = default
+//   holidays  true: a holiday's theme shows all day on the holiday
+//   gameday   true: a chosen team's colors show while it plays (theme-dynamic.js)
+export const VIEW_NAME_MAX = 40;
+export function cleanViewName(name) {
+  return String(name ?? "").replace(/\s+/g, " ").trim().slice(0, VIEW_NAME_MAX);
+}
+export function cleanViewExtras(p) {
+  const out = {};
+  if (typeof p?.name === "string") out.name = cleanViewName(p.name);
+  if (typeof p?.holidays === "boolean") out.holidays = p.holidays;
+  if (typeof p?.gameday === "boolean") out.gameday = p.gameday;
+  return out;
+}
+
+// The favorite teams (sports-model.js team keys) the person switched on for
+// game days. Their rank is the order of the favorites, not this list.
+export function cleanGamedayTeams(list) {
+  const out = [];
+  for (const k of Array.isArray(list) ? list : []) {
+    const key = String(k || "").slice(0, 140);
+    if (/^[a-z0-9-]+:[a-z0-9-]+$/.test(key) && !out.includes(key)) out.push(key);
+    if (out.length >= 30) break;
+  }
   return out;
 }
 
@@ -173,6 +203,10 @@ export function normalizeDisplayPrefs(prefs, legacyMode) {
     : THEME_MODES.includes(legacyMode) ? legacyMode : "light";
   out.theme = THEME_CHOICES.includes(p.theme) ? p.theme : "classic";
   out.icon = p.icon !== false;
+  out.name = cleanViewName(p.name);
+  out.holidays = p.holidays === true;
+  out.gameday = p.gameday === true;
+  out.gamedayTeams = cleanGamedayTeams(p.gamedayTeams);
   return out;
 }
 

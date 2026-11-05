@@ -120,12 +120,12 @@ describe("views: display per view", () => {
     expect(displayPrefsForView("household", { base, available: ["household"] })).toEqual(base);
   });
   it("other views default to their own theme and the person's mode, never the icon", () => {
-    expect(displayPrefsForView("household", { base, available: ALL })).toEqual({ mode: "dark", theme: "household", icon: false });
-    expect(displayPrefsForView("business", { base, available: ALL })).toEqual({ mode: "dark", theme: "urbangreens", icon: false });
+    expect(displayPrefsForView("household", { base, available: ALL })).toEqual({ mode: "dark", theme: "household", icon: false, name: "", holidays: false, gameday: false, gamedayTeams: [] });
+    expect(displayPrefsForView("business", { base, available: ALL })).toEqual({ mode: "dark", theme: "urbangreens", icon: false, name: "", holidays: false, gameday: false, gamedayTeams: [] });
   });
   it("a view's own choice wins", () => {
     const viewPrefs = { business: { mode: "light", theme: "classic" } };
-    expect(displayPrefsForView("business", { base, viewPrefs, available: ALL })).toEqual({ mode: "light", theme: "classic", icon: false });
+    expect(displayPrefsForView("business", { base, viewPrefs, available: ALL })).toEqual({ mode: "light", theme: "classic", icon: false, name: "", holidays: false, gameday: false, gamedayTeams: [] });
   });
   it("cleanViewDisplayPrefs keeps only valid choices for secondary views", () => {
     const out = cleanViewDisplayPrefs({
