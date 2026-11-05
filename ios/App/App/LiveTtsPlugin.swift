@@ -49,6 +49,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         CAPPluginMethod(name: "resume", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seekBy", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seekTo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "skipSpeech", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "seekSpeech", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stagedFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stageFile", returnType: CAPPluginReturnPromise)
@@ -79,7 +81,10 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         var songId = ""                    // appleMusic only: the catalog song id
     }
 
-    private let synth = AVSpeechSynthesizer()
+    // Replaced (resetSynth) when it may have lost its place: after an
+    // interruption a paused synthesizer can report "speaking" while making no
+    // sound, which is how a read stuck after a text came in (Luke, 2026-11-05).
+    private var synth = AVSpeechSynthesizer()
     private var voiceId: String?
     private var rate: Float = 1.0
     // Extra multiplier for speech only (Settings → Voice "Speaking speed"); the
@@ -89,6 +94,19 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     private var upcoming: [Item] = []
     private var userPaused = false
     private var interrupted = false
+    private var interruptedAt: Date?
+    // A notification, Siri reading a message, an alarm: short enough to carry on
+    // afterwards even when iOS doesn't say "should resume".
+    private static let shortInterruption: TimeInterval = 30
+    // The synthesizer can't be trusted to continue (interrupted, or moved while
+    // paused): resume re-speaks from lastLocation on a fresh synthesizer.
+    private var speechNeedsRestart = false
+    // When the last word was spoken, and a check that words come after a resume.
+    private var lastRangeAt = Date.distantPast
+    private var speechWatchdog: DispatchWorkItem?
+    // Sentence starts of the current article (for skip / seek), keyed by id + length.
+    private var sentenceCacheKey = ""
+    private var sentenceCache: [Int] = []
     // Speech can't change rate mid-utterance: a rate change while paused is
     // applied on resume by re-speaking from the last word.
     private var speechRateDirty = false
@@ -150,6 +168,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleInterruption(_:)),
             name: AVAudioSession.interruptionNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleMediaReset(_:)),
+            name: AVAudioSession.mediaServicesWereResetNotification, object: nil)
     }
 
     @objc func getVoices(_ call: CAPPluginCall) {
@@ -372,6 +393,26 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         }
     }
 
+    // Speech only: move within the article. { seconds } → back or forward by
+    // about that much reading, snapped to the start of a sentence; past the end
+    // finishes the article (the queue moves on). Resolves { moved }.
+    @objc func skipSpeech(_ call: CAPPluginCall) {
+        let seconds = call.getDouble("seconds") ?? 0
+        DispatchQueue.main.async {
+            call.resolve(["moved": self.skipSpeech(seconds: seconds)])
+        }
+    }
+
+    // Speech only: { fraction } 0…1 of the article, snapped to a sentence start.
+    @objc func seekSpeech(_ call: CAPPluginCall) {
+        let f = max(0, min(1, call.getDouble("fraction") ?? 0))
+        DispatchQueue.main.async {
+            guard let item = self.current, item.kind == .speech else { call.resolve(["moved": false]); return }
+            let len = (item.text as NSString).length
+            call.resolve(["moved": self.moveSpeech(to: Int(Double(len) * f), forward: false)])
+        }
+    }
+
     @objc func stop(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             self.current = nil
@@ -471,6 +512,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     // without touching the queue. keepMusicPlayer: the next item is a song, which
     // replaces the player's queue itself (stopping first would race its start).
     private func stopOutput(keepMusicPlayer: Bool = false) {
+        speechWatchdog?.cancel()
+        speechWatchdog = nil
         currentUtterance = nil
         if synth.isSpeaking { synth.stopSpeaking(at: .immediate) }
         teardownPlayer()
@@ -705,7 +748,89 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         }
     }
 
+    // A new synthesizer for one that may be wedged. The old one's late callbacks
+    // are ignored (their utterance is no longer currentUtterance).
+    private func resetSynth() {
+        let old = synth
+        currentUtterance = nil
+        old.delegate = nil
+        if old.isSpeaking { old.stopSpeaking(at: .immediate) }
+        synth = AVSpeechSynthesizer()
+        synth.delegate = self
+    }
+
+    // Re-speak the current article from the last word reached.
+    private func restartSpeech(_ item: Item) {
+        if speechNeedsRestart || synth.isSpeaking { resetSynth() }
+        start(item, speechOffset: lastLocation)
+        armSpeechWatchdog(for: item)
+    }
+
+    // After a resume, words should start within a few seconds. If none do, the
+    // synthesizer is stuck: start over from the last word on a fresh one (once).
+    private func armSpeechWatchdog(for item: Item, retried: Bool = false) {
+        speechWatchdog?.cancel()
+        let mark = Date()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, let cur = self.current, cur.kind == .speech, cur.id == item.id,
+                  !self.userPaused, self.lastRangeAt < mark, !retried else { return }
+            self.resetSynth()
+            self.start(cur, speechOffset: self.lastLocation)
+            self.armSpeechWatchdog(for: cur, retried: true)
+        }
+        speechWatchdog = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    private func sentenceStarts(for item: Item) -> [Int] {
+        let ns = item.text as NSString
+        let key = "\(item.id)#\(ns.length)"
+        if key == sentenceCacheKey { return sentenceCache }
+        var starts: [Int] = []
+        ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length), options: [.bySentences, .substringNotRequired]) { _, range, _, _ in
+            starts.append(range.location)
+        }
+        if starts.first != 0 { starts.insert(0, at: 0) }
+        sentenceCacheKey = key
+        sentenceCache = starts
+        return starts
+    }
+
+    // About `seconds` of reading back or forward (≈15 characters a second at
+    // normal speed), snapped to a sentence start.
+    private func skipSpeech(seconds: Double) -> Bool {
+        guard let item = current, item.kind == .speech, seconds != 0 else { return false }
+        let cps = 15.0 * Double(max(0.5, min(3.0, rate * speechSpeed)))
+        return moveSpeech(to: lastLocation + Int((seconds * cps).rounded()), forward: seconds > 0)
+    }
+
+    // Jump to a character offset of the current article, snapped to the start of
+    // a sentence (forward: the next one at or after it; else the one it's in).
+    // Forward past the last sentence finishes the article. Keeps a pause.
+    private func moveSpeech(to raw: Int, forward: Bool) -> Bool {
+        guard let item = current, item.kind == .speech else { return false }
+        let length = (item.text as NSString).length
+        let starts = sentenceStarts(for: item)
+        var target = forward
+            ? (starts.first(where: { $0 >= raw }) ?? length)
+            : (starts.last(where: { $0 <= max(0, raw) }) ?? 0)
+        if target >= length {
+            if forward { itemFinished(failed: false); return true }
+            target = starts.last ?? 0
+        }
+        lastLocation = target
+        notifyListeners("ttsRange", data: ["id": item.id, "location": target, "length": 0, "total": length])
+        if userPaused {
+            speechNeedsRestart = true // resume reads from here
+        } else {
+            start(item, speechOffset: target)
+            armSpeechWatchdog(for: item)
+        }
+        return true
+    }
+
     private func startSpeech(_ item: Item, from offset: Int) {
+        speechNeedsRestart = false
         let ns = item.text as NSString
         let base = max(0, min(offset, ns.length))
         utteranceBase = base
@@ -970,14 +1095,18 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         interrupted = false
         switch item.kind {
         case .speech:
-            var resumed = synth.isSpeaking && !synth.isPaused // already playing
-            if synth.isPaused && !speechRateDirty { resumed = synth.continueSpeaking() }
-            if !resumed {
-                // The synthesizer lost the paused utterance (or refused to
-                // continue): re-speak from the last word reached.
-                start(item, speechOffset: lastLocation)
-            } else {
+            // "Speaking and not paused" alone isn't proof: a synthesizer stuck by
+            // an interruption says so while silent. Only recent words count.
+            let speakingNow = synth.isSpeaking && !synth.isPaused && Date().timeIntervalSince(lastRangeAt) < 2
+            if speakingNow {
                 updateNowPlaying(playing: true)
+            } else if synth.isPaused && !speechRateDirty && !speechNeedsRestart && synth.continueSpeaking() {
+                updateNowPlaying(playing: true)
+                armSpeechWatchdog(for: item)
+            } else {
+                // Lost, stuck, moved while paused, or the speed changed: re-speak
+                // from the last word reached.
+                restartSpeech(item)
             }
         case .audio:
             if let p = player, p.currentItem != nil {
@@ -1012,18 +1141,31 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             // MusicKit pauses and resumes its own songs around a call.
             if self.current?.kind == .appleMusic { return }
             if type == .began {
+                // Speech taken over mid-word often can't continue afterwards.
+                if self.current?.kind == .speech { self.speechNeedsRestart = true }
                 if self.current != nil && !self.userPaused {
                     self.doPause(notify: true)
                     self.interrupted = true // not the user's pause — may auto-resume
+                    self.interruptedAt = Date()
                 }
             } else if type == .ended {
                 let optValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                 let opts = AVAudioSession.InterruptionOptions(rawValue: optValue)
-                if self.interrupted && opts.contains(.shouldResume) && self.current != nil {
+                let short = self.interruptedAt.map { Date().timeIntervalSince($0) <= LiveTtsPlugin.shortInterruption } ?? false
+                if self.interrupted && self.current != nil && (opts.contains(.shouldResume) || short) {
                     self.doResume(notify: true)
                 }
                 self.interrupted = false
+                self.interruptedAt = nil
             }
+        }
+    }
+
+    // The phone's audio system restarted: every player and synthesizer is dead.
+    @objc private func handleMediaReset(_ note: Notification) {
+        DispatchQueue.main.async {
+            self.resetSynth()
+            if self.current?.kind == .speech { self.speechNeedsRestart = true }
         }
     }
 
@@ -1041,6 +1183,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             guard utterance === self.currentUtterance else { return }
             let location = self.utteranceBase + characterRange.location
             self.lastLocation = location
+            self.lastRangeAt = Date()
             self.notifyListeners("ttsRange", data: [
                 "id": self.current?.id ?? "",
                 "location": location,
@@ -1089,12 +1232,16 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         center.skipForwardCommand.preferredIntervals = [30]
         center.skipBackwardCommand.preferredIntervals = [15]
         add(center.skipForwardCommand) { [weak self] _ in
-            guard let self = self, self.current?.kind == .audio else { return .commandFailed }
+            guard let self = self, let kind = self.current?.kind else { return .commandFailed }
+            if kind == .speech { return self.skipSpeech(seconds: 30) ? .success : .commandFailed }
+            guard kind == .audio else { return .commandFailed }
             self.seekAudio(to: self.currentAudioPosition() + 30)
             return .success
         }
         add(center.skipBackwardCommand) { [weak self] _ in
-            guard let self = self, self.current?.kind == .audio else { return .commandFailed }
+            guard let self = self, let kind = self.current?.kind else { return .commandFailed }
+            if kind == .speech { return self.skipSpeech(seconds: -15) ? .success : .commandFailed }
+            guard kind == .audio else { return .commandFailed }
             self.seekAudio(to: self.currentAudioPosition() - 15)
             return .success
         }
@@ -1107,12 +1254,13 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     }
 
     // Podcasts get ±seconds skip + a scrubbable bar on the lock screen; speech
-    // (no seeking) gets next-track instead.
+    // gets ±skip by sentences (skipSpeech) and next-track.
     private func configureCommands(for kind: Kind, music: Bool = false) {
         let center = MPRemoteCommandCenter.shared()
-        let audio = kind == .audio && !music // songs get next-track, not ±seconds
-        center.skipForwardCommand.isEnabled = audio
-        center.skipBackwardCommand.isEnabled = audio
+        // Songs get next-track, not ±seconds; speech skips by sentences.
+        let skips = (kind == .audio && !music) || kind == .speech
+        center.skipForwardCommand.isEnabled = skips
+        center.skipBackwardCommand.isEnabled = skips
         center.changePlaybackPositionCommand.isEnabled = kind == .audio
         center.nextTrackCommand.isEnabled = kind != .live
     }
