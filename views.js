@@ -28,7 +28,7 @@ export const VIEW_LABELS = Object.freeze({
 // 2026-10-20). Meal Plan, Shop and Explore are Household's only (Explore moved
 // from Personal, Luke 2026-10-22); Tasks lives inside the
 // Calendar, Weather opens from the dock, and Scores is News → Sports — none of
-// those three has a menu entry. Documents (Luke, 2026-11-03) is in Household
+// those three has a menu entry. Document (Luke, 2026-11-03; renamed 2026-11-04) is in Household
 // (shared) and Personal (Luke only), each with its own encrypted vault.
 export const VIEW_PAGES = Object.freeze({
   personal: Object.freeze(["plan", "news", "finance", "documents", "watch", "read", "mail", "play", "recreate"]),

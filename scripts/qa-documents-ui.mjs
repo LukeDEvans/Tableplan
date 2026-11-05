@@ -35,8 +35,9 @@ async function docStorage(uid, body) {
   const { op, items } = JSON.parse(body || "{}");
   if (!["put", "get", "delete"].includes(op) || !Array.isArray(items) || !items.length || items.length > 25) return [400, { error: "request" }];
   for (const s of new Set(items.map((i) => i.scope))) if ((await t.rpc("doc_can_access", { p_scope: s })) !== true) return [403, { error: "scope" }];
-  if (op === "delete") for (const i of items) if ((await t.rpc("doc_blob_deletable", { p_scope: i.scope, p_file: i.fileId })) !== true) return [403, { error: "not deletable yet" }];
-  return [200, { urls: items.map((i) => ({ url: `/blob/${i.scope}/${i.fileId}/${i.part}?op=${op}`, headers: {} })) }]; // relative: each page's own origin
+  if (items.some((i) => i.tier !== undefined && i.tier !== "everyday")) return [400, { error: "item" }];
+  if (op === "delete") for (const i of items) if ((await t.rpc(i.tier === "everyday" ? "doc_pblob_deletable" : "doc_blob_deletable", { p_scope: i.scope, p_file: i.fileId })) !== true) return [403, { error: "not deletable yet" }];
+  return [200, { urls: items.map((i) => ({ url: `/blob/${i.tier === "everyday" ? "p/" : ""}${i.scope}/${i.fileId}/${i.part}?op=${op}`, headers: {} })) }]; // relative: each page's own origin
 }
 
 const api = createHttp(async (req, res) => {
@@ -97,7 +98,7 @@ const browser = await chromium.launch({ ...ARGS, channel: "chrome" }).catch(() =
 const MEMBERS = [{ user_id: USERS.luke, display_name: "Luke" }, { user_id: USERS.wife, display_name: "Marijane" }];
 const PERSONAL = `u-${USERS.luke}`;
 
-async function device(name, userId, { native, width = 390, host = null, ctx: sameBrowser = null }) {
+async function device(name, userId, { native, width = 390, host = null, ctx: sameBrowser = null, page: wholePage = false, lockKey = null }) {
   const appUrl = host ? appUrlBase.replace("127.0.0.1", host) : appUrlBase; // passkeys need a domain, not an IP
   // sameBrowser: another tab of an existing profile (shares its IndexedDB).
   const ctx = sameBrowser || await browser.newContext({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
@@ -108,7 +109,7 @@ async function device(name, userId, { native, width = 390, host = null, ctx: sam
   await page.route(`${appUrl}/qa-documents.html`, (r) => r.fulfill({ contentType: "text/html", body: `<!doctype html><html data-theme="light"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"></head>
     <body style="margin:0;background:var(--bg);font-family:system-ui"><section class="planner-column do-column documents-page" id="documentsMainPage" style="height:100vh;display:flex;flex-direction:column"><div class="article-page-inner" id="documentsRoot" style="flex:1;min-height:0;display:flex;flex-direction:column"></div></section></body></html>` }));
   await page.goto(`${appUrl}/qa-documents.html`);
-  await page.evaluate(async ({ appUrl, userId, native, members, personal }) => {
+  await page.evaluate(async ({ appUrl, userId, native, members, personal, wholePage, lockKey: sharedLockKey }) => {
     const headers = () => ({ authorization: `Bearer ${userId}`, "content-type": "application/json" });
     const { createKeystore, idbBackend } = await import(`${appUrl}/messaging/keystore.js`);
     const { createMessagingServer, createRestTransport } = await import(`${appUrl}/messaging/server.js`);
@@ -120,7 +121,8 @@ async function device(name, userId, { native, width = 390, host = null, ctx: sam
     window.__msg = createMessagingAccount({ server: createMessagingServer(createRestTransport({ baseUrl: () => appUrl, headers })), store: createKeystore(await idbBackend()), userId });
     window.__toasts = [];
     window.__opened = [];
-    const lockKey = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    // The Face ID stand-in's key: one per profile (a second tab gets the first's).
+    const lockKey = sharedLockKey || btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
     window.__lock = {
       key: lockKey, prompts: 0, cancelNext: false, delayMs: 0,
       async unlock() {
@@ -133,8 +135,21 @@ async function device(name, userId, { native, width = 390, host = null, ctx: sam
     const { createReceiptOutbox } = await import(`${appUrl}/documents/outbox.js`);
     window.__outbox = createReceiptOutbox(createKeystore((await import(`${appUrl}/messaging/keystore.js`)).memoryBackend()));
     window.__receipts = [];
+    // wholePage: the Document page (documents/page.js) with the Safe inside it; else
+    // the Safe's module on its own (documents/ui.js).
     const { mountDocuments } = await import(`${appUrl}/documents/ui.js`);
-    window.__ui = await mountDocuments(document.getElementById("documentsRoot"), {
+    const { mountDocumentPage } = await import(`${appUrl}/documents/page.js`);
+    const { fileReceipts } = await import(`${appUrl}/documents/outbox.js`);
+    const { createEverydayLibrary } = await import(`${appUrl}/documents/everyday.js`);
+    const { createDocumentsStorage, edgePresigner } = await import(`${appUrl}/documents/storage.js`);
+    const { MIME_TYPES } = await import(`${appUrl}/documents/common.js`);
+    window.__fileReceipts = async (scope) => {
+      const library = createEverydayLibrary({ transport: createRestTransport({ baseUrl: () => appUrl, headers }), storage: createDocumentsStorage({ presign: edgePresigner({ functionsUrl: `${appUrl}/functions/v1`, getToken: async () => userId }), tier: "everyday" }) });
+      const folderId = (await library.ensureStartingFolders(scope, { receipts: true })).find((f) => f.kind === "receipts").id;
+      return fileReceipts({ outbox: window.__outbox, library, scope, folderId, receipts: () => window.__receipts, mimeOk: (m) => MIME_TYPES.includes(m) });
+    };
+    window.__ui = await (wholePage ? mountDocumentPage : mountDocuments)(document.getElementById("documentsRoot"), {
+      fileReceipts: (scope) => window.__fileReceipts(scope),
       userId, baseUrl: () => appUrl, headers, functionsUrl: () => `${appUrl}/functions/v1`, getToken: async () => userId,
       isNative: native, nativeMessagingKeys: () => null,
       // A stand-in for the iPhone's DocumentsLock (Face ID): a fixed key per profile,
@@ -160,7 +175,7 @@ async function device(name, userId, { native, width = 390, host = null, ctx: sam
       toast: (t) => window.__toasts.push(t),
       openMessages: () => window.__opened.push("messages"),
     });
-  }, { appUrl, userId, native, members: MEMBERS, personal: userId === USERS.luke ? PERSONAL : null });
+  }, { appUrl, userId, native, members: MEMBERS, personal: userId === USERS.luke ? PERSONAL : null, wholePage, lockKey });
   return { name, page, errors, ctx };
 }
 
@@ -231,7 +246,7 @@ try {
   await phone.page.click("[data-act=create]");
   await phone.page.waitForSelector(".docs-sidebar", { timeout: 20000 });
   const tabs = await folderTabs(phone);
-  check(JSON.stringify(tabs) === JSON.stringify(["All documents", "Receipts", "IDs & Records", "Home", "Vehicles", "Insurance", "Medical", "New folder", "Recently deleted"]), "Household starts with Receipts first, then the five folders", tabs.join(", "));
+  check(JSON.stringify(tabs) === JSON.stringify(["All documents", "IDs & Records", "Insurance", "Medical", "New folder", "Recently deleted"]), "the Household Safe starts with its three private folders (Receipts, Home and Vehicles are everyday now)", tabs.join(", "));
   check((await text(phone)).includes("verified Marijane"), "an unverified household member is flagged, with a way to Messages");
   await shot(phone, "2-household-empty");
   check(await noSideScroll(phone), "the empty page fits a phone-width window");
@@ -277,14 +292,14 @@ try {
   await shot(phone, "5-viewer");
   check(await noSideScroll(phone), "the viewer fits a phone-width window");
   await phone.page.fill("[data-form=edit] [name=name]", "Car title — Honda");
-  const vehicles = await phone.page.locator("[data-form=edit] [name=folder] option", { hasText: "Vehicles" }).getAttribute("value");
+  const vehicles = await phone.page.locator("[data-form=edit] [name=folder] option", { hasText: "Insurance" }).getAttribute("value");
   await phone.page.selectOption("[data-form=edit] [name=folder]", vehicles);
   await phone.page.fill("[data-form=edit] [name=tags]", "car, title");
   await phone.page.click("[data-form=edit] button[type=submit]");
   await phone.page.waitForFunction(() => window.__toasts.includes("Saved."), null, { timeout: 15000 });
   await phone.page.click("[data-act=close-viewer]");
   await pick(phone, `[data-folder="${vehicles}"]`);
-  check(JSON.stringify(await fileNames(phone)) === JSON.stringify(["Car title — Honda"]), "renamed and moved: Vehicles shows it");
+  check(JSON.stringify(await fileNames(phone)) === JSON.stringify(["Car title — Honda"]), "renamed and moved: Insurance shows it");
   await pick(phone, `[data-folder=all]`);
   await phone.page.fill("[data-search]", "car");
   check(JSON.stringify(await fileNames(phone)) === JSON.stringify(["Car title — Honda"]), "search finds it by tag");
@@ -315,8 +330,6 @@ try {
   await pick(phone, "[data-act=new-folder]");
   await idle(phone);
   check((await folderTabs(phone)).includes("Taxes"), "a new folder can be added");
-  await pick(phone, ".docs-sidebar .article-sidebar-tab:has-text('Receipts')");
-  check(await phone.page.locator("[data-act=delete-folder]").count() === 0, "Receipts has no Remove button");
   await pick(phone, ".docs-sidebar .article-sidebar-tab:has-text('Taxes')");
   phone.page.__answers = [undefined];
   await phone.page.click("[data-act=delete-folder]");
@@ -369,33 +382,8 @@ try {
     return { found: Boolean(vaultKey), right: await tryKey(right), wrong: await tryKey(wrong) };
   });
   check(atRest.found && atRest.right && !atRest.wrong, "the vault keys on the phone are encrypted with the Face ID key", JSON.stringify(atRest));
-  console.log("Receipts scanned elsewhere in the app");
-  await phone.page.evaluate(async () => {
-    const page = async (w, h) => {
-      const c = document.createElement("canvas"); c.width = w; c.height = h;
-      const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.fillStyle = "#000"; g.fillRect(20, 20, w - 40, 30);
-      const b = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.8));
-      return { bytes: new Uint8Array(await b.arrayBuffer()), type: "image/jpeg" };
-    };
-    await window.__outbox.queue([await page(400, 900), await page(400, 600)], { scope: "7aa1feaf-4c11-4b20-a1b4-234082e90c97", camera: true });
-    await window.__outbox.queue([await page(300, 300)], { scope: "99999999-9999-4999-8999-999999999999" }); // another household's
-    window.__receipts = [{ id: "rc1", storeName: "Costco", purchaseDate: "2026-11-02", createdAt: new Date(Date.now() + 20000).toISOString(), source: "scan" }];
-    window.__toasts = [];
-    window.__ui.hide();
-  });
-  await household(phone);
-  await idle(phone);
-  check((await phone.page.evaluate(() => window.__toasts)).includes("1 receipt filed in Receipts."), "a receipt scanned in the app is filed when Household Documents opens", (await phone.page.evaluate(() => window.__toasts)).join(" | "));
-  await pick(phone, ".docs-sidebar .article-sidebar-tab:has-text('Receipts')");
-  check((await fileNames(phone)).includes("Costco · 2026-11-02") && (await text(phone)).includes("2 pages"), "…in Receipts, named from the receipt's read, one PDF of its 2 pages", (await fileNames(phone)).join(", "));
-  check((await phone.page.evaluate(async () => (await window.__outbox.entries()).map((e) => e.scope).join(","))) === "99999999-9999-4999-8999-999999999999", "…and it leaves the outbox; a receipt scanned for another household stays out of this one");
-  await phone.page.click(".docs-file:has-text('Costco')");
-  await phone.page.waitForSelector(".docs-view-pdf", { timeout: 15000 });
-  await phone.page.click("[data-act=close-viewer]");
-  await pick(phone, "[data-folder=all]");
-
   console.log("Scanning (iPhone)");
-  await pick(phone, ".docs-sidebar .article-sidebar-tab:has-text('Home')");
+  await pick(phone, ".docs-sidebar .article-sidebar-tab:has-text('Medical')");
   await phone.page.evaluate(() => { window.__toasts = []; });
   await phone.page.click("[data-act=scan]");
   await phone.page.waitForSelector(".docs-view-pdf", { timeout: 20000 });
@@ -403,7 +391,7 @@ try {
   check(scanOpts.pdf === true && scanOpts.maxPages === 30 && scanOpts.ocr === true, "Scan asks the camera for one PDF of up to 30 pages, with the text", JSON.stringify(scanOpts));
   check((await phone.page.locator(".docs-viewer [name=name]").inputValue()).startsWith("Scan "), "the scan opens straight away, ready to rename");
   await phone.page.click("[data-act=close-viewer]");
-  check((await text(phone)).includes("3 pages") && (await fileNames(phone)).some((n) => n.startsWith("Scan ")), "it's listed in the open folder (Home) with its page count");
+  check((await text(phone)).includes("3 pages") && (await fileNames(phone)).some((n) => n.startsWith("Scan ")), "it's listed in the open folder (Medical) with its page count");
   const scanText = await phone.page.evaluate(async (scope) => {
     const d = window.__ui._debug;
     const f = d.ui.files.find((x) => x.name.startsWith("Scan "));
@@ -441,6 +429,115 @@ try {
     return r.status;
   }, PERSONAL);
   check(herPersonal === 403, "Marijane can't get links to Luke's Personal documents");
+
+  console.log("The Document page: everyday documents, with the Safe inside");
+  const E = "[data-everyday]";
+  const eNames = (d) => d.page.locator(`${E} .docs-file-name`).allInnerTexts();
+  const eTabs = (d) => d.page.locator(`${E} .docs-sidebar .article-sidebar-tab span`).allInnerTexts();
+  // The drawer of folders (phone width) in one part of the page: E or the Safe's box.
+  const inPick = async (d, part, selector) => { await d.page.click(`${part} [data-act=toggle-sidebar]`); await d.page.click(`${part} ${selector}`); };
+  const eIdle = (d) => d.page.waitForFunction(() => !document.querySelector("[data-everyday] [role=status]"), null, { timeout: 20000 });
+  const lukeKey = await phone.page.evaluate(() => window.__lock.key);
+  await phone.page.evaluate(() => window.__ui.hide());
+  const doc = await device("luke-phone-page", USERS.luke, { native: true, ctx: phone.ctx, page: true, lockKey: lukeKey });
+  const docPrompts = () => doc.page.evaluate(() => window.__lock.prompts);
+  await household(doc);
+  await doc.page.waitForSelector(`${E} .docs-sidebar`, { timeout: 20000 });
+  const etabs = await eTabs(doc);
+  check(JSON.stringify(etabs) === JSON.stringify(["All documents", "Receipts", "Home", "Vehicles", "New folder", "Safe", "Recently deleted"]), "Household opens on everyday documents: Receipts, Home, Vehicles, and the Safe", etabs.join(", "));
+  check((await docPrompts()) === 0, "…without asking for Face ID");
+  await shot(doc, "9-everyday");
+  await addFiles(doc, "input");
+  await eIdle(doc);
+  const enames = await eNames(doc);
+  check(enames.includes("Car title") && enames.includes("Home insurance 2026") && enames.includes("notes") && !enames.includes("logo"), "files are added to everyday documents (an SVG still refused)", enames.join(", "));
+  check([...blobs.entries()].some(([k, v]) => k.startsWith(`p/${GROUP}/`) && v.toString("latin1").startsWith("%PDF")), "…and stored as they are, under p/ (not encrypted on the device)");
+  check((await docPrompts()) === 0, "…still without Face ID");
+  await doc.page.click(`${E} .docs-file:has-text('Home insurance')`);
+  await doc.page.waitForSelector(`${E} .docs-view-pdf`, { timeout: 15000 });
+  await doc.page.evaluate(() => { window.__ql = null; });
+  await doc.page.click(`${E} [data-act=quicklook]`);
+  const eql = await doc.page.evaluate(() => window.__ql && { sensitive: Boolean(window.__ql.sensitive), head: atob(window.__ql.data).slice(0, 5) });
+  check(eql && !eql.sensitive && eql.head === "%PDF-", "Open shows an everyday PDF in Apple's viewer (not as a Safe file)", JSON.stringify(eql));
+  await doc.page.click(`${E} [data-act=close-viewer]`);
+
+  // Receipts: filed into everyday Receipts as soon as possible (here, on open).
+  await doc.page.evaluate(async (group) => {
+    const c = document.createElement("canvas"); c.width = 400; c.height = 600;
+    c.getContext("2d").fillRect(10, 10, 100, 30);
+    const b = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.8));
+    const page = { bytes: new Uint8Array(await b.arrayBuffer()), type: "image/jpeg" };
+    await window.__outbox.queue([page, page], { scope: group, camera: true });
+    await window.__outbox.queue([page], { scope: "99999999-9999-4999-8999-999999999999" });
+    window.__receipts = [{ id: "rc1", storeName: "Costco", purchaseDate: "2026-11-02", createdAt: new Date(Date.now() + 20000).toISOString(), source: "scan" }];
+    window.__ui.hide();
+  }, GROUP);
+  await household(doc);
+  await doc.page.waitForFunction(async () => (await window.__outbox.entries()).length === 1, null, { timeout: 20000 });
+  await inPick(doc, E, `.docs-sidebar .article-sidebar-tab:has-text('Receipts')`);
+  await doc.page.waitForFunction(() => [...document.querySelectorAll("[data-everyday] .docs-file-name")].some((n) => n.textContent.startsWith("Costco")), null, { timeout: 20000 }).catch(() => {});
+  check((await eNames(doc)).includes("Costco · 2026-11-02") && (await doc.page.locator(E).innerText()).includes("2 pages"), "a receipt scanned in Shop lands in everyday Receipts as one PDF, no Face ID", (await eNames(doc)).join(", "));
+  check((await doc.page.evaluate(async () => (await window.__outbox.entries()).map((e) => e.scope).join(","))) === "99999999-9999-4999-8999-999999999999", "…and leaves the outbox; another household's stays out");
+  check(await doc.page.locator(`${E} [data-act=delete-folder]`).count() === 0, "Receipts can't be removed");
+
+  // A scan into Home, then search finds it by the text on its pages (the database).
+  await inPick(doc, E, `.docs-sidebar .article-sidebar-tab:has-text('Home')`);
+  await doc.page.click(`${E} [data-act=scan]`);
+  await doc.page.waitForSelector(`${E} .docs-view-pdf`, { timeout: 20000 });
+  await doc.page.click(`${E} [data-act=close-viewer]`);
+  await inPick(doc, E, `[data-folder=all]`);
+  await doc.page.fill(`${E} [data-search]`, "lease agr");
+  await doc.page.waitForFunction(() => [...document.querySelectorAll("[data-everyday] .docs-file-name")].some((n) => n.textContent.startsWith("Scan ")), null, { timeout: 15000 }).catch(() => {});
+  check(JSON.stringify((await eNames(doc)).map((n) => n.slice(0, 5))) === JSON.stringify(["Scan "]), "search finds an everyday scan by its page text", (await eNames(doc)).join(", "));
+  await doc.page.fill(`${E} [data-search]`, "");
+  check((await docPrompts()) === 0, "none of that asked for Face ID");
+
+  // Marijane sees everyday documents at once, no key needed.
+  const wifeKey = await wife.page.evaluate(() => window.__lock.key);
+  await wife.page.evaluate(() => window.__ui.hide());
+  const herDoc = await device("wife-phone-page", USERS.wife, { native: true, ctx: wife.ctx, page: true, lockKey: wifeKey });
+  await household(herDoc);
+  await herDoc.page.waitForSelector(`${E} .docs-file`, { timeout: 20000 });
+  check((await eNames(herDoc)).includes("Home insurance 2026") && (await herDoc.page.locator(E).innerText()).includes("added by Luke"), "Marijane sees Luke's everyday documents at once", (await eNames(herDoc)).join(", "));
+  check((await herDoc.page.evaluate(() => window.__lock.prompts)) === 0, "…without Face ID");
+
+  // The Safe: Face ID on opening, its own folders; leaving locks it.
+  const safeP0 = await docPrompts();
+  await inPick(doc, E, `[data-act=open-safe]`);
+  await doc.page.waitForSelector("[data-safe-root] .docs-sidebar", { timeout: 20000 });
+  check((await docPrompts()) === safeP0 + 1, "opening the Safe asks for Face ID");
+  const stabs = await doc.page.locator("[data-safe-root] .docs-sidebar .article-sidebar-tab span").allInnerTexts();
+  check(stabs.includes("IDs & Records") && stabs.includes("Medical") && !stabs.includes("Receipts"), "…and shows the Safe's folders", stabs.join(", "));
+  await shot(doc, "10-safe");
+
+  // An older Safe with a Home folder: its documents move out on request.
+  doc.page.__answers = ["Home"];
+  await inPick(doc, "[data-safe-root]", "[data-act=new-folder]");
+  await doc.page.waitForFunction(() => !document.querySelector("[data-safe-root] [role=status]"), null, { timeout: 20000 });
+  await addFiles(doc, "input");
+  await doc.page.waitForFunction(() => document.querySelector("[data-safe-root] [data-act=move-out]"), null, { timeout: 30000 }).catch(() => {});
+  check(await doc.page.locator("[data-safe-root] [data-act=move-out]").count() === 1, "a Safe with documents in Home offers to move them out");
+  doc.page.__answers = [undefined];
+  await doc.page.evaluate(() => { window.__toasts = []; });
+  await doc.page.click("[data-safe-root] [data-act=move-out]");
+  await doc.page.waitForFunction(() => window.__toasts.some((t) => t.startsWith("Moved")), null, { timeout: 30000 }).catch(() => {});
+  check((await doc.page.evaluate(() => window.__toasts)).includes("Moved 3 documents out of the Safe."), "…Move them takes them out", (await doc.page.evaluate(() => window.__toasts)).join(" | "));
+  const stabs2 = await doc.page.locator("[data-safe-root] .docs-sidebar .article-sidebar-tab span").allInnerTexts();
+  check(!stabs2.includes("Home") && await doc.page.locator("[data-safe-root] [data-act=move-out]").count() === 0, "…the Safe's empty Home folder is hidden and the offer is gone", stabs2.join(", "));
+  await doc.page.click("[data-act=leave-safe]");
+  await doc.page.waitForSelector(`${E} .docs-sidebar`, { timeout: 20000 });
+  check(await doc.page.evaluate(() => window.__ui._debug.safe._debug.locked), "leaving the Safe locks it");
+  await inPick(doc, E, `.docs-sidebar .article-sidebar-tab:has-text('Home')`);
+  const homeNames = await eNames(doc);
+  check(["Car title", "Home insurance 2026", "notes"].every((n) => homeNames.includes(n)), "…and they're in everyday Home, readable", homeNames.join(", "));
+  await doc.page.click(`${E} .docs-file:has-text('notes')`);
+  await doc.page.waitForSelector(`${E} .docs-view-text`, { timeout: 15000 });
+  check((await doc.page.locator(`${E} .docs-view-text`).innerText()).includes("<b>not bold</b>"), "a moved file opens with its content");
+  await doc.page.click(`${E} [data-act=close-viewer]`);
+  await doc.page.setViewportSize({ width: 360, height: 740 });
+  check(await noSideScroll(doc), "the Document page fits a 360 px phone");
+  await shot(doc, "11-everyday-narrow");
+  for (const d of [doc, herDoc]) { check(d.errors.length === 0, `${d.name}: no page errors`, d.errors.join(" | ")); await d.page.close(); }
 
   console.log("Luke's laptop browser");
   const laptop = await device("luke-browser", USERS.luke, { native: false, width: 1280, host: "localhost" });

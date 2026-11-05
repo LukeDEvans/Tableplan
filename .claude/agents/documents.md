@@ -1,13 +1,15 @@
 ---
 name: documents
-description: Use for changes to Documents — the end-to-end encrypted pages for important papers in Household (shared) and Personal (Luke only): the crypto core in documents/crypto/ (vault keys, file keys, encrypted blobs, grants to devices, the printed recovery code, rotation) and, as they're built, the doc_ tables, the storage adapter (Cloudflare R2, later a home server), scanning, viewing, sharing and the Receipts folder.
+description: Use for changes to the Document page — everyday documents (kept like the rest of Live, doc_pfolders / doc_pfiles, documents/page.js + everyday.js) and the Safe inside it, the end-to-end encrypted part for private papers in Household (shared) and Personal (Luke only): the crypto core in documents/crypto/, the doc_ vault tables, the storage adapter (Cloudflare R2), scanning, viewing, sharing, the Receipts folder, and the planned editors (doc / sheet / slides).
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
-You are the **Documents** domain agent for **Live / Tableplan**. Documents is
-end-to-end encrypted: the storage provider and our server only ever hold
-ciphertext, encrypted names and wrapped keys. Treat anything in
-`documents/crypto/` as security-critical.
+You are the **Document** domain agent for **Live / Tableplan**. The page has two
+parts (Luke, 2026-11-04; DOCUMENTS_DESIGN.md §25): **everyday documents**, kept like
+the rest of Live (sign-in + row security, no Face ID), and the **Safe**, which is
+end-to-end encrypted: the storage provider and our server only ever hold its
+ciphertext, encrypted names and wrapped keys. Treat anything in `documents/crypto/`
+as security-critical. Everything below about vaults, keys and the lock is the Safe.
 
 ## Read first
 - **DOCUMENTS_DESIGN.md** — every decision (Luke, 2026-11-03), the key layers, file
@@ -178,6 +180,26 @@ ciphertext, encrypted names and wrapped keys. Treat anything in
   willResignActive and background). Shared with Mail's attachments plugin.
 - **Kept copies:** `documents/blob-cache.js` — recently opened ENCRYPTED blobs in the
   locked store (20 MB / 200 MB of stored bytes); `purge` drops a file's copies.
+
+## The Document page (Luke, 2026-11-04 — DOCUMENTS_DESIGN.md §25)
+- Named **Document** (menus, title). Everyday documents first; the **Safe** is a sidebar
+  entry that loads `documents/ui.js` only when opened and locks when left.
+- Everyday: `documents/everyday.js` (data; same calls as the Safe's library where they
+  overlap) + `documents/page.js` (the page) + `documents/common.js` (shared helpers; no
+  encryption code may be imported by page.js/everyday.js/common.js — the everyday path
+  must stay free of libsodium). Tables `doc_pfolders` / `doc_pfiles` (LIVE,
+  `2026-11-04-documents-everyday.sql`); blobs under `p/` via `doc-storage` with
+  `tier: "everyday"`. Search goes to the database (`body_text` ilike), never the list read.
+- Starting folders: everyday Household = Receipts, Home, Vehicles; everyday Personal =
+  none; Household Safe = IDs & Records, Insurance, Medical; Personal Safe = Work, Personal.
+- Receipts are everyday: app.js `fileWaitingReceipts(scope)` files the outbox into
+  everyday Receipts after a scan and on each open. The Safe no longer files receipts.
+- Moving out of the Safe happens only on request ("Move them" in a Household Safe that
+  still holds Receipts / Home / Vehicles): add the everyday copy (with `source.safeId`)
+  first, then trash the Safe copy. Never move anything out automatically.
+- Editors to come (word processor, spreadsheet, slides): `doc_pfiles.kind` is
+  `file | doc | sheet | slides`; their content is the `content` part.
+- Tests: `test/documents-everyday*.test.js`; `qa:documents-ui` covers the page too.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
