@@ -135,6 +135,9 @@ body[data-palette="halloween"][data-theme="dark"] { background: #0e0c0b; }
    stays the accent for fills, links and highlights. */
 body[data-palette="halloween"] .home-logo { content: url("./home-logo-halloween-light.png"); }
 body[data-palette="halloween"][data-theme="dark"] .home-logo { content: url("./home-logo-halloween-dark.png"); }
+/* A view's own logo (view-logo.js) stays itself in every theme. */
+body[data-palette] .home-logo.is-custom,
+body[data-palette][data-theme] .home-logo.is-custom { content: normal; }
 body[data-palette="halloween"] .bottom-dock {
   --dock-bg1: #2d2140;
   --dock-bg2: #141210;
@@ -1784,6 +1787,14 @@ body {
   display: block;
   width: clamp(100px, 18vw, 160px);
   height: auto;
+}
+/* Someone's own logo keeps its shape: as wide as a wordmark needs, never taller
+   than the sailboat's box. */
+.home-logo.is-custom {
+  width: auto;
+  max-width: min(78vw, 320px);
+  max-height: clamp(82px, 15vw, 132px);
+  object-fit: contain;
 }
 
 /* ── Alternate "hero" layout (saved for later) ────────────────────────────────
@@ -24763,6 +24774,70 @@ button.scores-idle:hover { background: color-mix(in srgb, var(--ink) 5%, transpa
 .display-theme-text { display: grid; gap: 2px; min-width: 0; align-content: start; }
 .display-theme-name { color: var(--ink); font-size: 0.92rem; font-weight: 850; line-height: 1.2; }
 .display-theme-desc { color: var(--muted); font-size: 0.76rem; line-height: 1.3; }
+
+/* Display › Logo & name (view-logo.js) — like the profile photo's row. */
+.display-logo-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.display-logo-preview {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-strong);
+  overflow: hidden;
+}
+.display-logo-preview img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.display-logo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.display-logo-actions [data-display-logo-remove] { color: var(--muted); }
+#displayLogoStatus:empty { display: none; }
+.display-name-field { display: grid; gap: 4px; margin-top: 4px; }
+.display-name-label { color: var(--ink); font-size: 0.9rem; font-weight: 800; }
+.display-name-field input { width: 100%; min-width: 0; box-sizing: border-box; }
+
+/* Display › Automatic: holidays, game days and the ranked team list. */
+.display-dynamic { gap: 12px; }
+.display-now { color: var(--accent-dark); font-weight: 700; }
+.display-teams-block { display: grid; gap: 6px; transition: opacity 0.15s; }
+.display-teams-block.is-off { opacity: 0.6; }
+.display-teams { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.display-team {
+  display: grid;
+  grid-template-columns: 14px 26px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-strong);
+}
+.display-team-rank { color: var(--muted); font-size: 0.82rem; font-weight: 900; text-align: center; }
+.display-team-swatch { display: grid; grid-auto-flow: column; width: 26px; height: 22px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+.display-team-swatch i { display: block; }
+.display-team-swatch.is-empty { background: repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 6px); }
+.display-team-text { display: grid; min-width: 0; }
+.display-team-name { display: -webkit-box; overflow: hidden; color: var(--ink); font-size: 0.9rem; font-weight: 800; line-height: 1.2; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.display-team-note { color: var(--muted); font-size: 0.74rem; }
+.display-team.is-unthemed .display-team-name { color: var(--muted); }
+.display-team-move { display: flex; gap: 2px; }
+.display-team-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.display-team-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.display-team-btn:disabled { opacity: 0.25; cursor: default; }
+.display-team-btn:not(:disabled):hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 
 /* App-wide text-box clear button (input-clear.js; CLAUDE.md "Text-box clear
    button"). Shown at the right of any single-line text box the user has typed

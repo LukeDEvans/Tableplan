@@ -22,7 +22,7 @@ so flag changes to them (CLAUDE.md "Shared infrastructure — flag, don't silent
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `theme.js`
+- files: `theme.js`, `theme-dynamic.js`, `view-logo.js`
 - state: `displayPrefs`, `themeMode`, `viewDisplayPrefs`
 
 ## Your scope (edit these)
@@ -33,8 +33,13 @@ so flag changes to them (CLAUDE.md "Shared infrastructure — flag, don't silent
 - **`theme.js`** (pure, tested in `test/theme.test.js` and `test/theme-contrast.test.js`):
   `THEMES`, `THEME_GROUPS`, `SEASONS`, `normalizeDisplayPrefs`, `resolveTheme`,
   `applyResolvedTheme`. Palettes live in `styles.css` (design tokens — shared).
-- **Data:** `state.displayPrefs` (per person: mode, theme, icon), `state.viewDisplayPrefs`
-  (the admin's Household and Business looks), and the legacy household `themeMode`
+- **`theme-dynamic.js`** (pure, `test/theme-dynamic.test.js`): holiday days, team → theme
+  (`TEAM_THEMES`), the game-day pick (ranked by `state.sportsPrefs.teams` order) and its check
+  timing. **`view-logo.js`**: each view's own landing logo, stored like the profile photo
+  (`avatars` bucket, `logo_v` in auth metadata, device cache).
+- **Data:** `state.displayPrefs` (per person: mode, theme, icon, plus the primary view's name /
+  holidays / gameday and the person's `gamedayTeams`), `state.viewDisplayPrefs`
+  (the admin's Household and Business looks, names and automatic switches), and the legacy household `themeMode`
   (fallback mode only). All are stamped in `TRACKED_SETTINGS`.
 - `settings-sync.js` (`TRACKED_SETTINGS`, stamps) is **state-sync infra**: every new synced
   setting must be added there (CLAUDE.md), but changing how stamps merge is a shared-infra

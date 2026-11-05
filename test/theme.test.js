@@ -39,7 +39,7 @@ describe("display prefs", () => {
     expect(cleanDisplayPrefs(null)).toEqual({});
   });
   it("defaults to Classic (seasonal is opt-in) and the legacy household mode", () => {
-    expect(normalizeDisplayPrefs({}, "dark")).toEqual({ mode: "dark", theme: "classic", icon: true });
+    expect(normalizeDisplayPrefs({}, "dark")).toEqual({ mode: "dark", theme: "classic", icon: true, name: "", holidays: false, gameday: false, gamedayTeams: [] });
     expect(normalizeDisplayPrefs({}, undefined).mode).toBe("light");
   });
   it("a person's own mode beats the legacy household one", () => {
