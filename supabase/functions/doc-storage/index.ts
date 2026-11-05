@@ -1,11 +1,12 @@
 // doc-storage — hands out short-lived upload / download / delete URLs for Documents'
-// encrypted blobs (DOCUMENTS_DESIGN.md §5.2). Supabase Edge Function (Deno).
+// encrypted blobs (DOCUMENTS_DESIGN.md §5.2) and, with tier "everyday", for everyday
+// documents (§25: kept under "p/", not encrypted on the device; deletes checked with
+// doc_pblob_deletable). Supabase Edge Function (Deno).
 //
 // The store's secret key lives only here (function secrets). A caller gets URLs
 // only for scopes they may use, checked by asking Postgres as them
 // (doc_can_access through PostgREST with their own token, so row security applies).
-// Bytes never pass through this function, and it never sees a readable document:
-// blobs are encrypted on the device.
+// Bytes never pass through this function. Safe blobs are encrypted on the device.
 //
 // Secrets: DOC_S3_ENDPOINT (https://<account>.r2.cloudflarestorage.com),
 //          DOC_S3_BUCKET, DOC_S3_ACCESS_KEY_ID, DOC_S3_SECRET_ACCESS_KEY,
@@ -18,6 +19,7 @@
 import { presignS3 } from "./s3-presign.js";
 
 const PARTS = new Set(["content", "thumb", "text"]);
+const EVERYDAY_PARTS = new Set(["content", "thumb"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCOPE_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_PART_BYTES = 70 * 1024 * 1024;
@@ -73,14 +75,17 @@ Deno.serve(async (req) => {
   const auth = req.headers.get("authorization") || "";
   if (!/^Bearer [A-Za-z0-9._-]+$/.test(auth)) return reply(401, { error: "sign in" }, origin);
 
-  let body: { op?: string; items?: Array<{ scope?: string; fileId?: string; part?: string; size?: number } | null> };
+  type Item = { scope?: string; fileId?: string; part?: string; size?: number; tier?: string };
+  let body: { op?: string; items?: Array<Item | null> };
   try { body = await req.json(); } catch { return reply(400, { error: "json" }, origin); }
   const op = (body && typeof body.op === "string" && body.op) || "";
-  const items = (Array.isArray(body?.items) ? body.items : []) as Array<{ scope?: string; fileId?: string; part?: string; size?: number }>;
+  const items = (Array.isArray(body?.items) ? body.items : []) as Array<Item>;
   if (!METHOD[op] || items.length < 1 || items.length > MAX_BATCH) return reply(400, { error: "request" }, origin);
   for (const it of items) {
     if (!it || typeof it !== "object") return reply(400, { error: "item" }, origin);
-    if (!SCOPE_RE.test(it.scope || "") || !UUID_RE.test(it.fileId || "") || !PARTS.has(it.part || "")) return reply(400, { error: "item" }, origin);
+    if (it.tier !== undefined && it.tier !== "everyday") return reply(400, { error: "item" }, origin);
+    const parts = it.tier === "everyday" ? EVERYDAY_PARTS : PARTS;
+    if (!SCOPE_RE.test(it.scope || "") || !UUID_RE.test(it.fileId || "") || !parts.has(it.part || "")) return reply(400, { error: "item" }, origin);
     if (op === "put" && !(Number.isInteger(it.size) && it.size! >= 1 && it.size! <= MAX_PART_BYTES)) return reply(400, { error: "size" }, origin);
   }
 
@@ -89,15 +94,16 @@ Deno.serve(async (req) => {
   }
   // Blobs go only after 30 days in Recently deleted (or if the upload never got a row).
   if (op === "delete") {
-    for (const fileId of new Set(items.map((i) => `${i.scope}|${i.fileId}`))) {
-      const [scope, id] = fileId.split("|");
-      if (!(await ask("doc_blob_deletable", { p_scope: scope, p_file: id }, auth))) return reply(403, { error: "not deletable yet" }, origin);
+    for (const fileId of new Set(items.map((i) => `${i.tier === "everyday" ? "p" : "s"}|${i.scope}|${i.fileId}`))) {
+      const [tier, scope, id] = fileId.split("|");
+      const fn = tier === "p" ? "doc_pblob_deletable" : "doc_blob_deletable";
+      if (!(await ask(fn, { p_scope: scope, p_file: id }, auth))) return reply(403, { error: "not deletable yet" }, origin);
     }
   }
 
   const region = Deno.env.get("DOC_S3_REGION") || "auto";
   const urls = await Promise.all(items.map(async (it) => {
-    const key = `${it.scope}/${it.fileId!.toLowerCase()}/${it.part}`;
+    const key = `${it.tier === "everyday" ? "p/" : ""}${it.scope}/${it.fileId!.toLowerCase()}/${it.part}`;
     const headers: Record<string, string> = op === "put" ? { "content-length": String(it.size) } : {};
     const url = await presignS3({ method: METHOD[op], endpoint, bucket, key, region, accessKeyId, secretAccessKey, expires: EXPIRES, headers });
     // content-length is set by the browser from the body; it's signed so the size can't change.

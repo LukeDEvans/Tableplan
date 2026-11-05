@@ -29,6 +29,10 @@ beforeAll(async () => {
       const { p_scope, p_file } = JSON.parse(init.body);
       return new Response(JSON.stringify(deletable.has(`${p_scope}/${p_file}`)), { status: 200 });
     }
+    if (String(url).endsWith("/rest/v1/rpc/doc_pblob_deletable")) {
+      const { p_scope, p_file } = JSON.parse(init.body);
+      return new Response(JSON.stringify(deletable.has(`p/${p_scope}/${p_file}`)), { status: 200 });
+    }
     throw new Error(`unexpected fetch ${url}`);
   };
   const out = await build({ entryPoints: [fileURLToPath(new URL("../supabase/functions/doc-storage/index.ts", import.meta.url))], bundle: true, format: "esm", write: false, platform: "neutral", logLevel: "silent" });
@@ -94,6 +98,22 @@ describe("doc-storage", () => {
     expect((await call({ op: "delete", items: [{ scope, fileId, part: "content" }] })).status).toBe(403);
     deletable = new Set([`${scope}/${fileId}`]);
     expect((await call({ op: "delete", items: [{ scope, fileId, part: "content" }, { scope, fileId, part: "thumb" }] })).status).toBe(200);
+  });
+
+  it("everyday files: kept under p/, only content and thumb, deletes checked against the everyday table", async () => {
+    allowed = new Set([scope]);
+    const { urls } = await (await call({ op: "get", items: [{ scope, fileId, part: "content", tier: "everyday" }] })).json();
+    expect(urls[0].url).toMatch(new RegExp(`/liv-documents/p/${scope}/${fileId}/content\\?`));
+    expect((await call({ op: "get", items: [{ scope, fileId, part: "text", tier: "everyday" }] })).status).toBe(400);
+    expect((await call({ op: "get", items: [{ scope, fileId, part: "content", tier: "plain" }] })).status).toBe(400);
+    allowed = new Set();
+    expect((await call({ op: "get", items: [{ scope, fileId, part: "content", tier: "everyday" }] })).status).toBe(403);
+    allowed = new Set([scope]);
+    deletable = new Set([`${scope}/${fileId}`]); // the Safe's file may go, not the everyday one
+    expect((await call({ op: "delete", items: [{ scope, fileId, part: "content", tier: "everyday" }] })).status).toBe(403);
+    deletable = new Set([`p/${scope}/${fileId}`]);
+    expect((await call({ op: "delete", items: [{ scope, fileId, part: "content", tier: "everyday" }] })).status).toBe(200);
+    expect((await call({ op: "delete", items: [{ scope, fileId, part: "content" }] })).status).toBe(403);
   });
 
   it("is off when switched off or not configured", async () => {

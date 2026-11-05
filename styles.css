@@ -25526,7 +25526,7 @@ body[data-theme="dark"] .grocery-store-app { color: var(--accent); }
 .msg-link { display: flex; flex-direction: column; gap: 10px; }
 .msg-details summary { cursor: pointer; color: var(--link, var(--accent)); }
 
-/* ─── Documents page (documents/ui.js, DOCUMENTS_DESIGN.md §9) ──────────────────
+/* ─── Document page (documents/page.js + the Safe, documents/ui.js; DOCUMENTS_DESIGN.md §9, §25) ─
    Watch's shell: the shared sidebar of folders, a search head, files as a list. */
 body:has(#documentsMainPage:not([hidden])) { overflow: hidden; height: 100dvh; }
 body:has(#documentsMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
@@ -25534,6 +25534,14 @@ body:has(#documentsMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; 
 body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 #documentsMainPage .article-page-inner { min-height: 0; }
 #documentsMainPage .docs-layout { flex: 1; min-height: 0; }
+/* The Document page (documents/page.js, §25): everyday documents, and the Safe in its
+   own box with a bar back to them. */
+#documentsMainPage .docs-everyday, #documentsMainPage .docs-safe-wrap, #documentsMainPage .docs-safe-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#documentsMainPage .docs-everyday[hidden], #documentsMainPage .docs-safe-wrap[hidden] { display: none; }
+.docs-safe-bar { padding: 4px 12px 2px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.docs-safe-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); }
+.docs-safe-name .article-sidebar-icon { width: 18px; height: 18px; }
+.docs-safe-tab { color: var(--ink); font-weight: 600; }
 #documentsMainPage .docs-panel { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; overflow-y: auto; padding-bottom: 24px; }
 #documentsMainPage .discover-head { display: flex; align-items: center; gap: 6px; }
 #documentsMainPage .discover-head .discover-search-input { flex: 1; min-width: 0; }

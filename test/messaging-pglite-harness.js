@@ -57,7 +57,17 @@ function parseQuery(query) {
     const k = decodeURIComponent(part.slice(0, i));
     const v = decodeURIComponent(part.slice(i + 1));
     if (k === "select") out.select = v.split(",").map((c) => `"${c}"`).join(",");
-    else if (k === "order") out.order = `"${v}"`;
+    else if (k === "order") { const [col, dir] = v.split("."); out.order = `"${col}"${dir === "desc" ? " desc" : ""}`; }
+    else if (k === "or") {
+      // or=(col.ilike.*x*,col2.ilike.*x*) — PostgREST's * wildcard is %.
+      const conds = v.replace(/^\(|\)$/g, "").split(",").map((c) => {
+        const [col, op, ...rest] = c.split(".");
+        if (op !== "ilike") throw new Error(`harness: unsupported or filter ${c}`);
+        out.params.push(rest.join(".").replace(/\*/g, "%"));
+        return `"${col}" ilike $${out.params.length}`;
+      });
+      out.where.push(`(${conds.join(" or ")})`);
+    }
     else if (k === "limit") out.limit = Number(v);
     else {
       const dot = v.indexOf(".");
@@ -116,7 +126,9 @@ export function pgliteTransport(db, userId) {
     async insert(table, rows) {
       for (const row of rows) {
         const cols = Object.keys(row);
-        await as(`insert into public.${table} (${cols.map((c) => `"${c}"`).join(",")}) values (${cols.map((_, i) => `$${i + 1}`).join(",")})`, cols.map((c) => row[c]));
+        // A JSON object (a jsonb column) goes as its text, as PostgREST would store it.
+        const val = (v) => (v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Uint8Array) ? JSON.stringify(v) : v);
+        await as(`insert into public.${table} (${cols.map((c) => `"${c}"`).join(",")}) values (${cols.map((_, i) => `$${i + 1}`).join(",")})`, cols.map((c) => val(row[c])));
       }
       return null;
     },

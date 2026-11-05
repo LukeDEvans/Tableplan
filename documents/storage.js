@@ -5,23 +5,26 @@
 // here.
 //
 // presign(op, items) → [{ url, headers }] in the same order, where op is
-// "put" | "get" | "delete" and items are { scope, fileId, part, size? }.
+// "put" | "get" | "delete" and items are { scope, fileId, part, size?, tier? }.
+// tier "everyday": everyday documents (§25), kept under "p/" and not encrypted on the
+// device; anything else is the Safe's encrypted blobs.
 // In the app, presign is a call to the doc-storage function; in tests, the memory
 // store below.
 //
-// Every blob is already encrypted (documents/crypto) before it gets here.
+// Every Safe blob is already encrypted (documents/crypto) before it gets here.
 
 const PARTS = new Set(["content", "thumb", "text"]);
+const EVERYDAY_PARTS = new Set(["content", "thumb"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCOPE_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export const MAX_PART_BYTES = 70 * 1024 * 1024;
 export const MAX_BATCH = 25;
 
-export function objectKey({ scope, fileId, part }) {
+export function objectKey({ scope, fileId, part, tier }) {
   if (!SCOPE_RE.test(scope || "")) throw new Error("storage: bad scope");
   if (!UUID_RE.test(fileId || "")) throw new Error("storage: bad file id");
-  if (!PARTS.has(part)) throw new Error("storage: bad part");
-  return `${scope}/${fileId.toLowerCase()}/${part}`;
+  if (!(tier === "everyday" ? EVERYDAY_PARTS : PARTS).has(part)) throw new Error("storage: bad part");
+  return `${tier === "everyday" ? "p/" : ""}${scope}/${fileId.toLowerCase()}/${part}`;
 }
 
 export class StorageError extends Error {
@@ -32,8 +35,10 @@ export class StorageError extends Error {
   }
 }
 
-export function createDocumentsStorage({ presign, fetchImpl = (...a) => globalThis.fetch(...a) }) {
+export function createDocumentsStorage({ presign, fetchImpl = (...a) => globalThis.fetch(...a), tier = null }) {
+  const withTier = (it) => (tier ? { ...it, tier } : it);
   async function urls(op, items) {
+    items = items.map(withTier);
     items.forEach(objectKey);
     if (items.length > MAX_BATCH) throw new StorageError("TOO_MANY", "Too many parts in one request.");
     const out = await presign(op, items);
@@ -66,7 +71,7 @@ export function createDocumentsStorage({ presign, fetchImpl = (...a) => globalTh
       return new Uint8Array(await res.arrayBuffer());
     },
 
-    async remove(scope, fileId, parts = ["content", "thumb", "text"]) {
+    async remove(scope, fileId, parts = tier === "everyday" ? ["content", "thumb"] : ["content", "thumb", "text"]) {
       const items = parts.map((part) => ({ scope, fileId, part }));
       const signed = await urls("delete", items);
       await Promise.all(signed.map(async (s) => {

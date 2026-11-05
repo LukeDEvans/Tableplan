@@ -8,7 +8,7 @@ import { createTestDatabase as createMessagingDatabase, pgliteTransport, USERS }
 
 export { pgliteTransport, USERS };
 
-export const DOC_MIGRATIONS = ["2026-11-03-documents.sql", "2026-11-03b-documents-v2.sql"];
+export const DOC_MIGRATIONS = ["2026-11-03-documents.sql", "2026-11-03b-documents-v2.sql", "2026-11-04-documents-everyday.sql"];
 const SQL = DOC_MIGRATIONS
   .map((f) => readFileSync(fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)), "utf8"))
   .join("\n");

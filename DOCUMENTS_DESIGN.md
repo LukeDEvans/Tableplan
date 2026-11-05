@@ -609,3 +609,54 @@ After a review (ISSUES.md, 2026-11-03): the re-key is marked pending in the same
 - Emailed and browser-extension receipts have no images to file (text only).
 - Share-sheet order screenshots are read by `share-receipt` and not kept anywhere. Keeping them would need the share extension to hand them to the app (an App Group handoff, then the outbox): a question for Luke.
 - The home server waits for the hardware.
+
+## 25. The Document page: everyday documents, with the Safe inside (2026-11-04)
+
+**Decisions (Luke, 2026-11-04):**
+- The page is called **Document** (was Documents). It holds **everyday documents**, and a **Safe** inside it for private papers.
+- **Everyday documents are kept like the rest of Live:** protected by sign-in and row security, readable by the server, not encrypted on the device. They open at once on any signed-in device: no Face ID, no device linking. This also leaves room for editing together and for search and AI features later.
+- **The Safe is what was built before** (§1–24): end-to-end encrypted, Face ID on every open. **One in each view:** a Household Safe shared with Marijane, and a Personal Safe.
+- **Receipts are everyday documents** and are filed straight after a scan.
+- **What starts where:** the Household Safe holds IDs & Records, Insurance and Medical. Everyday Household holds Receipts, Home and Vehicles. The Personal Safe holds Work and Personal; everyday Personal starts empty.
+- **Later:** a word processor, spreadsheets and slides inside Document. Every everyday file has a `kind` (`file` now; `doc`, `sheet`, `slides` reserved). An editor's content will be the file's `content` part like any other.
+
+**Data** (`migrations/2026-11-04-documents-everyday.sql`, applied 2026-11-04 with Luke's OK and recorded as `20261105020500 documents_everyday`):
+- `doc_pfolders` (id, scope, name, kind `user|receipts`, sort, created_by, dates). Starting folders are made on first open.
+- `doc_pfiles` (id, scope, folder_id, kind, name, mime, doc_date, tags, page_count, body_text, parts `content|thumb`, size, source jsonb, backend, added_by, dates). `body_text` is the text read from scanned pages, used for search; it is never in the list read.
+- Access works as in the Safe's tables: `doc_can_access(scope)`, so only Household members (or only you, for Personal). There is no DELETE: Recently deleted for 30 days, then `doc_ppurge_file` / `doc_ppurge_folder`. Authors and scope are fixed by a trigger, and Receipts can't be removed.
+- `doc_usage_all(scope)` counts the Safe and everyday documents together, for the 7 GB note.
+- Files live in the same R2 bucket under `p/<scope>/<file>/<part>`. `doc-storage` (redeployed 2026-11-04, version 6) signs them for items with `tier: "everyday"`. Deletes are checked with `doc_pblob_deletable`. Requests without a tier are the Safe's, unchanged.
+
+**Code:**
+- `documents/everyday.js` is the data layer. It has the same calls as the Safe's library where they overlap, so the receipts outbox files into either.
+- `documents/page.js` is the page. The Safe is loaded only when opened, mounted in its own box that stays between visits, and locked (`hide()`) when left.
+- `documents/common.js` holds the shared helpers. It loads no encryption code, so everyday documents open without libsodium.
+- `documents/ui.js` is now only the Safe: its new starting folders, no receipt filing, and the move out (below).
+- app.js `showDocumentsApp` mounts `page.js`. `fileWaitingReceipts(scope)` files the outbox into everyday Receipts right after a scan and again on each open.
+
+**Moving out of the Safe:** only a device holding the keys can read Safe files, so the move is done in the Safe when someone asks. A Household Safe that still has documents in Receipts, Home or Vehicles shows "Move them".
+- Each file is read and added to the same everyday folder, with its name, date, tags and scanned text. Its `source.safeId` lets a second run skip it.
+- Only then does the Safe copy go to the Safe's Recently deleted.
+- A file that fails stays in the Safe. Empty moved folders are hidden in the Safe; the Safe's old Receipts folder can't be deleted, so it is hidden instead.
+
+**Verified:**
+- `test/documents-everyday-migration.test.js`: access rules for Luke, his wife, a coworker, a stranger and anon.
+- `test/documents-everyday.test.js`: folders, add/open, `p/` storage, search in the database, edits, Recently deleted and purge, receipts through the outbox, and the file-type list matching the Safe's.
+- `test/documents-edge-function.test.js`: the everyday tier, its parts, and its delete check.
+- `qa:documents-ui`, 110 checks:
+  - Household opens on Receipts / Home / Vehicles / Safe with no Face ID.
+  - Uploads are stored as they are under `p/`.
+  - Quick Look opens files as not sensitive.
+  - A Shop receipt is filed as one PDF.
+  - Search finds a scan by its page text.
+  - Marijane sees everything at once, without Face ID.
+  - The Safe asks for Face ID and shows its own folders.
+  - Move-out moves 3 files, hides the empty folder, and leaving the Safe locks it.
+  - The page fits 360 px.
+- Live database: row security on, no anon access, no DELETE, recorded in the migration history.
+- Unit suite 3486, build, boot check, `qa:page-groups` 48/48 (its Personal list was stale on main: no Documents, "Mail").
+
+**Not verified:**
+- The live `doc-storage` signing everyday links: this session can't reach Supabase over HTTP. First use on the phone checks it.
+- Face ID and scanning on the phone, which need a TestFlight build.
+- The web pages, which need a deploy.

@@ -8879,10 +8879,11 @@ function showWatchApp(event) {
   renderWatchTab();
 }
 
-// Documents (DOCUMENTS_DESIGN.md, Luke 2026-11-03): end-to-end encrypted papers.
-// Household Documents is shared with the household; Personal Documents is the
-// person's own. Same page, one vault per scope; documents/ui.js draws it and is
-// imported the first time the page opens (libsodium stays off the boot path).
+// Document (DOCUMENTS_DESIGN.md §25; Luke 2026-11-04, was "Documents"): everyday
+// documents, kept like the rest of Live (documents/page.js), with the Safe inside it —
+// the end-to-end encrypted papers with Face ID on every open (documents/ui.js, loaded
+// only when the Safe is opened, so libsodium stays off the page's path). Household's
+// are shared with the household; Personal's are the person's own.
 function documentsScopeForView(view = currentViewKey()) {
   const uid = authSession?.user?.id;
   if (view === "personal") return uid ? `u-${uid}` : null;
@@ -8903,12 +8904,12 @@ function documentsDeps() {
     nativeAttachmentPreview,
     userName: authSession?.user?.email || "Live",
     signOutOtherSessions,
-    receiptOutbox: () => (userGroup?.id ? receiptOutbox() : Promise.resolve(null)),
     receipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
     household: () => (userGroup?.id ? { scope: userGroup.id, members: groupMembers.map((m) => ({ user_id: m.user_id, display_name: m.display_name })) } : null),
     personalScope: () => (currentViewList().includes("personal") && authSession?.user?.id ? `u-${authSession.user.id}` : null),
     toast: (text) => showMailToast(text),
     openMessages: () => { localStorage.setItem(MESSAGE_TAB_KEY, "messages"); showMailApp(); },
+    fileReceipts: (scope) => fileWaitingReceipts(scope),
   };
 }
 
@@ -8921,26 +8922,26 @@ async function showDocumentsApp(event) {
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   const view = currentViewKey();
-  const title = view === "personal" ? "Personal Documents" : "Household Documents";
-  setPageTitle("Documents");
+  const title = view === "personal" ? "Personal documents" : "Household documents";
+  setPageTitle("Document");
   setPageHash("documents");
   closePageTitleMenu();
   closeAppMenu();
   const root = document.getElementById("documentsRoot");
   if (localDevMode || !authSession?.user?.id) {
-    root.innerHTML = `<div class="msg-pane"><p class="msg-muted">Sign in to use Documents.</p></div>`;
+    root.innerHTML = `<div class="msg-pane"><p class="msg-muted">Sign in to use Document.</p></div>`;
     return;
   }
   if (!groupMembers.length) await loadGroupMembers();
   try {
     if (!documentsUi) {
-      documentsUiLoading ||= import("./documents/ui.js").then((m) => m.mountDocuments(root, documentsDeps()));
+      documentsUiLoading ||= import("./documents/page.js").then((m) => m.mountDocumentPage(root, documentsDeps()));
       documentsUi = await documentsUiLoading;
     }
     if (activeAppArea === "documents") await documentsUi.show(documentsScopeForView(view), { kind: view === "personal" ? "personal" : "household", title });
   } catch (e) {
     documentsUiLoading = null;
-    root.innerHTML = `<div class="msg-pane"><p class="msg-error">Documents couldn't open: ${escapeHtml(e?.message || String(e))}</p></div>`;
+    root.innerHTML = `<div class="msg-pane"><p class="msg-error">Document couldn't open: ${escapeHtml(e?.message || String(e))}</p></div>`;
   }
 }
 
@@ -12881,7 +12882,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Shop"; // a space of the Shop page
   if (activeAppArea === "watch") return "Watch";
-  if (activeAppArea === "documents") return "Documents";
+  if (activeAppArea === "documents") return "Document";
   if (activeAppArea === "media") return "Listen";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Leisure";
@@ -17791,11 +17792,12 @@ function scanReceiptFromHeader(files, options = {}) {
   queueReceiptForDocuments(images, { camera });
 }
 
-// Every scanned receipt is also kept, encrypted, in Household Documents › Receipts
-// (DOCUMENTS_DESIGN.md §7). Filing needs Face ID, so a scan never prompts: the pages
-// wait in this device's receipts outbox (documents/outbox.js) and Household
-// Documents files them the next time it's opened (Luke, 2026-11-03). Only for
-// someone in a household with Documents on; best-effort, never in the scan's way.
+// Every scanned receipt is also kept in Household's Document › Receipts, an everyday
+// folder since 2026-11-04 (DOCUMENTS_DESIGN.md §25: no Face ID, so it's filed right
+// after the scan). The pages go into this device's receipts outbox first
+// (documents/outbox.js), so a scan with no signal is filed on a later try or the next
+// time Document opens. Only for someone in a household with Document on; best-effort,
+// never in the scan's way.
 let receiptOutboxPromise = null;
 function receiptOutbox() {
   receiptOutboxPromise ||= (async () => {
@@ -17813,7 +17815,38 @@ async function queueReceiptForDocuments(files, { camera = false } = {}) {
   try {
     const pages = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
     await (await receiptOutbox()).queue(pages, { scope, camera });
-  } catch { /* best-effort: the receipt itself is unaffected */ }
+  } catch { return; /* best-effort: the receipt itself is unaffected */ }
+  fileWaitingReceipts(scope).catch(() => {}); // now; whatever fails waits for the next try
+}
+
+// Files this device's waiting receipts into the household's everyday Receipts folder.
+// One run at a time (Web Locks keep a second tab out too). Returns { filed, failed, dropped }.
+let receiptFiling = null;
+function fileWaitingReceipts(scope) {
+  receiptFiling ||= (async () => {
+    if (!scope || scope !== userGroup?.id || !authSession?.user?.id) return { filed: 0, failed: 0, dropped: 0 };
+    const [{ fileReceipts, OUTBOX_LOCK }, { createEverydayLibrary }, { createDocumentsStorage, edgePresigner }, { createRestTransport }, { withLock }, { MIME_TYPES, makeThumb }] = await Promise.all([
+      import("./documents/outbox.js"), import("./documents/everyday.js"), import("./documents/storage.js"),
+      import("./messaging/server.js"), import("./messaging/keystore.js"), import("./documents/common.js"),
+    ]);
+    const outbox = await receiptOutbox();
+    if (!(await outbox.entries()).some((e) => e.scope === scope)) return { filed: 0, failed: 0, dropped: 0 };
+    const library = createEverydayLibrary({
+      transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+      storage: createDocumentsStorage({ presign: edgePresigner({ functionsUrl: `${supabaseBaseUrl()}/functions/v1`, getToken: async () => authSession?.access_token || "" }), tier: "everyday" }),
+    });
+    const folders = await library.ensureStartingFolders(scope, { receipts: true, names: [] });
+    const folderId = folders.find((f) => f.kind === "receipts")?.id;
+    if (!folderId) return { filed: 0, failed: 0, dropped: 0 };
+    return fileReceipts({
+      outbox, library, scope, folderId,
+      receipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
+      makeThumb: (page) => makeThumb(new Blob([page.bytes], { type: page.type })),
+      mimeOk: (mime) => MIME_TYPES.includes(mime),
+      lock: (fn) => withLock(OUTBOX_LOCK, fn),
+    });
+  })().finally(() => { receiptFiling = null; });
+  return receiptFiling;
 }
 
 // The iPhone's text recognition → printed rows per page (receipt-reconcile.js).
