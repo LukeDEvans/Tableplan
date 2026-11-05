@@ -27,7 +27,7 @@ kept in history). **Read** opens it as an article; outside the iPhone app, Play 
 | Issues from before this existed: fetched once per device (last 21 days, at most 2) | `gmail.js` action `importMusicShows`, `importRecentOnce` in the app |
 | Bell, badge, Play / Read / ×, following playback | `media-music-show-ui.js` (`createMusicShowsModule`) |
 | Bell list, segments, catalog matching (pure, tested) | `media-music-show.js` |
-| Native player: a new queue item kind **`appleMusic`** beside speech/audio/live, played through MusicKit's `ApplicationMusicPlayer`; end of song detected natively, so the queue moves on with the phone locked; upcoming songs looked up ahead of time | `ios/App/App/LiveTtsPlugin.swift` |
+| Native player: a new queue item kind **`appleMusic`** beside speech/audio/live, played through MusicKit's `ApplicationMusicPlayer`; end of song detected natively (state changes plus a once-a-second check), with a silent mixable keep-alive output holding the app awake during a song — MusicKit plays outside the app, so without it iOS suspended the app mid-song and the show stopped after song 1 (fixed 2026-11-04) — so the queue moves on with the phone locked; upcoming songs looked up ahead of time | `ios/App/App/LiveTtsPlugin.swift` |
 | The web music player hears nothing while a show's song plays | `AppleMusicPlugin.swift` (`LiveTtsPlugin.ownsAppleMusicPlayer`) |
 | Toggle | Mail → Automation → "“The Amplifier” → Listen bell" (`amplifierToListen`, on by default). Off: converted like any NYT newsletter, as before. |
 
