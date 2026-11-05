@@ -27,7 +27,8 @@ import Combine
 // (AMPLIFIER_DESIGN.md) is spoken write-ups with the song after each one. A song
 // plays through MusicKit's ApplicationMusicPlayer (the same player the AppleMusic
 // plugin uses); its end is detected here and the queue moves on natively, so a
-// show keeps going with the phone locked. While a song plays, MusicKit runs the
+// show keeps going with the phone locked (a silent keep-alive holds the app
+// awake during the song — see keepAliveEngine). While a song plays, MusicKit runs the
 // lock screen and the AppleMusic plugin stays quiet (ownsAppleMusicPlayer).
 //
 // Speech voices: this can use ALL of the device's installed voices, including the
@@ -129,6 +130,16 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     private var musicPlaying = false
     private var musicDuration: Double = 0
     private var musicLastTime: Double = 0
+    // Keep-alive while a song plays. MusicKit plays the song outside this app, so
+    // with the screen locked iOS suspends the app mid-song: nothing here would
+    // notice the song ending and the next write-up would never start (Luke's
+    // first test, 2026-11-03: the show stopped after song 1). A silent,
+    // mixable output keeps the app running so the end is seen and speech takes
+    // over. Stopped after a long pause so a forgotten paused show doesn't hold
+    // the app awake.
+    private var keepAliveEngine: AVAudioEngine?
+    private var musicPausedAt: Date?
+    private static let keepAlivePauseLimit: TimeInterval = 10 * 60
 
     // Lock-screen targets exist ONLY while native playback is active, so they
     // never shadow WebKit's own handlers for web-played podcasts / music / Kokoro.
@@ -441,12 +452,15 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
 
     private func activateSession() {
         let mode: AVAudioSession.Mode = (current?.kind == .live || current?.kind == .appleMusic || current?.isMusic == true) ? .default : .spokenAudio
+        // During a song our only output is the silent keep-alive: mix, so it can
+        // never interrupt MusicKit's song.
+        let options: AVAudioSession.CategoryOptions = current?.kind == .appleMusic ? [.mixWithOthers] : []
         // Background playback + lock-screen requires an active .playback session.
         // Re-asserted on every start/resume: iOS can deactivate it while the app
         // is suspended during a pause, and resuming into an inactive session is
         // silent.
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: mode, options: [])
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: mode, options: options)
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             // Non-fatal: playback still works in the foreground without the session.
@@ -529,6 +543,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         musicPlaying = false
         musicDuration = 0
         musicLastTime = 0
+        musicPausedAt = nil
         LiveTtsPlugin.ownsAppleMusicPlayer = true
         let songId = item.songId
         let cached = songCache[songId]
@@ -556,6 +571,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
                 guard self.musicToken == token else { return }
                 self.musicStarted = true
                 self.musicPlaying = true
+                self.startKeepAlive()
                 self.startMusicTicker(token)
             } catch {
                 guard self.musicToken == token else { return }
@@ -565,8 +581,10 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         }
     }
 
-    // Samples the position once a second while a song is loaded: how a song that
-    // played out (the player rewinds to 0 and pauses) is told from a user's pause.
+    // Once a second while a song is loaded: samples the position (how a song that
+    // played out — the player rewinds to 0 and pauses — is told from a user's
+    // pause) and checks the player's state itself, so a song's end is caught even
+    // when MusicKit sends no change notice for it.
     private func startMusicTicker(_ token: UUID) {
         musicTicker?.invalidate()
         musicTicker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -574,8 +592,48 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
                 guard let self = self, self.musicToken == token else { return }
                 let t = ApplicationMusicPlayer.shared.playbackTime
                 if self.musicPlaying && t.isFinite && t > 0 { self.musicLastTime = t }
+                self.checkAppleMusic(token)
+                guard self.musicToken == token else { return } // the song ended just now
+                if self.userPaused, let since = self.musicPausedAt {
+                    if Date().timeIntervalSince(since) > LiveTtsPlugin.keepAlivePauseLimit { self.stopKeepAlive() }
+                } else if self.keepAliveEngine?.isRunning != true {
+                    self.restartKeepAlive() // a route change (headphones) stops the engine
+                }
             }
         }
+    }
+
+    // MARK: - Keep-alive (see keepAliveEngine)
+
+    private func startKeepAlive() {
+        guard keepAliveEngine == nil else { return }
+        let engine = AVAudioEngine()
+        let node = AVAudioPlayerNode()
+        engine.attach(node)
+        var format = engine.mainMixerNode.outputFormat(forBus: 0)
+        if format.sampleRate <= 0 || format.channelCount == 0,
+           let f = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2) { format = f }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(format.sampleRate)) else { return }
+        buffer.frameLength = buffer.frameCapacity
+        if let data = buffer.floatChannelData {
+            for ch in 0..<Int(format.channelCount) { data[ch].initialize(repeating: 0, count: Int(buffer.frameLength)) }
+        }
+        engine.connect(node, to: engine.mainMixerNode, format: format)
+        do { try engine.start() } catch { return }
+        node.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
+        node.play()
+        keepAliveEngine = engine
+    }
+
+    private func stopKeepAlive() {
+        guard let engine = keepAliveEngine else { return }
+        keepAliveEngine = nil
+        engine.stop()
+    }
+
+    private func restartKeepAlive() {
+        stopKeepAlive()
+        startKeepAlive()
     }
 
     @MainActor private func checkAppleMusic(_ token: UUID) {
@@ -586,6 +644,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             musicStarted = true
             if !musicPlaying {
                 musicPlaying = true
+                musicPausedAt = nil
+                startKeepAlive()
                 if userPaused { userPaused = false; notifyListeners("ttsState", data: ["playing": true]) }
             }
         case .paused, .stopped, .interrupted:
@@ -596,10 +656,16 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             let rewound = musicLastTime > 5 && t < 1
             let ended = player.state.playbackStatus == .stopped || player.queue.currentEntry == nil || nearEnd || rewound
             if ended && player.state.playbackStatus != .interrupted {
+                // Let go of the player now, before the next item starts: a stop
+                // left to run later could land in the middle of the next write-up.
+                stopAppleMusic(stopPlayer: false)
+                player.stop()
+                releaseAppleMusicPlayerSoon()
                 itemFinished(failed: false)
             } else if !userPaused {
                 // Paused from the lock screen / AirPods (MusicKit's controls).
                 userPaused = true
+                musicPausedAt = Date()
                 notifyListeners("ttsState", data: ["playing": false])
             }
         default:
@@ -617,6 +683,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         musicSub = nil
         musicTicker?.invalidate()
         musicTicker = nil
+        musicPausedAt = nil
+        stopKeepAlive()
         if stopPlayer {
             Task { @MainActor in
                 ApplicationMusicPlayer.shared.stop()
@@ -624,6 +692,16 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
                 // never reaches the web music player as a song ending.
                 if !self.musicActive { LiveTtsPlugin.ownsAppleMusicPlayer = false }
             }
+        }
+    }
+
+    // Hand the player back to the AppleMusic plugin a moment after a show's song
+    // stopped, so the stop itself never reaches the web music player as a song
+    // ending.
+    private func releaseAppleMusicPlayerSoon() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self, !self.musicActive else { return }
+            LiveTtsPlugin.ownsAppleMusicPlayer = false
         }
     }
 
@@ -878,6 +956,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             teardownPlayer()
         case .appleMusic:
             musicPlaying = false
+            musicPausedAt = Date()
             Task { @MainActor in ApplicationMusicPlayer.shared.pause() }
         }
         updateNowPlaying(playing: false)
@@ -913,6 +992,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         case .appleMusic:
             if musicStarted {
                 musicPlaying = true
+                musicPausedAt = nil
+                startKeepAlive()
                 Task { @MainActor in
                     do { try await ApplicationMusicPlayer.shared.play() } catch { self.start(item) }
                 }
