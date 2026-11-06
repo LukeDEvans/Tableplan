@@ -92,6 +92,20 @@ changes to Mail only.
   unguarded loop once caused an auth storm). Google Calendar has its own connect flow
   (`_gcal.js`) — don't merge the two.
 - Contacts lives inside the Mail page (contacts mode) but is the **contacts** agent's.
+- **Gmail rate limits** (Luke, 2026-11-05, after "Quota exceeded … Units per minute
+  per user" on fast folder switching): Gmail's per-user quota is enforced over a short
+  window, so bursts matter. `gFetch` / `gBatchGet` retry a rate limit (429, or 403
+  `rateLimitExceeded`/`userRateLimitExceeded`) **exactly once** after a delay — never a
+  loop, and a rate-limited batch **never** falls back to parallel individual calls.
+  Rows still unloaded show as "Couldn't load" (`loadFailed`), not dropped. Luke chose
+  **no client-side auto-retry** (storm risk).
+- **Folder cache is always fresh, never TTL-stale** (Luke, 2026-11-05): the first page
+  of a plain folder is cached with the mailbox `historyId`; returning to it sends
+  `ifUnchangedSince` and the server answers `unchanged` from one `history.list` (2 units)
+  or does a full load. Luke rejected a plain time-based cache and a folder-switch
+  debounce as noticeable downgrades — don't add them. Any action that changes a list
+  (`move`/`snooze`/`unsnooze`/`send`/non-peek `get`) clears the cache; Refresh always
+  does a full load. Read-ahead stops the moment a folder switch starts.
 
 ## Verify
 `npx vitest run` (`mail-*`, `auth-gmail-callback`), `npm run check:mail-frame`,

@@ -9951,6 +9951,42 @@ const mailThreadCache = new Map(); // threadId → { thread, at }
 const mailRowSummary = new Map(); // threadId → { subject, from }
 let mailPrefetchGen = 0;
 const MAIL_LIST_PRELOAD_TTL = 2 * 60 * 1000;
+// Always-fresh folder cache: the first page of each plain folder, keyed by
+// label, with the mailbox history id Gmail had when it was read. Returning to a
+// folder asks the server "anything changed since?" (one 2-unit history.list
+// call instead of a ~266-unit full load); unchanged → show the cached page.
+// Two guards keep it honest against Gmail's brief search-index lag (a list read
+// right after a change can still show the old state while the history id has
+// already moved on): a load made within MAIL_CACHE_MUTATION_GUARD of our own
+// move/snooze/read/send isn't cached, and every entry expires after
+// MAIL_FOLDER_CACHE_TTL whatever the check says.
+const mailFolderCache = new Map(); // labelId → { data, historyId, at }
+const MAIL_FOLDER_CACHE_TTL = 5 * 60 * 1000;
+const MAIL_FOLDER_CACHE_MAX = 12;
+const MAIL_CACHE_MUTATION_GUARD = 15 * 1000;
+let mailLastMutationAt = 0;
+
+function mailFolderCacheGet(labelId) {
+  const c = mailFolderCache.get(labelId);
+  if (!c) return null;
+  if (Date.now() - c.at > MAIL_FOLDER_CACHE_TTL) { mailFolderCache.delete(labelId); return null; }
+  return c;
+}
+
+function mailFolderCacheStore(labelId, data, startedAt) {
+  if (!labelId || !data?.historyId || data.partial) return;
+  if (startedAt - mailLastMutationAt < MAIL_CACHE_MUTATION_GUARD) return;
+  mailFolderCache.delete(labelId); // re-insert so the newest is last
+  mailFolderCache.set(labelId, { data, historyId: data.historyId, at: Date.now() });
+  while (mailFolderCache.size > MAIL_FOLDER_CACHE_MAX) mailFolderCache.delete(mailFolderCache.keys().next().value);
+}
+
+// Our own change to the mailbox: forget every cached folder (the history check
+// would catch it too, but this also covers the index-lag window above).
+function noteMailMutation() {
+  mailLastMutationAt = Date.now();
+  mailFolderCache.clear();
+}
 const MAIL_THREAD_CACHE_TTL = 5 * 60 * 1000;
 const MAIL_PREFETCH_COUNT = 15;
 
@@ -10273,6 +10309,7 @@ async function disconnectGmail() {
   await callGmailApi({ action: "disconnect" });
   mailGmailConnected = false;
   mailStatusPromise = null;
+  mailFolderCache.clear();
   renderMailConnectState();
 }
 
@@ -10280,6 +10317,10 @@ async function disconnectGmail() {
 // (prev/next) goes through mailGoToPage → fetchAndRenderMailPage.
 async function loadMailList(labelId, q = "") {
   const gen = ++mailListLoadGen;
+  // Stop the previous folder's read-ahead now rather than when the new list
+  // lands: it was for a folder we're leaving, and overlapping it with the new
+  // load is what makes fast folder switching burst past Gmail's rate limit.
+  mailPrefetchGen++;
   currentMailbox = labelId;
   // Snoozed folder: pull the wake-time metadata so rows can show "until when"
   // and offer unsnooze/reschedule instead of the normal quick actions.
@@ -10317,15 +10358,26 @@ async function fetchAndRenderMailPage({ fresh = false } = {}) {
     mailListPreload.labelId === currentMailbox &&
     Date.now() - mailListPreload.at < MAIL_LIST_PRELOAD_TTL) ? mailListPreload.promise : null;
   if (preload) mailListPreload = null; // one-shot
+  const loadedAt = Date.now();
+  const labelId = currentMailbox;
+  const cacheable = mailPageIndex === 0 && !mailCurrentQuery;
+  const cached = cacheable && !preload ? mailFolderCacheGet(labelId) : null;
   let data = preload ? await preload : null;
   if (!data) {
     data = await callGmailApi({
       action: "list",
-      labelIds: [currentMailbox],
+      labelIds: [labelId],
       q: mailCurrentQuery || undefined,
       pageToken: token || undefined,
-      maxResults: MAIL_PAGE_SIZE
+      maxResults: MAIL_PAGE_SIZE,
+      ifUnchangedSince: cached?.historyId || undefined
     });
+  }
+  if (data?.unchanged) {
+    // Nothing in the mailbox changed since the cached copy was read.
+    data = cached ? cached.data : null;
+  } else if (data && cacheable) {
+    mailFolderCacheStore(labelId, data, loadedAt);
   }
   if (gen !== mailListLoadGen) return; // stale: a newer load owns the list (and mailPageBusy)
   mailPageBusy = false;
@@ -10467,6 +10519,7 @@ function toggleMailSelectAll() {
 
 function refreshMailList() {
   if (mailPageBusy) return;
+  mailFolderCache.delete(currentMailbox); // Refresh always does a full load
   loadMailList(currentMailbox, mailCurrentQuery);
 }
 
@@ -13021,6 +13074,12 @@ async function callGmailApi(body) {
   // snapshot, so a stale preload can never resurrect a moved/snoozed row.
   if (body && (body.action === "move" || body.action === "snooze" || body.action === "unsnooze")) {
     invalidateMailListPreload();
+  }
+  // Anything that changes what a folder list shows (membership, read state, a
+  // sent message) also retires the folder cache.
+  if (body && (body.action === "move" || body.action === "snooze" || body.action === "unsnooze" ||
+    body.action === "send" || (body.action === "get" && !body.peek))) {
+    noteMailMutation();
   }
   const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
   const token = session?.data?.session?.access_token;
