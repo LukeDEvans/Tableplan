@@ -10,6 +10,16 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Mail: no more "Quota exceeded" on fast folder switching** · #221 · **Both a TestFlight build
+  and a Netlify deploy** (client + Netlify function; either can land first — each side ignores the
+  other's new fields, so nothing breaks in between). Client (TestFlight / laptop deploy): read-ahead
+  stops when you switch folders; folders you return to come from an always-fresh cache. Server
+  (deploy): one safe retry on Gmail rate limits, no parallel fan-out on a refused batch, unloaded
+  rows shown as "Couldn't load — tap to open", and the 2-unit "anything changed?" check that makes
+  the cache work (the cache stays off until this is deployed). No env vars, no migration.
+  Post-deploy: switch Inbox → AI Trash → Inbox quickly several times (no error; returning is
+  instant); archive something, go to another folder and back (it's gone); get a new email while
+  in another folder, go back to Inbox (it's there).
 - **Listen (iPhone): an interrupted read carries on; skip within an article** · #220 · **TestFlight
   build** (native + bundled web code; the laptop's web voice is unchanged). After a text or other short
   interruption the article resumes by itself, and play always works (fresh synthesizer from the last
