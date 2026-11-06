@@ -225,6 +225,34 @@ exports.handler = async (event) => {
     if (q) params.set("q", q);
     labelIds.forEach((l) => params.append("labelIds", l));
 
+    // Always-fresh folder cache (the Mail page caches each folder's first
+    // page). Only the first page of a plain folder (no search, no paging) is
+    // cacheable. The client sends the mailbox history id it got with its cached
+    // copy; one history.list call (2 quota units, vs ~266 for a full load) says
+    // whether ANYTHING in the mailbox has changed since. Unchanged → the cached
+    // copy is exactly right. Changed, expired or unknown → full load as before.
+    // The history id is captured BEFORE the list is read, so a change that lands
+    // mid-load is caught by the next check (an extra reload, never a stale page).
+    const cacheable = !pageToken && !q;
+    let mailboxHistoryId = null;
+    if (cacheable) {
+      const since = String(body.ifUnchangedSince || "");
+      if (/^\d+$/.test(since)) {
+        const hr = await gFetch(gToken, `/history?${new URLSearchParams({ startHistoryId: since, maxResults: "1" })}`);
+        if (hr.ok) {
+          const hd = await hr.json().catch(() => null);
+          if (hd && !(hd.history || []).length) return json(200, { unchanged: true, historyId: hd.historyId || since });
+          mailboxHistoryId = hd?.historyId || null;
+        }
+        // 404 = history id too old to check; anything else = can't tell. Reload.
+      }
+      if (!mailboxHistoryId) {
+        const pr = await gFetch(gToken, "/profile").catch(() => null);
+        const pd = pr?.ok ? await pr.json().catch(() => null) : null;
+        mailboxHistoryId = pd?.historyId || null;
+      }
+    }
+
     // List CONVERSATIONS, not individual messages, so a multi-message chain is
     // one row (Gmail-style). Each thread is summarized from its latest message.
     const listRes = await gFetch(gToken, `/threads?${params}`);
@@ -267,9 +295,23 @@ exports.handler = async (event) => {
 
     const [total, attachmentIds, details] = await Promise.all([totalP, attachmentP, detailsP]);
 
+    let partial = false;
     const messages = threadList.map((t, i) => {
       const d = details[i];
       const msgs = d?.messages || [];
+      if (!d) {
+        // The row's details couldn't be fetched (e.g. Gmail was busy even after
+        // the one retry). Show the row rather than silently dropping it;
+        // opening it fetches the whole thread, which loads it properly.
+        partial = true;
+        return {
+          id: t.id, threadId: t.id, count: 1,
+          snippet: cleanSnippet(t.snippet || ""),
+          unread: false, starred: false, hasAttachment: false,
+          from: "", subject: "Couldn't load this message — tap to open",
+          date: "", internalDate: null, loadFailed: true
+        };
+      }
       if (!msgs.length) return null;
       const last = msgs[msgs.length - 1]; // most recent message drives the row
       const hdrs = headersMap(last.payload?.headers);
@@ -288,7 +330,13 @@ exports.handler = async (event) => {
       };
     }).filter(Boolean);
 
-    return json(200, { messages, nextPageToken: listData.nextPageToken || null, resultSizeEstimate: listData.resultSizeEstimate ?? null, total });
+    return json(200, {
+      messages, nextPageToken: listData.nextPageToken || null, resultSizeEstimate: listData.resultSizeEstimate ?? null, total,
+      // A partial page is never cached by the client (it would hide the
+      // missing rows until the mailbox next changed).
+      historyId: partial ? null : mailboxHistoryId,
+      partial
+    });
   }
 
   if (action === "attachment") {

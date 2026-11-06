@@ -106,10 +106,49 @@ async function getValidAccessToken(tokens, serviceKey, userId) {
 
 // ─── Gmail API helpers ────────────────────────────────────────────────────────
 
+// ─── Gmail rate limits: one safe retry ───────────────────────────────────────
+// Gmail enforces a per-user quota over a short moving window, so a quick burst
+// (e.g. switching folders fast) can be refused with 429, or 403 with a
+// rateLimitExceeded reason. A refused request did nothing, so repeating it is
+// safe. We retry exactly ONCE, after the delay Gmail asks for (Retry-After,
+// clamped) or ~1–1.5s. The worst case is one extra request per call — bounded,
+// never a loop, so it can't snowball into a storm.
+const RATE_LIMIT_REASONS = /^(rateLimitExceeded|userRateLimitExceeded)$/;
+const RATE_LIMIT_MIN_MS = 500;
+const RATE_LIMIT_MAX_MS = 4000;
+let sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function isRateLimited(res) {
+  if (!res) return false;
+  if (res.status === 429) return true;
+  if (res.status !== 403) return false;
+  // A 403 is also used for real permission errors — only count it when Gmail
+  // says it's a rate limit. Read a clone so the caller can still read the body.
+  if (typeof res.clone !== "function") return false;
+  const b = await res.clone().json().catch(() => null);
+  const reasons = (b?.error?.errors || []).map((e) => e?.reason);
+  return reasons.some((r) => RATE_LIMIT_REASONS.test(String(r || ""))) || /quota exceeded/i.test(b?.error?.message || "");
+}
+
+function rateLimitDelayMs(res) {
+  const ra = Number(res?.headers?.get?.("retry-after"));
+  if (Number.isFinite(ra) && ra > 0) return Math.min(RATE_LIMIT_MAX_MS, Math.max(RATE_LIMIT_MIN_MS, ra * 1000));
+  return 1000 + Math.floor(Math.random() * 500);
+}
+
+async function fetchWithRateLimitRetry(url, opts) {
+  const res = await fetch(url, opts);
+  if (!(await isRateLimited(res))) return res;
+  const wait = rateLimitDelayMs(res);
+  console.warn(`[gmail] rate limited (${res.status}); one retry in ${wait}ms`);
+  await sleep(wait);
+  return fetch(url, opts); // second answer is final, whatever it is
+}
+
 function gFetch(token, path, method = "GET", body) {
   const opts = { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } };
   if (body) opts.body = JSON.stringify(body);
-  return fetch(`${GMAIL_BASE}${path}`, opts);
+  return fetchWithRateLimitRetry(`${GMAIL_BASE}${path}`, opts);
 }
 
 // Bundle many GET sub-requests into ONE HTTP call to Gmail's batch endpoint.
@@ -117,16 +156,22 @@ function gFetch(token, path, method = "GET", body) {
 // "/threads/ID?format=metadata"). Returns an array aligned to `paths`: each
 // entry is the parsed JSON body, or null if that sub-request failed/couldn't be
 // matched. This turns a 50-row inbox page (50 round trips) into a single one.
-// Gmail caps a batch at 100 sub-requests, so we chunk; on any transport-level
+// Gmail caps a batch at 100 sub-requests, so we chunk; on a transport-level
 // failure we fall back to individual gFetch calls so a bad batch never blanks
 // the list.
-async function gBatchGet(token, paths) {
+//
+// Rate limits are handled differently from other failures, because the old
+// fallback (fire every sub-request individually, in parallel) is the worst
+// possible answer to "slow down": a rate-limited batch, or rate-limited
+// sub-requests inside a 200 batch, get ONE delayed retry and are otherwise left
+// null. Callers show null rows as "couldn't load" rather than dropping them.
+async function gBatchGet(token, paths, { _retry = true } = {}) {
   if (!paths.length) return [];
   const CHUNK = 100;
   if (paths.length > CHUNK) {
     const out = [];
     for (let i = 0; i < paths.length; i += CHUNK) {
-      out.push(...await gBatchGet(token, paths.slice(i, i + CHUNK)));
+      out.push(...await gBatchGet(token, paths.slice(i, i + CHUNK), { _retry }));
     }
     return out;
   }
@@ -141,7 +186,8 @@ async function gBatchGet(token, paths) {
 
   // Slower, correct path: fetch each sub-request on its own. This is the
   // pre-batch behaviour, used as a safety net whenever the batch can't be
-  // trusted (transport error, or a 200 whose body we couldn't parse).
+  // trusted (transport error, or a 200 whose body we couldn't parse) — never
+  // for a rate limit.
   const fetchIndividually = () => Promise.all(paths.map(async (p) => {
     try { const r = await gFetch(token, p); return r.ok ? await r.json() : null; }
     catch { return null; }
@@ -149,21 +195,31 @@ async function gBatchGet(token, paths) {
 
   let res = null;
   try {
-    res = await fetch("https://gmail.googleapis.com/batch/gmail/v1", {
+    const opts = {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/mixed; boundary=${boundary}` },
       body
-    });
+    };
+    // The whole batch being refused gets the same single safe retry as gFetch.
+    res = _retry
+      ? await fetchWithRateLimitRetry("https://gmail.googleapis.com/batch/gmail/v1", opts)
+      : await fetch("https://gmail.googleapis.com/batch/gmail/v1", opts);
   } catch { res = null; }
 
+  if (res && !res.ok && await isRateLimited(res)) {
+    console.warn(`[gmail] batch of ${paths.length} still rate limited after retry; rows left unloaded`);
+    return new Array(paths.length).fill(null);
+  }
   if (!res || !res.ok) return fetchIndividually();
 
   const text = await res.text();
-  const ctMatch = (res.headers.get("content-type") || "").match(/boundary=([^;]+)/);
+  const ctMatch = (res.headers?.get?.("content-type") || "").match(/boundary=([^;]+)/);
   const respBoundary = ctMatch ? ctMatch[1].trim().replace(/^"|"$/g, "") : null;
   if (!respBoundary) return fetchIndividually();
 
   const out = new Array(paths.length).fill(null);
+  const limited = []; // indexes Gmail refused for rate limiting
+  let parsedAny = false;
   for (const part of text.split(`--${respBoundary}`)) {
     if (!part.trim() || part.trim() === "--") continue;
     // Gmail echoes each request's Content-ID back prefixed with "response-",
@@ -171,19 +227,39 @@ async function gBatchGet(token, paths) {
     const idMatch = part.match(/Content-ID:\s*<?(?:response-)?item-(\d+)>?/i);
     const idx = idMatch ? Number(idMatch[1]) : -1;
     if (idx < 0 || idx >= out.length) continue;
+    parsedAny = true;
+    // The sub-response's own status line, e.g. "HTTP/1.1 429 Too Many Requests".
+    const statusMatch = part.match(/HTTP\/\d(?:\.\d)?\s+(\d{3})/);
+    const status = statusMatch ? Number(statusMatch[1]) : 200;
     // The sub-response is HTTP headers, a blank line, then the JSON body; no
     // braces appear before the body, so first "{" … last "}" is the payload.
     const start = part.indexOf("{");
     const end = part.lastIndexOf("}");
-    if (start < 0 || end <= start) continue;
-    try { out[idx] = JSON.parse(part.slice(start, end + 1)); } catch { /* leave null */ }
+    let json = null;
+    if (start >= 0 && end > start) { try { json = JSON.parse(part.slice(start, end + 1)); } catch { /* leave null */ } }
+    if (status >= 200 && status < 300) { out[idx] = json; continue; }
+    const reasons = (json?.error?.errors || []).map((e) => String(e?.reason || ""));
+    if (status === 429 || (status === 403 && (reasons.some((r) => RATE_LIMIT_REASONS.test(r)) || /quota exceeded/i.test(json?.error?.message || "")))) {
+      limited.push(idx);
+    }
+    // Any other error (404 for a thread deleted mid-list, …) stays null.
   }
 
-  // Fail safe: if we parsed NOTHING out of a non-empty batch, the response
+  // Fail safe: if we matched NOTHING out of a non-empty batch, the response
   // format wasn't what we expected — fall back rather than return an empty
   // inbox. (A batch where every sub-request legitimately 404s is rare and would
   // just re-fail individually, i.e. no worse.)
-  if (out.every((x) => x === null)) return fetchIndividually();
+  if (!parsedAny) return fetchIndividually();
+
+  // Rate-limited sub-requests: one delayed retry, as a smaller batch, and only
+  // once (the retry itself never retries).
+  if (limited.length && _retry) {
+    const wait = 1000 + Math.floor(Math.random() * 500);
+    console.warn(`[gmail] ${limited.length} of ${paths.length} batch rows rate limited; one retry in ${wait}ms`);
+    await sleep(wait);
+    const again = await gBatchGet(token, limited.map((i) => paths[i]), { _retry: false });
+    limited.forEach((i, k) => { out[i] = again[k] ?? null; });
+  }
   return out;
 }
 
@@ -889,6 +965,9 @@ module.exports = {
   getValidAccessToken,
   gFetch,
   gBatchGet,
+  isRateLimited,
+  // Tests only: replace the retry wait so they don't sleep.
+  _setSleepForTests: (fn) => { sleep = fn; },
   headersMap,
   extractBody,
   decodeB64,
