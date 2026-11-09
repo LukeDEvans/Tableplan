@@ -124,6 +124,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     getText: () => ({ text: editor ? nodeText(editor.state.doc) : "", pages: pageCount }),
   });
   try { await session.ready; } catch (e) {
+    session.close().catch(() => {});
     statusEl.textContent = e?.message || "This document couldn't be opened.";
     statusEl.classList.add("is-error");
     $("[data-act=close]").addEventListener("click", () => { root.remove(); onClose?.({}); });

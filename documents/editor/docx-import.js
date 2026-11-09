@@ -164,11 +164,28 @@ export function docxToDoc(bytes) {
           const ct = tag(c);
           if (ct === "w:t" || ct === "w:delText") { const s = textOf(c); if (s) out.push({ type: "text", text: s, marks: dedupe(marks) }); }
           else if (ct === "w:tab") out.push({ type: "text", text: "\t", marks: dedupe(marks) });
+          else if (ct === "w:noBreakHyphen") out.push({ type: "text", text: "\u2011", marks: dedupe(marks) });
+          else if (ct === "w:softHyphen") { /* invisible */ }
+          else if (ct === "w:sym") {
+            const code = parseInt(String(attr(c, "w:char") || ""), 16);
+            // Symbol-font characters live in the private-use area (F0xx): their plain counterpart is code - 0xF000.
+            const ch = Number.isFinite(code) ? String.fromCodePoint(code >= 0xf000 && code <= 0xf0ff ? code - 0xf000 : code) : "";
+            if (ch.trim()) { out.push({ type: "text", text: ch, marks: dedupe(marks) }); warnings.add("symbols (kept as plain characters)"); }
+          }
           else if (ct === "w:br" || ct === "w:cr") {
             if (attr(c, "w:type") === "page") out.push({ type: "__pagebreak" });
             else out.push({ type: "hardBreak" });
           } else if (ct === "w:lastRenderedPageBreak") { /* layout hint only */ }
-          else if (ct === "w:drawing" || ct === "w:pict") {
+          else if ((ct === "w:drawing" || ct === "w:pict" || ct === "mc:AlternateContent") && deep(c, "w:txbxContent").length) {
+            // A text box or shape with text: its text is kept, in line, as plain paragraphs.
+            const box = deep(c, "w:txbxContent")[0];
+            const lines = findAll(box, "w:p").map((pp) => deep(pp, "w:t").map(textOf).join("")).filter(Boolean);
+            lines.forEach((line, i) => { if (i || out.length) out.push({ type: "hardBreak" }); out.push({ type: "text", text: line, marks: dedupe(marks) }); });
+            warnings.add("text boxes (their text is kept in line)");
+          } else if (ct === "mc:AlternateContent") {
+            const choice = find(c, "mc:Fallback") || find(c, "mc:Choice");
+            if (choice) inline([{ "w:r": [...(find(n, "w:rPr") ? [find(n, "w:rPr")] : []), ...kids(choice)] }], ctx, out, relMap);
+          } else if (ct === "w:drawing" || ct === "w:pict") {
             const blip = deep(c, "a:blip")[0] || deep(c, "v:imagedata")[0];
             const relId = attr(blip, "r:embed") || attr(blip, "r:id");
             const id = relId ? imageFor(relId, relMap) : null;
@@ -185,11 +202,19 @@ export function docxToDoc(bytes) {
             if (ft === "begin") ctx.field = { instr: "", result: true };
             else if (ft === "separate" && ctx.field) ctx.field.inResult = true;
             else if (ft === "end") ctx.field = null;
-          } else if (ct === "w:instrText" && ctx.field) {
+          } else if (ct === "w:instrText" && !ctx.field) { /* stray field code */ }
+          else if (ct === "w:instrText" && ctx.field) {
             ctx.field.instr += textOf(c);
             const instr = ctx.field.instr.trim().toUpperCase();
             if (/^(PAGE|NUMPAGES)\b/.test(instr) && !ctx.field.done) { out.push({ type: "pageNumber", attrs: { total: instr.startsWith("NUMPAGES") } }); ctx.field.done = true; }
           }
+        }
+        for (const c of kids(n)) {
+          const ct = tag(c);
+          if (!ct || /^w:(t|delText|tab|br|cr|rPr|lastRenderedPageBreak|drawing|pict|footnoteReference|endnoteReference|fldChar|instrText|noBreakHyphen|softHyphen|sym|annotationRef|commentReference|separator|continuationSeparator)$/.test(ct) || ct === "mc:AlternateContent") continue;
+          const t = deep(c, "w:t").map(textOf).join("");
+          if (t) { out.push({ type: "text", text: t, marks: dedupe(marks) }); }
+          warnings.add(`unsupported content (${ct})`);
         }
         // A field's shown result after a PAGE field we already turned into a page number: drop it.
         if (ctx.field?.done && ctx.field.inResult) { while (out.length && out[out.length - 1].type === "text") out.pop(); }
@@ -312,6 +337,16 @@ export function docxToDoc(bytes) {
       } else if (t === "w:tbl") { closeAll(); const tb = table(n, ctx, relMap); if (tb) out.push(tb); }
       else if (t === "w:sdt") { closeAll(); out.push(...body(kids(find(n, "w:sdtContent") || {}), ctx, relMap)); }
       else if (t === "w:customXml") out.push(...body(kids(n), ctx, relMap));
+      else if (t === "w:ins" || t === "w:moveTo" || t === "w:del" || t === "w:moveFrom") {
+        // Whole paragraphs inside a tracked change: kept, with the change as a suggestion on their text.
+        const s = { id: shortId(), author: null, name: String(attr(n, "w:author") || "Someone").slice(0, 80), at: Date.parse(attr(n, "w:date") || "") || 0 };
+        const mark = { type: t === "w:ins" || t === "w:moveTo" ? "insertion" : "deletion", attrs: s };
+        const inner = body(kids(n), { ...ctx, marks: [...ctx.marks, mark] }, relMap);
+        out.push(...inner);
+      } else if (t && t !== "w:sectPr" && t !== "w:bookmarkStart" && t !== "w:bookmarkEnd" && t !== "w:proofErr" && t !== "#text" && t !== "w:permStart" && t !== "w:permEnd") {
+        const text = deep(n, "w:t").map(textOf).join("");
+        if (text) { out.push({ type: "paragraph", content: [{ type: "text", text }] }); warnings.add(`unsupported content (${t})`); }
+      }
     }
     return out;
   }

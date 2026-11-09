@@ -112,4 +112,18 @@ describe("docx import edge cases", () => {
     expect(r.warnings.length).toBe(1);
     expect(() => schema.nodeFromJSON(r.doc).check()).not.toThrow();
   });
+
+  it("keeps text boxes, symbols and paragraphs inside tracked changes (review, 2026-11-09)", () => {
+    const xml = `<?xml version="1.0"?><w:document xmlns:w="w" xmlns:mc="mc" xmlns:wps="wps"><w:body>
+      <w:p><w:r><w:t>Before</w:t></w:r><w:r><mc:AlternateContent><mc:Choice><w:drawing><wps:txbx><w:txbxContent><w:p><w:r><w:t>TEXTBOX SECRET</w:t></w:r></w:p><w:p><w:r><w:t>BOX2</w:t></w:r></w:p></w:txbxContent></wps:txbx></w:drawing></mc:Choice></mc:AlternateContent></w:r></w:p>
+      <w:ins w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:p><w:r><w:t>BODYINS</w:t></w:r></w:p></w:ins>
+      <w:p><w:r><w:t>A</w:t><w:noBreakHyphen/><w:t>B</w:t><w:sym w:font="Wingdings" w:char="F0FC"/></w:r></w:p>
+    </w:body></w:document>`;
+    const r = docxToDoc(zipSync({ "word/document.xml": strToU8(xml) }));
+    const all = flat(r.doc).map((x) => x.text).join("|");
+    for (const s of ["Before", "TEXTBOX SECRET", "BOX2", "BODYINS", "A", "\u2011", "B"]) expect(all).toContain(s);
+    expect(flat(r.doc).find((x) => x.text === "BODYINS").marks.find((m) => m.type === "insertion").attrs.name).toBe("Ann");
+    expect(r.warnings.some((w) => /text boxes/.test(w))).toBe(true);
+    expect(() => schema.nodeFromJSON(r.doc).check()).not.toThrow();
+  });
 });

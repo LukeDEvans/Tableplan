@@ -256,3 +256,18 @@ Branch `claude/word-processor` (PR #223, draft). Everything under `documents/edi
 - **@mention notifications** in comments (the mention is recognised; no push is sent yet).
 - **Image resize by dragging** (buttons for smaller / larger / full width instead) and an interactive crop (sliders instead).
 - Safe: a purged Safe document leaves its version and image blobs in R2 (sealed; harmless, small) — ISSUES.md.
+
+## 20. Independent review (2026-11-09)
+
+A separate agent that hadn't seen the code attacked it, confirming findings with scripts. **Fixed** (each with a test):
+1. *(P1)* Restoring this hour's / today's / this week's version could overwrite it with the current text before reading it. → The version is read first; the "before restore" copy is a named version. (`documents-editor-session.test.js`)
+2. *(P1)* Accept/reject crashed or stripped the wrong marks when text carried both a suggested insertion and a suggested deletion. → Positions are mapped through the change and only that suggestion's mark is removed. (`documents-editor-model.test.js`)
+3. *(P1)* Word import silently dropped text boxes, paragraphs inside tracked changes, symbols and non-breaking hyphens. → All kept (text boxes as inline text, with a note); anything else unknown is kept as text and reported. (`documents-editor-docx.test.js`)
+4. *(P1)* Just opening and closing a document wrote three snapshots and the file row (and every viewer did). → Only your own edits make a snapshot or a row update due. (`documents-editor-session.test.js`)
+5. *(P2)* Sign-out left everyday documents' device copies in the browser. → Sign-out deletes them.
+6. *(P2)* A purge that couldn't list a document's versions went ahead and orphaned them. → It waits for the next purge.
+7. *(P3)* A document that failed to open kept its listeners. → Closed.
+
+**For Luke:** turn off **Realtime › Settings › Allow public access** in the Supabase dashboard (the document channels are private; nothing else in the app uses Realtime).
+
+**Logged, not fixed (ISSUES.md):** conditional writes for save races; binding a Safe document's content to a version; counting editor parts in storage use; presence not encrypted for Safe documents; no cap on named versions.

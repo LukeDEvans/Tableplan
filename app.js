@@ -9614,6 +9614,8 @@ async function purgeLocalMessaging(headersSnapshot = null) {
           await deleteMessagingStore("live-documents-outbox");
           // The browser's passkey-locked store, and the passkey's (non-secret) id and salt.
           await deleteMessagingStore("live-documents-pk");
+          // The word processor's device copies of documents (documents/editor/cache.js).
+          try { await (await import("./documents/editor/cache.js")).deleteDocCaches(); } catch { /* none */ }
           try { for (const k of Object.keys(localStorage)) if (k.startsWith("liveDocumentsPasskey:")) localStorage.removeItem(k); } catch { /* storage blocked */ }
         } catch { /* nothing stored */ }
         try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }

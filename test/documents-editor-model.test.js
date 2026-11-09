@@ -231,6 +231,28 @@ describe("suggesting mode", () => {
     expect(listSuggestions(rejected.doc)).toEqual([]);
   });
 
+  it("text with both a suggested insertion and a suggested deletion resolves cleanly (review, 2026-11-09)", () => {
+    for (const at of ["end", "middle"]) {
+      let s = stateOf(docJson(para(at === "end" ? "Hi" : "Hi you")), 3);
+      s = run(s, (st) => st.tr.insertText(" there", 3)); // Luke suggests " there"
+      s = run(s, (st) => st.tr.delete(3, 9), wife); // Marijane suggests deleting it
+      s = run(s, (st) => st.tr.insertText("!", st.doc.content.size - 1), wife); // and adds another suggestion
+      for (const accept of [true, false]) {
+        const tr = resolveSuggestion(s, null, accept);
+        const next = s.apply(tr);
+        expect(listSuggestions(next.doc)).toEqual([]);
+        // accept: Luke's insertion kept then Marijane's deletion applied → " there" gone; "!" kept
+        // reject: Luke's insertion removed, Marijane's deletion removed (its text is gone anyway), "!" removed
+        expect(next.doc.textContent).toBe(accept ? (at === "end" ? "Hi!" : "Hi you!") : (at === "end" ? "Hi" : "Hi you"));
+      }
+      // One suggestion at a time leaves the others intact.
+      const ids = listSuggestions(s.doc).map((x) => x.id);
+      const after = s.apply(resolveSuggestion(s, ids[ids.length - 1], false)); // reject only the "!"
+      expect(listSuggestions(after.doc).length).toBe(ids.length - 1);
+      expect(after.doc.textContent).toBe(at === "end" ? "Hi there" : "Hi there you");
+    }
+  });
+
   it("structural and formatting changes go through unchanged", () => {
     const s = stateOf(docJson(para("Hello")));
     const tr = s.tr.addMark(1, 3, schema.marks.bold.create());

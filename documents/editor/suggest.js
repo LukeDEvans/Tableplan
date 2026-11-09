@@ -150,10 +150,15 @@ export function resolveSuggestion(state, id, accept) {
   tr.setMeta(SKIP_META, true);
   const ranges = rangesOf(state.doc, id).sort((a, b) => b.from - a.from);
   if (!ranges.length) return null;
+  // Text can carry both an insertion and a deletion (someone suggested deleting a
+  // suggested insertion): positions are mapped through what's already been done.
   for (const r of ranges) {
+    const from = tr.mapping.map(r.from, 1);
+    const to = tr.mapping.map(r.to, -1);
+    if (to <= from) continue;
     const keep = (r.type === "insertion") === accept;
-    if (keep) tr.removeMark(r.from, r.to, r.mark.type);
-    else tr.delete(r.from, r.to);
+    if (keep) tr.removeMark(from, to, r.mark);
+    else tr.delete(from, to);
   }
   return tr;
 }

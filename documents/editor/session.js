@@ -81,7 +81,7 @@ export function createDocSession({ store, me, liveOpen = null, cache = null, get
         state.lastSaved = now();
         set({ status: "saved", offline: false, error: "" });
         await cache?.put(r.bytes || docToContent(ydoc));
-        if (r.wrote || final) await saveRow({ force: final, size: (r.bytes || []).length });
+        if (r.wrote || (final && wasDirty)) await saveRow({ force: final, size: (r.bytes || []).length });
         if (state.sinceSnapshot && (final || now() - lastSnapshot >= SNAPSHOT_EVERY_MS)) await snapshot();
       } catch (e) {
         state.dirty = state.dirty || wasDirty;
@@ -105,7 +105,6 @@ export function createDocSession({ store, me, liveOpen = null, cache = null, get
 
   const onUpdate = (update, origin) => {
     if (closed || origin === "load") return;
-    state.sinceSnapshot = true;
     if (origin === "remote" || origin === LIVE_ORIGIN) {
       // Someone else's edit: it's already stored (or will be by them); keep the device copy.
       clearTimeout(cacheTimer);
@@ -113,7 +112,10 @@ export function createDocSession({ store, me, liveOpen = null, cache = null, get
       onRemoteChange?.();
       return;
     }
+    // Only this device's own edits make a snapshot due (someone else's edits are
+    // snapshotted by them); opening and reading a document writes nothing.
     state.dirty = true;
+    state.sinceSnapshot = true;
     if (state.status === "saved") set({ status: "unsaved" });
     clearTimeout(cacheTimer);
     cacheTimer = setTimeout(() => cache?.put(docToContent(ydoc)), CACHE_MS);
@@ -148,8 +150,10 @@ export function createDocSession({ store, me, liveOpen = null, cache = null, get
   // Makes the document what the version was; first keeps a snapshot of now (so a
   // restore can itself be undone from the list).
   async function restore(slot, copyFragment) {
-    await snapshot().catch(() => {});
+    // Read the version first: the "before restore" copy below may go in the very slot
+    // being restored (this hour's, today's, this week's), so it's kept as a named version.
     const v = await loadVersion(slot);
+    await snapshot(`Before restoring ${new Date().toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`).catch(() => {});
     restoreInto(ydoc, v, { copyFragment });
     await save();
   }
