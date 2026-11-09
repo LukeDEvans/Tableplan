@@ -197,7 +197,7 @@ as security-critical. Everything below about vaults, keys and the lock is the Sa
 - Moving out of the Safe happens only on request ("Move them" in a Household Safe that
   still holds Receipts / Home / Vehicles): add the everyday copy (with `source.safeId`)
   first, then trash the Safe copy. Never move anything out automatically.
-- Editors to come (word processor, spreadsheet, slides): `doc_pfiles.kind` is
+- Spreadsheets (`kind = 'sheet'`, `application/vnd.live.sheet`) are the **sheets** agent's (`documents/sheet/`, SPREADSHEET_DESIGN.md); the page and the Safe open them through `documents/sheet/host.js`. Editors to come (word processor, spreadsheet, slides): `doc_pfiles.kind` is
   `file | doc | sheet | slides`; their content is the `content` part.
 - Tests: `test/documents-everyday*.test.js`; `qa:documents-ui` covers the page too.
 
