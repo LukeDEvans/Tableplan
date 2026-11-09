@@ -69,6 +69,14 @@
         <button class="secondary-btn" id="lockDevSignInBtn" type="button" hidden>Continue in local dev mode</button>
       </div>
     </div>
+    <!-- iPhone app: Face ID to open (auth-second-step.js) -->
+    <div id="faceIdLock" hidden>
+      <div class="lock-card">
+        <img class="lock-logo" src="./lock-logo.png" alt="Live" width="280" height="280" />
+        <p id="faceIdLockMessage"></p>
+        <button class="primary-btn" id="faceIdUnlockBtn" type="button">Unlock</button>
+      </div>
+    </div>
     <div id="hydrationOverlay" hidden>
       <div class="hydration-card">
         <div class="hydration-spinner" aria-hidden="true"></div>
@@ -2962,6 +2970,31 @@
           <div>
             <button class="secondary-btn" type="button" id="cancelAuthBtn">Cancel</button>
             <button class="primary-btn" id="sendLoginBtn" type="button">Send code</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Second sign-in step: authenticator code (auth-second-step.js) -->
+    <dialog class="recipe-dialog auth-dialog" id="secondStepDialog">
+      <form class="recipe-form" id="secondStepForm">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">One more step</p>
+            <h2>Enter your code</h2>
+          </div>
+        </div>
+        <p class="settings-hint">Open the Passwords app, find Live, and enter the 6-digit code it shows.</p>
+        <label>
+          Code
+          <input id="secondStepCode" type="text" inputmode="numeric" placeholder="123456" autocomplete="one-time-code" data-no-clear />
+        </label>
+        <p class="import-status" id="secondStepMessage"></p>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="secondStepSignOutBtn">Sign out</button>
+            <button class="primary-btn" type="button" id="secondStepVerifyBtn">Verify</button>
           </div>
         </div>
       </form>

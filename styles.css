@@ -19214,6 +19214,38 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 }
 body.app-authed #appLockScreen { display: none; }
 
+/* iPhone app: Face ID cover (auth-second-step.js) — above the app, same look as the gate */
+#faceIdLock {
+  position: fixed;
+  inset: 0;
+  z-index: 3001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sun-soft, #f7f5ef);
+}
+#faceIdLock[hidden] { display: none; }
+#faceIdLockMessage:empty { display: none; }
+
+/* Settings › Sign-in */
+.second-step-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line, color-mix(in srgb, var(--ink) 12%, transparent));
+}
+.second-step-row > div,
+.second-step-switch > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.second-step-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.second-step-enroll { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 8px 0; }
+.second-step-add { text-decoration: none; display: inline-block; }
+.second-step-qr { background: #fff; /* a QR code needs white behind it to scan, in every theme */ padding: 8px; border-radius: 8px; max-width: 100%; height: auto; }
+.second-step-secret { word-break: break-all; user-select: all; }
+.second-step-code-label { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.second-step-code-label input { max-width: 160px; letter-spacing: 0.2em; }
+
 /* Shown when a signed-in device has no locally-cached data yet and the cloud
    sync hasn't landed — so pages never render empty and look "wiped" during a
    slow/failed load. Removed the instant hydration succeeds. */
