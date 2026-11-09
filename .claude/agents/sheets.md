@@ -62,5 +62,5 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->
-- files: `documents/sheet/engine/*.js`, `documents/sheet/engine/functions/*.js`
+- files: `documents/sheet/*.js`, `documents/sheet/engine/*.js`, `documents/sheet/engine/functions/*.js`
 - state: none — spreadsheets never go in tableplan_states; they live in doc_pfiles / the doc_ vault tables, R2 and on each device

@@ -100,7 +100,7 @@ function listFiles(dir, re) {
   return readdirSync(join(root, dir)).filter((f) => re.test(f) && statSync(join(root, dir, f)).isFile()).map((f) => (dir === "." ? f : `${dir}/${f}`));
 }
 const CODE = /\.(js|mjs)$/;
-const candidateFiles = [...listFiles(".", CODE), ...listFiles("calendar", CODE), ...listFiles("music", CODE), ...listFiles("messaging", CODE), ...listFiles("messaging/crypto", CODE), ...listFiles("documents", CODE), ...listFiles("documents/crypto", CODE), ...listFiles("documents/editor", CODE), ...listFiles("documents/sheet/engine", CODE), ...listFiles("documents/sheet/engine/functions", CODE), ...listFiles("netlify/functions", CODE)];
+const candidateFiles = [...listFiles(".", CODE), ...listFiles("calendar", CODE), ...listFiles("music", CODE), ...listFiles("messaging", CODE), ...listFiles("messaging/crypto", CODE), ...listFiles("documents", CODE), ...listFiles("documents/crypto", CODE), ...listFiles("documents/editor", CODE), ...listFiles("documents/sheet", CODE), ...listFiles("documents/sheet/engine", CODE), ...listFiles("documents/sheet/engine/functions", CODE), ...listFiles("netlify/functions", CODE)];
 
 function stateKeys() {
   const src = readFileSync(join(root, "app.js"), "utf8");
