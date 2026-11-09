@@ -1,6 +1,6 @@
 # Spreadsheet — design & plan
 
-Status: **DESIGN, for Luke's review** (decisions from Luke, 2026-11-09). Nothing built yet. Branch `claude/spreadsheet`, built on top of the word processor (`claude/word-processor`, PR #223), whose saving, version history, live co-editing and Safe encryption it reuses.
+Status: **APPROVED (Luke, 2026-11-09: "Everything here has my approval" — the plan, §14 defaults, the migration and the scratch Google Sheet), being built.** The Netlify deploy still gets its own OK. Branch `claude/spreadsheet`, built on top of the word processor (`claude/word-processor`, PR #223), whose saving, version history, live co-editing and Safe encryption it reuses.
 
 Goal: a Google Sheets replacement inside the **Document** page. New → Spreadsheet opens a full spreadsheet with Sheets' formulas and formatting, live co-editing with Marijane, charts, filters, rules on cells, pivot tables, comments, version history, Excel/CSV/PDF in and out, a one-time move of existing Google Sheets, and the same spreadsheet working inside the **Safe**. Everything is built here: no paid or GPL code.
 
@@ -214,3 +214,9 @@ Test without Netlify deploys (TestFlight on the phone, `npm run dev:local` on th
 7. **Charts in documents** (a live chart from a spreadsheet inside a word-processor document) **later**, not v1.
 8. **Conformance answers come from Google Sheets itself:** a scratch sheet in your Drive, read back, then deleted. OK to do that when step 1 starts?
 9. **Either of you can delete or restore versions in Household** (as documents).
+
+---
+
+## 15. Progress
+
+- **Migration applied** (2026-11-09, Luke's OK): `migrations/2026-11-09b-documents-sheet-versions.sql`, recorded as `20261109120500 documents_sheet_versions`; checked live (guard accepts `sheet`, both triggers in place). Test: `test/documents-sheet-migration.test.js` (fails without the migration).
