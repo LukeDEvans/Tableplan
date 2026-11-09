@@ -29,6 +29,10 @@
 .wp-status.is-error { color: var(--tomato); }
 .wp-people { display: flex; }
 .wp-person { width: 28px; height: 28px; border-radius: 50%; color: #fff; font-size: 0.8rem; font-weight: 700; display: grid; place-items: center; margin-left: -6px; border: 2px solid var(--bg); }
+.wp-root .wp-mode { width: auto; flex: none; max-width: 140px; }
+.wp-root .wp-title input { width: 100%; min-width: 0; margin: 0; box-shadow: none; height: auto; }
+.wp-root input[type=checkbox], .wp-root input[type=radio] { width: auto; margin: 0; }
+.wp-root .wp-find input, .wp-root .wp-toolbar select, .wp-root .wp-sheetpanel select { width: auto; margin: 0; }
 .wp-mode { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 6px 8px; font-size: 0.85rem; }
 .wp-icon { min-width: 36px; height: 36px; border: 0; background: transparent; color: var(--ink); border-radius: 8px; display: inline-grid; place-items: center; cursor: pointer; padding: 0 6px; }
 .wp-icon:hover { background: var(--surface); }

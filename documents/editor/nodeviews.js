@@ -232,8 +232,9 @@ export function atTrigger({ onOpen, onQuery, onClose }) {
           handleTextInput(view, from, to, text) {
             if (text !== "@") return false;
             const before = from > 0 ? view.state.doc.textBetween(Math.max(0, from - 1), from, "\n", "\n") : "";
-            if (before && !/\s/.test(before)) return false;
-            setTimeout(() => { active = { from }; onOpen({ from, to: from + 1 }); }, 0);
+            if (before && /[\p{L}\p{N}_.+-]/u.test(before) && !/[.!?,;:)]/.test(before)) return false; // not inside a word or an email address
+            active = { from };
+            setTimeout(() => { if (active?.from === from) onOpen({ from, to: from + 1 }); }, 0);
             return false;
           },
         },

@@ -141,8 +141,13 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
   let previewing = false;
   let phoneEditing = startEditing;
 
+  // On the phone, documents open reflowed to the screen (as Docs' app, with Print
+  // layout off); Print layout in ⋯ shows the pages. A setting of this device only.
+  const PHONE_PRINT_KEY = "live-wp-phone-print-layout";
+  let phonePrint = (() => { try { return localStorage.getItem(PHONE_PRINT_KEY) === "1"; } catch { return false; } })();
+  const showPages = () => !settings.pageless && (!isPhone() || phonePrint);
   const getPageOf = (pos) => {
-    if (settings.pageless || !lastLayout || !editor) return "";
+    if (!showPages() || !lastLayout || !editor) return "";
     try {
       const c = editor.view.coordsAtPos(pos);
       const top = docEl.getBoundingClientRect().top;
@@ -232,7 +237,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
 
   // ---- page geometry and the page layer ----------------------------------------------------------
   function geometry() {
-    if (settings.pageless) return null;
+    if (!showPages()) return null;
     const box = pageBox(settings);
     return { pageW: box.w * PX_PER_IN, pageH: box.h * PX_PER_IN, mt: settings.marginTop * PX_PER_IN, mb: settings.marginBottom * PX_PER_IN, ml: settings.marginLeft * PX_PER_IN, mr: settings.marginRight * PX_PER_IN };
   }
@@ -241,7 +246,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     return Number.isFinite(z) && z > 0 ? z : 1;
   }
   function applySheet() {
-    root.classList.toggle("is-pageless", settings.pageless);
+    root.classList.toggle("is-pageless", !showPages());
     const pm = editor.view.dom;
     const geo = geometry();
     if (!geo) {
@@ -390,6 +395,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     wordCount: { label: "Word count", key: "⌘⇧C", run: () => wordCount() },
     pageSetup: { label: "Page setup…", run: () => pageSetup() },
     pageless: { label: "Print layout (pages)", run: () => writeSettings(session.ydoc, { pageless: !settings.pageless }), active: () => !settings.pageless },
+    phonePrint: { label: "Print layout", run: () => { phonePrint = !phonePrint; try { localStorage.setItem(PHONE_PRINT_KEY, phonePrint ? "1" : "0"); } catch { /* this session only */ } applySheet(); editor.view.__relayout?.(); }, active: () => phonePrint },
     showWordCount: { label: "Show word count", run: () => writeSettings(session.ydoc, { showWordCount: !settings.showWordCount }), active: () => settings.showWordCount },
     outline: { label: "Show outline", run: () => toggleSide("outline"), active: () => !$('[data-side="outline"]').hidden },
     comments: { label: "Comments", run: () => toggleSide("comments") },
@@ -434,7 +440,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
   const run = (id, e) => {
     const c = C[id];
     if (!c) return;
-    const editOnly = !["outline", "comments", "history", "wordCount", "find", "print", "exportDocx", "exportPdf", "exportTxt", "modeEdit", "modeSuggest", "modeView", "pageless", "showWordCount", "hideComments", "spell", "selectAll"].includes(id);
+    const editOnly = !["outline", "comments", "history", "wordCount", "find", "print", "exportDocx", "exportPdf", "exportTxt", "modeEdit", "modeSuggest", "modeView", "phonePrint", "showWordCount", "hideComments", "spell", "selectAll"].includes(id);
     if (editOnly && !editingAllowed() && id !== "comment") { toast(mode === "viewing" ? "Switch to Editing or Suggesting to change the document." : "Close the version you're looking at first."); return; }
     if (editOnly && isPhone() && !phoneEditing && id !== "comment") startPhoneEditing();
     try { c.run(e); } catch (err) { toast(err?.message || "That didn't work."); }
@@ -652,7 +658,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     return [
       label("Mode"), item("modeEdit"), item("modeSuggest"), item("modeView"), hr,
       item("find"), item("outline"), item("history"), item("wordCount"), hr,
-      item("pageless"), item("pageSetup"), sub("@hf", "Headers & footers"), item("showWordCount"), hr,
+      item("phonePrint"), item("pageless", "Pages for everyone (page setup)"), item("pageSetup"), sub("@hf", "Headers & footers"), item("showWordCount"), hr,
       label("Share a copy"), item("exportPdf"), item("exportDocx"), item("exportTxt"), hr,
       item("acceptAll"), item("rejectAll"),
     ].join("");
@@ -945,7 +951,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     const row = (l, v, s) => `<span>${esc(l)}</span><strong>${s != null ? `${s.toLocaleString()} of ` : ""}${v.toLocaleString()}</strong>`;
     const { form, value } = await openDialog(root, {
       title: "Word count",
-      body: `<div class="wp-stats">${settings.pageless ? "" : row("Pages", pageCount)}${row("Words", all.words, selC?.words)}${row("Characters", all.characters, selC?.characters)}${row("Characters excluding spaces", all.charactersNoSpaces, selC?.charactersNoSpaces)}</div>
+      body: `<div class="wp-stats">${showPages() ? row("Pages", pageCount) : ""}${row("Words", all.words, selC?.words)}${row("Characters", all.characters, selC?.characters)}${row("Characters excluding spaces", all.charactersNoSpaces, selC?.charactersNoSpaces)}</div>
         <label class="is-row"><input type="checkbox" name="show"${settings.showWordCount ? " checked" : ""}> Display word count while typing</label>`,
       actions: [{ label: "OK", value: "ok", primary: true }],
     });
@@ -957,7 +963,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     const { from, to, empty } = editor.state.selection;
     const all = countWords(nodeText(editor.state.doc)).words;
     const s = empty ? null : countWords(editor.state.doc.textBetween(from, to, "\n")).words;
-    foot.textContent = `${s != null ? `${s.toLocaleString()} of ` : ""}${all.toLocaleString()} words${settings.pageless ? "" : ` · ${pageCount} page${pageCount === 1 ? "" : "s"}`}`;
+    foot.textContent = `${s != null ? `${s.toLocaleString()} of ` : ""}${all.toLocaleString()} words${!showPages() ? "" : ` · ${pageCount} page${pageCount === 1 ? "" : "s"}`}`;
   }
 
   // ---- find & replace ---------------------------------------------------------------------------
@@ -1193,7 +1199,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     else if (e.altKey && /^[0-6]$/.test(e.key)) { e.preventDefault(); run(e.key === "0" ? "style_normal" : `style_h${e.key}`); }
     else if (k === "f" && e.altKey) { e.preventDefault(); run("footnote"); }
   };
-  root.addEventListener("keydown", onKey);
+  document.addEventListener("keydown", onKey);
 
   // ---- start -------------------------------------------------------------------------------------------
   drawToolbar();
@@ -1209,6 +1215,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     try { await session.close(); } catch { /* kept on the device */ }
     comments?.destroy();
     window.removeEventListener("resize", onResize);
+    document.removeEventListener("keydown", onKey);
     unsub();
     editor.destroy();
     for (const p of imageUrls.values()) p.then((u) => URL.revokeObjectURL(u)).catch(() => {});
