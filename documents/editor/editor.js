@@ -332,14 +332,15 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
   window.addEventListener("resize", onResize);
 
   // ---- status and people ---------------------------------------------------------------------
-  const unsub = session.subscribe((s) => {
+  const unsub = session.subscribe((s) => showStatus(s));
+  function showStatus(s) {
     const label = { loading: "Opening…", saving: "Saving…", saved: "All changes saved", unsaved: "Saving soon…", offline: "Offline — changes kept on this device", error: s.error || "Couldn't save" }[s.status] || "";
     statusEl.textContent = mode === "viewing" ? `Viewing · ${label}` : label;
     statusEl.classList.toggle("is-error", s.status === "error");
     const ppl = $("[data-people]");
     const seen = new Set();
     ppl.innerHTML = s.peers.filter((p) => (seen.has(p.id) ? false : seen.add(p.id))).map((p) => `<span class="wp-person" style="background:${safeColor(p.color) || "#888"}" title="${esc(p.name || "Someone")} is here">${esc(String(p.name || "?").trim()[0] || "?").toUpperCase()}</span>`).join("");
-  });
+  }
 
   // ---- commands --------------------------------------------------------------------------------
   const chain = () => editor.chain().focus();
@@ -1157,10 +1158,10 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     statusEl.textContent = "Making the Word file…";
     try {
       const { docToDocx } = await import("./docx-export.js");
-      const blob = await docToDocx({ json: editor.getJSON(), settings, ydoc: session.ydoc, schema: editor.schema, images: (id) => store.images.get(id), threads: comments ? null : null });
+      const blob = await docToDocx({ json: editor.getJSON(), settings, ydoc: session.ydoc, schema: editor.schema, images: (id) => store.images.get(id) });
       await shareBlob(blob, `${safeName()}.docx`, blob.type);
     } catch (e) { toast(e?.message || "The Word file couldn't be made."); }
-    session.subscribe(() => {})();
+    showStatus(session.state);
   }
   async function exportTxt() {
     await shareBlob(new Blob([nodeText(editor.state.doc)], { type: "text/plain" }), `${safeName()}.txt`, "text/plain");

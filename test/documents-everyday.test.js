@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { createDocumentsDatabase, pgliteTransport, USERS, GROUP } from "./documents-pglite-harness.js";
+import { asUser } from "./documents-pglite-harness.js";
 import { createEverydayLibrary, EVERYDAY_STARTING_FOLDERS } from "../documents/everyday.js";
 import { createDocumentsStorage, memoryObjectStore } from "../documents/storage.js";
 import { createReceiptOutbox, fileReceipts } from "../documents/outbox.js";
@@ -92,6 +93,27 @@ describe("everyday documents", () => {
     expect(await luke.purgeExpired(GROUP)).toBe(1);
     expect(await luke.files(GROUP, { includeDeleted: true })).toEqual([]);
     expect([...objects.objects.keys()].filter((k) => k.includes(f.id))).toEqual([]);
+  });
+
+  it("a Live document's version snapshots and images go with it", async () => {
+    const { docToContent } = await import("../documents/editor/doc-model.js");
+    const { prosemirrorJSONToYDoc } = await import("@tiptap/y-tiptap");
+    const { getSchema } = await import("@tiptap/core");
+    const { baseExtensions } = await import("../documents/editor/extensions.js");
+    const schema = getSchema(baseExtensions({ collaboration: true }));
+    const img = "c".repeat(32);
+    const ydoc = prosemirrorJSONToYDoc(schema, { type: "doc", content: [{ type: "paragraph", content: [{ type: "image", attrs: { src: `liveimg:${img}` } }] }] }, "default");
+    const luke = lib("luke");
+    const storage = createDocumentsStorage({ ...objects, tier: "everyday" });
+    const id = await luke.addFile(GROUP, { content: docToContent(ydoc), kind: "doc", meta: { name: "Notes", mime: "application/vnd.live.doc" } });
+    await storage.putPart(GROUP, id, `i${img}`, bytes("jpeg"));
+    await storage.putPart(GROUP, id, "vh03", bytes("snapshot"));
+    await asUser(db, USERS.luke, `insert into public.doc_pversions (file_id, scope, slot, size) values ($1, $2, 'h03', 8)`, [id, GROUP]);
+    expect([...objects.objects.keys()].filter((k) => k.includes(id)).length).toBe(3);
+    await luke.trash(GROUP, id);
+    await db.query(`update public.doc_pfiles set deleted_at = now() - interval '31 days' where id = $1`, [id]);
+    expect(await luke.purgeExpired(GROUP)).toBe(1);
+    expect([...objects.objects.keys()].filter((k) => k.includes(id))).toEqual([]);
   });
 
   it("a removed folder takes its files to Recently deleted; Receipts can't be removed", async () => {
