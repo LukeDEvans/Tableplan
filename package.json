@@ -38,6 +38,7 @@
     "qa:documents-crypto": "node scripts/qa-documents-crypto.mjs",
     "qa:messaging-ui": "node scripts/qa-messaging-ui.mjs",
     "qa:documents-ui": "node scripts/qa-documents-ui.mjs",
+    "qa:docs-editor": "node scripts/qa-docs-editor.mjs",
     "check:messaging-migration": "node scripts/check-messaging-migration.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"

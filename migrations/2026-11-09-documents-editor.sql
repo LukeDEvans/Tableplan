@@ -93,9 +93,12 @@ begin
 end $$;
 
 revoke all on public.doc_pversions, public.doc_sversions from anon, authenticated;
-grant select, insert on public.doc_pversions, public.doc_sversions to authenticated;
-grant update (name, size, saved_at, saved_by) on public.doc_pversions, public.doc_sversions to authenticated;
-grant all on public.doc_pversions, public.doc_sversions to service_role;
+grant select, insert on public.doc_pversions to authenticated;
+grant select, insert on public.doc_sversions to authenticated;
+grant update (name, size, saved_at, saved_by) on public.doc_pversions to authenticated;
+grant update (name, size, saved_at, saved_by) on public.doc_sversions to authenticated;
+grant all on public.doc_pversions to service_role;
+grant all on public.doc_sversions to service_role;
 revoke all on function public.doc_versions_guard() from public, anon, authenticated;
 
 -- Live co-editing channels (private broadcast + presence).

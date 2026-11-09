@@ -16,17 +16,7 @@ const SQL = readFileSync(fileURLToPath(new URL("../migrations/2026-11-09-documen
 let db;
 beforeAll(async () => {
   db = await createDocumentsDatabase();
-  await db.exec(`
-    create schema if not exists realtime;
-    create table if not exists realtime.messages (id bigserial primary key, topic text not null, extension text not null default 'broadcast', payload jsonb);
-    create or replace function realtime.topic() returns text language sql stable as $$ select nullif(current_setting('realtime.topic', true), '') $$;
-    grant usage on schema realtime to authenticated, anon;
-    grant select, insert on realtime.messages to authenticated;
-    grant usage on all sequences in schema realtime to authenticated;
-    alter table realtime.messages enable row level security;
-    grant execute on function realtime.topic() to authenticated, anon;`);
-  await db.exec(SQL);
-  await db.exec(SQL); // re-runnable
+  await db.exec(SQL); // re-runnable: the harness already applied it once
   await asUser(db, luke, `insert into public.doc_pfiles (id, scope, kind, name, mime, size) values ($1, $2, 'doc', 'Letter', 'application/vnd.live.doc', 10)`, [id(1), GROUP]);
   await asUser(db, luke, `insert into public.doc_pfiles (id, scope, kind, name, mime, size) values ($1, $2, 'doc', 'Diary', 'application/vnd.live.doc', 10)`, [id(2), PERSONAL]);
   await asUser(db, luke, `insert into public.doc_pfiles (id, scope, kind, name, mime, size) values ($1, $2, 'file', 'Scan', 'application/pdf', 10)`, [id(3), GROUP]);
@@ -74,13 +64,6 @@ describe("version rows", () => {
 });
 
 describe("live-editing channels", () => {
-  const send = (who, topic) => asUser(db, who, `select set_config('realtime.topic', $1, false); insert into realtime.messages (topic, payload) values ($1, '{}') returning id`.replace("; ", "; "), [topic]);
-  const can = async (who, topic) => {
-    const set = await asUser(db, who, `select set_config('realtime.topic', $1, false)`, [topic]);
-    if (isErr(set)) return set;
-    const r = await asUser(db, who, `insert into realtime.messages (topic, payload) select $1, '{}' where realtime.topic() is not null or true returning id`, [topic]);
-    return !isErr(r);
-  };
   it("members of the scope may use its document channels; others may not", async () => {
     // realtime.topic() reads a per-session setting; set it in the same statement batch.
     const as = async (who, topic) => {
@@ -95,6 +78,5 @@ describe("live-editing channels", () => {
     expect(await as(wife, `livedoc:${PERSONAL}:${id(9)}`)).toBe(false);
     expect(await as(luke, `livedoc:${PERSONAL}:${id(9)}`)).toBe(true);
     expect(await as(luke, `other:${GROUP}:${id(9)}`)).toBe(false);
-    void send; void can;
   });
 });

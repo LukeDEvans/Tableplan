@@ -534,6 +534,44 @@ try {
   await doc.page.waitForSelector(`${E} .docs-view-text`, { timeout: 15000 });
   check((await doc.page.locator(`${E} .docs-view-text`).innerText()).includes("<b>not bold</b>"), "a moved file opens with its content");
   await doc.page.click(`${E} [data-act=close-viewer]`);
+
+  // The word processor (WORD_PROCESSOR_DESIGN.md): + → New document opens the editor;
+  // what's typed is saved to R2 as a Live document and listed; a Word file opens as one.
+  await doc.page.click(`${E} [data-act=add]`);
+  await doc.page.click(`[data-act=new-doc]`);
+  await doc.page.waitForSelector(".wp-root [data-doc] .ProseMirror", { timeout: 30000 });
+  check(await doc.page.$eval(".wp-root [data-kbbar]", (el) => !el.hidden), "New document opens the editor, ready to type (phone)");
+  await doc.page.click(".wp-root [data-doc] .ProseMirror");
+  await doc.page.keyboard.type("Grocery budget for December", { delay: 10 });
+  await doc.page.waitForFunction(() => /saved/i.test(document.querySelector(".wp-status")?.textContent || ""), null, { timeout: 15000 });
+  await doc.page.click(".wp-root [data-act=close]");
+  await doc.page.waitForFunction(() => !document.querySelector(".wp-root"), null, { timeout: 15000 });
+  await doc.page.waitForTimeout(500);
+  const docRow = await doc.page.locator(`${E} .docs-file:has-text('Untitled document')`).count();
+  check(docRow === 1, "the new document is listed");
+  const storedDoc = [...blobs.entries()].find(([k, v]) => k.startsWith(`p/${GROUP}/`) && k.endsWith("/content") && v.subarray(0, 4).toString() === "LDOC");
+  check(Boolean(storedDoc), "…and stored in R2 as a Live document (p/<scope>/<file>/content)");
+  const docVersions = (await db.query("select slot from public.doc_pversions")).rows;
+  check(docVersions.length >= 1, "closing keeps a version (doc_pversions row)", JSON.stringify(docVersions));
+  await doc.page.click(`${E} .docs-file:has-text('Untitled document')`);
+  await doc.page.waitForSelector(".wp-root [data-doc] .ProseMirror", { timeout: 30000 });
+  await doc.page.waitForTimeout(300);
+  check((await doc.page.locator(".wp-root [data-doc] .ProseMirror").innerText()).includes("Grocery budget for December"), "reopening shows what was typed");
+  await doc.page.click(".wp-root [data-act=close]");
+  await doc.page.waitForFunction(() => !document.querySelector(".wp-root"), null, { timeout: 15000 });
+  {
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import("docx");
+    const wordBytes = Buffer.from(await (await Packer.toBlob(new Document({ sections: [{ children: [new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("Lease summary")] }), new Paragraph({ children: [new TextRun({ text: "Rent is due on the 1st.", bold: true })] })] }] }))).arrayBuffer());
+    await doc.page.click(`${E} [data-act=add]`);
+    const [chooser] = await Promise.all([doc.page.waitForEvent("filechooser"), doc.page.click(`[data-act=add-word]`)]);
+    await chooser.setFiles({ name: "Lease summary.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: wordBytes });
+    await doc.page.waitForSelector(".wp-root [data-doc] .ProseMirror h1", { timeout: 30000 });
+    const t = await doc.page.locator(".wp-root [data-doc] .ProseMirror").innerText();
+    check(t.includes("Lease summary") && t.includes("Rent is due"), "a Word file opens as a Live document, headings and text kept");
+    check(await doc.page.$eval(".wp-root [data-doc] .ProseMirror", (el) => Boolean(el.querySelector("strong"))), "…with its bold text");
+    await doc.page.click(".wp-root [data-act=close]");
+    await doc.page.waitForFunction(() => !document.querySelector(".wp-root"), null, { timeout: 15000 });
+  }
   await doc.page.setViewportSize({ width: 360, height: 740 });
   check(await noSideScroll(doc), "the Document page fits a 360 px phone");
   await shot(doc, "11-everyday-narrow");
