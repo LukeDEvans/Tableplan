@@ -26,6 +26,7 @@ export const LIMITS = Object.freeze({ name: 200, text: 256 * 1024, tags: 20, tag
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export const MIME_TYPES = Object.freeze([
+  "application/vnd.live.doc", // a Live document (the word processor; WORD_PROCESSOR_DESIGN.md §12)
   "application/pdf",
   "image/jpeg", "image/png", "image/heic", "image/heif", "image/webp", "image/gif",
   "text/plain", "text/csv",

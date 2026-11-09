@@ -524,6 +524,23 @@ try {
   check((await doc.page.evaluate(() => window.__toasts)).includes("Moved 3 documents out of the Safe."), "…Move them takes them out", (await doc.page.evaluate(() => window.__toasts)).join(" | "));
   const stabs2 = await doc.page.locator("[data-safe-root] .docs-sidebar .article-sidebar-tab span").allInnerTexts();
   check(!stabs2.includes("Home") && await doc.page.locator("[data-safe-root] [data-act=move-out]").count() === 0, "…the Safe's empty Home folder is hidden and the offer is gone", stabs2.join(", "));
+  // A document in the Safe: made and edited in the same editor, stored only as ciphertext.
+  await doc.page.click("[data-safe-root] [data-act=new-safe-doc]");
+  await doc.page.waitForSelector(".wp-root [data-doc] .ProseMirror", { timeout: 30000 });
+  await doc.page.click(".wp-root [data-doc] .ProseMirror");
+  await doc.page.keyboard.type("Passport renewal notes", { delay: 10 });
+  await doc.page.waitForFunction(() => /saved/i.test(document.querySelector(".wp-status")?.textContent || ""), null, { timeout: 15000 });
+  await doc.page.click(".wp-root [data-act=close]");
+  await doc.page.waitForFunction(() => !document.querySelector(".wp-root"), null, { timeout: 15000 });
+  const safeBlobs = [...blobs.entries()].filter(([k]) => k.startsWith(`${GROUP}/`));
+  check(safeBlobs.length > 0 && safeBlobs.every(([, v]) => !v.toString("latin1").includes("Passport")), "a Safe document is stored only as ciphertext");
+  check(!JSON.stringify((await db.query("select * from public.doc_sversions")).rows).includes("Passport"), "…its version rows carry nothing readable");
+  await doc.page.click("[data-safe-root] .docs-file:has-text('Untitled document')");
+  await doc.page.waitForSelector(".wp-root [data-doc] .ProseMirror", { timeout: 30000 });
+  await doc.page.waitForTimeout(300);
+  check((await doc.page.locator(".wp-root [data-doc] .ProseMirror").innerText()).includes("Passport renewal notes"), "…and opens again on the device with its text");
+  await doc.page.click(".wp-root [data-act=close]");
+  await doc.page.waitForFunction(() => !document.querySelector(".wp-root"), null, { timeout: 15000 });
   await doc.page.click("[data-act=leave-safe]");
   await doc.page.waitForSelector(`${E} .docs-sidebar`, { timeout: 20000 });
   check(await doc.page.evaluate(() => window.__ui._debug.safe._debug.locked), "leaving the Safe locks it");

@@ -267,6 +267,9 @@ export function createDocumentsLibrary({ server, storage, vaults, store, userId,
   return {
     folders, addFolder, ensureStartingFolders, renameFolder, deleteFolder,
     files, addFile, has, open, thumbnail, searchText,
+    // The word processor in the Safe (WORD_PROCESSOR_DESIGN.md §12): the file key of a
+    // document, unwrapped on this device from a fresh row, for documents/editor/store-safe.js.
+    docKey: async (scope, fileId) => (await rowFor(scope, fileId, { fresh: true })).fileKey,
     rename, setTags, setDocumentDate, move, trash, restore, purge, purgeExpired, usage,
   };
 }
