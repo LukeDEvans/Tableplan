@@ -15,6 +15,10 @@
 
 const PARTS = new Set(["content", "thumb", "text"]);
 const EVERYDAY_PARTS = new Set(["content", "thumb"]);
+// The word processor's extra parts (WORD_PROCESSOR_DESIGN.md §3, §6), in either tier:
+// a version snapshot in its slot (v + h00–h23 | d01–d31 | w00–w52 | n<32 hex>) and an
+// image in a document (i<32 hex>).
+export const EDITOR_PART_RE = /^(v(h(0[0-9]|1[0-9]|2[0-3])|d(0[1-9]|[12][0-9]|3[01])|w([0-4][0-9]|5[0-2])|n[0-9a-f]{32})|i[0-9a-f]{32})$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCOPE_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export const MAX_PART_BYTES = 70 * 1024 * 1024;
@@ -23,7 +27,7 @@ export const MAX_BATCH = 25;
 export function objectKey({ scope, fileId, part, tier }) {
   if (!SCOPE_RE.test(scope || "")) throw new Error("storage: bad scope");
   if (!UUID_RE.test(fileId || "")) throw new Error("storage: bad file id");
-  if (!(tier === "everyday" ? EVERYDAY_PARTS : PARTS).has(part)) throw new Error("storage: bad part");
+  if (!(tier === "everyday" ? EVERYDAY_PARTS : PARTS).has(part) && !EDITOR_PART_RE.test(part || "")) throw new Error("storage: bad part");
   return `${tier === "everyday" ? "p/" : ""}${scope}/${fileId.toLowerCase()}/${part}`;
 }
 
