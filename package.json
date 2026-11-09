@@ -41,7 +41,9 @@
     "qa:docs-editor": "node scripts/qa-docs-editor.mjs",
     "check:messaging-migration": "node scripts/check-messaging-migration.mjs",
     "ios:sync": "vite build && npx cap sync ios",
-    "ios:open": "npx cap open ios"
+    "ios:open": "npx cap open ios",
+    "qa:sheet": "node scripts/qa-sheet.mjs",
+    "sheet:conformance": "node scripts/sheet-conformance.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^6.2.2",
