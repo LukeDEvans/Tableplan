@@ -499,7 +499,10 @@ export function shortId() {
 
 // The schema's extensions. { collaboration: true } leaves out Tiptap's own undo
 // history (Yjs keeps a per-person one instead).
-export function baseExtensions({ collaboration = false, placeholder = "", resolveImage = null } = {}) {
+// nodeViews: { image, tableOfContents, smartChip } node-view factories (the editor's,
+// documents/editor/nodeviews.js); onMathClick(node, pos, kind) edits an equation.
+export function baseExtensions({ collaboration = false, placeholder = "", resolveImage = null, nodeViews = {}, onMathClick = null } = {}) {
+  const withView = (ext, name) => (nodeViews[name] ? ext.extend({ addNodeView: () => nodeViews[name] }) : ext);
   return [
     StarterKit.configure({
       undoRedo: collaboration ? false : undefined,
@@ -512,9 +515,10 @@ export function baseExtensions({ collaboration = false, placeholder = "", resolv
     ParagraphFormat, ListStyles, TextTools,
     TaskList, TaskItem.configure({ nested: true }),
     TableKit.configure({ table: { resizable: true, lastColumnResizable: false }, tableCell: false, tableHeader: false }), LiveCell, LiveHeader,
-    LiveImage.configure({ resolve: resolveImage }),
-    PageBreak, TableOfContents, Footnote, Bookmark, SmartChip, PageNumber,
-    InlineMath, BlockMath,
+    withView(LiveImage, "image").configure({ resolve: resolveImage }),
+    PageBreak, withView(TableOfContents, "tableOfContents"), Footnote, Bookmark, withView(SmartChip, "smartChip"), PageNumber,
+    InlineMath.configure(onMathClick ? { onClick: (node, pos) => onMathClick(node, pos, "inline") } : {}),
+    BlockMath.configure(onMathClick ? { onClick: (node, pos) => onMathClick(node, pos, "block") } : {}),
     CommentMark, Insertion, Deletion,
     CharacterCount,
     ...(placeholder ? [Placeholder.configure({ placeholder })] : []),
