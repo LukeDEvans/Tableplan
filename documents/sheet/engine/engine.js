@@ -191,7 +191,7 @@ export function createEngine({ functions = new Map(), now = () => Date.now(), ra
   function setName(name, boundRef) {
     const u = name.toUpperCase();
     if (boundRef) names.set(u, boundRef); else names.delete(u);
-    for (const f of nameUsers.get(u) || []) { unindexDeps(f); indexDeps(f); pendingDirty.add(f); }
+    for (const f of [...(nameUsers.get(u) || [])]) { unindexDeps(f); indexDeps(f); pendingDirty.add(f); } // a copy: re-indexing adds to the set
   }
 
   // ---- resolving refs -------------------------------------------------------------------
@@ -726,6 +726,7 @@ export function createEngine({ functions = new Map(), now = () => Date.now(), ra
     return valueAt(tabId, r, c);
   }
   function valueAt(tabId, r, c) {
+    if (pendingChanged.size || pendingDirty.size) recalc(); // never read a stale value
     depth = 0;
     try { return cellValueAt(tabId, r, c); } catch (e) { if (e === DEFER || e instanceof RangeError) { recalc(); depth = 0; return cellValueAt(tabId, r, c); } throw e; }
   }
