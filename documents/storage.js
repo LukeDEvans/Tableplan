@@ -67,6 +67,16 @@ export function createDocumentsStorage({ presign, fetchImpl = (...a) => globalTh
       return items.reduce((n, i) => n + i.size, 0);
     },
 
+    // One part on its own (the word processor's version slots and images).
+    async putPart(scope, fileId, part, bytes) {
+      if (!(bytes instanceof Uint8Array) || !bytes.length) throw new Error("storage: parts must be bytes");
+      if (bytes.length > MAX_PART_BYTES) throw new StorageError("TOO_LARGE", "That file is too large.");
+      const [signed] = await urls("put", [{ scope, fileId, part, size: bytes.length }]);
+      const res = await fetchImpl(signed.url, { method: "PUT", headers: signed.headers || {}, body: bytes });
+      if (!res.ok) throw new StorageError("UPLOAD", `Upload failed (${res.status}).`, res.status);
+      return bytes.length;
+    },
+
     async get(scope, fileId, part) {
       const [signed] = await urls("get", [{ scope, fileId, part }]);
       const res = await fetchImpl(signed.url, { method: "GET", headers: signed.headers || {} });
@@ -76,12 +86,14 @@ export function createDocumentsStorage({ presign, fetchImpl = (...a) => globalTh
     },
 
     async remove(scope, fileId, parts = tier === "everyday" ? ["content", "thumb"] : ["content", "thumb", "text"]) {
-      const items = parts.map((part) => ({ scope, fileId, part }));
-      const signed = await urls("delete", items);
-      await Promise.all(signed.map(async (s) => {
-        const res = await fetchImpl(s.url, { method: "DELETE", headers: s.headers || {} });
-        if (!res.ok && res.status !== 404) throw new StorageError("DELETE", `Delete failed (${res.status}).`, res.status);
-      }));
+      for (let i = 0; i < parts.length; i += MAX_BATCH) {
+        const items = parts.slice(i, i + MAX_BATCH).map((part) => ({ scope, fileId, part }));
+        const signed = await urls("delete", items);
+        await Promise.all(signed.map(async (s) => {
+          const res = await fetchImpl(s.url, { method: "DELETE", headers: s.headers || {} });
+          if (!res.ok && res.status !== 404) throw new StorageError("DELETE", `Delete failed (${res.status}).`, res.status);
+        }));
+      }
     },
   };
 }
