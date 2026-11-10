@@ -82,7 +82,7 @@ function itemHtml(it, ctx) {
     const color = stroke || resolveColor("@dk1", theme);
     const id = `ln${++lineSeq}`;
     const w = Math.max(1, n(it.w)), h = Math.max(1, n(it.h));
-    return `<div ${attrs}><svg class="sl-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" overflow="visible" aria-hidden="true"><defs>${svgDefsForLine(it, color, id)}</defs><path d="${linePath(it)}" fill="none" stroke="${color}" stroke-width="${Math.max(1, n(it.sw, 3))}" stroke-linecap="round" stroke-linejoin="round"${it.dash ? ` stroke-dasharray="${dashArray(it.dash, it.sw)}"` : ""}${it.a1 && it.a1 !== "none" ? ` marker-start="url(#${id}-s)"` : ""}${it.a2 && it.a2 !== "none" ? ` marker-end="url(#${id}-e)"` : ""}/></svg></div>`;
+    return `<div ${attrs}><svg class="sl-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" overflow="visible" aria-hidden="true"><defs>${svgDefsForLine(it, color, id)}</defs><path class="sl-hit" d="${linePath(it)}" fill="none" stroke="transparent" stroke-width="28"/><path d="${linePath(it)}" fill="none" stroke="${color}" stroke-width="${Math.max(1, n(it.sw, 3))}" stroke-linecap="round" stroke-linejoin="round"${it.dash ? ` stroke-dasharray="${dashArray(it.dash, it.sw)}"` : ""}${it.a1 && it.a1 !== "none" ? ` marker-start="url(#${id}-s)"` : ""}${it.a2 && it.a2 !== "none" ? ` marker-end="url(#${id}-e)"` : ""}/></svg></div>`;
   }
 
   if (it.t === "image") {

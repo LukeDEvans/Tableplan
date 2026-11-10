@@ -67,8 +67,44 @@ export function cleanItem(v, id = v?.id) {
 const plainOf = (ymap) => {
   const o = {};
   ymap.forEach((v, k) => { if (!(v instanceof Y.AbstractType)) o[k] = v; });
+  const t = tableData(ymap);
+  if (t) Object.assign(o, t);
   return o;
 };
+
+// Tables keep row and column identities (as the spreadsheet does), so two people adding
+// rows and typing in cells at once merge cleanly. Cells are keyed "<rowId>.<colId>".
+export const MAX_ROWS = 30, MAX_COLS = 12;
+function tableData(im) {
+  const r = im.get("rowIds"), c = im.get("colIds"), cm = im.get("cellmap");
+  if (!(r instanceof Y.Array) || !(c instanceof Y.Array) || !(cm instanceof Y.Map)) return null;
+  const rows = r.toArray(), cols = c.toArray();
+  const cells = {};
+  rows.forEach((rid, i) => cols.forEach((cid, j) => { const v = cm.get(`${rid}.${cid}`); if (v && typeof v === "object") cells[`${i}.${j}`] = v; }));
+  return { rows: rows.length, cols: cols.length, cells };
+}
+const cleanCell = (v) => {
+  if (!v || typeof v !== "object") return null;
+  const o = {};
+  if (typeof v.text === "string") o.text = v.text.slice(0, 5000);
+  for (const k of ["fill", "color", "align"]) if (typeof v[k] === "string" && v[k].length < 40) o[k] = v[k];
+  if (v.bold === true) o.bold = true;
+  if (v.italic === true) o.italic = true;
+  for (const k of ["rs", "cs"]) if (Number.isInteger(v[k]) && v[k] > 1 && v[k] <= 30) o[k] = v[k];
+  return Object.keys(o).length ? o : null;
+};
+function buildTable(im, rows, cols, cells = {}) {
+  const r = new Y.Array(), c = new Y.Array(), cm = new Y.Map();
+  const rids = Array.from({ length: Math.max(1, Math.min(MAX_ROWS, rows)) }, rid);
+  const cids = Array.from({ length: Math.max(1, Math.min(MAX_COLS, cols)) }, rid);
+  r.push(rids); c.push(cids);
+  for (const [k, v] of Object.entries(cells || {})) {
+    const [i, j] = k.split(".").map(Number);
+    const cell = cleanCell(v);
+    if (cell && rids[i] && cids[j]) cm.set(`${rids[i]}.${cids[j]}`, cell);
+  }
+  im.set("rowIds", r); im.set("colIds", c); im.set("cellmap", cm);
+}
 
 export const TRANSITIONS = Object.freeze(["none", "dissolve", "fade", "slide", "flip", "cube", "gallery", "zoom"]);
 export const EFFECTS = Object.freeze(["appear", "disappear", "fade-in", "fade-out", "fly-in", "fly-out", "zoom-in", "zoom-out", "spin", "grow", "shrink"]);
@@ -136,6 +172,7 @@ export function createSlidesModel(ydoc) {
     const im = new Y.Map();
     for (const [k, v] of Object.entries(fields)) if (k !== "id" && v !== undefined) im.set(k, v);
     if (TEXT_TYPES.has(fields.t)) im.set("text", new Y.XmlFragment());
+    if (fields.t === "table") { im.delete("cells"); im.delete("rows"); im.delete("cols"); buildTable(im, fields.rows || 2, fields.cols || 2, fields.cells); }
     return im;
   }
 
@@ -481,6 +518,46 @@ export function createSlidesModel(ydoc) {
     return items(sid).filter((x) => x.grp === it.grp).map((x) => x.id);
   }
 
+  // ---- tables --------------------------------------------------------------------------------
+  function tableCell(sid, iid, r, c, patch) {
+    const im = itemMap(sid, iid);
+    const rid2 = im?.get("rowIds")?.get(r), cid = im?.get("colIds")?.get(c);
+    if (!rid2 || !cid) return;
+    tx(() => {
+      const cm = im.get("cellmap");
+      const key = `${rid2}.${cid}`;
+      const next = cleanCell({ ...(cm.get(key) || {}), ...patch });
+      for (const [k, v] of Object.entries(patch)) if (v === null) delete next?.[k];
+      if (next && Object.keys(next).length) cm.set(key, next); else cm.delete(key);
+    });
+  }
+  // axis "row" | "col"; at = index to insert before
+  function tableInsert(sid, iid, axis, at) {
+    const im = itemMap(sid, iid);
+    const arr = im?.get(axis === "row" ? "rowIds" : "colIds");
+    if (!arr || arr.length >= (axis === "row" ? MAX_ROWS : MAX_COLS)) return false;
+    tx(() => {
+      arr.insert(Math.max(0, Math.min(at, arr.length)), [rid()]);
+      if (axis === "col") { const w = im.get("colW"); if (Array.isArray(w)) { const n = [...w]; n.splice(at, 0, 1); im.set("colW", n); } }
+      else im.set("h", (im.get("h") || 0) + Math.round((im.get("h") || 0) / Math.max(1, arr.length - 1)));
+    });
+    return true;
+  }
+  function tableDelete(sid, iid, axis, at) {
+    const im = itemMap(sid, iid);
+    const arr = im?.get(axis === "row" ? "rowIds" : "colIds");
+    if (!arr || arr.length <= 1 || at < 0 || at >= arr.length) return false;
+    tx(() => {
+      const gone = arr.get(at);
+      arr.delete(at, 1);
+      const cm = im.get("cellmap");
+      for (const k of [...cm.keys()]) if (axis === "row" ? k.startsWith(`${gone}.`) : k.endsWith(`.${gone}`)) cm.delete(k);
+      if (axis === "col") { const w = im.get("colW"); if (Array.isArray(w)) { const n = [...w]; n.splice(at, 1); im.set("colW", n); } }
+      else im.set("h", Math.max(20, Math.round((im.get("h") || 0) * (arr.length / (arr.length + 1)))));
+    });
+    return true;
+  }
+
   // ---- animations ----------------------------------------------------------------------------
   function setAnims(sid, list) {
     tx(() => {
@@ -546,7 +623,7 @@ export function createSlidesModel(ydoc) {
     slideIds, slide, items, item, text, notes, anims, slideMap, itemMap,
     addSlide, duplicateSlides, deleteSlides, moveSlides, setSlide, setLayout,
     addItem, updateItems, deleteItems, copyItems, pasteItems, exportSlides, importSlides, restack, group, ungroup, groupOf,
-    setAnims, addMedia, mediaInfo, usedMedia,
+    setAnims, addMedia, mediaInfo, usedMedia, tableCell, tableInsert, tableDelete,
     tidy, searchText,
     transact: tx,
   };
@@ -605,12 +682,16 @@ export function xmlFromJson(json, target = new Y.XmlFragment()) {
 export function itemToJson(im) {
   const fields = {};
   im.forEach((v, k) => { if (!(v instanceof Y.AbstractType)) fields[k] = v; });
+  const t = tableData(im);
+  if (t) Object.assign(fields, t);
   const fr = im.get("text");
   return { fields, text: fr instanceof Y.XmlFragment ? xmlToJson(fr) : null };
 }
 export function itemFromJson({ fields, text }) {
   const im = new Y.Map();
-  for (const [k, v] of Object.entries(fields || {})) if (k !== "id" && v !== undefined) im.set(k, v);
+  const table = fields?.t === "table";
+  for (const [k, v] of Object.entries(fields || {})) if (k !== "id" && v !== undefined && !(table && ["cells", "rows", "cols"].includes(k))) im.set(k, v);
   if (TEXT_TYPES.has(fields?.t)) im.set("text", text ? xmlFromJson(text, new Y.XmlFragment()) : new Y.XmlFragment());
+  if (table) buildTable(im, fields.rows || 2, fields.cols || 2, fields.cells);
   return im;
 }

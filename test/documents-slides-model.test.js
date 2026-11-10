@@ -321,3 +321,32 @@ describe("slides as JSON", () => {
     expect(other.m.slide(n).transition.kind).toBe("cube");
   });
 });
+
+describe("tables", () => {
+  it("adds rows and types in cells at once on two devices", () => {
+    const { a, b } = two();
+    const s = a.m.slideIds()[0];
+    const t = a.m.addItem(s, { t: "table", rows: 2, cols: 2, h: 140 });
+    sync(a, b);
+    a.m.tableInsert(s, t, "row", 0);
+    b.m.tableCell(s, t, 1, 1, { text: "B2" });
+    sync(a, b);
+    const ta = a.m.item(s, t), tb2 = b.m.item(s, t);
+    expect(ta.rows).toBe(3);
+    expect(ta.cells["2.1"].text).toBe("B2"); // moved down with its row
+    expect(tb2.cells).toEqual(ta.cells);
+  });
+  it("deletes a column with its cells, and copies whole tables", () => {
+    const { m } = device();
+    m.init();
+    const s = m.slideIds()[0];
+    const t = m.addItem(s, { t: "table", rows: 2, cols: 3, cells: { "0.0": { text: "a" }, "0.2": { text: "c", bold: true } } });
+    m.tableDelete(s, t, "col", 1);
+    expect(m.item(s, t).cols).toBe(2);
+    expect(m.item(s, t).cells["0.1"]).toEqual({ text: "c", bold: true });
+    const [p] = m.pasteItems(s, m.copyItems(s, [t]));
+    expect(m.item(s, p).cells).toEqual(m.item(s, t).cells);
+    m.tableCell(s, p, 0, 0, { text: "changed" });
+    expect(m.item(s, t).cells["0.0"].text).toBe("a");
+  });
+});
