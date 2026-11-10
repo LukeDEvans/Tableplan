@@ -185,3 +185,26 @@
 .sh-swatch.is-on { outline: 2px solid var(--accent); outline-offset: 1px; }
 .sh-hint { position: absolute; z-index: 20; max-width: 280px; padding: 6px 10px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 0.85em; pointer-events: none; }
 .sh-hint.is-bad { border-color: var(--sheet-error); }
+
+/* charts (chart-ui.js) */
+.sh-charts { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 4; }
+.sh-chart { position: absolute; pointer-events: auto; background: var(--sheet-bg); border: 1px solid var(--sheet-line); border-radius: 6px; box-shadow: 0 1px 3px color-mix(in srgb, var(--ink) 15%, transparent); cursor: grab; touch-action: none; outline: none; overflow: hidden; }
+.sh-chart.is-locked { cursor: default; }
+.sh-chart.is-selected { border-color: var(--sheet-accent); box-shadow: 0 0 0 1px var(--sheet-accent); touch-action: none; }
+.sh-chart-svg, .sh-chart-svg svg { display: block; width: 100%; height: 100%; }
+.sh-chart-svg svg { stroke: none; stroke-width: 1; fill: none; } /* the app's icon defaults on every svg would outline the chart's text and bands */
+.sh-chart-svg [data-tip] { cursor: default; }
+.sh-chart-svg .is-hot:not(rect[fill=transparent]) { opacity: 0.85; }
+.sh-chart-svg rect.is-hot[fill=transparent] { fill: color-mix(in srgb, var(--ink) 6%, transparent); }
+.sh-chart-more { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; border: 0; border-radius: 6px; background: color-mix(in srgb, var(--sheet-bg) 85%, transparent); color: var(--ink); cursor: pointer; opacity: 0; font-size: 16px; line-height: 1; }
+.sh-chart:hover .sh-chart-more, .sh-chart.is-selected .sh-chart-more, .sh-chart:focus-within .sh-chart-more { opacity: 1; }
+.sh-chart-size { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; display: none; background: linear-gradient(135deg, transparent 50%, var(--sheet-accent) 50%); border-bottom-right-radius: 5px; }
+.sh-chart.is-selected:not(.is-locked) .sh-chart-size { display: block; }
+@media (pointer: coarse) { .sh-chart-more { opacity: 1; } .sh-chart-size { width: 22px; height: 22px; } }
+.sh-chart-tip { position: absolute; z-index: 5; pointer-events: none; white-space: pre; max-width: 260px; padding: 6px 8px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 12px color-mix(in srgb, var(--ink) 18%, transparent); font-size: 12px; line-height: 1.35; }
+.sh-ce-check { display: flex; align-items: center; gap: 8px; font-size: 0.9em; }
+.sh-ce-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sh-ce-series { display: flex; flex-direction: column; gap: 6px; }
+.sh-ce-series label { display: flex; align-items: center; gap: 8px; font-size: 0.9em; min-width: 0; }
+.sh-ce-series span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-ce-series input[type=color] { width: 32px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; flex: none; }

@@ -16,6 +16,7 @@
 //   "colmeta:<id>"  Map    colId → { w?, hidden? }
 //   "merges:<id>"   Map    mergeId → { r1, c1, r2, c2 } (ids of the corners)
 //   "rules:<id>"    Map    ruleId → a conditional format or data validation rule (rules.js)
+//   "charts:<id>"   Map    chartId → a chart (charts.js): type, options, range and position by ids
 //   "filters:<id>"  Map    "filter" → the tab's filter { top, bottom, left, right } (ids),
 //                          "view:<vid>" → a filter view { name, top, bottom, left, right },
 //                          "crit:<owner>:<colId>" → that column's criteria (filters.js);
@@ -98,6 +99,7 @@ export function createSheetModel(ydoc) {
   const merges = (id) => ydoc.getMap(`merges:${id}`);
   const filtersMap = (id) => ydoc.getMap(`filters:${id}`);
   const rulesMap = (id) => ydoc.getMap(`rules:${id}`);
+  const chartsMap = (id) => ydoc.getMap(`charts:${id}`);
 
   const tx = (fn, origin = LOCAL) => { let out; ydoc.transact(() => { out = fn(); }, origin); return out; };
   const uniq = (arr) => { const seen = new Set(); const out = []; for (const x of arr) if (typeof x === "string" && !seen.has(x)) { seen.add(x); out.push(x); } return out; };
@@ -433,6 +435,16 @@ export function createSheetModel(ydoc) {
         if (touched) rm.set(id, n);
       }
     }
+    for (const t of tabIds()) {
+      const cm = chartsMap(t);
+      for (const [id, c] of cm.entries()) {
+        if (!c) continue;
+        let n = c;
+        if (t === tab && c.range && (at.has(c.range.top) || at.has(c.range.bottom))) n = { ...n, range: { ...c.range, top: pin(c.range.top), bottom: pin(c.range.bottom) } };
+        if (t === tab && c.pos && at.has(c.pos.row)) n = { ...n, pos: { ...c.pos, row: pin(c.pos.row) } }; // a chart stays where it was on screen
+        if (n !== c) cm.set(id, n);
+      }
+    }
     const fm = filtersMap(tab);
     for (const [k, v] of fm.entries()) {
       if (!v || k.startsWith("crit:")) continue;
@@ -668,8 +680,25 @@ export function createSheetModel(ydoc) {
     tx(() => list.forEach((r, k) => { if (r.order !== k) { const { id: rid, ...rest } = r; rulesMap(tab).set(rid, { ...rest, order: k }); } }));
   }
 
+  // ---- charts (charts.js) ----------------------------------------------------------------------
+
+  function chartsOf(tab) {
+    const out = [];
+    for (const [id, c] of chartsMap(tab).entries()) if (c && c.type) out.push({ ...c, id });
+    return out.sort((a, b) => (a.z ?? 0) - (b.z ?? 0) || a.id.localeCompare(b.id));
+  }
+  function setChart(tab, id, chart) {
+    const cid = id || newId();
+    const next = JSON.parse(JSON.stringify({ ...chart }));
+    delete next.id;
+    tx(() => chartsMap(tab).set(cid, next));
+    return cid;
+  }
+  function removeChart(tab, id) { tx(() => chartsMap(tab).delete(id)); }
+
   return {
     ydoc, grid, LOCAL,
+    chartsOf, setChart, removeChart,
     rulesOf, setRule, removeRule, moveRule,
     filterOf, setFilter, setCriteria, removeFilter, filterViews, newFilterView,
     init, tidy, filledCells, searchText,

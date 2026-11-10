@@ -104,6 +104,14 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
 - `rules-ui.js` and `filter-ui.js` each watch their `rules:*` / `filters:*` types and
   redraw; on a phone only one bottom sheet is open at a time.
 
+## Charts
+- Our own SVG (`chart-svg.js`), on the house chart rules (the dataviz skill): palette in
+  fixed order with dark steps, never cycled (past eight → grey "Other"); thin bars with
+  4px rounded ends; 2px gaps; a legend for ≥ 2 series; **one y axis only** (combo shares it).
+- The app's global `svg { stroke… }` would outline chart text: `.sh-chart-svg svg` resets it.
+- Charts are DOM over the canvas (`chart-ui.js`), placed in grid content coordinates
+  (anchor cell id + offset); sorting pins their range and anchor (`keepRangesInPlace`).
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->
 - files: `documents/sheet/*.js`, `documents/sheet/engine/*.js`, `documents/sheet/engine/functions/*.js`

@@ -22,6 +22,8 @@ import { geometry, drawGrid, displayOf, a1Of, DEF_W, DEF_H } from "./grid.js";
 import { toCsv, parseCsv } from "./csv.js";
 import { createFilterUI } from "./filter-ui.js";
 import { createRulesUI } from "./rules-ui.js";
+import { createChartUI } from "./chart-ui.js";
+import { regionAround } from "./filters.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const safeColor = (c) => (/^#[0-9a-f]{3,8}$/i.test(String(c || "")) ? c : null);
@@ -123,7 +125,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   // ---- undo (only my edits) -----------------------------------------------------------------
   const undoScope = () => {
     const types = [session.ydoc.getArray("tabs"), session.ydoc.getMap("styles"), session.ydoc.getMap("names")];
-    for (const t of model.tabIds()) for (const p of ["tab", "rows", "cols", "cells", "rowmeta", "colmeta", "merges", "filters", "rules"]) types.push(p === "rows" || p === "cols" ? session.ydoc.getArray(`${p}:${t}`) : session.ydoc.getMap(`${p}:${t}`));
+    for (const t of model.tabIds()) for (const p of ["tab", "rows", "cols", "cells", "rowmeta", "colmeta", "merges", "filters", "rules", "charts"]) types.push(p === "rows" || p === "cols" ? session.ydoc.getArray(`${p}:${t}`) : session.ydoc.getMap(`${p}:${t}`));
     return types;
   };
   const undo = new Y.UndoManager(undoScope(), { trackedOrigins: new Set([LOCAL]), captureTimeout: 400 });
@@ -144,6 +146,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   let filterHead = null;
   const rx = createRulesUI({ root, model, engine, st, schedule: (o) => schedule(o), toast, isPhone, colors: COLORS, cellRect: (r, c) => cellRect(r, c), scroller, openMenu: (items, at) => openMenu(items, at) });
   let rulesC = null;
+  const cx = createChartUI({ root, model, engine, st, schedule: (o) => schedule(o), toast, isPhone, openMenu: (items, at) => openMenu(items, at), share: deps.share, fileName: () => nameInput?.value || file.name, regionAround, scroller });
 
   // ---- drawing --------------------------------------------------------------------------------
   function schedule({ geom = true } = {}) {
@@ -153,6 +156,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   }
   function draw() {
     if (!model.tabIds().includes(st.tab)) st.tab = model.tabIds()[0];
+    const fresh = geomDirty; // values or layout changed: charts redraw their pictures too
     if (geomDirty) { g = geometry(model, st.tab, st.zoom, fx.hidden()); filterHead = fx.head(); rulesC = rx.compiled(); geomDirty = false; }
     clampSel();
     sizer.style.width = `${g.width + g.headW + 60}px`;
@@ -160,6 +164,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     const w = scroller.clientWidth, h = scroller.clientHeight;
     const peers = peerCells();
     drawGrid(canvas, model, engine, st.tab, g, { scrollX: st.scrollX, scrollY: st.scrollY, w, h, sel: st.sel, peers, editing: st.editing, dpr: window.devicePixelRatio || 1, filter: filterHead, rules: rulesC });
+    cx.update(g, { data: fresh });
     drawTabs();
     syncToolbar();
     if (!st.editing) showFormulaBar();
@@ -290,6 +295,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (e.button > 0) return;
     const h = hit(e.clientX, e.clientY);
     closePop();
+    cx.deselect();
     // putting a reference into the formula being typed
     if (st.editing && isFormulaText(currentEditText()) && !h.inColHead && !h.inRowHead && canInsertRef()) {
       e.preventDefault();
@@ -784,7 +790,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       { label: `${nRows()} row${nRows() > 1 ? "s" : ""} below`, run: () => model.insertRows(st.tab, s().r2 + 1, nRows()) },
       { label: `${nCols()} column${nCols() > 1 ? "s" : ""} left`, run: () => model.insertCols(st.tab, s().c1, nCols()) },
       { label: `${nCols()} column${nCols() > 1 ? "s" : ""} right`, run: () => model.insertCols(st.tab, s().c2 + 1, nCols()) },
-      { sep: true }, { label: "New tab", run: newTab }, { label: "Note", run: editNote },
+      { sep: true }, { label: "Chart", run: () => cx.insert(), disabled: st.viewing }, { label: "New tab", run: newTab }, { label: "Note", run: editNote },
       { label: "Function", sub: ["SUM", "AVERAGE", "COUNT", "MAX", "MIN", "IF", "VLOOKUP", "XLOOKUP", "SUMIF", "TODAY"].map((f) => ({ label: f, run: () => insertFunction(f) })) },
     ],
     format: () => [
@@ -985,6 +991,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (st.editing && !isFormulaText(currentEditText())) commitEdit();
     fx.close();
     rx.close();
+    cx.close(); cx.deselect();
     st.tab = t;
     scroller.scrollTop = 0; scroller.scrollLeft = 0; st.scrollX = st.scrollY = 0;
     st.sel = { r: 0, c: 0, r1: 0, c1: 0, r2: 0, c2: 0 };
@@ -1234,6 +1241,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (st.editing) commitEdit();
     fx.destroy();
     rx.destroy();
+    cx.destroy();
     statusEl.textContent = "Saving…";
     stopBridge();
     engine.close();
@@ -1257,7 +1265,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     // a cell's centre on screen (QA clicks there)
     cellCenter: (r, c) => { const R = cellRect(r, c), b = scroller.getBoundingClientRect(); return { x: b.left + R.x + R.w / 2, y: b.top + R.y + R.h / 2, w: R.w, h: R.h, right: b.left + R.x + R.w, bottom: b.top + R.y + R.h }; },
     shown: (r, c) => displayOf(model, engine, st.tab, r, c).text,
-    fx, rx, rowShown: (r) => g.rh[r] > 0, rules: () => rulesC,
+    fx, rx, cx, rowShown: (r) => g.rh[r] > 0, rules: () => rulesC,
     idle: () => engine.whenIdle(),
   };
   return { close, model, engine };
