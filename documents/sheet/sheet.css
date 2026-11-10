@@ -154,3 +154,34 @@
 .sh-viewbar .sh-icon { color: inherit; }
 @media (max-width: 420px) { .sh-viewbar .sh-vb-note { display: none; } .sh-viewbar .sh-btn { margin-left: auto; } }
 .sh-f-list input[type=checkbox] { width: auto; height: auto; flex: none; margin: 0; }
+
+/* rules on cells (rules-ui.js) */
+.sh-rules { position: absolute; right: 0; z-index: 34; width: 320px; background: var(--surface); color: var(--ink); border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,0.12); display: flex; flex-direction: column; overflow: hidden; }
+.sh-rules.is-sheet { left: 0; right: 0; bottom: 0; top: auto; width: auto; max-height: 80%; border-left: 0; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0; box-shadow: 0 -8px 24px rgba(0,0,0,0.18); padding-bottom: env(safe-area-inset-bottom); }
+.sh-rx-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); flex: none; }
+.sh-rx-list, .sh-rx-edit { overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.sh-rules > .sh-btn { margin: 0 14px 12px; }
+.sh-rx-item { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.sh-rx-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.sh-rx-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sh-rx-text > span, .sh-rx-text > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-rx-text small { color: var(--muted); }
+.sh-rx-item .sh-icon { min-width: 28px; height: 28px; }
+.sh-rx-prev { display: inline-block; min-width: 42px; height: 22px; line-height: 22px; text-align: center; border: 1px solid var(--line); border-radius: 4px; font-size: 0.85em; flex: none; }
+.sh-rx-empty, .sh-rx-note { color: var(--muted); font-size: 0.85em; margin: 0; }
+.sh-rx-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.9em; border: 0; padding: 0; margin: 0; }
+.sh-rx-field legend { padding: 0; margin-bottom: 4px; }
+.sh-rx-field > label { display: flex; align-items: center; gap: 6px; }
+.sh-rx-sub { font-size: 0.85em; color: var(--muted); }
+.sh-rx-edit input[type=text], .sh-rx-edit select, .sh-rx-edit textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+.sh-rx-edit input[type=radio] { width: auto; }
+.sh-rx-tabs { padding: 0; border: 0; }
+.sh-rx-point { display: grid; grid-template-columns: 70px 1fr 64px 36px; gap: 6px; align-items: center; font-size: 0.9em; }
+.sh-rx-point select { grid-column: 2; }
+.sh-rx-point input[type=text] { grid-column: 3; }
+.sh-rx-point input[type=color] { grid-column: 4; width: 36px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
+.sh-rx-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); flex: none; }
+.sh-rx-foot [data-rx=remove] { margin-right: auto; }
+.sh-swatch.is-on { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sh-hint { position: absolute; z-index: 20; max-width: 280px; padding: 6px 10px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 0.85em; pointer-events: none; }
+.sh-hint.is-bad { border-color: var(--sheet-error); }

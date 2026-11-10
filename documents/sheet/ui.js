@@ -21,6 +21,7 @@ import { readRef, indexToCol } from "./engine/parser.js";
 import { geometry, drawGrid, displayOf, a1Of, DEF_W, DEF_H } from "./grid.js";
 import { toCsv, parseCsv } from "./csv.js";
 import { createFilterUI } from "./filter-ui.js";
+import { createRulesUI } from "./rules-ui.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const safeColor = (c) => (/^#[0-9a-f]{3,8}$/i.test(String(c || "")) ? c : null);
@@ -122,7 +123,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   // ---- undo (only my edits) -----------------------------------------------------------------
   const undoScope = () => {
     const types = [session.ydoc.getArray("tabs"), session.ydoc.getMap("styles"), session.ydoc.getMap("names")];
-    for (const t of model.tabIds()) for (const p of ["tab", "rows", "cols", "cells", "rowmeta", "colmeta", "merges", "filters"]) types.push(p === "rows" || p === "cols" ? session.ydoc.getArray(`${p}:${t}`) : session.ydoc.getMap(`${p}:${t}`));
+    for (const t of model.tabIds()) for (const p of ["tab", "rows", "cols", "cells", "rowmeta", "colmeta", "merges", "filters", "rules"]) types.push(p === "rows" || p === "cols" ? session.ydoc.getArray(`${p}:${t}`) : session.ydoc.getMap(`${p}:${t}`));
     return types;
   };
   const undo = new Y.UndoManager(undoScope(), { trackedOrigins: new Set([LOCAL]), captureTimeout: 400 });
@@ -141,6 +142,8 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   const sizeOK = () => model.filledCells() <= MAX_CELLS;
   const fx = createFilterUI({ root, model, engine, st, schedule: (o) => schedule(o), cellRect: (r, c) => cellRect(r, c), scroller, toast, isPhone });
   let filterHead = null;
+  const rx = createRulesUI({ root, model, engine, st, schedule: (o) => schedule(o), toast, isPhone, colors: COLORS, cellRect: (r, c) => cellRect(r, c), scroller, openMenu: (items, at) => openMenu(items, at) });
+  let rulesC = null;
 
   // ---- drawing --------------------------------------------------------------------------------
   function schedule({ geom = true } = {}) {
@@ -150,17 +153,18 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   }
   function draw() {
     if (!model.tabIds().includes(st.tab)) st.tab = model.tabIds()[0];
-    if (geomDirty) { g = geometry(model, st.tab, st.zoom, fx.hidden()); filterHead = fx.head(); geomDirty = false; }
+    if (geomDirty) { g = geometry(model, st.tab, st.zoom, fx.hidden()); filterHead = fx.head(); rulesC = rx.compiled(); geomDirty = false; }
     clampSel();
     sizer.style.width = `${g.width + g.headW + 60}px`;
     sizer.style.height = `${g.height + g.headH + 60}px`;
     const w = scroller.clientWidth, h = scroller.clientHeight;
     const peers = peerCells();
-    drawGrid(canvas, model, engine, st.tab, g, { scrollX: st.scrollX, scrollY: st.scrollY, w, h, sel: st.sel, peers, editing: st.editing, dpr: window.devicePixelRatio || 1, filter: filterHead });
+    drawGrid(canvas, model, engine, st.tab, g, { scrollX: st.scrollX, scrollY: st.scrollY, w, h, sel: st.sel, peers, editing: st.editing, dpr: window.devicePixelRatio || 1, filter: filterHead, rules: rulesC });
     drawTabs();
     syncToolbar();
     if (!st.editing) showFormulaBar();
     placeCellEditor();
+    rx.hint();
     $("[data-act=start-edit]").hidden = !st.viewing;
     root.classList.toggle("is-viewing", st.viewing);
   }
@@ -297,7 +301,8 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     }
     if (st.editing) commitEdit();
     const fcol = fx.buttonAt(h);
-    if (fcol >= 0) { e.preventDefault(); select(h.r, fcol); fx.openPanel(fcol); return; }
+    if (fcol >= 0) { e.preventDefault(); select(h.r, fcol); if (isPhone()) rx.close(); fx.openPanel(fcol); return; }
+    if (!e.shiftKey && !h.inRowHead && !h.inColHead && rx.pointer(h)) { e.preventDefault(); select(h.r, h.c); return; }
     if (h.edgeCol >= 0) { drag = { kind: "colsize", i: h.edgeCol, start: e.clientX, size: g.cw[h.edgeCol] / st.zoom }; scroller.setPointerCapture(e.pointerId); return; }
     if (h.edgeRow >= 0) { drag = { kind: "rowsize", i: h.edgeRow, start: e.clientY, size: g.rh[h.edgeRow] / st.zoom }; scroller.setPointerCapture(e.pointerId); return; }
     if (h.inColHead && h.inRowHead) { select(0, 0, g.rows.length - 1, g.cols.length - 1, { r: 0, c: 0 }); return; }
@@ -318,6 +323,10 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (e.pointerType !== "touch") { drag = { kind: "cells" }; scroller.setPointerCapture(e.pointerId); }
     scroller.focus({ preventScroll: true });
   });
+  // A press that started (or continues) an edit keeps the keyboard in the editor: without
+  // this, the mouse press's own focus change moves it to the grid and typing is lost
+  // (a double-click to edit, or clicking cells into a formula).
+  scroller.addEventListener("mousedown", (e) => { if (st.editing) e.preventDefault(); });
   scroller.addEventListener("pointermove", (e) => {
     const h = hit(e.clientX, e.clientY);
     scroller.style.cursor = h.edgeCol >= 0 ? "col-resize" : h.edgeRow >= 0 ? "row-resize" : "";
@@ -389,6 +398,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     }
     const moves = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
     if (moves[k]) { e.preventDefault(); move(...moves[k], { extend: e.shiftKey, jump: mod }); return; }
+    if (rx.key(e)) return;
     if (k === "Enter") { e.preventDefault(); if (e.shiftKey) move(-1, 0); else if (st.viewing) move(1, 0); else beginEdit(null); return; }
     if (k === "Tab") { e.preventDefault(); move(0, e.shiftKey ? -1 : 1); return; }
     if (k === "PageDown" || k === "PageUp") { e.preventDefault(); move((k === "PageDown" ? 1 : -1) * Math.max(1, Math.floor(scroller.clientHeight / (DEF_H * st.zoom)) - 1), 0, { extend: e.shiftKey }); return; }
@@ -532,7 +542,9 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
         if (!sizeOK() && !model.cellAt(f.tab, r, c)) toast("This spreadsheet has reached 1,000,000 filled cells; clear some to add more.");
         else {
           const before = model.inputText(f.tab, r, c);
-          if (text !== before) {
+          const refused = text !== before ? rx.refuse(f.tab, r, c, text) : null;
+          if (refused) toast(`Not entered: ${refused}`);
+          else if (text !== before) {
             const res = model.setInput(f.tab, r, c, text);
             if (res.error) toast(res.error);
             if (model.filledCells() > WARN_CELLS && !warned) { warned = true; toast("This spreadsheet is getting large (over 200,000 filled cells) and may be slow on a phone."); }
@@ -769,6 +781,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       { label: "Text", sub: [{ label: "Bold", keys: "⌘B", run: () => toggleStyle("bold") }, { label: "Italic", keys: "⌘I", run: () => toggleStyle("italic") }, { label: "Underline", keys: "⌘U", run: () => toggleStyle("underline") }, { label: "Strikethrough", run: () => toggleStyle("strike") }] },
       { label: "Alignment", sub: alignItems() }, { label: "Wrapping", sub: wrapItems() },
       { label: "Merge cells", sub: mergeItems() },
+      { label: "Conditional formatting…", run: () => { fx.close(); rx.openFormatting(); } },
       { label: "Clear formatting", run: () => model.setStyle(...range(), { font: null, size: null, bold: null, italic: null, underline: null, strike: null, color: null, fill: null, halign: null, valign: null, wrap: null, format: null, borderTop: null, borderBottom: null, borderLeft: null, borderRight: null }) },
     ],
     data: () => [
@@ -776,7 +789,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       { label: `Sort sheet by column ${indexToCol(s().c)}, Z → A`, run: () => sortRows(false, true) },
       { label: "Sort range A → Z", run: () => sortRows(true, false), disabled: s().r1 === s().r2 },
       { label: "Sort range Z → A", run: () => sortRows(false, false), disabled: s().r1 === s().r2 },
-      { sep: true }, ...fx.menu(),
+      { sep: true }, ...fx.menu(), { label: "Data validation…", run: () => { fx.close(); rx.openValidation(); } },
       { sep: true }, { label: "Named ranges…", run: namedRanges },
     ],
   };
@@ -960,6 +973,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   function switchTab(t) {
     if (st.editing && !isFormulaText(currentEditText())) commitEdit();
     fx.close();
+    rx.close();
     st.tab = t;
     scroller.scrollTop = 0; scroller.scrollLeft = 0; st.scrollX = st.scrollY = 0;
     st.sel = { r: 0, c: 0, r1: 0, c1: 0, r2: 0, c2: 0 };
@@ -1208,6 +1222,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   async function close() {
     if (st.editing) commitEdit();
     fx.destroy();
+    rx.destroy();
     statusEl.textContent = "Saving…";
     stopBridge();
     engine.close();
@@ -1231,7 +1246,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     // a cell's centre on screen (QA clicks there)
     cellCenter: (r, c) => { const R = cellRect(r, c), b = scroller.getBoundingClientRect(); return { x: b.left + R.x + R.w / 2, y: b.top + R.y + R.h / 2, w: R.w, h: R.h, right: b.left + R.x + R.w, bottom: b.top + R.y + R.h }; },
     shown: (r, c) => displayOf(model, engine, st.tab, r, c).text,
-    fx, rowShown: (r) => g.rh[r] > 0,
+    fx, rx, rowShown: (r) => g.rh[r] > 0, rules: () => rulesC,
     idle: () => engine.whenIdle(),
   };
   return { close, model, engine };

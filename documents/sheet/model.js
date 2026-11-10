@@ -15,6 +15,7 @@
 //   "rowmeta:<id>"  Map    rowId → { h?, hidden? }
 //   "colmeta:<id>"  Map    colId → { w?, hidden? }
 //   "merges:<id>"   Map    mergeId → { r1, c1, r2, c2 } (ids of the corners)
+//   "rules:<id>"    Map    ruleId → a conditional format or data validation rule (rules.js)
 //   "filters:<id>"  Map    "filter" → the tab's filter { top, bottom, left, right } (ids),
 //                          "view:<vid>" → a filter view { name, top, bottom, left, right },
 //                          "crit:<owner>:<colId>" → that column's criteria (filters.js);
@@ -96,6 +97,7 @@ export function createSheetModel(ydoc) {
   const colMeta = (id) => ydoc.getMap(`colmeta:${id}`);
   const merges = (id) => ydoc.getMap(`merges:${id}`);
   const filtersMap = (id) => ydoc.getMap(`filters:${id}`);
+  const rulesMap = (id) => ydoc.getMap(`rules:${id}`);
 
   const tx = (fn, origin = LOCAL) => { let out; ydoc.transact(() => { out = fn(); }, origin); return out; };
   const uniq = (arr) => { const seen = new Set(); const out = []; for (const x of arr) if (typeof x === "string" && !seen.has(x)) { seen.add(x); out.push(x); } return out; };
@@ -581,8 +583,38 @@ export function createSheetModel(ydoc) {
     return id;
   }
 
+  // ---- rules on cells (rules.js) -----------------------------------------------------------
+
+  function rulesOf(tab) {
+    const out = [];
+    for (const [id, r] of rulesMap(tab).entries()) if (r && (r.kind === "format" || r.kind === "valid")) out.push({ ...r, id });
+    return out.sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id));
+  }
+  // Adds (id omitted) or replaces a rule; returns its id. A new formatting rule goes last.
+  function setRule(tab, id, rule) {
+    const rid = id || newId();
+    tx(() => {
+      const m = rulesMap(tab);
+      const next = { ...rule };
+      delete next.id;
+      if (next.kind === "format" && next.order === undefined) next.order = Math.max(0, ...rulesOf(tab).filter((r) => r.kind === "format").map((r) => (r.order ?? 0) + 1));
+      m.set(rid, JSON.parse(JSON.stringify(next)));
+    });
+    return rid;
+  }
+  function removeRule(tab, id) { tx(() => rulesMap(tab).delete(id)); }
+  // Move a formatting rule up (-1) or down (+1) in priority.
+  function moveRule(tab, id, dir) {
+    const list = rulesOf(tab).filter((r) => r.kind === "format");
+    const i = list.findIndex((r) => r.id === id), j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    tx(() => list.forEach((r, k) => { if (r.order !== k) { const { id: rid, ...rest } = r; rulesMap(tab).set(rid, { ...rest, order: k }); } }));
+  }
+
   return {
     ydoc, grid, LOCAL,
+    rulesOf, setRule, removeRule, moveRule,
     filterOf, setFilter, setCriteria, removeFilter, filterViews, newFilterView,
     init, tidy, filledCells, searchText,
     tabIds, tabInfo, addTab, renameTab, setTabProps, removeTab, moveTab,

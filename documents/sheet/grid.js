@@ -7,6 +7,9 @@ import { formatValue } from "./engine/number-format.js";
 import { isErr } from "./engine/values.js";
 import { indexToCol } from "./engine/parser.js";
 import { resultFormatHint } from "./engine/functions/index.js";
+import { checkboxValues } from "./rules.js";
+
+const checkboxOn = (rule, v) => { const { on } = checkboxValues(rule); return typeof on === "string" && typeof v === "string" ? on.toLowerCase() === v.toLowerCase() : on === v; };
 
 export const DEF_W = 100;
 export const DEF_H = 21;
@@ -40,11 +43,13 @@ function cssVar(el, name, fallback) {
   return v || fallback;
 }
 
-// The text, colour and alignment a cell shows.
-export function displayOf(model, engine, tab, r, c) {
+// The text, colour and alignment a cell shows. rules: the tab's compiled rules on cells
+// (rules.js compileRules) — a matching format rule's style goes over the cell's own,
+// and check says which validation rule covers the cell and whether the value passes.
+export function displayOf(model, engine, tab, r, c, rules = null) {
   const cell = model.cellAt(tab, r, c);
   const v = engine.valueAt(tab, r, c);
-  const st = model.style(cell?.s) || {};
+  let st = model.style(cell?.s) || {};
   let fmt = st.format;
   if (!fmt && cell?.f) {
     const hint = resultFormatHint(model.engineInput(cell)?.formula);
@@ -52,8 +57,17 @@ export function displayOf(model, engine, tab, r, c) {
   }
   const out = formatValue(v, fmt || "General");
   const kind = isErr(v) ? "error" : typeof v === "number" ? "number" : typeof v === "boolean" ? "bool" : "text";
+  let color = out.color || st.color || null;
+  let check = null;
+  if (rules && !rules.empty) {
+    const info = { value: v, text: out.text };
+    const patch = rules.formatAt(r, c, info);
+    if (patch) { st = { ...st, ...patch }; if (patch.color) color = patch.color; }
+    check = rules.check(r, c, info);
+    if (!check.rule) check = null;
+  }
   const align = st.halign || (kind === "number" ? "right" : kind === "bool" || kind === "error" ? "center" : "left");
-  return { text: out.text, color: out.color || st.color || null, align, kind, st, value: v, cell };
+  return { text: out.text, color, align, kind, st, value: v, cell, check };
 }
 
 // Draws the visible part of a tab.
@@ -88,6 +102,9 @@ export function drawGrid(canvas, model, engine, tab, g, view) {
   const rowPaneOf = (r) => (r < g.fr ? rowPanes[0] : rowPanes[1]);
   const colPaneOf = (c) => (c < g.fc ? colPanes[0] : colPanes[1]);
 
+  const shown = new Map();
+  const dOf = (r, c) => { const k = `${r},${c}`; let d = shown.get(k); if (!d) { d = displayOf(model, engine, tab, r, c, view.rules || null); shown.set(k, d); } return d; };
+
   const drawPane = (rp, cp) => {
     const clipX = cp === colPanes[0] ? ox : ox + g.frozenW, clipY = rp === rowPanes[0] ? oy : oy + g.frozenH;
     const clipW = cp === colPanes[0] ? g.frozenW : W - clipX, clipH = rp === rowPanes[0] ? g.frozenH : H - clipY;
@@ -99,8 +116,7 @@ export function drawGrid(canvas, model, engine, tab, g, view) {
     ctx.beginPath(); ctx.rect(clipX, clipY, clipW, clipH); ctx.clip();
     // fills
     for (const r of rows) for (const c of cols) {
-      const cell = model.cellAt(tab, r, c);
-      const st = cell?.s ? model.style(cell.s) : null;
+      const st = view.rules && !view.rules.empty ? dOf(r, c).st : model.style(model.cellAt(tab, r, c)?.s);
       if (st?.fill) { ctx.fillStyle = st.fill; ctx.fillRect(xOf(c, cp), yOf(r, rp), g.cw[c], g.rh[r]); }
     }
     // grid lines
@@ -125,11 +141,39 @@ export function drawGrid(canvas, model, engine, tab, g, view) {
         if (c <= skipUntil) continue;
         const m = mergeAt.get(`${r},${c}`);
         if (m && (m.r1 !== r || m.c1 !== c)) continue;
-        const d = displayOf(model, engine, tab, r, c);
-        if (!d.text) continue;
-        const st = d.st;
+        const d = dOf(r, c);
         let x = xOf(c, cp), y = yOf(r, rp), w = g.cw[c], h = g.rh[r];
         if (m) { w = g.cx[m.c2 + 1] - g.cx[m.c1]; h = g.ry[m.r2 + 1] - g.ry[m.r1]; }
+        // data validation: checkboxes, dropdowns, and a red corner on a value that doesn't pass
+        let padL = 0, arrowW = 0;
+        if (d.check) {
+          const ru = d.check.rule;
+          if (!d.check.valid) { ctx.fillStyle = C.error; ctx.beginPath(); ctx.moveTo(x + w - 7, y + 1); ctx.lineTo(x + w - 1, y + 1); ctx.lineTo(x + w - 1, y + 7); ctx.closePath(); ctx.fill(); }
+          if (ru.type === "checkbox" && d.check.valid) {
+            const on = d.value !== null && d.value !== undefined && d.value !== "" && checkboxOn(ru, d.value);
+            const b = Math.round(12 * g.zoom), bx = Math.round(x + (w - b) / 2) + 0.5, by = Math.round(y + (h - b) / 2) + 0.5;
+            ctx.lineWidth = 1.5;
+            if (on) { ctx.fillStyle = C.accent; ctx.fillRect(bx, by, b, b); ctx.strokeStyle = C.bg; ctx.beginPath(); ctx.moveTo(bx + b * 0.22, by + b * 0.52); ctx.lineTo(bx + b * 0.42, by + b * 0.72); ctx.lineTo(bx + b * 0.8, by + b * 0.28); ctx.stroke(); }
+            else { ctx.strokeStyle = C.headInk; ctx.strokeRect(bx, by, b, b); }
+            continue;
+          }
+          if ((ru.type === "list" || ru.type === "range") && ru.display !== "plain") {
+            arrowW = 14 * g.zoom;
+            ctx.fillStyle = C.headInk;
+            const ax = x + w - arrowW / 2 - 2, ay = y + h / 2;
+            ctx.beginPath(); ctx.moveTo(ax - 3.5 * g.zoom, ay - 1.5 * g.zoom); ctx.lineTo(ax + 3.5 * g.zoom, ay - 1.5 * g.zoom); ctx.lineTo(ax, ay + 2.5 * g.zoom); ctx.closePath(); ctx.fill();
+            if (ru.display !== "arrow" && d.text) {
+              const size0 = (d.st.size || 10) * 1.333 * g.zoom;
+              ctx.font = `400 ${size0.toFixed(1)}px Arial, sans-serif`;
+              const cw0 = Math.min(w - arrowW - 6, ctx.measureText(d.text).width + 14 * g.zoom), ch0 = Math.min(h - 4, size0 + 6 * g.zoom);
+              ctx.fillStyle = (ru.colors && ru.colors[d.text]) || C.selFill;
+              roundRect(ctx, x + 3, y + (h - ch0) / 2, Math.max(0, cw0), ch0, ch0 / 2); ctx.fill();
+              padL = 4 * g.zoom;
+            }
+          }
+        }
+        if (!d.text) continue;
+        const st = d.st;
         const size = (st.size || 10) * 1.333 * g.zoom;
         ctx.font = `${st.italic ? "italic " : ""}${st.bold ? "700 " : "400 "}${size.toFixed(1)}px ${st.font ? `"${st.font}", ` : ""}Arial, sans-serif`;
         ctx.fillStyle = d.kind === "error" ? C.error : d.color || C.ink;
@@ -143,7 +187,7 @@ export function drawGrid(canvas, model, engine, tab, g, view) {
           skipUntil = cc;
         }
         ctx.save();
-        ctx.beginPath(); ctx.rect(x, y, clipW, h); ctx.clip();
+        ctx.beginPath(); ctx.rect(x, y, clipW - arrowW, h); ctx.clip();
         const lines = wrap ? wrapText(ctx, d.text, w - pad * 2) : [d.text];
         const lh = size * 1.25;
         const valign = st.valign || "bottom";
@@ -152,7 +196,7 @@ export function drawGrid(canvas, model, engine, tab, g, view) {
         ctx.textBaseline = "top";
         for (const line of lines) {
           const tw = ctx.measureText(line).width;
-          const tx = d.align === "right" ? x + w - pad - tw : d.align === "center" ? x + (w - tw) / 2 : x + pad;
+          const tx = d.align === "right" ? x + w - pad - arrowW - tw : d.align === "center" ? x + (w - tw) / 2 : x + pad + padL;
           ctx.fillText(line, tx, ty);
           if (st.underline || st.strike) {
             ctx.fillRect(tx, st.strike ? ty + size * 0.55 : ty + size * 1.02, tw, Math.max(1, size / 14));
@@ -266,6 +310,14 @@ export function drawGrid(canvas, model, engine, tab, g, view) {
   if (g.fr) ctx.fillRect(0, oy + g.frozenH - 2, W, 3);
   if (g.fc) ctx.fillRect(ox + g.frozenW - 2, 0, 3, H);
   return { rectOf };
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r); ctx.closePath();
 }
 
 function wrapText(ctx, text, width) {

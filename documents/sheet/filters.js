@@ -4,7 +4,8 @@
 //
 // A filter (the tab's own, shared by everyone) or a filter view (named, only changes
 // what the person using it sees) is:
-//   { top: rowId (the header row), bottom: rowId | null (null = through the last filled row),
+//   { top: rowId (the header row), bottom: rowId | null (null = whole columns: through the
+//     last filled row; a set bottom grows only while the row right below is filled),
 //     left: colId, right: colId, criteria: { colId: crit } }
 //   crit: { hide?: [text…] (shown text of values to hide; "" is blanks),
 //           cond?: { op, a?, b? }, color?: { fill?: "#rrggbb", text?: "#rrggbb" } }
@@ -122,9 +123,12 @@ export function filterBounds(model, tab, spec) {
   if (c1 > c2) [c1, c2] = [c2, c1];
   let r2;
   if (spec.bottom) {
+    // a set range grows as rows are filled in right below it (as Sheets), not to data further down
     r2 = rows.indexOf(spec.bottom);
-    if (r2 < 0) r2 = lastFilledRow(model, tab, c1, c2, rows, cols);
-  } else r2 = lastFilledRow(model, tab, c1, c2, rows, cols);
+    if (r2 < 0) r2 = r1;
+    const filledRow = (r) => { for (let c = c1; c <= c2; c++) if (model.cellAt(tab, r, c)) return true; return false; };
+    while (r2 + 1 < rows.length && filledRow(r2 + 1)) r2++;
+  } else r2 = lastFilledRow(model, tab, c1, c2, rows, cols); // whole columns
   return { r1, r2: Math.max(r1, r2), c1, c2 };
 }
 function lastFilledRow(model, tab, c1, c2, rows, cols) {

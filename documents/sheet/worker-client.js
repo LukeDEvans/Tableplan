@@ -29,6 +29,8 @@ export function createWorkerEngine({ onChange = null, makeWorker = defaultWorker
   const cells = new Map(); // key → encoded input
   const names = new Map();
   let settings = null;
+  const rules = new Map(); // id → { tab, f, ranges } (custom-formula rules on cells)
+  const ruleHits = new Map(); // id → Set("rowId.colId") where the formula is TRUE
   // answers
   const values = new Map(); // key → value (decoded)
   const anchors = new Map(); // key → { row, col }
@@ -63,6 +65,7 @@ export function createWorkerEngine({ onChange = null, makeWorker = defaultWorker
     for (const [id, t] of tabs) ops.push(["setTab", id, { name: t.name, rows: t.rows, cols: t.cols }]);
     for (const [k, v] of cells) { const [tab, row, col] = k.split("|"); ops.push(["setCell", tab, row, col, v]); }
     for (const [k, ref] of names) ops.push(["setName", k, ref]);
+    for (const [id, r] of rules) ops.push(["setRule", id, r]);
     return ops;
   }
 
@@ -80,9 +83,11 @@ export function createWorkerEngine({ onChange = null, makeWorker = defaultWorker
       if (info) infos.set(k, { ...info, error: info.error ? decodeValue(info.error) : null }); else infos.delete(k);
       changed.add(k);
     }
+    let rulesChanged = false;
+    for (const [id, list] of Object.entries(msg.rules || {})) { if (list.length) ruleHits.set(id, new Set(list)); else ruleHits.delete(id); rulesChanged = true; }
     answered = all ? seq : Math.max(answered, msg.seq);
     while (waiting.length && waiting[0][0] <= answered) waiting.shift()[1]();
-    if (changed.size) for (const fn of listeners) fn(changed);
+    if (changed.size || rulesChanged) for (const fn of listeners) fn(changed);
   }
 
   function send(op) { queue.push(op); }
@@ -117,6 +122,11 @@ export function createWorkerEngine({ onChange = null, makeWorker = defaultWorker
   function setName(k, ref) {
     if (ref) names.set(k, ref); else names.delete(k);
     send(["setName", k, ref]);
+  }
+  // A rule on cells with a custom formula: { tab, f (stored), ranges } or null to remove.
+  function setRule(id, spec) {
+    if (spec) rules.set(id, spec); else { rules.delete(id); ruleHits.delete(id); }
+    send(["setRule", id, spec || null]);
   }
   function setSettings(s) { settings = { ...(settings || {}), ...s }; send(["setSettings", s]); }
 
@@ -160,7 +170,8 @@ export function createWorkerEngine({ onChange = null, makeWorker = defaultWorker
 
   start();
   return {
-    setTab, setOrder, removeTab, setCell, setName, setSettings, recalc,
+    setTab, setOrder, removeTab, setCell, setName, setSettings, setRule, recalc,
+    ruleHits: (id) => ruleHits.get(id) || null,
     value, valueAt, spillAnchorOf, formulaInfo, whenIdle, close,
     onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
     get inWorker() { return Boolean(worker); },

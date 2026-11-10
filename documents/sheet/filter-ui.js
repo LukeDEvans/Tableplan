@@ -77,13 +77,9 @@ export function createFilterUI({ root, model, engine, st, schedule, cellRect, sc
     let box;
     if (s.r1 === s.r2 && s.c1 === s.c2) box = regionAround(filled, s.r, s.c, rows.length - 1, cols.length - 1);
     else box = { r1: s.r1, r2: Math.min(s.r2, rows.length - 1), c1: s.c1, c2: Math.min(s.c2, cols.length - 1) };
-    // a whole column or a range to the data's end grows as rows are added
-    const toEnd = box.r2 >= lastFilled(box.c1, box.c2);
-    model.setFilter(st.tab, "filter", { top: rows[box.r1], bottom: toEnd ? null : rows[box.r2], left: cols[box.c1], right: cols[box.c2] });
-  }
-  function lastFilled(c1, c2) {
-    for (let r = model.rowIds(st.tab).length - 1; r >= 0; r--) for (let c = c1; c <= c2; c++) if (filled(r, c)) return r;
-    return 0;
+    // whole columns follow the data to its end; a table grows as rows are added right below it
+    const wholeCols = s.r1 === 0 && s.r2 >= rows.length - 1;
+    model.setFilter(st.tab, "filter", { top: rows[box.r1], bottom: wholeCols ? null : rows[box.r2], left: cols[box.c1], right: cols[box.c2] });
   }
   function toggle() {
     close();
@@ -102,7 +98,7 @@ export function createFilterUI({ root, model, engine, st, schedule, cellRect, sc
     if (!from) {
       const s = st.sel, rows = model.rowIds(st.tab), cols = model.colIds(st.tab);
       const b = s.r1 === s.r2 && s.c1 === s.c2 ? regionAround(filled, s.r, s.c, rows.length - 1, cols.length - 1) : s;
-      from = { top: rows[b.r1], bottom: null, left: cols[b.c1], right: cols[b.c2], criteria: {} };
+      from = { top: rows[b.r1], bottom: rows[b.r2], left: cols[b.c1], right: cols[b.c2], criteria: {} };
     }
     view = model.newFilterView(st.tab, from);
     schedule();

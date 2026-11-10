@@ -85,6 +85,16 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
   "" is (Blanks). A column's list ignores its own criteria.
 - A filter change of any origin must redraw: `filter-ui.js` watches `filters:*` types.
 
+## Rules on cells
+- Conditional formats: the first rule (in `order`) that matches a cell wins entirely
+  (Sheets), not a mix. Validation: the newest rule covering a cell counts. Blank cells
+  always pass validation.
+- Custom-formula rules are evaluated in the worker (`engine/host.js` `evaluateRules`,
+  `engine.evaluateAt`) relative to the first range's top-left; the page only gets the set
+  of TRUE cells (`worker-client.js` `ruleHits`). The bridge sends them (`sendRules`).
+- `rules-ui.js` and `filter-ui.js` each watch their `rules:*` / `filters:*` types and
+  redraw; on a phone only one bottom sheet is open at a time.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->
 - files: `documents/sheet/*.js`, `documents/sheet/engine/*.js`, `documents/sheet/engine/functions/*.js`

@@ -43,6 +43,17 @@ describe("a filter", () => {
     expect(filterBounds(d.model, d.tab(), d.model.filterOf(d.tab()))).toEqual({ r1: 0, r2: 7, c1: 0, c2: 2 });
   });
 
+  it("with a set bottom, grows only as rows are filled in right below it", () => {
+    const d = withTable();
+    const t = d.tab(), rows = d.model.rowIds(t), cols = d.model.colIds(t);
+    d.model.setFilter(t, "filter", { top: rows[0], bottom: rows[5], left: cols[0], right: cols[2] });
+    expect(filterBounds(d.model, t, d.model.filterOf(t)).r2).toBe(5); // row 6 is empty; Gus in row 7 is past the gap
+    d.model.setInput(t, 6, 0, "Fay");
+    expect(filterBounds(d.model, t, d.model.filterOf(t)).r2).toBe(7); // filling the gap joins Gus too
+    d.model.setInput(t, 20, 1, "far away");
+    expect(filterBounds(d.model, t, d.model.filterOf(t)).r2).toBe(7);
+  });
+
   it("hides rows by value, including blanks, and shows the rest", () => {
     const d = withTable();
     const { t, cols } = makeFilter(d);

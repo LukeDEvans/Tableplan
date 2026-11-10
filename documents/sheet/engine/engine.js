@@ -731,6 +731,20 @@ export function createEngine({ functions = new Map(), now = () => Date.now(), ra
     try { return cellValueAt(tabId, r, c); } catch (e) { if (e === DEFER || e instanceof RangeError) { recalc(); depth = 0; return cellValueAt(tabId, r, c); } throw e; }
   }
 
+  // A formula's value as if it were in this cell, without putting it there (rules on
+  // cells: a custom formula is evaluated at each cell of its range). Nothing is stored.
+  function evaluateAt(tabId, tree, rowId, colId) {
+    if (pendingChanged.size || pendingDirty.size) recalc();
+    const f = { key: `?${tabId}|${rowId}|${colId}`, tab: tabId, row: rowId, col: colId, tree, dirty: true, value: EMPTY, evaluating: false, volatile: false, spill: null, deps: [], ranges: [], names: [], tabsUsed: new Set() };
+    const run = () => { depth = 0; const v = finish(evaluate(tree, f, null), f); return isMatrix(v) ? v.get(0, 0) : v; };
+    try { return run(); }
+    catch (e) {
+      if (e === CYCLE) return err(ERR.REF, "Circular dependency detected.");
+      if (e === DEFER || e instanceof RangeError) { recalc(); try { return run(); } catch { return err(ERR.ERROR, "Calculation too deep."); } }
+      throw e;
+    }
+  }
+
   // Is this cell's value part of an array result (and which anchor)?
   function spillAnchorOf(tabId, rowId, colId) {
     const f = spillOwner.get(key(tabId, rowId, colId));
@@ -743,7 +757,7 @@ export function createEngine({ functions = new Map(), now = () => Date.now(), ra
   }
 
   const api = {
-    grid, setTab, setOrder, removeTab, setCell, setName, recalc, value, valueAt, spillAnchorOf, formulaInfo,
+    grid, setTab, setOrder, removeTab, setCell, setName, recalc, value, valueAt, spillAnchorOf, formulaInfo, evaluateAt,
     tabs: () => [...tabs.values()].map((t) => ({ id: t.id, name: t.name, rows: t.rows.length, cols: t.cols.length })),
     tab: (id) => tabs.get(id),
     setSettings: (s) => { settings = { ...settings, ...s }; },

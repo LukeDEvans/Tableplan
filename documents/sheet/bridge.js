@@ -31,10 +31,27 @@ export function connectEngine(model, sink, { onChanged = null } = {}) {
     return now;
   }
 
+  // rules on cells with a custom formula (only a sink that runs them has setRule)
+  const ruleIds = new Map(); // tab → Set of ids sent
+  function sendRules(tab) {
+    if (!sink.setRule) return;
+    const sent = ruleIds.get(tab) || new Set();
+    const now = new Set();
+    for (const r of model.tabIds().includes(tab) ? model.rulesOf(tab) : []) {
+      const f = r.kind === "format" ? (r.cond?.op === "formula" ? r.cond.f : null) : r.type === "formula" ? r.f : null;
+      if (!f || !r.ranges?.length) continue;
+      sink.setRule(r.id, { tab, f, ranges: r.ranges });
+      now.add(r.id);
+    }
+    for (const id of sent) if (!now.has(id)) sink.setRule(id, null);
+    ruleIds.set(tab, now);
+  }
+
   // the first load
   const first = syncTabs();
   for (const id of first) sendAllCells(id);
   sendNames();
+  for (const id of first) sendRules(id);
   const firstChanged = sink.recalc();
   onChanged?.(firstChanged, { full: true });
 
@@ -51,6 +68,7 @@ export function connectEngine(model, sink, { onChanged = null } = {}) {
     const orders = new Set();
     const cellEdits = [];
     let namesChanged = false;
+    const ruleTabs = new Set();
     for (const [type, keys] of tr.changed) {
       const n = nameOf(type);
       if (!n) continue;
@@ -58,11 +76,13 @@ export function connectEngine(model, sink, { onChanged = null } = {}) {
       else if (n.startsWith("rows:") || n.startsWith("cols:")) orders.add(n.slice(5));
       else if (n.startsWith("cells:")) cellEdits.push([n.slice(6), keys]);
       else if (n === "names") namesChanged = true;
+      else if (n.startsWith("rules:")) ruleTabs.add(n.slice(6));
     }
     if (tabsChanged) {
       const before = new Set(known);
       const now = syncTabs();
-      for (const id of now) if (!before.has(id)) sendAllCells(id); // a new or restored tab
+      for (const id of now) if (!before.has(id)) { sendAllCells(id); sendRules(id); } // a new or restored tab
+      for (const id of before) if (!now.has(id)) sendRules(id); // a removed tab's rules go
       any = true;
     }
     for (const id of orders) if (known.has(id)) { sink.setOrder(id, model.rowIds(id), model.colIds(id)); any = true; }
@@ -84,6 +104,7 @@ export function connectEngine(model, sink, { onChanged = null } = {}) {
       lastNames = live;
       any = true;
     }
+    for (const id of ruleTabs) { sendRules(id); any = true; }
     if (any) { const changed = sink.recalc(); onChanged?.(changed, { full: false }); } // recalc even with no listener
   };
   let lastNames = new Set(model.nameList().map((x) => x.key));
