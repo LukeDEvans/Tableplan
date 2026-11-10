@@ -175,7 +175,8 @@ try {
   console.log("Two people");
   const b = await openAs("marijane");
   await wait(600);
-  check(await S(b, () => window.__S.model.slideIds().length) === 3, "Marijane sees the three slides");
+  const bCount = await S(b, () => window.__S.model.slideIds().length), aCount = await S(a, () => window.__S.model.slideIds().length);
+  check(bCount === aCount && aCount >= 3, "Marijane sees the same slides", `${bCount} vs ${aCount}`);
   await S(a, () => { const S = window.__S; S.goSlide(S.model.slideIds()[0]); });
   await S(b, () => { const S = window.__S; S.goSlide(S.model.slideIds()[0]); });
   const firstTitle = await S(b, () => { const S = window.__S; return S.model.items(S.st.slide).find((i) => i.role === "title")?.id; });

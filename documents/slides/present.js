@@ -12,7 +12,8 @@ import { renderSlide, fitText, fitScale, mountScaled } from "./render.js";
 import { fragmentHtml } from "./text.js";
 import { buildSteps, prepareSlide, playStep, runTransition, stepDuration } from "./anim.js";
 import { esc } from "./chrome.js";
-import { liveMedia } from "./av.js";
+import { liveMedia, stopAllAcross } from "./av.js";
+import { remoteFollower } from "./remote.js";
 
 const SVG = {
   prev: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
@@ -56,6 +57,7 @@ export function createShow({ model, media, frame, onChange = () => {}, doc = doc
   function stopMedia() { for (const p of playing) p.stop(); playing = []; }
   function startMedia(el, d) {
     stopMedia();
+    if (show.silent) return; // the TV plays them
     playing = liveMedia(el, model, d.id, media, { keepAcross: true });
   }
   function scheduleAuto() {
@@ -142,11 +144,12 @@ export function createShow({ model, media, frame, onChange = () => {}, doc = doc
 
   const show = {
     get index() { return i; }, get step() { return step; }, get deck() { return deck; }, get slideId() { return deck[i]?.id; },
-    ended: false, loop: false, loopEvery: 0,
+    ended: false, loop: false, loopEvery: 0, silent: false,
     start: (idx) => queue(() => enter(Math.max(0, Math.min(deck.length - 1, idx)), { instant: true })),
     next, prev, go, relayout,
     refresh() { deck = deckOf(model); },
-    stop() { clearTimeout(autoTimer); stopMedia(); cur?.remove(); cur = null; },
+    stop() { clearTimeout(autoTimer); stopMedia(); stopAllAcross(); cur?.remove(); cur = null; },
+    stopMedia: () => stopMedia(),
     stepsLeft: () => (deck[i] ? deck[i].steps.length - 1 - step : 0),
     totalSteps: (idx) => (deck[idx]?.steps.length || 1),
     stepDuration,
@@ -214,8 +217,8 @@ export function startPresenting({ model, media, session, me, deps = {}, host = d
     if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace", "p", "P"].includes(k)) { e.preventDefault(); show.prev(); return; }
     if (k === "Home") { e.preventDefault(); show.go(0); return; }
     if (k === "End") { e.preventDefault(); show.go(show.deck.length - 1); return; }
-    if (k === "b" || k === "B" || k === ".") { black.style.background = "#000"; black.hidden = !black.hidden; return; }
-    if (k === "w" || k === "W" || k === ",") { black.style.background = "#fff"; black.hidden = !black.hidden; return; }
+    if (k === "b" || k === "B" || k === ".") { black.style.background = "#000"; black.hidden = !black.hidden; air?.black(black.hidden ? null : "black"); return; }
+    if (k === "w" || k === "W" || k === ",") { black.style.background = "#fff"; black.hidden = !black.hidden; air?.black(black.hidden ? null : "white"); return; }
     if (k === "s" || k === "S") { openPresenter(); return; }
     if (k === "f" || k === "F") { toggleFull(); return; }
   }
@@ -279,26 +282,13 @@ export function startPresenting({ model, media, session, me, deps = {}, host = d
   if (deps.presentScreen) {
     import("./presenter-air.js").then(({ connectAirPlay }) => {
       if (ended) return;
-      air = connectAirPlay({ plugin: deps.presentScreen, model, media, show, root, name, t0, onScreen: (on) => root.classList.toggle("is-airplay", on) });
+      air = connectAirPlay({ plugin: deps.presentScreen, model, media, show, root, name, t0, onScreen: (on) => { root.classList.toggle("is-airplay", on); show.silent = on; if (on) show.stopMedia(); } });
     }).catch(() => {});
   }
 
-  // ---- remote: follow commands from my other devices -------------------------------------------
-  let lastSeq = new Map();
-  const onAware = () => {
-    for (const [cid, a] of session.awareness.getStates()) {
-      const r = a?.remote;
-      if (cid === session.awareness.clientID || !r || r.to !== session.awareness.clientID) continue;
-      if (a.user?.id && a.user.id !== me.id && !deps.allowRemoteFrom?.(a.user.id)) continue;
-      if ((lastSeq.get(cid) || 0) >= r.seq) continue;
-      lastSeq.set(cid, r.seq);
-      if (r.cmd === "next") show.next();
-      else if (r.cmd === "prev") show.prev();
-      else if (r.cmd === "go") show.go(Number(r.n) || 0);
-      else if (r.cmd === "black") { const b = root.querySelector("[data-black]"); b.style.background = "#000"; b.hidden = !b.hidden; }
-      else if (r.cmd === "end") end();
-    }
-  };
+  // ---- remote: Next / Back from a phone in the same presentation (remote.js) ----------------
+  const toggleBlack = () => { const b = root.querySelector("[data-black]"); b.style.background = "#000"; b.hidden = !b.hidden; air?.black(b.hidden ? null : "black"); };
+  const onAware = remoteFollower(session.awareness, { next: () => show.next(), prev: () => show.prev(), go: (n) => show.go(n), black: toggleBlack, end: () => end() });
   session.awareness.on("change", onAware);
 
   // ---- start and end --------------------------------------------------------------------------------

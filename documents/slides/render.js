@@ -31,7 +31,7 @@ export function textStyle(it, theme) {
   ensureFont(font);
   const color = resolveColor(it.color || "@dk1", theme) || "#000";
   const parts = [
-    `font-family:${fontStack(font)}`, `font-size:${n(it.size, 18)}pt`, `color:${color}`,
+    `font-family:${fontStack(font)}`, `font-size:calc(${n(it.size, 18)} * var(--pt, 1pt))`, `color:${color}`,
     `text-align:${["left", "center", "right", "justify"].includes(it.align) ? it.align : "left"}`,
     `line-height:${n(it.lineH, 1.2)}`, `padding:${n(it.pad, 12)}px`,
     `justify-content:${it.valign === "middle" ? "center" : it.valign === "bottom" ? "flex-end" : "flex-start"}`,
@@ -100,7 +100,7 @@ function itemHtml(it, ctx) {
   }
 
   if (it.t === "video" || it.t === "audio") {
-    const poster = it.poster ? ctx.mediaUrl?.(it.poster) : (it.t === "video" && it.media && ctx.mediaInfo?.(it.media)?.poster ? ctx.mediaUrl?.(ctx.mediaInfo(it.media).poster) : null);
+    const poster = it.poster ? ctx.mediaUrl?.(it.poster) : /^https:\/\/i\.ytimg\.com\/vi\/[A-Za-z0-9_-]+\/\w+\.jpg$/.test(it.posterUrl || "") ? it.posterUrl : null;
     const inner = it.t === "audio"
       ? `<div class="sl-audio-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a8.5 8.5 0 0 1 0 13" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></div>`
       : `${poster ? `<img src="${esc(poster)}" alt="" draggable="false" class="sl-poster">` : `<div class="sl-video-blank"></div>`}<div class="sl-play" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="rgba(0,0,0,.55)"/><path d="M10 8l6 4-6 4z" fill="#fff"/></svg></div>`;
@@ -162,6 +162,9 @@ export function renderSlide(model, sid, { mediaUrl = () => null, mediaInfo = (id
   el.dataset.slide = sid;
   el.style.width = `${W}px`;
   el.style.height = `${H}px`;
+  // Text sizes are points on a slide 720 pt wide (as Google Slides and PowerPoint):
+  // 1 pt of text = W / 720 slide px. The word processor's marks size through --pt.
+  el.style.setProperty("--pt", `${W / 720}px`);
   const bgUrl = s?.bg?.kind === "image" ? mediaUrl(s.bg.media) : null;
   el.style.background = backgroundCss(s?.bg, theme, bgUrl);
   const ctx = { model, sid, theme, mediaUrl, mediaInfo, textHtml, placeholders };

@@ -306,3 +306,25 @@
   .sl-pv-ctrl { justify-content: flex-end; }
 }
 .sl-remote { position: fixed; inset: 0; z-index: 3000; background: #1b1b1d; color: #f2f2f2; display: flex; flex-direction: column; gap: 12px; padding: 14px; padding-top: calc(14px + env(safe-area-inset-top)); padding-bottom: calc(14px + env(safe-area-inset-bottom)); font: 15px/1.4 system-ui, sans-serif; }
+.sl-remote-offer { position: absolute; left: 50%; top: calc(60px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 2200; display: flex; align-items: center; gap: 10px; background: var(--window-bg, var(--bg)); border: 1px solid var(--line); border-radius: 14px; padding: 8px 8px 8px 14px; box-shadow: 0 8px 26px rgba(0,0,0,.2); max-width: calc(100vw - 24px); font-size: 0.85rem; }
+.sl-remote .sl-pv-cur > div { margin: 0 auto; }
+.sl-remote .sl-pv-ctrl .sl-pv-big { flex: 1; font-size: 1.3rem; padding: 22px; }
+.sl-remote .sl-pv-ctrl { justify-content: flex-end; }
+.wp-dialog-box.sl-tpl-dialog { width: min(760px, 100%); }
+.sl-tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; max-height: 60vh; overflow-y: auto; padding: 2px; }
+.sl-tpl { display: flex; flex-direction: column; gap: 3px; border: 2px solid transparent; background: none; padding: 4px; border-radius: 10px; cursor: pointer; text-align: left; color: var(--ink); }
+.sl-tpl:hover, .sl-tpl:focus-visible { border-color: var(--accent); }
+.sl-tpl-prev { aspect-ratio: 16 / 9; display: grid; place-items: center; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line); font-size: 0.85rem; padding: 6px; text-align: center; }
+.sl-tpl-name { font-weight: 600; font-size: 0.85rem; }
+.sl-tpl small { color: var(--muted); font-size: 0.75rem; }
+.sl-tpl-mine { display: flex; flex-wrap: wrap; gap: 6px; max-height: 20vh; overflow-y: auto; }
+.sl-tpl-file { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+
+/* the app's own text styles must not reach inside a slide */
+.sl-slide p, .sl-slide li, .sl-slide ul, .sl-slide ol, .sl-slide h1, .sl-slide h2, .sl-slide h3, .sl-slide span, .sl-slide td, .sl-slide table { font-size: inherit; line-height: inherit; font-family: inherit; letter-spacing: normal; color: inherit; }
+.sl-slide span[style*="font-size"] { line-height: normal; }
+.sl-slide .sl-prompt { color: #8a8a8a; }
+/* the app's global svg rule (stroke: currentColor) must not outline shapes */
+.sl-slide svg { stroke: none; fill: none; stroke-width: 0; display: block; }
+.sl-slide { user-select: none; -webkit-user-select: none; }
+.sl-slide .sl-text.is-live { user-select: text; -webkit-user-select: text; }

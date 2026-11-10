@@ -88,6 +88,8 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // slides-tv.html: the TV screen while presenting slides from the iPhone (SLIDES_DESIGN.md §9)
+    rollupOptions: { input: { main: 'index.html', slidestv: 'slides-tv.html' } },
   },
   server: {
     host: true,

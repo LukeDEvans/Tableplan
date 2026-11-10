@@ -33,7 +33,7 @@ export const newId = rid;
 
 // Plain fields an item may carry. Anything else is ignored on read.
 const NUM = new Set(["x", "y", "w", "h", "rot", "sw", "opacity", "size", "lineH", "radius", "pad", "rows", "cols", "start", "end", "volume"]);
-const STR = new Set(["t", "z", "grp", "role", "name", "fill", "stroke", "dash", "shape", "font", "color", "align", "valign", "autofit", "media", "alt", "mask", "a1", "a2", "kind", "link", "play", "fit", "recolor"]);
+const STR = new Set(["t", "z", "grp", "role", "name", "fill", "stroke", "dash", "shape", "font", "color", "align", "valign", "autofit", "media", "alt", "mask", "a1", "a2", "kind", "link", "play", "fit", "recolor", "poster", "posterUrl"]);
 const BOOL = new Set(["flipH", "flipV", "lock", "bold", "italic", "shadow", "loop", "mute", "controls", "acrossSlides"]);
 const OBJ = new Set(["crop", "colW", "rowH", "cells", "conn"]);
 export const ITEM_KEYS = Object.freeze([...NUM, ...STR, ...BOOL, ...OBJ]);

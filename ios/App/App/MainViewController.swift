@@ -6,7 +6,7 @@ import Capacitor
 // Registers the app's own Swift plugins in code. `npx cap sync` rewrites the
 // bundled capacitor.config.json's packageClassList with ONLY the plugins it finds
 // in npm packages, so plugins that live in this Xcode project (LiveTts,
-// AppleMusic, ArticleReader, DocumentScanner, WebAuth, LiveLocation, ShareToken, AppIcon, AttachmentPreview, LiveLanguage, LinkOut, MessagingKeys, QrScan, DocumentsLock, PdfExport) listed there are dropped on every sync and never load. Registering
+// AppleMusic, ArticleReader, DocumentScanner, WebAuth, LiveLocation, ShareToken, AppIcon, AttachmentPreview, LiveLanguage, LinkOut, MessagingKeys, QrScan, DocumentsLock, PdfExport, PresentScreen, VideoCompress) listed there are dropped on every sync and never load. Registering
 // them here doesn't depend on that list.
 class MainViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
@@ -25,6 +25,8 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(QrScanPlugin())
         bridge?.registerPluginInstance(DocumentsLockPlugin())
         bridge?.registerPluginInstance(PdfExportPlugin())
+        bridge?.registerPluginInstance(PresentScreenPlugin())
+        bridge?.registerPluginInstance(VideoCompressPlugin())
 
         // Tap the status bar → scroll to top. iOS only scrolls the web view's own
         // document on that tap, and this app's document never scrolls (each page

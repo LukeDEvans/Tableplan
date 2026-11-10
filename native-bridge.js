@@ -298,6 +298,30 @@ export function nativePdfExport() {
   return _pdfExport;
 }
 
+// Slides on the iPhone (SLIDES_DESIGN.md §8, §9): "PresentScreen" shows the slides on a
+// connected TV while the phone shows presenter view; "VideoCompress" picks a video from
+// the photo library and compresses it to 720p on the phone.
+let _presentScreen;
+export function nativePresentScreen() {
+  if (_presentScreen !== undefined) return _presentScreen;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) { _presentScreen = null; return _presentScreen; }
+    const p = registerPlugin("PresentScreen");
+    _presentScreen = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("PresentScreen")) ? p : null;
+  } catch { _presentScreen = null; }
+  return _presentScreen;
+}
+let _videoCompress;
+export function nativeVideoCompress() {
+  if (_videoCompress !== undefined) return _videoCompress;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) { _videoCompress = null; return _videoCompress; }
+    const p = registerPlugin("VideoCompress");
+    _videoCompress = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("VideoCompress")) ? p : null;
+  } catch { _videoCompress = null; }
+  return _videoCompress;
+}
+
 // The iPhone app runs at capacitor://localhost, so app.js's canUseLocalBackend()
 // (a hostname check) is TRUE there and URL helpers pick their local-dev-server
 // paths (/api/<name>, served by server.js on a laptop). The live site only routes

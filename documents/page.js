@@ -41,6 +41,7 @@ export async function mountDocumentPage(root, deps) {
   // The word processor (WORD_PROCESSOR_DESIGN.md): loaded the first time a document is made or opened.
   const host = () => import("./editor/host.js");
   const sheetHost = () => import("./sheet/host.js"); // the spreadsheet (SPREADSHEET_DESIGN.md)
+  const slidesHost = () => import("./slides/host.js"); // slides (SLIDES_DESIGN.md)
   const myName = () => deps.myDisplayName?.() || household()?.members.find((m) => m.user_id === userId)?.display_name || "Me";
   const people = () => (household()?.members || []).map((m) => ({ id: m.user_id, name: m.display_name || "Someone" }));
   let openDoc = null; // the editor while a document is open
@@ -208,7 +209,7 @@ export async function mountDocumentPage(root, deps) {
     const folder = ui.folder === "all" ? ui.folders.find((x) => x.id === f.folderId)?.name : "";
     const who = ui.kind === "household" && f.addedBy && f.addedBy !== userId ? ` · added by ${esc(nameOf(f.addedBy))}` : "";
     return `<li><button type="button" class="docs-file" data-open="${esc(f.id)}">
-      <span class="docs-thumb${f.kind === "doc" ? " is-doc" : f.kind === "sheet" ? " is-sheet" : ""}" data-thumb="${esc(f.id)}" aria-hidden="true">${f.kind === "doc" ? "Aa" : f.kind === "sheet" ? "▦" : esc(glyphFor(f.mime))}</span>
+      <span class="docs-thumb${f.kind === "doc" ? " is-doc" : f.kind === "sheet" ? " is-sheet" : f.kind === "slides" ? " is-slides" : ""}" data-thumb="${esc(f.id)}" aria-hidden="true">${f.kind === "doc" ? "Aa" : f.kind === "sheet" ? "▦" : f.kind === "slides" ? "▶" : esc(glyphFor(f.mime))}</span>
       <span class="docs-file-text"><span class="docs-file-name">${esc(f.name)}</span>
       <span class="docs-file-meta">${esc(meta)}${folder ? ` · ${esc(folder)}` : ""}${who}</span></span></button></li>`;
   }
@@ -534,6 +535,7 @@ export async function mountDocumentPage(root, deps) {
     else if (act === "add-upload") { closeAddMenu(); view.querySelector("[data-file-input]")?.click(); }
     else if (act === "new-doc") { closeAddMenu(); newDocument(); }
     else if (act === "new-sheet") { closeAddMenu(); newSpreadsheet(); }
+    else if (act === "new-slides") { closeAddMenu(); newPresentation(); }
     else if (act === "add-csv") { closeAddMenu(); pickCsvFiles(); }
     else if (act === "csv-to-sheet") csvFileToSheet();
     else if (act === "add-xlsx") { closeAddMenu(); pickExcelFiles(); }
@@ -615,6 +617,7 @@ export async function mountDocumentPage(root, deps) {
     addMenu.setAttribute("role", "menu");
     addMenu.innerHTML = `<button type="button" role="menuitem" data-act="new-doc">New document</button>
       <button type="button" role="menuitem" data-act="new-sheet">New spreadsheet</button>
+      <button type="button" role="menuitem" data-act="new-slides">New presentation</button>
       <button type="button" role="menuitem" data-act="add-upload">Upload a file</button>
       <button type="button" role="menuitem" data-act="add-word">Open a Word file as a document</button>
       <button type="button" role="menuitem" data-act="add-csv">Open a CSV file as a spreadsheet</button>
@@ -631,6 +634,7 @@ export async function mountDocumentPage(root, deps) {
 
   async function openDocument(f, { startEditing = false } = {}) {
     if (f?.kind === "sheet") return openSpreadsheet(f, { startEditing });
+    if (f?.kind === "slides") return openPresentation(f, { startEditing });
     if (openDoc) return;
     const scope = ui.scope;
     openDoc = "opening";
@@ -716,6 +720,58 @@ export async function mountDocumentPage(root, deps) {
     if (notes?.length) deps.toast?.(`Opened. Not everything carried over: ${notes.slice(0, 3).join(" ")}`);
     const f = id && ui.scope === scope && ui.files.find((x) => x.id === id);
     if (f) openSpreadsheet(f, { startEditing: true });
+    return id;
+  }
+
+  // ---- slides (SLIDES_DESIGN.md §11) ----
+  const slidesDeps = (f) => {
+    const vc = deps.nativeVideoCompress?.();
+    return {
+      liveOpen: deps.liveDocChannel || null, toast: deps.toast, isNative: deps.isNative, people: people(),
+      presentScreen: deps.nativePresentScreen?.() || null,
+      pickVideo: vc ? async (o) => { const r = await vc.pick(o); if (!r || r.cancelled) return null; const b = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0)); return new Blob([b], { type: r.mime || "video/mp4" }); } : null,
+      share: (blob, name, mime) => shareBlob(blob, name, mime),
+      rename: (n) => { const x = ui.files.find((y) => y.id === f.id); if (x) x.name = n; },
+    };
+  };
+  async function openPresentation(f, { startEditing = false } = {}) {
+    if (openDoc) return;
+    const scope = ui.scope;
+    openDoc = "opening";
+    try {
+      const h = await slidesHost();
+      const store = h.storeFor({ storage, transport, scope, fileId: f.id });
+      openDoc = await h.openSlidesFor({
+        store, file: { id: f.id, name: f.name, scope }, me: { id: userId, name: myName() }, startEditing, deps: slidesDeps(f),
+        onClose: () => { openDoc = null; if (visible && ui.scope === scope) refresh(gen, scope).then(() => draw()).catch(() => {}); },
+      });
+      if (!openDoc?.close) openDoc = null;
+    } catch (e) {
+      openDoc = null;
+      ui.error = e?.message || "That presentation couldn't be opened.";
+      draw();
+    }
+  }
+
+  async function newPresentation() {
+    const scope = ui.scope;
+    const folderId = currentFolder();
+    const h = await slidesHost();
+    const mine = ui.files.filter((x) => x.kind === "slides");
+    const pick = await h.pickTemplate(root, { mine });
+    if (!pick) return;
+    let id;
+    await run("Making a new presentation…", async (sc, my) => {
+      if (pick.copyOf) {
+        const from = mine.find((x) => x.id === pick.copyOf);
+        id = await h.copySlidesFile({ library, storeFor: (fid) => h.storeFor({ storage, transport, scope: sc, fileId: fid }), scope: sc, folderId, fromId: pick.copyOf, name: `Copy of ${from?.name || "presentation"}` });
+      } else {
+        id = await h.createSlidesFile({ library, scope: sc, folderId, template: pick, name: pick === "blank" ? "Untitled presentation" : (await h.templateName(pick)) });
+      }
+      await refresh(my, sc);
+    });
+    const f = id && ui.scope === scope && ui.files.find((x) => x.id === id);
+    if (f) openPresentation(f, { startEditing: true });
     return id;
   }
 

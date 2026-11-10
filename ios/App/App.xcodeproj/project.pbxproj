@@ -27,6 +27,8 @@
 		4D5E6A0F2F10000100C0FFEE /* MessagingKeysPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A102F10000100C0FFEE /* MessagingKeysPlugin.swift */; };
 		4D5E6A132F10000100C0FFEE /* DocumentsLockPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A142F10000100C0FFEE /* DocumentsLockPlugin.swift */; };
 		4D5E6A152F10000100C0FFEE /* PdfExportPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A162F10000100C0FFEE /* PdfExportPlugin.swift */; };
+		4D5E6A192F10000100C0FFEE /* VideoCompressPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A1A2F10000100C0FFEE /* VideoCompressPlugin.swift */; };
+		4D5E6A172F10000100C0FFEE /* PresentScreenPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A182F10000100C0FFEE /* PresentScreenPlugin.swift */; };
 		A1C0FFEE2E90000100A1C0DE /* AppIconPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */; };
 		B7A11AC02E90000100A77AC0 /* AttachmentPreviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */; };
 		D07C4A102E90000100D07C4A /* LiveLanguagePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */; };
@@ -86,6 +88,8 @@
 		4D5E6A102F10000100C0FFEE /* MessagingKeysPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingKeysPlugin.swift; sourceTree = "<group>"; };
 		4D5E6A142F10000100C0FFEE /* DocumentsLockPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsLockPlugin.swift; sourceTree = "<group>"; };
 		4D5E6A162F10000100C0FFEE /* PdfExportPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PdfExportPlugin.swift; sourceTree = "<group>"; };
+		4D5E6A1A2F10000100C0FFEE /* VideoCompressPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoCompressPlugin.swift; sourceTree = "<group>"; };
+		4D5E6A182F10000100C0FFEE /* PresentScreenPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentScreenPlugin.swift; sourceTree = "<group>"; };
 		A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconPlugin.swift; sourceTree = "<group>"; };
 		B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPreviewPlugin.swift; sourceTree = "<group>"; };
 		D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLanguagePlugin.swift; sourceTree = "<group>"; };
@@ -163,6 +167,8 @@
 				4D5E6A102F10000100C0FFEE /* MessagingKeysPlugin.swift */,
 				4D5E6A142F10000100C0FFEE /* DocumentsLockPlugin.swift */,
 				4D5E6A162F10000100C0FFEE /* PdfExportPlugin.swift */,
+				4D5E6A1A2F10000100C0FFEE /* VideoCompressPlugin.swift */,
+				4D5E6A182F10000100C0FFEE /* PresentScreenPlugin.swift */,
 				A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */,
 				B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */,
 				D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */,
@@ -364,6 +370,8 @@
 				4D5E6A0F2F10000100C0FFEE /* MessagingKeysPlugin.swift in Sources */,
 				4D5E6A132F10000100C0FFEE /* DocumentsLockPlugin.swift in Sources */,
 				4D5E6A152F10000100C0FFEE /* PdfExportPlugin.swift in Sources */,
+				4D5E6A192F10000100C0FFEE /* VideoCompressPlugin.swift in Sources */,
+				4D5E6A172F10000100C0FFEE /* PresentScreenPlugin.swift in Sources */,
 				A1C0FFEE2E90000100A1C0DE /* AppIconPlugin.swift in Sources */,
 				B7A11AC02E90000100A77AC0 /* AttachmentPreviewPlugin.swift in Sources */,
 				D07C4A102E90000100D07C4A /* LiveLanguagePlugin.swift in Sources */,

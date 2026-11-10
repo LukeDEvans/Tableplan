@@ -8,6 +8,7 @@
 export const MIME_TYPES = Object.freeze([
   "application/vnd.live.doc", // a Live document (the word processor; WORD_PROCESSOR_DESIGN.md)
   "application/vnd.live.sheet", // a Live spreadsheet (SPREADSHEET_DESIGN.md)
+  "application/vnd.live.slides", // a Live presentation (SLIDES_DESIGN.md)
   "application/pdf",
   "image/jpeg", "image/png", "image/heic", "image/heif", "image/webp", "image/gif",
   "text/plain", "text/csv",

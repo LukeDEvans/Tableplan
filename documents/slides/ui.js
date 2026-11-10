@@ -120,6 +120,9 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
 
   const ydoc = session.ydoc;
   const undo = new Y.UndoManager([ydoc.getMap("meta"), ydoc.getArray("order"), ydoc.getMap("slides"), ydoc.getMap("media")], { trackedOrigins: new Set([LOCAL, ySyncPluginKey]), captureTimeout: 500 });
+  // each move, resize or colour change is its own undo step (typing still groups)
+  const onBefore = (tr) => { if (tr.origin === LOCAL) undo.stopCapturing(); };
+  ydoc.on("beforeTransaction", onBefore);
 
   // ---- view state ----------------------------------------------------------------------------
   const st = {
@@ -287,7 +290,34 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
   function awarenessSel() {
     session.awareness.setLocalStateField("slides", { slide: st.slide, sel: st.sel.slice(0, 50) });
   }
-  session.awareness.on("change", () => { drawOverlay(); film.markPeers(peerSlides()); });
+  session.awareness.on("change", () => { drawOverlay(); film.markPeers(peerSlides()); offerRemote(); });
+
+  // Someone (you on the laptop, or Marijane) is presenting this: offer to be the remote.
+  let remote = null, remoteBanner = null;
+  async function offerRemote() {
+    if (remote || presenting) { remoteBanner?.remove(); remoteBanner = null; return; }
+    const { presentersIn } = await import("./remote.js");
+    const p = presentersIn(session.awareness)[0];
+    if (!p) { remoteBanner?.remove(); remoteBanner = null; return; }
+    if (!remoteBanner) {
+      remoteBanner = document.createElement("div");
+      remoteBanner.className = "sl-remote-offer";
+      remoteBanner.innerHTML = `<span data-who></span><button type="button" class="sl-btn" data-r="control">Control the presentation</button><button type="button" class="sl-icon" data-r="no" aria-label="Dismiss">${IC.close}</button>`;
+      remoteBanner.addEventListener("click", async (e) => {
+        const a = e.target.closest("[data-r]")?.dataset.r;
+        if (a === "no") { remoteBanner.remove(); remoteBanner = null; remote = "dismissed"; setTimeout(() => { if (remote === "dismissed") remote = null; }, 60000); return; }
+        if (a !== "control") return;
+        const cur = presentersIn(session.awareness)[0];
+        if (!cur) return;
+        const { openRemote } = await import("./remote.js");
+        remoteBanner?.remove(); remoteBanner = null;
+        stopEditingText();
+        remote = openRemote({ host: root, model, media, awareness: session.awareness, target: cur.cid, onClose: () => { remote = null; } });
+      });
+      root.appendChild(remoteBanner);
+    }
+    remoteBanner.querySelector("[data-who]").textContent = `${p.name === me.name ? "You're" : `${p.name} is`} presenting this on another screen.`;
+  }
   const peerSlides = () => {
     const out = new Map();
     for (const [cid, a] of session.awareness.getStates()) if (cid !== session.awareness.clientID && a?.slides?.slide) out.set(a.slides.slide, safeColor(a.user?.color) || "#888");
@@ -882,7 +912,14 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
   });
 
   // ---- keyboard ------------------------------------------------------------------------------
-  root.addEventListener("keydown", (e) => {
+  const onDocKey = (e) => {
+    // keys reach the editor when focus is in it or nowhere in particular (after a popover closes)
+    if (!(root.contains(e.target) || e.target === document.body || e.target === document.documentElement)) return;
+    if (root.querySelector(".wp-dialog") || presenting) return;
+    onKey(e);
+  };
+  document.addEventListener("keydown", onDocKey);
+  function onKey(e) {
     if (mod(e) && (e.key === "z" || e.key === "Z" || e.key === "y")) {
       if (isTyping(e.target) && !e.target.closest(".sl-text, .sl-notes-ed")) return;
       e.preventDefault(); e.stopPropagation();
@@ -921,7 +958,7 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
     if (k === "Enter" && st.sel.length === 1) { e.preventDefault(); startEditingText(st.sel[0]); return; }
     if (k === "PageDown") { e.preventDefault(); step(1); }
     if (k === "PageUp") { e.preventDefault(); step(-1); }
-  });
+  }
 
   function doUndo() { stopEditingText(); undo.undo(); afterHistory(); }
   function doRedo() { stopEditingText(); undo.redo(); afterHistory(); }
@@ -1540,6 +1577,8 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
     ydoc.getMap("meta").unobserve(onMeta);
     ydoc.getArray("order").unobserve(onOrder);
     unsub();
+    ydoc.off("beforeTransaction", onBefore);
+    document.removeEventListener("keydown", onDocKey);
     undo.destroy();
     statusEl.textContent = "Saving…";
     try { await session.close(); } catch { /* kept on the device */ }

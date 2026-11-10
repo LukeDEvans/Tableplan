@@ -25651,6 +25651,7 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
 .docs-add-menu button:hover, .docs-add-menu button:focus-visible { background: var(--surface); }
 .docs-thumb.is-doc { background: var(--accent-soft); color: var(--accent-dark, var(--accent)); font-family: Georgia, serif; font-weight: 700; }
 .docs-thumb.is-sheet { background: var(--sun-soft, var(--accent-soft)); color: var(--ink); font-size: 1.3rem; } /* Live spreadsheets (SPREADSHEET_DESIGN.md) */
+.docs-thumb.is-slides { background: var(--tomato-soft, var(--accent-soft)); color: var(--ink); font-size: 1.1rem; } /* Live presentations (SLIDES_DESIGN.md) */
 .docs-gdocs-box { width: min(560px, 100%); }
 .docs-gdocs-path { font-size: 0.85rem; margin-bottom: 6px; }
 .docs-gdocs-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }

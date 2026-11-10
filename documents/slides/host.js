@@ -5,7 +5,7 @@
 
 import * as Y from "yjs";
 import { createSlidesModel, SLIDES_MIME } from "./model.js";
-import { docToContent } from "../editor/doc-model.js";
+import { docToContent, docFromContent } from "../editor/doc-model.js";
 import { createEverydayDocStore } from "../editor/store-everyday.js";
 
 export { SLIDES_MIME };
@@ -38,7 +38,35 @@ export async function openSlidesFor(opts) {
   return openSlidesEditor(opts);
 }
 
-export async function pickTemplate(root) {
+export async function pickTemplate(root, opts = {}) {
   const { templatePicker } = await import("./templates.js");
-  return templatePicker(root);
+  return templatePicker(root, opts);
+}
+export async function templateName(id) {
+  const { TEMPLATES } = await import("./templates.js");
+  return TEMPLATES.find((t) => t.id === id)?.name || "Untitled presentation";
+}
+
+// "Start from one of yours": a copy of another presentation (its slides, theme and
+// uploaded pictures and video, which are copied part by part; comments aren't).
+export async function copySlidesFile({ library, storeFor, scope, folderId, fromId, name }) {
+  const src = storeFor(fromId);
+  const bytes = await src.loadContent();
+  const from = bytes ? docFromContent(bytes) : new Y.Doc();
+  const fm = createSlidesModel(from);
+  const to = new Y.Doc();
+  const tm = createSlidesModel(to);
+  tm.transact(() => {
+    for (const k of ["format", "size", "w", "h", "theme"]) if (fm.meta.has(k)) tm.meta.set(k, fm.meta.get(k));
+    tm.importSlides(fm.exportSlides(fm.slideIds()), 0);
+  });
+  const id = crypto.randomUUID();
+  await library.addFile(scope, { id, content: docToContent(to), text: tm.searchText(100_000) || " ", folderId, kind: "slides", meta: { name, mime: SLIDES_MIME, pages: tm.slideIds().length } });
+  const dst = storeFor(id);
+  for (const mid of fm.usedMedia()) {
+    const info = fm.mediaInfo(mid);
+    try { await dst.images.put(mid, await src.images.get(mid)); if (info) tm.addMedia(mid, info); } catch { /* left as a soft box */ }
+  }
+  if (tm.media.size) await dst.saveContent(docToContent(to));
+  return id;
 }
