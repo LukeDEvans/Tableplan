@@ -4,7 +4,7 @@
 // part of the presentation, encrypted in the Safe like everything else.
 
 import { openDialog } from "../editor/panels.js";
-import { contentId, sniffType } from "./media.js";
+import { mediaId, sniffType } from "./media.js";
 import { esc } from "./chrome.js";
 
 export const MAX_VIDEO_BYTES = 60 * 1024 * 1024;
@@ -129,12 +129,12 @@ export async function addMediaDialog({ root, kind, model, store, media, sid, dep
     if (isVideo ? !/^video\//.test(mime) : !/^audio\//.test(mime)) throw new Error(isVideo ? "That file isn't a video this can play (MP4, MOV or WebM)." : "That file isn't audio this can play (MP3, M4A, WAV or OGG).");
     if (used + bytes.length > MEDIA_WARN_BYTES) toast("Heads up: this presentation now holds over 2 GB of media.");
     const info = isVideo ? await videoInfo(blob) : await audioInfo(blob);
-    const id = await contentId(bytes);
+    const id = await mediaId(store, bytes);
     let posterId = null;
     if (!model.mediaInfo(id)) {
       toast(`Saving the ${kind}…`);
       await store.images.put(id, bytes);
-      if (info.poster) { posterId = await contentId(info.poster); await store.images.put(posterId, info.poster); media.put(posterId, info.poster); }
+      if (info.poster) { posterId = await mediaId(store, info.poster); await store.images.put(posterId, info.poster); media.put(posterId, info.poster); }
       model.addMedia(id, { kind, mime, size: bytes.length, w: info.w || 0, h: info.h || 0, duration: Math.round(info.duration || 0), poster: posterId });
     } else posterId = model.mediaInfo(id).poster || null;
     media.put(id, bytes);

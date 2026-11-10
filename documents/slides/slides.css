@@ -90,15 +90,15 @@
 .sl-video-blank { position: absolute; inset: 0; background: #1d1d1d; }
 .sl-play { position: relative; width: 18%; min-width: 40px; max-width: 160px; aspect-ratio: 1; }
 .sl-play svg, .sl-audio-icon svg { width: 100%; height: 100%; }
-.sl-audio { background: transparent; }
-.sl-audio .sl-media-box { background: transparent; color: #555; }
+.sl-t-audio { background: transparent; }
+.sl-t-audio .sl-media-box { background: transparent; color: #555; }
 .sl-audio-icon { width: 70%; height: 70%; color: #555; }
 .sl-table { width: 100%; height: 100%; border-collapse: collapse; table-layout: fixed; display: table; padding: 0; }
 .sl-table td { border: 2px solid; padding: 8px 12px; vertical-align: top; overflow: hidden; overflow-wrap: break-word; }
 .sl-chart-wait { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(127,127,127,.1); color: #888; font-size: 40px; }
-.sl-line { pointer-events: none; }
-.sl-line path { pointer-events: visibleStroke; }
-.sl-root:not(.is-viewing) .sl-stage .sl-item:not(.sl-line) { cursor: move; }
+.sl-t-line { pointer-events: none; }
+.sl-t-line path { pointer-events: visibleStroke; }
+.sl-root:not(.is-viewing) .sl-stage .sl-item:not(.sl-t-line) { cursor: move; }
 .sl-root .sl-stage .sl-text.is-live, .sl-root .sl-stage .sl-text.is-live * { cursor: text; }
 
 /* selection */

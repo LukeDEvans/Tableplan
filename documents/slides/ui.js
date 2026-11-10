@@ -25,12 +25,21 @@ import { fragmentHtml } from "./text.js";
 import { LAYOUTS, THEMES, layoutFor, resolveColor, SIZES } from "./themes.js";
 import { SHAPES, SHAPE_GROUPS, shapeIcon } from "./shapes.js";
 import { popover, closePopover, colorPicker, menuHtml, esc, mod, keyLabel } from "./chrome.js";
-import { prepareImage, contentId, mediaCache } from "./media.js";
+import { prepareImage, mediaId, mediaCache } from "./media.js";
 import { createFilmstrip } from "./filmstrip.js";
 import { createPanels } from "./panels.js";
 
 const isPhone = () => window.matchMedia("(max-width: 700px), (pointer: coarse) and (max-width: 900px)").matches;
 const CLIP_MARK = "live-slides:";
+// Pictures, video and audio behind the last copy (id → { info, bytes: Promise }), so
+// pasting into another presentation in this app brings them along.
+const clipMedia = new Map();
+const mediaIdsIn = (data) => {
+  const ids = new Set();
+  const walk = (v) => { if (!v || typeof v !== "object") return; for (const [k, x] of Object.entries(v)) { if ((k === "media" || k === "poster") && typeof x === "string" && /^[0-9a-f]{32}$/.test(x)) ids.add(x); else if (typeof x === "object") walk(x); } };
+  walk(data);
+  return [...ids];
+};
 const MIN = 8;
 const SI = {
   present: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>',
@@ -738,7 +747,7 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
   }
   async function storeImage(f) {
     const img = await prepareImage(f);
-    const id = await contentId(img.bytes);
+    const id = await mediaId(store, img.bytes);
     if (!model.mediaInfo(id)) {
       await store.images.put(id, img.bytes);
       model.addMedia(id, { kind: "image", mime: img.mime, size: img.bytes.length, w: img.w, h: img.h });
@@ -851,6 +860,12 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
       clip = { kind: "items", data: model.copyItems(st.slide, st.sel), from: st.slide };
       if (cut) deleteSel();
     } else return false;
+    clipMedia.clear();
+    for (const id of mediaIdsIn(clip.data)) {
+      const p = media.bytes(id);
+      p.catch(() => {});
+      clipMedia.set(id, { info: model.mediaInfo(id), bytes: p });
+    }
     const text = CLIP_MARK + JSON.stringify(clip);
     if (e?.clipboardData) { e.clipboardData.setData("text/plain", text); e.preventDefault(); } else navigator.clipboard?.writeText(text).catch(() => {});
     return true;
@@ -872,6 +887,23 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
     }
     if (!c) return;
     e?.preventDefault();
+    bringMedia(c.data).then(() => doPaste(c));
+  }
+  // Media the pasted things use that this presentation doesn't have yet.
+  async function bringMedia(data) {
+    for (const id of mediaIdsIn(data)) {
+      if (model.mediaInfo(id)) continue;
+      const src = clipMedia.get(id);
+      if (!src) continue;
+      try {
+        const bytes = await src.bytes;
+        await store.images.put(id, bytes);
+        media.put(id, bytes);
+        model.addMedia(id, src.info || { kind: "image", size: bytes.length });
+      } catch { /* shows a soft box */ }
+    }
+  }
+  function doPaste(c) {
     try {
       if (c.kind === "slides") {
         const ids = model.importSlides(c.data, slideIndex() + 1);

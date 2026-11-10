@@ -23,7 +23,7 @@ export function connectAirPlay({ plugin, model, media, show, root, t0, onScreen 
     const n = Math.max(1, Math.ceil(bytes.length / CHUNK));
     for (let i = 0; i < n; i++) await send({ t: "media", id, i, n, d: toB64(bytes.subarray(i * CHUNK, (i + 1) * CHUNK)) });
   }
-  function sync() { if (ready) send({ t: "show", idx: show.index, step: show.step, ended: !!show.ended, black: black.v }); }
+  function sync() { if (ready) send({ t: "show", slide: show.slideId, idx: show.index, step: show.step, ended: !!show.ended, black: black.v }); }
 
   async function openTv() {
     if (open || closed) return;
@@ -53,7 +53,7 @@ export function connectAirPlay({ plugin, model, media, show, root, t0, onScreen 
     if (!m) return;
     if (m.t === "ready") {
       ready = true;
-      await send({ t: "show", idx: show.index, step: show.step, ended: !!show.ended });
+      await send({ t: "show", slide: show.slideId, idx: show.index, step: show.step, ended: !!show.ended });
       await send({ t: "doc", u: toB64(Y.encodeStateAsUpdate(model.ydoc)) });
     } else if (m.t === "need" && typeof m.id === "string" && /^[0-9a-f]{32}$/.test(m.id)) sendMedia(m.id);
   }));

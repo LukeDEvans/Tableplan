@@ -125,7 +125,7 @@ export function createPanels({ box, sheet, root, app }) {
   // ---- Theme ---------------------------------------------------------------------------------
   function themePreview(th, W = 160, H = 90) {
     const t = cleanTheme(th);
-    return `<div class="sl-theme-prev" style="background:${backgroundCss(null, t)};font-family:${fontStack(t.fonts.heading)}"><svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" aria-hidden="true">${decoSvg(t, W, H)}</svg><span style="color:${t.colors.dk1}">${esc(t.name)}</span><i style="background:${t.colors.a1}"></i><i style="background:${t.colors.a2}"></i><i style="background:${t.colors.a3}"></i></div>`;
+    return `<div class="sl-theme-prev" style="${esc(`background:${backgroundCss(null, t)};font-family:${fontStack(t.fonts.heading)}`)}"><svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" aria-hidden="true">${decoSvg(t, W, H)}</svg><span style="color:${t.colors.dk1}">${esc(t.name)}</span><i style="background:${t.colors.a1}"></i><i style="background:${t.colors.a2}"></i><i style="background:${t.colors.a3}"></i></div>`;
   }
   function theme(body) {
     const cur = app.model.theme();
@@ -298,7 +298,7 @@ export function createPanels({ box, sheet, root, app }) {
       for (const k of ["size", "w", "h"]) { if (vm.meta.has(k)) m.meta.set(k, vm.meta.get(k)); else m.meta.delete(k); }
       vm.media.forEach((v, k) => { if (!m.media.has(k)) m.media.set(k, v); });
       m.deleteSlides(m.slideIds());
-      m.importSlides(data, 0);
+      m.importSlides(data, 0, { keepIds: true });
     });
     app.invalidateAll();
     app.goSlide(m.slideIds()[0]);

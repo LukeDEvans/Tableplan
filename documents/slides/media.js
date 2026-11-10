@@ -27,8 +27,13 @@ export function sniffType(b) {
 
 export const hexId = (n = 16) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (x) => x.toString(16).padStart(2, "0")).join("");
 
-// A content id: the first 16 bytes of SHA-256, as 32 hex characters (the part name the
-// stores accept). Same picture → same id → stored once.
+// A media id (the part name the stores accept, 32 hex characters). Everyday: the first
+// 16 bytes of SHA-256, so the same picture is stored once. The Safe: random, because the
+// part name is visible to the server and a hash of the plain file would let it tell
+// whether a known picture is in someone's Safe.
+export async function mediaId(store, bytes) {
+  return store?.kind === "safe" ? hexId(16) : contentId(bytes);
+}
 export async function contentId(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   return Array.from(h.slice(0, 16), (x) => x.toString(16).padStart(2, "0")).join("");

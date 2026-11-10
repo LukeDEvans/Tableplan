@@ -350,3 +350,22 @@ describe("tables", () => {
     expect(m.item(s, t).cells["0.0"].text).toBe("a");
   });
 });
+
+describe("fixes from review", () => {
+  it("a font is a plain name or a theme role, never CSS", () => {
+    expect(cleanItem({ t: "text", font: 'x" onmouseover="alert(1)' }).font).toBeUndefined();
+    expect(cleanItem({ t: "text", font: "x onmouseover=alert(1) y" }).font).toBeUndefined();
+    expect(cleanItem({ t: "text", font: "Open Sans" }).font).toBe("Open Sans");
+    expect(cleanItem({ t: "text", font: "@heading" }).font).toBe("@heading");
+  });
+  it("restoring keeps slide and item ids (comments still find them)", () => {
+    const { m } = device();
+    m.init();
+    const s = m.slideIds()[0];
+    const it = m.items(s)[0].id;
+    const data = JSON.parse(JSON.stringify(m.exportSlides(m.slideIds())));
+    m.transact(() => { m.deleteSlides(m.slideIds()); m.importSlides(data, 0, { keepIds: true }); });
+    expect(m.slideIds()).toEqual([s]);
+    expect(m.item(s, it)).toBeTruthy();
+  });
+});

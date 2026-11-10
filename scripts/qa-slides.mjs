@@ -158,6 +158,11 @@ try {
   await wait(120);
   check(await S(a, () => window.__S.model.theme().id) === "urbangreens", "picking Urban Greens changes the theme");
   check(await a.$eval(".sl-stage .sl-slide", (el) => getComputedStyle(el).backgroundColor) === "rgb(255, 255, 255)", "the slide follows the theme");
+  check(await a.evaluate(() => { const t = [...document.querySelectorAll(".sl-stage .sl-text")]; return t.length > 0 && t.every((el) => parseFloat(getComputedStyle(el).fontSize) > 20 && /Open Sans|Montserrat/.test(getComputedStyle(el).fontFamily)); }), "text keeps its theme font and size (quoted font names don't cut the style short)", await a.evaluate(() => [...document.querySelectorAll(".sl-stage .sl-text")].filter((el) => parseFloat(getComputedStyle(el).fontSize) < 20).map((el) => el.parentElement.className + " :: " + el.getAttribute("style")).join(" | ")));
+  await S(a, () => { const S = window.__S; const id = S.model.addItem(S.st.slide, { t: "text", x: 10, y: 10, w: 300, h: 80 }); S.model.updateItems(S.st.slide, [id], { font: 'Arial" onmouseover="window.__pwned=1' }); S.model.slideMap(S.st.slide).get("items").get(id).set("font", 'Arial" onmouseover="window.__pwned=1'); S.renderStage(); });
+  await wait(60);
+  const hostile = await a.evaluate(() => [...document.querySelectorAll(".sl-stage [onmouseover]")].length);
+  check(hostile === 0, "a hostile font name can't add an event handler", String(hostile));
   await shot(a, "03-theme");
   await S(a, () => window.__S.panels.close());
 
@@ -186,7 +191,7 @@ try {
   await S(a, () => { const S = window.__S; const id = S.model.addItem(S.st.slide, { t: "shape", shape: "heart", x: 100, y: 100, w: 200, h: 200 }); S.renderStage(); return id; });
   await wait(700);
   check(await S(b, () => window.__S.model.items(window.__S.st.slide).some((i) => i.shape === "heart")), "Marijane sees Luke's new heart live");
-  check(await b.$(".sl-stage .sl-shape svg path") !== null, "and it's drawn on her slide");
+  check(await b.$(".sl-stage .sl-t-shape svg path") !== null, "and it's drawn on her slide");
   await b.close();
 
   console.log("Tables, notes, comments");
@@ -219,7 +224,7 @@ try {
   await wait(600);
   const img = (await items(a)).find((i) => i.t === "image");
   check(!!img && img.alt === "lake", "dropping a picture adds it", JSON.stringify(img && { alt: img.alt }));
-  check(await a.$eval(".sl-stage .sl-image img", (el) => el.complete && el.naturalWidth === 400), "and it's drawn");
+  check(await a.$eval(".sl-stage .sl-t-image img", (el) => el.complete && el.naturalWidth === 400), "and it's drawn");
   await S(a, (id) => window.__S.select([id]), img.id);
   await S(a, () => window.__S.runAct("panel", "format"));
   await wait(60);
@@ -231,7 +236,7 @@ try {
   console.log("Video link");
   await S(a, () => { const S = window.__S; const id = S.model.addItem(S.st.slide, { t: "video", link: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", posterUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg", x: 1200, y: 600, w: 480, h: 270, play: "click" }); S.renderStage(); return id; });
   await wait(60);
-  check(await a.$eval(".sl-stage .sl-video .sl-poster", (el) => el.getAttribute("src").startsWith("https://i.ytimg.com/")), "a linked video shows its poster");
+  check(await a.$eval(".sl-stage .sl-t-video .sl-poster", (el) => el.getAttribute("src").startsWith("https://i.ytimg.com/")), "a linked video shows its poster");
 
   console.log("Transitions and animations");
   const sid0 = await S(a, () => window.__S.st.slide);

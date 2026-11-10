@@ -147,7 +147,16 @@ export function createShow({ model, media, frame, onChange = () => {}, doc = doc
     ended: false, loop: false, loopEvery: 0, silent: false,
     start: (idx) => queue(() => enter(Math.max(0, Math.min(deck.length - 1, idx)), { instant: true })),
     next, prev, go, relayout,
-    refresh() { deck = deckOf(model); },
+    // After an edit (someone skips a slide or changes its animations): rebuild the deck,
+    // staying on the same slide, and keep the step within that slide's steps.
+    refresh() {
+      const id = deck[i]?.id;
+      deck = deckOf(model);
+      const at = deck.findIndex((d) => d.id === id);
+      i = at >= 0 ? at : Math.min(i, Math.max(0, deck.length - 1));
+      step = Math.min(step, Math.max(0, (deck[i]?.steps.length || 1) - 1));
+    },
+    indexOf: (id) => deck.findIndex((d) => d.id === id),
     stop() { clearTimeout(autoTimer); stopMedia(); stopAllAcross(); cur?.remove(); cur = null; },
     stopMedia: () => stopMedia(),
     stepsLeft: () => (deck[i] ? deck[i].steps.length - 1 - step : 0),
@@ -179,6 +188,10 @@ export function startPresenting({ model, media, session, me, deps = {}, host = d
   sizeFrame();
 
   const show = createShow({ model, media, frame, onChange: () => changed() });
+  // a co-editor's change during the show: the deck follows (and so do the TV and remote)
+  let refreshTimer = 0;
+  const onEdit = (_, origin) => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { show.refresh(); changed(); }, 150); void origin; };
+  model.ydoc.on("update", onEdit);
   let presenter = null;
   let air = null;
   let ended = false;
@@ -304,6 +317,8 @@ export function startPresenting({ model, media, session, me, deps = {}, host = d
     document.removeEventListener("fullscreenchange", onFs);
     window.removeEventListener("resize", onResize);
     session.awareness.off("change", onAware);
+    model.ydoc.off("update", onEdit);
+    clearTimeout(refreshTimer);
     session.awareness.setLocalStateField("show", null);
     presenter?.close();
     air?.close();

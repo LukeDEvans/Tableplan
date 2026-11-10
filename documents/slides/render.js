@@ -27,7 +27,7 @@ export function boxStyle(it) {
 
 // Text defaults for a box (the runs inside may override them).
 export function textStyle(it, theme) {
-  const font = resolveFont(it.font, theme);
+  const font = resolveFont(/^@(heading|body)$|^[A-Za-z0-9 ]{1,60}$/.test(it.font || "") ? it.font : "@body", theme);
   ensureFont(font);
   const color = resolveColor(it.color || "@dk1", theme) || "#000";
   const parts = [
@@ -76,7 +76,7 @@ function itemHtml(it, ctx) {
   const stroke = resolveColor(it.stroke, theme);
   const sw = n(it.sw, stroke ? 2 : 0);
   const shadow = it.shadow ? "filter:drop-shadow(0 6px 10px rgba(0,0,0,.28));" : "";
-  const attrs = `class="sl-item sl-${it.t}" data-item="${esc(it.id)}"${it.grp ? ` data-grp="${esc(it.grp)}"` : ""} style="${boxStyle(it)}${shadow}"`;
+  const attrs = `class="sl-item sl-t-${it.t}" data-item="${esc(it.id)}"${it.grp ? ` data-grp="${esc(it.grp)}"` : ""} style="${esc(boxStyle(it) + shadow)}"`;
 
   if (it.t === "line") {
     const color = stroke || resolveColor("@dk1", theme);
@@ -96,7 +96,7 @@ function itemHtml(it, ctx) {
     const img = url
       ? `<img src="${esc(url)}" alt="${esc(it.alt || "")}" draggable="false" style="position:absolute;left:${(-cl / vw) * 100}%;top:${(-ct / vh) * 100}%;width:${100 / vw}%;height:${100 / vh}%;${it.fit === "contain" ? "object-fit:contain;" : "object-fit:fill;"}${filter ? `filter:${filter};` : ""}${it.opacity !== undefined ? `opacity:${n(it.opacity, 1)};` : ""}">`
       : `<div class="sl-img-wait" role="img" aria-label="${esc(it.alt || "Image")}"></div>`;
-    return `<div ${attrs}><div class="sl-crop" style="${clip}${border}">${img}</div></div>`;
+    return `<div ${attrs}><div class="sl-crop" style="${esc(clip + border)}">${img}</div></div>`;
   }
 
   if (it.t === "video" || it.t === "audio") {
@@ -125,7 +125,7 @@ function itemHtml(it, ctx) {
   const has = fragmentHasText(fr);
   const body = has ? ctx.textHtml(fr) : (ctx.placeholders && it.role ? `<p class="sl-prompt">${esc(PLACEHOLDER_PROMPTS[it.role] || "")}</p>` : "");
   const textColor = it.t === "shape" && !it.color ? { ...it, color: "@lt1" } : it;
-  return `<div ${attrs}>${under}<div class="sl-text${it.autofit === "shrink" ? " is-shrink" : ""}" style="${textStyle(textColor, theme)}">${body}</div></div>`;
+  return `<div ${attrs}>${under}<div class="sl-text${it.autofit === "shrink" ? " is-shrink" : ""}" style="${esc(textStyle(textColor, theme))}">${body}</div></div>`;
 }
 
 function tableHtml(it, ctx) {
@@ -134,7 +134,7 @@ function tableHtml(it, ctx) {
   const total = colW.reduce((a, b) => a + n(b, 1), 0) || 1;
   const cells = it.cells || {};
   const border = resolveColor(it.stroke || "@dk2", ctx.theme) || "#999";
-  const out = [`<table class="sl-table" style="border-color:${border};${textStyle(it, ctx.theme)};padding:0"><colgroup>${colW.map((w) => `<col style="width:${(n(w, 1) / total) * 100}%">`).join("")}</colgroup>`];
+  const out = [`<table class="sl-table" style="${esc(`border-color:${border};${textStyle(it, ctx.theme)};padding:0`)}"><colgroup>${colW.map((w) => `<col style="width:${(n(w, 1) / total) * 100}%">`).join("")}</colgroup>`];
   const covered = new Set();
   for (let r = 0; r < rows; r++) {
     out.push("<tr>");

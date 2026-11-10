@@ -58,6 +58,7 @@ export function cleanItem(v, id = v?.id) {
     else if (OBJ.has(k)) { if (raw && typeof raw === "object") out[k] = JSON.parse(JSON.stringify(raw)); }
   }
   if (!ITEM_TYPES.includes(out.t)) out.t = "shape";
+  if (out.font !== undefined && !/^@(heading|body)$|^[A-Za-z0-9 ]{1,60}$/.test(out.font)) delete out.font; // a font is a name, never CSS
   if (!isKey(out.z)) out.z = "a0";
   for (const k of ["x", "y"]) if (out[k] === undefined) out[k] = 0;
   for (const k of ["w", "h"]) if (out[k] === undefined) out[k] = 100;
@@ -435,11 +436,13 @@ export function createSlidesModel(ydoc) {
       sm.forEach((v, k) => { if (!(v instanceof Y.AbstractType)) fields[k] = v; });
       const its = [];
       const idMap = {};
-      sm.get("items")?.forEach((im, iid) => { idMap[iid] = its.length; its.push(itemToJson(im)); });
-      return { fields, items: its, notes: xmlToJson(sm.get("notes")), anims: (sm.get("anims")?.toArray() || []).map((a) => ({ ...a, item: idMap[a.item] })) };
+      sm.get("items")?.forEach((im, iid) => { idMap[iid] = its.length; its.push({ ...itemToJson(im), iid }); });
+      return { id, fields, items: its, notes: xmlToJson(sm.get("notes")), anims: (sm.get("anims")?.toArray() || []).map((a) => ({ ...a, item: idMap[a.item] })) };
     });
   }
-  function importSlides(list, at = null) {
+  // keepIds (restoring a version): slides and items keep their ids, so comments and
+  // anything else that points at them still find them.
+  function importSlides(list, at = null, { keepIds = false } = {}) {
     if (order.length + list.length > MAX_SLIDES) throw new Error(`A presentation can hold up to ${MAX_SLIDES} slides.`);
     return tx(() => {
       const ids = [];
@@ -454,7 +457,7 @@ export function createSlidesModel(ydoc) {
         for (const data of (s.items || []).slice(0, MAX_ITEMS)) {
           const f = cleanItem(data.fields || {});
           if (f.grp) { if (!groups.has(f.grp)) groups.set(f.grp, rid()); f.grp = groups.get(f.grp); }
-          const nid = rid();
+          const nid = keepIds && typeof data.iid === "string" && /^[A-Za-z0-9]{1,20}$/.test(data.iid) && !itemsMap.has(data.iid) ? data.iid : rid();
           newIds.push(nid);
           itemsMap.set(nid, itemFromJson({ fields: f, text: data.text }));
         }
@@ -463,7 +466,7 @@ export function createSlidesModel(ydoc) {
         const an = new Y.Array();
         an.push((s.anims || []).map((a) => cleanAnim({ ...a, id: rid(), item: newIds[a.item] })).filter(Boolean));
         sm.set("anims", an);
-        const id = rid();
+        const id = keepIds && typeof s.id === "string" && /^[A-Za-z0-9]{1,20}$/.test(s.id) && !slides.has(s.id) ? s.id : rid();
         slides.set(id, sm);
         order.insert(rawIndex(pos), [id]);
         pos++;

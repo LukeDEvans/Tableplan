@@ -37,15 +37,20 @@ export function startTv({ post = (s) => window.webkit?.messageHandlers?.tv?.post
   let at = { idx: 0, step: 0 };
   const send = () => post(encode({ t: "state", idx: show?.index ?? 0, step: show?.step ?? 0 }));
 
-  async function follow(idx, step) {
+  // Follows the phone by slide id (the index can differ for a moment while an edit
+  // reaches both); never loops past the steps a slide has.
+  async function follow(slideId, idx0, step) {
     if (!show) return;
     show.refresh();
+    const found = slideId ? show.indexOf(slideId) : -1;
+    const idx = found >= 0 ? found : Math.min(idx0, show.deck.length - 1);
+    step = Math.min(step, show.totalSteps(idx) - 1);
     if (idx === show.index && step === show.step + 1) await show.next();
     else if (idx === show.index + 1 && step === 0 && show.step === show.totalSteps(show.index) - 1) await show.next();
     else if (idx === show.index && step === show.step - 1) await show.prev();
     else if (idx !== show.index || step !== show.step) {
       await show.go(idx);
-      while (show.step < step) await show.next();
+      for (let k = 0; k < 50 && show.index === idx && show.step < step; k++) await show.next();
     }
   }
 
@@ -56,8 +61,9 @@ export function startTv({ post = (s) => window.webkit?.messageHandlers?.tv?.post
       Y.applyUpdate(ydoc, fromB64(m.u), "phone");
       if (m.t === "doc" && !show) {
         show = createShow({ model, media, frame, onChange: send, doc });
-        await show.start(at.idx);
-        while (show.step < at.step) await show.next();
+        const f = show.indexOf(at.slide);
+        await show.start(f >= 0 ? f : at.idx);
+        await follow(at.slide, at.idx, at.step);
       }
       return;
     }
@@ -65,18 +71,18 @@ export function startTv({ post = (s) => window.webkit?.messageHandlers?.tv?.post
       const done = joiner.add(m);
       if (done) {
         urls.set(done.id, URL.createObjectURL(new Blob([done.bytes], { type: sniffType(done.bytes) })));
-        if (show) { const { idx, step } = { idx: show.index, step: show.step }; await show.go(idx); while (show.step < step) await show.next(); }
+        if (show) { const idx = show.index, st = show.step; await show.go(idx); for (let k = 0; k < 50 && show.index === idx && show.step < st; k++) await show.next(); }
       }
       return;
     }
     if (m.t === "show") {
-      at = { idx: Math.max(0, Number(m.idx) || 0), step: Math.max(0, Number(m.step) || 0) };
+      at = { slide: typeof m.slide === "string" ? m.slide.slice(0, 40) : null, idx: Math.max(0, Number(m.idx) || 0), step: Math.max(0, Number(m.step) || 0) };
       const black = root.querySelector("[data-black]");
       black.hidden = !m.black;
       black.style.background = m.black === "white" ? "#fff" : "#000";
       if (m.ended) { frame.style.visibility = "hidden"; return; }
       frame.style.visibility = "";
-      await follow(at.idx, at.step);
+      await follow(at.slide, at.idx, at.step);
     }
   };
   window.addEventListener("resize", () => { size(); show?.relayout(); });

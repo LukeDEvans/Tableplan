@@ -115,7 +115,7 @@ export function buildTemplate(model, id) {
 export async function templatePicker(root, { mine = [] } = {}) {
   const card = (t) => {
     const th = themeById(t.theme);
-    return `<button type="button" class="sl-tpl" data-tpl="${t.id}"><span class="sl-tpl-prev" style="background:${th.colors.lt1};color:${th.colors.dk1};border-top:6px solid ${th.colors.a1}"><b style="font-family:'${esc(th.fonts.heading)}',sans-serif">${esc(t.name)}</b></span><span class="sl-tpl-name">${esc(t.name)}</span><small>${esc(t.blurb)}</small></button>`;
+    return `<button type="button" class="sl-tpl" data-tpl="${t.id}"><span class="sl-tpl-prev" style="${esc(`background:${th.colors.lt1};color:${th.colors.dk1};border-top:6px solid ${th.colors.a1}`)}"><b style="${esc(`font-family:"${th.fonts.heading}",sans-serif`)}">${esc(t.name)}</b></span><span class="sl-tpl-name">${esc(t.name)}</span><small>${esc(t.blurb)}</small></button>`;
   };
   let picked = null;
   const { value } = await openDialog(root, {

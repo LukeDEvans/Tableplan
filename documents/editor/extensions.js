@@ -39,7 +39,7 @@ const num = (v, min, max) => {
 export const safeId = (v) => (typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null);
 const ptFromCss = (v) => {
   let s = String(v || "");
-  const calc = s.match(/^calc\(\s*([\d.]+)\s*\*\s*var\(--pt/); // our own: calc(N * var(--pt, 1pt))
+  const calc = s.match(/^calc\(\s*(-?[\d.]+)\s*\*\s*var\(--pt/); // our own: calc(N * var(--pt, 1pt))
   if (calc) return Number(calc[1]);
   const n = Number.parseFloat(s);
   if (!Number.isFinite(n)) return null;
@@ -71,7 +71,7 @@ const TextStyleAttrs = Extension.create({
         fontSize: {
           default: null,
           parseHTML: (el) => num(ptFromCss(el.style.fontSize), 1, 400),
-          renderHTML: (a) => (num(a.fontSize, 1, 400) ? { style: `font-size: calc(${num(a.fontSize, 1, 400)} * var(--pt, 1pt))` } : {}),
+          renderHTML: (a) => (num(a.fontSize, 1, 400) ? { style: `font-size: ${num(a.fontSize, 1, 400)}pt; font-size: calc(${num(a.fontSize, 1, 400)} * var(--pt, 1pt))` } : {}),
         },
       },
     }];
@@ -130,17 +130,17 @@ const ParagraphFormat = Extension.create({
         spaceBefore: {
           default: null,
           parseHTML: (el) => num(ptFromCss(el.style.marginTop), 0, 200),
-          renderHTML: (a) => (num(a.spaceBefore, 0, 200) !== null ? { style: `margin-top: calc(${num(a.spaceBefore, 0, 200)} * var(--pt, 1pt))` } : {}),
+          renderHTML: (a) => (num(a.spaceBefore, 0, 200) !== null ? { style: `margin-top: ${num(a.spaceBefore, 0, 200)}pt; margin-top: calc(${num(a.spaceBefore, 0, 200)} * var(--pt, 1pt))` } : {}),
         },
         spaceAfter: {
           default: null,
           parseHTML: (el) => num(ptFromCss(el.style.marginBottom), 0, 200),
-          renderHTML: (a) => (num(a.spaceAfter, 0, 200) !== null ? { style: `margin-bottom: calc(${num(a.spaceAfter, 0, 200)} * var(--pt, 1pt))` } : {}),
+          renderHTML: (a) => (num(a.spaceAfter, 0, 200) !== null ? { style: `margin-bottom: ${num(a.spaceAfter, 0, 200)}pt; margin-bottom: calc(${num(a.spaceAfter, 0, 200)} * var(--pt, 1pt))` } : {}),
         },
         indent: {
           default: 0,
           parseHTML: (el) => Math.round((num(ptFromCss(el.style.marginLeft), 0, 1000) || 0) / INDENT_PT),
-          renderHTML: (a) => (a.indent > 0 ? { style: `margin-left: calc(${Math.min(MAX_INDENT, a.indent) * INDENT_PT} * var(--pt, 1pt))` } : {}),
+          renderHTML: (a) => (a.indent > 0 ? { style: `margin-left: ${Math.min(MAX_INDENT, a.indent) * INDENT_PT}pt; margin-left: calc(${Math.min(MAX_INDENT, a.indent) * INDENT_PT} * var(--pt, 1pt))` } : {}),
         },
         // First-line (positive) or hanging (negative) indent, in points.
         textIndent: {
@@ -149,7 +149,7 @@ const ParagraphFormat = Extension.create({
           renderHTML: (a) => {
             const t = num(a.textIndent, -200, 200);
             if (!t) return {};
-            return t < 0 ? { style: `text-indent: ${t}pt; padding-left: ${-t}pt` } : { style: `text-indent: ${t}pt` };
+            return t < 0 ? { style: `text-indent: ${t}pt; text-indent: calc(${t} * var(--pt, 1pt)); padding-left: ${-t}pt; padding-left: calc(${-t} * var(--pt, 1pt))` } : { style: `text-indent: ${t}pt; text-indent: calc(${t} * var(--pt, 1pt))` };
           },
         },
         pageBreakBefore: {
