@@ -11,6 +11,7 @@ import { financeFunctions } from "./finance.js";
 import { distributionFunctions } from "./distributions.js";
 import { moreFunctions } from "./more.js";
 import { queryFunctions } from "./query.js";
+import { pivotFunctions } from "./pivot.js";
 
 let catalog = null;
 
@@ -18,7 +19,7 @@ export function functionCatalog() {
   if (catalog) return catalog;
   const map = new Map();
   const all = () => map;
-  for (const list of [mathFunctions(all), statsFunctions(), logicFunctions(), textFunctions(), dateFunctions(), lookupFunctions(), arrayFunctions(), financeFunctions(), distributionFunctions(), moreFunctions(), queryFunctions()]) {
+  for (const list of [mathFunctions(all), statsFunctions(), logicFunctions(), textFunctions(), dateFunctions(), lookupFunctions(), arrayFunctions(), financeFunctions(), distributionFunctions(), moreFunctions(), queryFunctions(), pivotFunctions()]) {
     for (const d of list) {
       if (map.has(d.name)) throw new Error(`Function ${d.name} defined twice`);
       map.set(d.name, d);

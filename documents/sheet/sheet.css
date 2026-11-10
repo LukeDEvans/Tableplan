@@ -92,7 +92,7 @@
 .sh-ok:hover { background: var(--accent); }
 
 /* menus */
-.sh-menu { position: absolute; z-index: 30; min-width: 200px; max-width: 320px; max-height: 70vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); padding: 4px; }
+.sh-menu { position: absolute; z-index: 40; /* above the side panels (34–35), which open menus of their own */ min-width: 200px; max-width: 320px; max-height: 70vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); padding: 4px; }
 .sh-menu button { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; color: var(--ink); padding: 8px 10px; border-radius: 6px; text-align: left; cursor: pointer; }
 .sh-menu button > span:nth-last-child(1):not(:first-child) { margin-left: auto; color: var(--muted); }
 .sh-menu button:hover:not([disabled]) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
@@ -208,3 +208,18 @@
 .sh-ce-series label { display: flex; align-items: center; gap: 8px; font-size: 0.9em; min-width: 0; }
 .sh-ce-series span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sh-ce-series input[type=color] { width: 32px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; flex: none; }
+
+/* pivot tables (pivot-ui.js) */
+.sh-pivot-chip { position: absolute; z-index: 6; height: 26px; padding: 0 10px; border: 1px solid var(--sheet-accent); border-radius: 13px; background: var(--surface); color: var(--sheet-accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 6px color-mix(in srgb, var(--ink) 15%, transparent); }
+.sh-pv-sec { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.sh-pv-head { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
+.sh-pv-head .sh-btn { padding: 2px 10px; }
+.sh-pv-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.sh-pv-top { display: flex; align-items: center; gap: 8px; }
+.sh-pv-top strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-pv-note { color: var(--muted); font-size: 0.85em; }
+.sh-pv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sh-pv-grid label { display: flex; flex-direction: column; gap: 2px; font-size: 0.85em; color: var(--muted); min-width: 0; }
+.sh-pv-item .sh-f-list { max-height: 150px; }
+.sh-pv-item .sh-f-list input[type=checkbox] { width: auto; height: auto; flex: none; margin: 0; }
+.sh-formula.is-pivot, [data-formula].is-pivot { color: var(--muted); font-style: italic; }

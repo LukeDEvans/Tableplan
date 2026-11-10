@@ -23,6 +23,7 @@ import { toCsv, parseCsv } from "./csv.js";
 import { createFilterUI } from "./filter-ui.js";
 import { createRulesUI } from "./rules-ui.js";
 import { createChartUI } from "./chart-ui.js";
+import { createPivotUI, isPivotText } from "./pivot-ui.js";
 import { regionAround } from "./filters.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -146,6 +147,8 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   let filterHead = null;
   const rx = createRulesUI({ root, model, engine, st, schedule: (o) => schedule(o), toast, isPhone, colors: COLORS, cellRect: (r, c) => cellRect(r, c), scroller, openMenu: (items, at) => openMenu(items, at) });
   let rulesC = null;
+  const px = createPivotUI({ root, model, engine, st, schedule: (o) => schedule(o), toast, isPhone, openMenu: (items, at) => openMenu(items, at), cellRect: (r, c) => cellRect(r, c), select: (r, c) => select(r, c), regionAround,
+    newTabWithName: (name) => { const id = model.addTab({ name, at: model.tabIds().indexOf(st.tab) + 1 }); refreshUndoScope(); switchTab(id); return id; } });
   const cx = createChartUI({ root, model, engine, st, schedule: (o) => schedule(o), toast, isPhone, openMenu: (items, at) => openMenu(items, at), share: deps.share, fileName: () => nameInput?.value || file.name, regionAround, scroller });
 
   // ---- drawing --------------------------------------------------------------------------------
@@ -170,6 +173,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (!st.editing) showFormulaBar();
     placeCellEditor();
     rx.hint();
+    px.chip();
     $("[data-act=start-edit]").hidden = !st.viewing;
     root.classList.toggle("is-viewing", st.viewing);
   }
@@ -212,7 +216,14 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   function showFormulaBar() {
     const { r, c, r1, c1, r2, c2 } = st.sel;
     if (document.activeElement !== nameBox) nameBox.value = a1Of(r1, c1, r2, c2) === a1Of(r, c) ? a1Of(r, c) : a1Of(r1, c1, r2, c2);
-    if (document.activeElement !== formulaEl) formulaEl.value = model.inputText(st.tab, r, c);
+    if (document.activeElement !== formulaEl) {
+      const t = model.inputText(st.tab, r, c);
+      // a pivot's formula carries its settings as JSON: show what it is, change it in the editor
+      const pivot = isPivotText(t);
+      formulaEl.value = pivot ? "Pivot table — use “Edit pivot table” to change it" : t;
+      formulaEl.readOnly = pivot || st.viewing;
+      formulaEl.classList.toggle("is-pivot", pivot);
+    }
   }
   nameBox.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
@@ -583,7 +594,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   }
 
   // ---- function suggestions while typing a formula ---------------------------------------
-  const catalogNames = [...functionCatalog().keys(), "LET", "LAMBDA"].sort();
+  const catalogNames = [...functionCatalog().entries()].filter(([, d]) => !d.hidden).map(([n]) => n).concat(["LET", "LAMBDA"]).sort();
   const sugEl = $("[data-suggest]");
   let sugItems = [], sugIdx = 0, sugFor = null;
   function suggest(el) {
@@ -790,7 +801,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       { label: `${nRows()} row${nRows() > 1 ? "s" : ""} below`, run: () => model.insertRows(st.tab, s().r2 + 1, nRows()) },
       { label: `${nCols()} column${nCols() > 1 ? "s" : ""} left`, run: () => model.insertCols(st.tab, s().c1, nCols()) },
       { label: `${nCols()} column${nCols() > 1 ? "s" : ""} right`, run: () => model.insertCols(st.tab, s().c2 + 1, nCols()) },
-      { sep: true }, { label: "Chart", run: () => cx.insert(), disabled: st.viewing }, { label: "New tab", run: newTab }, { label: "Note", run: editNote },
+      { sep: true }, { label: "Chart", run: () => cx.insert(), disabled: st.viewing }, { label: "Pivot table", run: () => px.insert(), disabled: st.viewing }, { label: "New tab", run: newTab }, { label: "Note", run: editNote },
       { label: "Function", sub: ["SUM", "AVERAGE", "COUNT", "MAX", "MIN", "IF", "VLOOKUP", "XLOOKUP", "SUMIF", "TODAY"].map((f) => ({ label: f, run: () => insertFunction(f) })) },
     ],
     format: () => [
@@ -991,7 +1002,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (st.editing && !isFormulaText(currentEditText())) commitEdit();
     fx.close();
     rx.close();
-    cx.close(); cx.deselect();
+    cx.close(); cx.deselect(); px.close();
     st.tab = t;
     scroller.scrollTop = 0; scroller.scrollLeft = 0; st.scrollX = st.scrollY = 0;
     st.sel = { r: 0, c: 0, r1: 0, c1: 0, r2: 0, c2: 0 };
@@ -1242,6 +1253,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     fx.destroy();
     rx.destroy();
     cx.destroy();
+    px.destroy();
     statusEl.textContent = "Saving…";
     stopBridge();
     engine.close();
@@ -1265,7 +1277,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     // a cell's centre on screen (QA clicks there)
     cellCenter: (r, c) => { const R = cellRect(r, c), b = scroller.getBoundingClientRect(); return { x: b.left + R.x + R.w / 2, y: b.top + R.y + R.h / 2, w: R.w, h: R.h, right: b.left + R.x + R.w, bottom: b.top + R.y + R.h }; },
     shown: (r, c) => displayOf(model, engine, st.tab, r, c).text,
-    fx, rx, cx, rowShown: (r) => g.rh[r] > 0, rules: () => rulesC,
+    fx, rx, cx, px, rowShown: (r) => g.rh[r] > 0, rules: () => rulesC,
     idle: () => engine.whenIdle(),
   };
   return { close, model, engine };

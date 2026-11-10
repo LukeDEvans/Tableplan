@@ -502,6 +502,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+- [ ] **[P3] Pivot tables: no bold headers/totals, no date grouping, no calculated fields yet** (sheets · documents/sheet/pivot.js · 2026-11-10)
+      Sheets bolds a pivot's header and total rows, can group a date field by month / quarter / year, and offers calculated fields (a value from a formula). Ours shows plain cells and groups by the exact value. → Styling needs the grid to know a cell is a pivot header (the worker could send it with the answer); date grouping and calculated fields are settings additions in pivot.js. Verdict: KNOWN GAP.
 - [ ] **[P3] Sheets: every custom-formula rule is re-evaluated at every cell on every batch, and the 100,000-cell cap cuts off silently** (sheets · documents/sheet/engine/host.js:42-66 evaluateRules · 2026-11-10, review of e032ae5)
       `handle` runs `evaluateRules` after each batch whatever changed, and each cell does unbind → shift → bind → `evaluateAt`; a rule on whole columns (`A:Z`, top/bottom null → every row of the tab) is tens of thousands of evaluations per keystroke, delaying every answer the grid waits for. Past the shared budget, later cells (and later rules) just get no hit, with no sign. `break` only leaves the column loop, so the row loop keeps spinning. → Skip rules whose inputs didn't change (the engine's changed set vs the rule's deps), clip whole-column ranges to the last filled row, and flag a rule that hit the cap in the panel. Verdict: PLAUSIBLE (not measured).
 - [x] **[P3] qa:sheet missed one check once, during a screenshot run** (sheets · scripts/qa-sheet.mjs Filters section · 2026-11-10)

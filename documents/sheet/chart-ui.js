@@ -85,7 +85,7 @@ export function createChartUI({ root, model, engine, st, schedule, toast = () =>
     layer.style.clipPath = `inset(${g.headH}px 0 0 ${g.headW}px)`;
     const charts = model.chartsOf(st.tab);
     const live = new Set(charts.map((c) => c.id));
-    for (const [id, x] of els) if (!live.has(id)) { x.el.remove(); els.delete(id); if (selected === id) selected = null; }
+    for (const [id, x] of els) if (!live.has(id)) { x.el.remove(); els.delete(id); if (selected === id) selected = null; tip.hidden = true; }
     if (editingId && !live.has(editingId)) closePanel();
     const th = data ? theme() : null;
     for (const spec of charts) {

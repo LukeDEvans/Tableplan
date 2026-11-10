@@ -112,6 +112,14 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
 - Charts are DOM over the canvas (`chart-ui.js`), placed in grid content coordinates
   (anchor cell id + offset); sorting pins their range and anchor (`keepRangesInPlace`).
 
+## Pivot tables
+- A pivot is the hidden function `PIVOT.TABLE(source, "settings JSON", header cells…)` in
+  its corner cell. Settings' field numbers point at the header-cell arguments, so
+  fields follow column inserts/moves via the normal id binding. Never store column
+  positions in the JSON.
+- `pivot-ui.js` reads and writes that formula; the formula bar shows "Pivot table…"
+  (read-only) for it. Menus (`.sh-menu`, z 40) sit above side panels (z 34–35).
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->
 - files: `documents/sheet/*.js`, `documents/sheet/engine/*.js`, `documents/sheet/engine/functions/*.js`
