@@ -66,7 +66,7 @@ const clickCell = async (page, r, c, opts = {}) => {
   await page.evaluate(([r, c]) => { const S = window.__S; if (!S.st.editing) S.select(r, c); }, [r, c]);
   await wait(30);
   const p = await center(page, r, c); await page.mouse.click(p.x, p.y, opts); await wait(30); };
-const val = (page, r, c) => page.evaluate(([r, c]) => { const v = window.__S.engine.valueAt(window.__S.st.tab, r, c); return v && v.code ? v.code : v; }, [r, c]);
+const val = (page, r, c) => page.evaluate(async ([r, c]) => { await window.__S.idle?.(); const v = window.__S.engine.valueAt(window.__S.st.tab, r, c); return v && v.code ? v.code : v; }, [r, c]);
 const shown = (page, r, c) => page.evaluate(([r, c]) => window.__S.shown(r, c), [r, c]);
 const input = (page, r, c) => page.evaluate(([r, c]) => window.__S.model.inputText(window.__S.st.tab, r, c), [r, c]);
 const typeIn = async (page, r, c, text) => { await clickCell(page, r, c); await page.keyboard.type(text); await page.keyboard.press("Enter"); await wait(40); };
@@ -179,6 +179,7 @@ try {
   console.log("Two people");
   const b = await openAs("marijane");
   check(await val(b, 5, 1) === 42, "Marijane opens what Luke made");
+  check(await b.evaluate(() => window.__S.engine.inWorker), "formulas are computed in the worker");
   await wait(600);
   await a.bringToFront(); // keyboard focus goes to the page in front, as on a real screen
   await typeIn(a, 30, 4, "hello from Luke");

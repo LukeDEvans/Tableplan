@@ -13,7 +13,7 @@ import { createDocCache } from "../editor/cache.js";
 import { IC } from "../editor/icons.js";
 import { createSheetModel, LOCAL, WARN_CELLS, MAX_CELLS } from "./model.js";
 import { connectEngine } from "./bridge.js";
-import { createEngine } from "./engine/engine.js";
+import { createWorkerEngine } from "./worker-client.js";
 import { functionCatalog } from "./engine/functions/index.js";
 import { compare, isErr } from "./engine/values.js";
 import { FORMATS } from "./engine/number-format.js";
@@ -113,8 +113,9 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   model = createSheetModel(session.ydoc);
   if (!model.tabIds().length) model.init();
   model.tidy();
-  engine = createEngine({ functions: functionCatalog() });
-  const stopBridge = connectEngine(model, engine, { onChanged: () => schedule() });
+  // formulas are computed in a Web Worker; answers come back through onChange
+  engine = createWorkerEngine({ onChange: () => schedule() });
+  const stopBridge = connectEngine(model, engine);
 
   // ---- undo (only my edits) -----------------------------------------------------------------
   const undoScope = () => {
@@ -1196,6 +1197,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (st.editing) commitEdit();
     statusEl.textContent = "Saving…";
     stopBridge();
+    engine.close();
     unsub();
     ro.disconnect();
     undo.destroy();
@@ -1216,6 +1218,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     // a cell's centre on screen (QA clicks there)
     cellCenter: (r, c) => { const R = cellRect(r, c), b = scroller.getBoundingClientRect(); return { x: b.left + R.x + R.w / 2, y: b.top + R.y + R.h / 2, w: R.w, h: R.h, right: b.left + R.x + R.w, bottom: b.top + R.y + R.h }; },
     shown: (r, c) => displayOf(model, engine, st.tab, r, c).text,
+    idle: () => engine.whenIdle(),
   };
   return { close, model, engine };
 }

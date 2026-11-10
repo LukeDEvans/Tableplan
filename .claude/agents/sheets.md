@@ -66,6 +66,16 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
   spills, LET/LAMBDA), `test/documents-sheet-conformance.test.js` (Sheets' answers),
   `test/documents-sheet-migration.test.js` (version rows for sheets).
 
+## The calculation worker
+- The screen never calls the engine directly: `worker-client.js` sends edits to
+  `engine/worker.js` and keeps a copy of the answers, so `valueAt` stays synchronous for
+  the grid. Values cross as plain data (`engine/host.js` `encodeValue` / `decodeValue`:
+  errors as `{ e, m }`). Anything new the grid reads from the engine has to cross this
+  way too — add it to the host's change rows, not a second channel.
+- Reads right after an edit can be one answer behind; code that needs the new value
+  (QA, tests) awaits `whenIdle()`. The page falls back to running the engine itself if
+  the worker fails; keep that path tested.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->
 - files: `documents/sheet/*.js`, `documents/sheet/engine/*.js`, `documents/sheet/engine/functions/*.js`
