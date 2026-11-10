@@ -17,6 +17,8 @@ import { displayOf } from "./grid.js";
 import { storedFromText, formulaText } from "./engine/binding.js";
 import { parseTyped } from "./engine/values.js";
 
+// Colours come from the shared document: only #rrggbb ever reaches HTML.
+const safeColor = (c) => (typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c) ? c : null);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
 const DEFAULT_STYLE = { fill: "#b7e1cd" }; // Sheets' default: light green
 const SCALE_DEFAULT = { min: { type: "min", color: "#ffffff" }, mid: { type: "none", color: "#ffd666" }, max: { type: "max", color: "#57bb8a" } };
@@ -70,18 +72,19 @@ export function createRulesUI({ root, model, engine, st, schedule, toast = () =>
     if (cur) items.push({ sep: true }, { label: "Clear", run: () => { model.clearRange(st.tab, r, c, r, c); schedule(); } });
     openMenu(items, { x: sb.left + R.x, y: sb.top + R.y + R.h + 2 });
   }
-  function pointer(h) {
+  // pointer(h): act on a click on a checkbox or dropdown arrow; wants(h): would it?
+  function pointer(h, dry = false) {
     if (h.inRowHead || h.inColHead || !current || current.empty) return false;
     const chk = checkAt(h.r, h.c);
     if (!chk?.rule) return false;
     const R = cellRect(h.r, h.c);
     if (chk.rule.type === "checkbox" && chk.valid) {
       const b = 12 * (st.zoom || 1) + 8, cx = R.x + R.w / 2, cy = R.y + R.h / 2;
-      if (Math.abs(h.x - cx) <= b / 2 + 2 && Math.abs(h.y - cy) <= b / 2 + 2) { toggleBox(h.r, h.c, chk.rule); return true; }
+      if (Math.abs(h.x - cx) <= b / 2 + 2 && Math.abs(h.y - cy) <= b / 2 + 2) { if (!dry) toggleBox(h.r, h.c, chk.rule); return true; }
       return false;
     }
     if ((chk.rule.type === "list" || chk.rule.type === "range") && chk.rule.display !== "plain" && h.x >= R.x + R.w - 18 * (st.zoom || 1)) {
-      openDropdown(h.r, h.c, chk);
+      if (!dry) openDropdown(h.r, h.c, chk);
       return true;
     }
     return false;
@@ -177,9 +180,9 @@ export function createRulesUI({ root, model, engine, st, schedule, toast = () =>
   }
   function preview(r) {
     if (r.kind !== "format") return "";
-    if (r.type === "scale") return `<span class="sh-rx-prev" style="background:linear-gradient(90deg,${r.min?.color || "#fff"},${r.mid && r.mid.type !== "none" ? `${r.mid.color},` : ""}${r.max?.color || "#fff"})"></span>`;
+    if (r.type === "scale") { const mid = r.mid && r.mid.type !== "none" && safeColor(r.mid.color); return `<span class="sh-rx-prev" style="background:linear-gradient(90deg,${safeColor(r.min?.color) || "#ffffff"},${mid ? `${mid},` : ""}${safeColor(r.max?.color) || "#ffffff"})"></span>`; }
     const s = r.style || {};
-    return `<span class="sh-rx-prev" style="background:${s.fill || "transparent"};color:${s.color || "inherit"};font-weight:${s.bold ? 700 : 400};font-style:${s.italic ? "italic" : "normal"};text-decoration:${[s.underline && "underline", s.strike && "line-through"].filter(Boolean).join(" ") || "none"}">123</span>`;
+    return `<span class="sh-rx-prev" style="background:${safeColor(s.fill) || "transparent"};color:${safeColor(s.color) || "inherit"};font-weight:${s.bold ? 700 : 400};font-style:${s.italic ? "italic" : "normal"};text-decoration:${[s.underline && "underline", s.strike && "line-through"].filter(Boolean).join(" ") || "none"}">123</span>`;
   }
 
   function renderPanel() {
@@ -210,7 +213,7 @@ export function createRulesUI({ root, model, engine, st, schedule, toast = () =>
           <div class="sh-rx-sub">Text colour</div>${swatches("color", r.style?.color)}
           <div class="sh-rx-sub">Fill colour</div>${swatches("fill", r.style?.fill)}`;
       } else {
-        const point = (k, label, types) => { const p = r[k] || {}; return `<div class="sh-rx-point"><span>${label}</span><select data-rx-pt="${k}">${opts(types, p.type)}</select>${p.type && !["min", "max", "none"].includes(p.type) ? `<input type="text" data-rx-ptv="${k}" value="${esc(p.v ?? "")}" inputmode="decimal">` : ""}<input type="color" data-rx-ptc="${k}" value="${p.color || "#ffffff"}" aria-label="${label} colour" ${p.type === "none" ? "disabled" : ""}></div>`; };
+        const point = (k, label, types) => { const p = r[k] || {}; return `<div class="sh-rx-point"><span>${label}</span><select data-rx-pt="${k}">${opts(types, p.type)}</select>${p.type && !["min", "max", "none"].includes(p.type) ? `<input type="text" data-rx-ptv="${k}" value="${esc(p.v ?? "")}" inputmode="decimal">` : ""}<input type="color" data-rx-ptc="${k}" value="${safeColor(p.color) || "#ffffff"}" aria-label="${label} colour" ${p.type === "none" ? "disabled" : ""}></div>`; };
         body += point("min", "Minpoint", [["min", "Min value"], ["num", "Number"], ["pct", "Percent"], ["percentile", "Percentile"]])
           + point("mid", "Midpoint", [["none", "None"], ["num", "Number"], ["pct", "Percent"], ["percentile", "Percentile"]])
           + point("max", "Maxpoint", [["max", "Max value"], ["num", "Number"], ["pct", "Percent"], ["percentile", "Percentile"]])
@@ -336,7 +339,7 @@ export function createRulesUI({ root, model, engine, st, schedule, toast = () =>
   }
 
   return {
-    compiled, pointer, key, refuse, hint, close, dropdownAt, openDropdownAt,
+    compiled, pointer, wants: (h) => pointer(h, true), key, refuse, hint, close, dropdownAt, openDropdownAt,
     openFormatting: () => open("format"),
     openValidation: () => open("valid"),
     destroy() { close(); model.ydoc.off("afterTransaction", onTx); hintEl.remove(); },

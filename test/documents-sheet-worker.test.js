@@ -133,4 +133,16 @@ describe("the calculation worker", () => {
     await s.eng.whenIdle();
     expect(s.val(2, 0)).toBe(15);
   });
+
+  it("drops the dead worker's answers: a spill that shrank doesn't linger", async () => {
+    const s = setup(() => fakeWorker({ dieAfter: 1 }));
+    const t = s.tab();
+    s.model.setInput(t, 0, 0, "=SEQUENCE(5)");
+    await s.eng.whenIdle();
+    expect([0, 1, 2, 3, 4].map((r) => s.val(r, 0))).toEqual([1, 2, 3, 4, 5]);
+    s.model.setInput(t, 0, 0, "=SEQUENCE(2)"); // the worker dies on this one
+    await s.eng.whenIdle();
+    expect(s.eng.inWorker).toBe(false);
+    expect([0, 1, 2, 3, 4].map((r) => s.val(r, 0))).toEqual([1, 2, null, null, null]);
+  });
 });

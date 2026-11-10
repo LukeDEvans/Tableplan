@@ -387,7 +387,63 @@ export function createSheetModel(ydoc) {
       return a.r - b.r;
     });
     const order = [...ids.slice(0, r1), ...slice.map((x) => x.id), ...ids.slice(r2 + 1)];
-    tx(() => { const arr = rowsArr(tab); arr.delete(0, arr.length); arr.insert(0, order); });
+    // A sort moves values, not ranges: an edge of a range inside the sorted block keeps its
+    // position (as Sheets), so it now names the row that's there. A single-cell reference in
+    // a cell's formula follows its row (the formula usually moved with it); a rule's formula
+    // doesn't move with rows, so all of its references keep their positions.
+    const at = new Map();
+    for (let i = r1; i <= r2; i++) if (ids[i] !== order[i]) at.set(ids[i], order[i]);
+    tx(() => {
+      const arr = rowsArr(tab); arr.delete(0, arr.length); arr.insert(0, order);
+      if (at.size) keepRangesInPlace(tab, at);
+    });
+  }
+
+  function keepRangesInPlace(tab, at) {
+    const pin = (id) => (at.has(id) ? at.get(id) : id);
+    const RANGE = new Set(["range", "open", "rows"]);
+    // stored formula { f, refs } living on homeTab; all = also single cells
+    const pinStored = (stored, homeTab, all) => {
+      let changed = false;
+      const refs = stored.refs.map((r) => {
+        if ((r.s || homeTab) !== tab || !(all || RANGE.has(r.k))) return r;
+        const n = { ...r };
+        if (r.r1 !== undefined) n.r1 = pin(r.r1);
+        if (r.r2 !== undefined) n.r2 = pin(r.r2);
+        if (n.r1 !== r.r1 || n.r2 !== r.r2) changed = true;
+        return n;
+      });
+      return changed ? { ...stored, refs } : null;
+    };
+    for (const t of tabIds()) {
+      const m = cells(t);
+      for (const [k, x] of m.entries()) {
+        if (!x?.f?.refs?.length) continue;
+        const next = pinStored(x.f, t, false);
+        if (next) m.set(k, { ...x, f: next });
+      }
+      const rm = rulesMap(t);
+      for (const [id, r] of rm.entries()) {
+        if (!r) continue;
+        let n = r, touched = false;
+        if (t === tab && r.ranges) { const ranges = r.ranges.map((g) => ({ ...g, top: pin(g.top), bottom: pin(g.bottom) })); if (JSON.stringify(ranges) !== JSON.stringify(r.ranges)) { n = { ...n, ranges }; touched = true; } }
+        if (r.source?.tab === tab) { const source = { ...r.source, top: pin(r.source.top), bottom: pin(r.source.bottom) }; if (source.top !== r.source.top || source.bottom !== r.source.bottom) { n = { ...n, source }; touched = true; } }
+        if (r.cond?.f) { const f = pinStored(r.cond.f, t, true); if (f) { n = { ...n, cond: { ...r.cond, f } }; touched = true; } }
+        if (r.f) { const f = pinStored(r.f, t, true); if (f) { n = { ...n, f }; touched = true; } }
+        if (touched) rm.set(id, n);
+      }
+    }
+    const fm = filtersMap(tab);
+    for (const [k, v] of fm.entries()) {
+      if (!v || k.startsWith("crit:")) continue;
+      const top = pin(v.top), bottom = v.bottom ? pin(v.bottom) : v.bottom;
+      if (top !== v.top || bottom !== v.bottom) fm.set(k, { ...v, top, bottom });
+    }
+    for (const [k, v] of names.entries()) {
+      if (!v || (v.sheet || null) !== tab || !RANGE.has(v.kind)) continue;
+      const r1 = pin(v.r1), r2 = pin(v.r2);
+      if (r1 !== v.r1 || r2 !== v.r2) names.set(k, { ...v, r1, r2 });
+    }
   }
 
   // Duplicate ids left by concurrent sorts: keep the first, delete the rest.

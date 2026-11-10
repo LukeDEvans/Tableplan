@@ -54,8 +54,12 @@ export function createWorkerEngine({ onChange = null, makeWorker = defaultWorker
     try { worker?.terminate(); } catch {}
     worker = null;
     goLocal();
-    // everything sent so far, once more, to the engine on the page
-    receive(local.handle({ seq, ops: replayOps() }), true);
+    // everything sent so far, once more, to the engine on the page; the old answers go
+    // first, so nothing the dead worker said lingers (a shrunk spill, a cleared formula)
+    const stale = new Set([...values.keys(), ...anchors.keys(), ...infos.keys()]);
+    values.clear(); anchors.clear(); infos.clear(); ruleHits.clear();
+    for (const [k, v] of cells) if (!isFormula(v)) values.set(k, decodeValue(v));
+    receive(local.handle({ seq, ops: replayOps() }), true, stale);
   }
   function goLocal() { local = createEngineHost(); }
 
@@ -69,13 +73,14 @@ export function createWorkerEngine({ onChange = null, makeWorker = defaultWorker
     return ops;
   }
 
-  function receive(msg, all = false) {
+  function receive(msg, all = false, alsoChanged = null) {
     if (!msg) return;
     if (msg.error) {
-      // the engine threw: show it rather than leave stale values
       console.error("[sheet] calculation failed:", msg.error);
+      // the worker's engine threw on this batch: start over on the page from the inputs
+      if (!local) { fail(); return; }
     }
-    const changed = new Set();
+    const changed = new Set(alsoChanged || []);
     for (const [k, v, anchor, info] of msg.changes || []) {
       const val = decodeValue(v);
       if (val === null) values.delete(k); else values.set(k, val);
@@ -87,7 +92,7 @@ export function createWorkerEngine({ onChange = null, makeWorker = defaultWorker
     for (const [id, list] of Object.entries(msg.rules || {})) { if (list.length) ruleHits.set(id, new Set(list)); else ruleHits.delete(id); rulesChanged = true; }
     answered = all ? seq : Math.max(answered, msg.seq);
     while (waiting.length && waiting[0][0] <= answered) waiting.shift()[1]();
-    if (changed.size || rulesChanged) for (const fn of listeners) fn(changed);
+    if (changed.size || rulesChanged || all) for (const fn of listeners) fn(changed);
   }
 
   function send(op) { queue.push(op); }

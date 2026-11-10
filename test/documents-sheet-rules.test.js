@@ -144,3 +144,34 @@ describe("data validation", () => {
     expect([0, 1, 2].map((r) => c.check(r, 2, s.info(r, 2)).valid)).toEqual([true, false, true]);
   });
 });
+
+describe("sorting keeps ranges where they were (as Sheets)", () => {
+  const sortA = (s, t, r1, r2) => s.model.sortRows(t, r1, r2, [{ col: 0, asc: true }], (r, c) => s.engine.valueAt(t, r, c), (a, b) => (a ?? 0) - (b ?? 0));
+  it("a rule's range, a custom formula, a SUM and a filter all keep their rows", async () => {
+    const s = setup();
+    const t = s.tab();
+    ["9", "3", "7", "1", "5", "2", "8", "4", "6", "10"].forEach((x, i) => s.model.setInput(t, i, 0, x));
+    s.model.setInput(t, 12, 0, "=SUM(A1:A10)");
+    s.model.setRule(t, "box", { kind: "valid", type: "checkbox", ranges: [rangeFromA1(s.model, t, "C1:C10")] });
+    s.model.setRule(t, null, { kind: "format", type: "single", ranges: [rangeFromA1(s.model, t, "B1:B10")], cond: { op: "formula", f: storedFromText("=A1>5", s.grid(), t) }, style: { bold: true } });
+    const rows = s.model.rowIds(t), cols = s.model.colIds(t);
+    s.model.setFilter(t, "filter", { top: rows[0], bottom: rows[9], left: cols[0], right: cols[2] });
+    sortA(s, t, 0, 9);
+    await s.engine.whenIdle();
+    expect(rangeToA1(s.model, t, s.model.rulesOf(t).find((r) => r.id === "box").ranges[0])).toBe("C1:C10");
+    expect(s.engine.valueAt(t, 12, 0)).toBe(55);
+    expect(s.model.inputText(t, 12, 0)).toBe("=SUM(A1:A10)");
+    const c = s.compiled();
+    expect([...Array(10).keys()].map((r) => Boolean(c.formatAt(r, 1, s.info(r, 1))))).toEqual([false, false, false, false, false, true, true, true, true, true]);
+    const f = s.model.filterOf(t);
+    expect([s.model.rowIds(t).indexOf(f.top), s.model.rowIds(t).indexOf(f.bottom)]).toEqual([0, 9]);
+  });
+  it("a formula on a sorted row still points at its own row", async () => {
+    const s = setup();
+    const t = s.tab();
+    [["3", "=A1*10"], ["1", "=A2*10"], ["2", "=A3*10"]].forEach(([a, b], i) => { s.model.setInput(t, i, 0, a); s.model.setInput(t, i, 1, b); });
+    sortA(s, t, 0, 2);
+    await s.engine.whenIdle();
+    expect([0, 1, 2].map((r) => s.engine.valueAt(t, r, 1))).toEqual([10, 20, 30]);
+  });
+});

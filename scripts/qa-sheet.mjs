@@ -64,7 +64,8 @@ const center = (page, r, c) => page.evaluate(([r, c]) => window.__S.cellCenter(r
 const clickCell = async (page, r, c, opts = {}) => {
   // bring the cell on screen first (as a person scrolls to it), unless a formula is being typed
   await page.evaluate(([r, c]) => { const S = window.__S; if (!S.st.editing) S.select(r, c); }, [r, c]);
-  await wait(30);
+  // positions come from the layout drawn on the next frame (after a filter or row change)
+  await page.evaluate(() => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))));
   const p = await center(page, r, c); await page.mouse.click(p.x, p.y, opts); await wait(30); };
 const val = (page, r, c) => page.evaluate(async ([r, c]) => { await window.__S.idle?.(); const v = window.__S.engine.valueAt(window.__S.st.tab, r, c); return v && v.code ? v.code : v; }, [r, c]);
 const shown = (page, r, c) => page.evaluate(([r, c]) => window.__S.shown(r, c), [r, c]);
@@ -236,6 +237,10 @@ try {
   await wait(600);
   check(await mj.evaluate(() => window.__S.rowShown(41) && window.__S.rowShown(43) && !window.__S.rowShown(42)), "my filter view doesn't change what Marijane sees");
   await shot(a, "05-filter-view");
+  await a.evaluate(() => window.__S.fx.openPanel(1));
+  await wait(60);
+  check(await a.$(".sh-filter") !== null && await a.$(".sh-filter [data-f=asc]") === null, "inside a filter view there's no Sort (it would reorder everyone's rows)");
+  await a.keyboard.press("Escape");
   await a.click(".sh-viewbar [data-vb=exit]");
   await wait(100);
   check(JSON.stringify(await shownRows()) === "[40,41,43,45]" && await a.$eval(".sh-viewbar", (el) => el.hidden), "closing the view goes back to the tab's filter");
@@ -340,6 +345,13 @@ try {
     check(await p.evaluate(() => { const el = document.querySelector(".sh-rules.is-sheet"); if (!el) return false; const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1; }), "the validation panel is a sheet that fits");
     await shot(p, `04-phone-${width}-rules`);
     await p.evaluate(() => window.__S.rx.close());
+    const before = await val(p, 50, 3);
+    await p.evaluate(() => window.__S.select(50, 3));
+    await wait(80);
+    const box = await center(p, 50, 3);
+    await p.mouse.click(box.x, box.y);
+    await wait(80);
+    check(await val(p, 50, 3) === before, "in view mode a tap on a checkbox doesn't tick it", String(await val(p, 50, 3)));
     await p.evaluate(() => window.__S.select(0, 0));
     await wait(60);
     check(await p.$eval(".sh-toolbar", (el) => getComputedStyle(el).display === "none"), "no laptop toolbar on the phone");

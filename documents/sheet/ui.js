@@ -302,7 +302,13 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (st.editing) commitEdit();
     const fcol = fx.buttonAt(h);
     if (fcol >= 0) { e.preventDefault(); select(h.r, fcol); if (isPhone()) rx.close(); fx.openPanel(fcol); return; }
-    if (!e.shiftKey && !h.inRowHead && !h.inColHead && rx.pointer(h)) { e.preventDefault(); select(h.r, h.c); return; }
+    // a checkbox or dropdown arrow: a mouse click acts at once; a finger acts on a tap
+    // (pointerup without moving), so landing on one to scroll doesn't tick it
+    tapRule = null;
+    if (!e.shiftKey && !st.viewing && !h.inRowHead && !h.inColHead && rx.wants(h)) {
+      if (e.pointerType === "touch") tapRule = { h, x: e.clientX, y: e.clientY };
+      else { e.preventDefault(); rx.pointer(h); select(h.r, h.c); return; }
+    }
     if (h.edgeCol >= 0) { drag = { kind: "colsize", i: h.edgeCol, start: e.clientX, size: g.cw[h.edgeCol] / st.zoom }; scroller.setPointerCapture(e.pointerId); return; }
     if (h.edgeRow >= 0) { drag = { kind: "rowsize", i: h.edgeRow, start: e.clientY, size: g.rh[h.edgeRow] / st.zoom }; scroller.setPointerCapture(e.pointerId); return; }
     if (h.inColHead && h.inRowHead) { select(0, 0, g.rows.length - 1, g.cols.length - 1, { r: 0, c: 0 }); return; }
@@ -356,6 +362,11 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (d.kind === "pick") st.formulaPick = null;
     schedule();
   };
+  let tapRule = null;
+  scroller.addEventListener("pointerup", (e) => {
+    const t = tapRule; tapRule = null;
+    if (t && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 8 && !st.viewing) rx.pointer(t.h);
+  });
   scroller.addEventListener("pointerup", endDrag);
   scroller.addEventListener("pointercancel", endDrag);
   scroller.addEventListener("dblclick", (e) => {
@@ -398,7 +409,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     }
     const moves = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
     if (moves[k]) { e.preventDefault(); move(...moves[k], { extend: e.shiftKey, jump: mod }); return; }
-    if (rx.key(e)) return;
+    if (!st.viewing && rx.key(e)) return;
     if (k === "Enter") { e.preventDefault(); if (e.shiftKey) move(-1, 0); else if (st.viewing) move(1, 0); else beginEdit(null); return; }
     if (k === "Tab") { e.preventDefault(); move(0, e.shiftKey ? -1 : 1); return; }
     if (k === "PageDown" || k === "PageUp") { e.preventDefault(); move((k === "PageDown" ? 1 : -1) * Math.max(1, Math.floor(scroller.clientHeight / (DEF_H * st.zoom)) - 1), 0, { extend: e.shiftKey }); return; }

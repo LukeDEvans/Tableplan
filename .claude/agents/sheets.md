@@ -85,6 +85,15 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
   "" is (Blanks). A column's list ignores its own criteria.
 - A filter change of any origin must redraw: `filter-ui.js` watches `filters:*` types.
 
+## Sorting
+- A sort moves values, not ranges (Sheets): `model.sortRows` → `keepRangesInPlace` re-points
+  every range edge inside the sorted block to the row now at that position — cell-formula
+  ranges, rule ranges and rule formulas (all refs), validation sources, filters and views,
+  named ranges. A single-cell ref in a cell's formula follows its row. Anything new that
+  stores a range by row id must be added there.
+- Nothing that writes the shared doc happens in view mode (st.viewing) or from a finger
+  landing to scroll: checkboxes act on a tap (pointerup), Sort is hidden in filter views.
+
 ## Rules on cells
 - Conditional formats: the first rule (in `order`) that matches a cell wins entirely
   (Sheets), not a mix. Validation: the newest rule covering a cell counts. Blank cells

@@ -17,6 +17,7 @@ import { indexToCol } from "./engine/parser.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
 const MAX_LIST = 500;
+const safeColor = (c) => (typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : null); // shared-doc colours only as #rrggbb
 
 export function createFilterUI({ root, model, engine, st, schedule, cellRect, scroller, toast = () => {}, isPhone = () => false }) {
   let view = null; // the filter view I'm in (mine only; never shared)
@@ -180,7 +181,7 @@ export function createFilterUI({ root, model, engine, st, schedule, cellRect, sc
     // colours used in the column (for "Filter by colour")
     const b = filterBounds(model, st.tab, sp);
     const fills = new Set(), inks = new Set();
-    for (let r = b.r1 + 1; r <= b.r2; r++) { const i = cellInfo(r, c); if (i.fill) fills.add(i.fill.toLowerCase()); if (i.color) inks.add(i.color.toLowerCase()); }
+    for (let r = b.r1 + 1; r <= b.r2; r++) { const i = cellInfo(r, c); const f = safeColor(i.fill), k = safeColor(i.color); if (f) fills.add(f); if (k) inks.add(k); }
 
     panel = document.createElement("div");
     panel.className = `sh-filter${isPhone() ? " is-sheet" : ""}`;
@@ -190,7 +191,7 @@ export function createFilterUI({ root, model, engine, st, schedule, cellRect, sc
     const colourSel = (key, set, label) => (set.size ? `<label class="sh-f-colour">${label} <select data-f-colour="${key}"><option value="">Any</option>${[...set].map((x) => `<option value="${x}" ${(crit.color?.[key] || "").toLowerCase() === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>` : "");
     panel.innerHTML = `
       <div class="sh-f-head"><strong>${esc(cellInfo(b.r1, c).text || `Column ${indexToCol(c)}`)}</strong></div>
-      <div class="sh-f-sort"><button type="button" class="sh-btn" data-f="asc">Sort A → Z</button><button type="button" class="sh-btn" data-f="desc">Sort Z → A</button></div>
+      ${view || st.viewing ? "" : `<div class="sh-f-sort"><button type="button" class="sh-btn" data-f="asc">Sort A → Z</button><button type="button" class="sh-btn" data-f="desc">Sort Z → A</button></div>`}
       <details ${crit.color ? "open" : ""} ${fills.size || inks.size ? "" : "hidden"}><summary>Filter by colour</summary>${colourSel("fill", fills, "Fill")}${colourSel("text", inks, "Text")}</details>
       <details ${crit.cond?.op ? "open" : ""}><summary>Filter by condition</summary>
         <select data-f-op aria-label="Condition">${opOptions}</select>
@@ -230,7 +231,7 @@ export function createFilterUI({ root, model, engine, st, schedule, cellRect, sc
       if (!f) return;
       if (f === "all" || f === "none") { for (const x of visible()) shown.set(x.text, f === "all"); renderList(); return; }
       if (f === "cancel") { close(); return; }
-      if (f === "asc" || f === "desc") { close(); sortBy(c, f === "asc"); schedule(); return; }
+      if ((f === "asc" || f === "desc") && !view && !st.viewing) { close(); sortBy(c, f === "asc"); schedule(); return; }
       if (f === "ok") {
         const next = {};
         const hide = list.filter((x) => !shown.get(x.text)).map((x) => x.text);
