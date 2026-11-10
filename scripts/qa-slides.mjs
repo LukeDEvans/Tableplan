@@ -189,6 +189,117 @@ try {
   check(await b.$(".sl-stage .sl-shape svg path") !== null, "and it's drawn on her slide");
   await b.close();
 
+  console.log("Tables, notes, comments");
+  await S(a, () => { const S = window.__S; S.goSlide(S.model.slideIds()[0]); });
+  await S(a, () => { const S = window.__S; const id = S.model.addItem(S.st.slide, { t: "table", rows: 2, cols: 2, x: 200, y: 600, w: 800, h: 200, cells: { "0.0": { text: "Day" }, "0.1": { text: "Miles" } } }); S.renderStage(); S.select([id]); return id; });
+  await wait(80);
+  check(await a.$eval(".sl-stage .sl-table", (el) => el.textContent.includes("Miles")), "a table is drawn with its cells");
+  await a.keyboard.press("Escape");
+  await a.click("[data-notes-ed] .ProseMirror");
+  await a.keyboard.type("Remember the lighthouse");
+  await wait(80);
+  check(await S(a, () => window.__S.model.searchText().includes("Remember the lighthouse")), "speaker notes are saved with the slide");
+  await S(a, () => window.__S.runAct("panel", "comments"));
+  await wait(60);
+  await a.fill("[data-newc] textarea", "Should we add the hike?");
+  await a.click("[data-newc] button[type=submit]");
+  await wait(80);
+  check(await a.$$eval(".sl-thread", (els) => els.length) === 1, "a comment on the slide shows in the panel");
+  await S(a, () => window.__S.panels.close());
+
+  console.log("Pictures");
+  await S(a, async () => {
+    const c = document.createElement("canvas"); c.width = 400; c.height = 300;
+    const g = c.getContext("2d"); g.fillStyle = "#2a9d8f"; g.fillRect(0, 0, 400, 300); g.fillStyle = "#fff"; g.fillRect(50, 50, 100, 100);
+    const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "lake.png", { type: "image/png" }));
+    const st = document.querySelector("[data-stage]"); const r = st.getBoundingClientRect();
+    st.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+  });
+  await wait(600);
+  const img = (await items(a)).find((i) => i.t === "image");
+  check(!!img && img.alt === "lake", "dropping a picture adds it", JSON.stringify(img && { alt: img.alt }));
+  check(await a.$eval(".sl-stage .sl-image img", (el) => el.complete && el.naturalWidth === 400), "and it's drawn");
+  await S(a, (id) => window.__S.select([id]), img.id);
+  await S(a, () => window.__S.runAct("panel", "format"));
+  await wait(60);
+  await a.$eval("[data-crop=l]", (el) => { el.value = "20"; el.dispatchEvent(new Event("input", { bubbles: true })); });
+  await wait(60);
+  check(Math.abs((await items(a)).find((i) => i.t === "image").crop.l - 0.2) < 0.001, "cropping from the format panel");
+  await S(a, () => window.__S.panels.close());
+
+  console.log("Video link");
+  await S(a, () => { const S = window.__S; const id = S.model.addItem(S.st.slide, { t: "video", link: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", posterUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg", x: 1200, y: 600, w: 480, h: 270, play: "click" }); S.renderStage(); return id; });
+  await wait(60);
+  check(await a.$eval(".sl-stage .sl-video .sl-poster", (el) => el.getAttribute("src").startsWith("https://i.ytimg.com/")), "a linked video shows its poster");
+
+  console.log("Transitions and animations");
+  const sid0 = await S(a, () => window.__S.st.slide);
+  await S(a, () => { const S = window.__S; const ids = S.model.slideIds(); S.model.setSlide(ids[1], { transition: { kind: "slide", dir: "right", ms: 300 } }); const t = S.model.addItem(ids[0], { t: "shape", shape: "ellipse", name: "anim-me", x: 50, y: 50, w: 100, h: 100 }); S.model.setAnims(ids[0], [{ item: t, effect: "fade-in", start: "click", ms: 200 }]); });
+  const N = await S(a, () => window.__S.model.slideIds().length);
+  const count = () => a.evaluate(() => document.querySelector(".sl-show [data-count]").textContent);
+  await S(a, () => window.__S.present({ fromStart: true }));
+  await wait(500);
+  check(await a.$(".sl-show") !== null, "Present opens the show");
+  const subtitleVisible = () => a.evaluate(() => { const S = window.__S; const t = S.model.items(S.model.slideIds()[0]).find((i) => i.name === "anim-me"); const el = document.querySelector(`.sl-show [data-item="${t.id}"]`); return el ? getComputedStyle(el).visibility : "missing"; });
+  check(await subtitleVisible() === "hidden", "an animated box starts hidden", await subtitleVisible());
+  await a.keyboard.press("ArrowRight"); await wait(450);
+  check(await subtitleVisible() === "visible", "the first click plays its animation", await subtitleVisible());
+  await a.keyboard.press("ArrowRight"); await wait(600);
+  check(await count() === `2 / ${N}`, "the next click goes to slide 2", await count());
+  await a.keyboard.press("ArrowLeft"); await wait(500);
+  check(await count() === `1 / ${N}` && await subtitleVisible() === "visible", "back returns to slide 1 with its animation done", `${await count()} ${await subtitleVisible()}`);
+  await a.keyboard.press("b"); await wait(50);
+  check(await a.$eval(".sl-show [data-black]", (el) => !el.hidden), "B blacks out the screen");
+  await a.keyboard.press("b");
+  await a.keyboard.type("3"); await a.keyboard.press("Enter"); await wait(600);
+  check(await count() === `3 / ${N}`, "3 then Enter jumps to slide 3", await count());
+  await shot(a, "06-present");
+
+  console.log("The phone as a remote");
+  const r = await openAs("marijane", { size: { width: 390, height: 844 }, query: "&view=1" });
+  await wait(900);
+  check(await r.$(".sl-remote-offer") !== null, "the other device offers to control the presentation");
+  await r.click(".sl-remote-offer [data-r=control]"); await wait(400);
+  check(await r.$(".sl-remote") !== null, "the remote opens");
+  await r.click(".sl-remote [data-r=prev]"); await wait(900);
+  check(await count() === `2 / ${N}`, "Back on the phone moves the laptop's show back", await count());
+  await a.evaluate(() => { window.__clog = []; const el = document.querySelector(".sl-show [data-count]"); new MutationObserver(() => window.__clog.push(el.textContent)).observe(el, { childList: true, characterData: true, subtree: true }); });
+  await r.click(".sl-remote [data-r=next]"); await r.click(".sl-remote [data-r=prev]"); await r.click(".sl-remote [data-r=prev]"); await wait(1200);
+  check(await count() === `1 / ${N}`, "quick taps all count", await count());
+  await wait(400);
+  check(await r.$eval(".sl-remote [data-count]", (el) => el.textContent) === `Slide 1 of ${N}`, "the remote shows where the show is", await r.$eval(".sl-remote [data-count]", (el) => el.textContent));
+  await shot(r, "07-remote");
+  await r.close();
+  await a.keyboard.press("Escape"); await wait(200);
+  check(await a.$(".sl-show") === null, "Esc stops presenting");
+  void sid0;
+
+  console.log("The TV page");
+  const tv = await ctx.newPage();
+  await tv.setViewportSize({ width: 960, height: 540 });
+  tv.on("pageerror", (e) => errors.push(`tv: ${e.message}`));
+  await tv.route(`${appUrl}/qa-tv.html*`, (rt) => rt.fulfill({ contentType: "text/html", body: `<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body><script type="module">window.__out=[];import { startTv } from "/documents/slides/tv.js";window.__T = startTv({ post: (s) => window.__out.push(s) });</script></body></html>` }));
+  await tv.goto(`${appUrl}/qa-tv.html`);
+  await tv.waitForFunction(() => window.__out?.some((s) => s.includes('"ready"')));
+  const state = await a.evaluate(() => window.__tvState());
+  check(!!state, "the phone can send the presentation");
+  if (state) {
+    await tv.evaluate((u) => window.__tv(JSON.stringify({ t: "show", idx: 1, step: 0 })).then(() => window.__tv(JSON.stringify({ t: "doc", u }))), state);
+    await wait(500);
+    check(await tv.evaluate(() => window.__T.show?.index) === 1, "the TV shows the slide the phone is on");
+    check(await tv.$$eval(".sl-show .sl-slide", (els) => els.length) === 1, "the TV draws it");
+    await tv.evaluate(() => window.__tv(JSON.stringify({ t: "show", idx: 2, step: 0 })));
+    await wait(600);
+    check(await tv.evaluate(() => window.__T.show?.index) === 2, "the TV follows the next slide");
+    await tv.evaluate(() => window.__tv(JSON.stringify({ t: "show", idx: 0, step: 1 })));
+    await wait(700);
+    check(await tv.evaluate(() => window.__out.some((s) => s.includes('"need"'))), "the TV asks the phone for the pictures it needs");
+    check(await tv.evaluate(() => window.__T.show?.index === 0 && window.__T.show?.step === 1), "going back with a step jumps there");
+    await shot(tv, "08-tv");
+  }
+  await tv.close();
+
   console.log("Saving");
   await S(a, () => window.__S.session.save());
   check(await S(a, () => window.__saves > 0), "the presentation is saved");

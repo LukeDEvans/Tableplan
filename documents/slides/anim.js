@@ -99,7 +99,8 @@ export function playStep(slideEl, step, { instant = false } = {}) {
       }).catch(() => {}));
     });
   }
-  return { done: Promise.all(running), cancel: () => {} };
+  const longest = step.reduce((m, x) => Math.max(m, x.at + (x.anim.ms || 0) * (x.anim.byPara ? 20 : 1)), 0);
+  return { done: Promise.race([Promise.all(running), new Promise((r) => setTimeout(r, longest + 300))]), cancel: () => {} };
 }
 
 // ---- transitions ----------------------------------------------------------------------------
@@ -156,5 +157,7 @@ export function runTransition(oldEl, newEl, tr, { w, h, back = false } = {}) {
     }
     default: break;
   }
-  return Promise.all(anims.map((a) => a.finished.catch(() => {}))).then(() => { for (const a of anims) a.cancel(); if (frame) frame.style.perspective = ""; });
+  // a hidden tab pauses animations; never let a transition hold the show up
+  const done = Promise.race([Promise.all(anims.map((a) => a.finished.catch(() => {}))), new Promise((r) => setTimeout(r, ms + 250))]);
+  return done.then(() => { for (const a of anims) a.cancel(); if (frame) frame.style.perspective = ""; });
 }

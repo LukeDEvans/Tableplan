@@ -93,7 +93,7 @@ export function createShow({ model, media, frame, onChange = () => {}, doc = doc
     scheduleAuto();
   }
 
-  function queue(fn) { busy = busy.then(fn).catch(() => {}); return busy; }
+  function queue(fn) { busy = busy.then(fn).catch((e) => console.error("slides show:", e)); return busy; }
 
   function next() {
     return queue(async () => {

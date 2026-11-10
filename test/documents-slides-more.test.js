@@ -117,3 +117,47 @@ describe("the remote", () => {
     expect(presentersIn(aw).map((p) => p.name)).toEqual(["Luke"]);
   });
 });
+
+describe("making presentations (host.js)", async () => {
+  const { createSlidesFile, copySlidesFile, SLIDES_MIME } = await import("../documents/slides/host.js");
+  const { docFromContent } = await import("../documents/editor/doc-model.js");
+  function fakeLibrary() {
+    const files = new Map();
+    return {
+      files,
+      async addFile(scope, { id, content, text, folderId, kind, meta }) { files.set(id, { scope, content, text, folderId, kind, meta, parts: new Map() }); return id; },
+    };
+  }
+  const storeFor = (lib) => (fid) => ({
+    loadContent: async () => lib.files.get(fid).content,
+    saveContent: async (b) => { lib.files.get(fid).content = b; },
+    images: { put: async (k, b) => lib.files.get(fid).parts.set(k, b), get: async (k) => { const b = lib.files.get(fid).parts.get(k); if (!b) throw new Error("missing"); return b; } },
+  });
+  it("makes a file of kind slides from a template", async () => {
+    const lib = fakeLibrary();
+    const id = await createSlidesFile({ library: lib, scope: "g1", folderId: null, name: "Trip", template: "trip" });
+    const f = lib.files.get(id);
+    expect(f.kind).toBe("slides");
+    expect(f.meta.mime).toBe(SLIDES_MIME);
+    expect(f.meta.pages).toBeGreaterThan(3);
+    const m = createSlidesModel(docFromContent(f.content));
+    expect(m.theme().id).toBe("coastal");
+  });
+  it("copies a presentation with its pictures", async () => {
+    const lib = fakeLibrary();
+    const id = await createSlidesFile({ library: lib, scope: "g1", name: "Mine", template: "blank" });
+    const ydoc = docFromContent(lib.files.get(id).content);
+    const m = createSlidesModel(ydoc);
+    const pic = "0123456789abcdef0123456789abcdef";
+    m.addMedia(pic, { kind: "image", size: 3 });
+    m.addItem(m.slideIds()[0], { t: "image", media: pic });
+    const { docToContent } = await import("../documents/editor/doc-model.js");
+    lib.files.get(id).content = docToContent(ydoc);
+    lib.files.get(id).parts.set(pic, new Uint8Array([1, 2, 3]));
+    const copy = await copySlidesFile({ library: lib, storeFor: storeFor(lib), scope: "g1", folderId: null, fromId: id, name: "Copy of Mine" });
+    expect(lib.files.get(copy).parts.get(pic)).toEqual(new Uint8Array([1, 2, 3]));
+    const cm = createSlidesModel(docFromContent(lib.files.get(copy).content));
+    expect(cm.items(cm.slideIds()[0]).some((i) => i.t === "image" && i.media === pic)).toBe(true);
+    expect(cm.mediaInfo(pic)).toMatchObject({ kind: "image" });
+  });
+});

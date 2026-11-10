@@ -2,6 +2,9 @@
 // (blobs and version rows on the QA server) with a BroadcastChannel standing in for
 // Supabase Realtime, so two pages in one browser can edit together.
 import { openSlidesEditor } from "/documents/slides/ui.js";
+import * as Y from "yjs";
+import { toB64 } from "/documents/slides/tv-protocol.js";
+window.__tvState = () => toB64(Y.encodeStateAsUpdate(window.__S.model.ydoc));
 
 const params = new URLSearchParams(location.search);
 const who = params.get("who") || "luke";
