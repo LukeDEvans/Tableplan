@@ -7,10 +7,10 @@
 // Upload the CSV to Drive converted to a Google Sheet, export it back as CSV, then
 // `read` writes test/fixtures/sheet-conformance.json. Row i holds case i: A = number,
 // B = the formula, C = Sheets' answer encoded as "N|<number>", "S|<text>", "B|TRUE",
-// "E|<ERROR.TYPE>" or "X|" (empty). E1:I10 hold the data the formulas read.
+// "E|<ERROR.TYPE>" or "X|" (empty). E1:I10 and J1:M8 (a table with headers) hold the data the formulas read.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { CASES, DATA } from "../test/fixtures/sheet-conformance-cases.mjs";
+import { CASES, DATA, TABLE } from "../test/fixtures/sheet-conformance-cases.mjs";
 
 const q = (s) => (s === null || s === undefined ? "" : /[",\n]/.test(String(s)) ? `"${String(s).replace(/"/g, '""')}"` : String(s));
 const wrapper = (i) => `=IF(ISERROR(B${i}),"E|"&ERROR.TYPE(B${i}),IF(ISNUMBER(B${i}),"N|"&TEXT(B${i},"0.00000000000000E+00"),IF(ISLOGICAL(B${i}),"B|"&B${i},IF(ISTEXT(B${i}),"S|"&B${i},"X|"))))`;
@@ -21,6 +21,7 @@ function csv() {
   for (let i = 1; i <= n; i++) {
     const row = [i <= CASES.length ? i : "", CASES[i - 1] ?? "", i <= CASES.length ? wrapper(i) : "", ""];
     for (const col of ["E", "F", "G", "H", "I"]) row.push(i <= 10 ? DATA[col][i - 1] : "");
+    for (const col of ["J", "K", "L", "M"]) row.push(i <= 8 ? TABLE[col][i - 1] : "");
     lines.push(row.map(q).join(","));
   }
   return lines.join("\n") + "\n";

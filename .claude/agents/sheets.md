@@ -50,6 +50,12 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
   - HOUR/MINUTE/SECOND round to the nearest second; YEARFRAC basis 1 is whole years
     plus the rest over that year's length; DATEDIF "YD" counts within the start's year.
   - VLOOKUP past the last column is `#REF!`; INDEX out of bounds is `#NUM!`.
+  - GAMMA of a negative is `#NUM!`; DB's period can't pass the life (Excel allows life + 1).
+  - QUERY: no matching rows gives just the header; `group by … pivot` with a
+    non-aggregate SELECT column is `#VALUE!`; default labels use the header text, also
+    inside functions (`month(Start)`, `sum Salary`).
+  - Functions found by iteration (inverse distributions, RATE/IRR, regressions) match
+    Sheets to ~1e-9, not the last digit — the conformance test's `APPROX` tolerance.
 - Errors carry Sheets' messages where we know them (`err(code, message)`).
 - Deep chains don't recurse without limit: past `MAX_DEPTH` the engine defers and
   finishes the deepest formula first (`recalc`'s work stack). Keep the 5,000-cell

@@ -12,6 +12,14 @@ export const DATA = {
   I: ["1/15/2026", "2/28/2026", "3/31/2026", "12/31/2025", "2/29/2024", "7/4/2026", "11/9/2026", "1/1/2000", "6/30/2026", "10/31/2026"],
 };
 
+// A small table with a header row (J1:M8) for QUERY and the database functions.
+export const TABLE = {
+  J: ["Name", "Ann", "Bob", "Cy", "Dee", "Eve", "Fay", "Gus"],
+  K: ["Dept", "Ops", "IT", "Ops", "IT", "HR", "Ops", "IT"],
+  L: ["Salary", 50, 70, 55, 90, 40, 65, 80],
+  M: ["Start", "1/5/2020", "3/1/2019", "7/15/2021", "11/30/2018", "2/2/2022", "9/9/2020", "4/4/2023"],
+};
+
 export const CASES = [
   // arithmetic and operators
   "=1+2*3", "=(1+2)*3", "=-2^2", "=2^-1", "=2^3^2", "=10%", "=50%%", "=1/3", "=0.1+0.2", "=1E+20*10", "=5-\"3\"", "=\"2\"*\"3\"", "=TRUE+1", "=\"a\"&1.5", "=1&TRUE",
@@ -68,4 +76,41 @@ export const CASES = [
   "=TEXTJOIN(\",\",TRUE,SORTN(G1:G10,3,0,1,FALSE))", "=ROWS(UNIQUE(F1:F10))", "=TEXTJOIN(\",\",TRUE,CHOOSECOLS({1,2,3},3,1))", "=TEXTJOIN(\",\",TRUE,VSTACK({1,2},{3}))", "=TEXTJOIN(\",\",TRUE,HSTACK({1;2},{3;4}))", "=TEXTJOIN(\",\",TRUE,TOCOL({1,2;3,4}))", "=TEXTJOIN(\",\",TRUE,WRAPROWS(SEQUENCE(5),2,0))",
   "=LET(x,5,y,x*2,x+y)", "=REDUCE(0,E1:E5,LAMBDA(a,v,a+v))", "=TEXTJOIN(\",\",TRUE,MAP({1,2,3},LAMBDA(v,v*v)))", "=TEXTJOIN(\",\",TRUE,SCAN(0,{1,2,3},LAMBDA(a,v,a+v)))", "=TEXTJOIN(\",\",TRUE,BYROW({1,2;3,4},LAMBDA(r,SUM(r))))", "=TEXTJOIN(\",\",TRUE,MAKEARRAY(2,2,LAMBDA(r,c,r*10+c)))",
   "={1,2;3,4}", "=SUM({1,2;3,4})", "=SUMPRODUCT((E1:E8>2)*(G1:G8))", "=SUMPRODUCT(--(F1:F10=\"apple\"))", "=COUNTA(UNIQUE(H1:H10))",
+  // ---- pass B/C (2026-11-10) ----
+  // financial
+  "=PMT(0.05/12,360,300000)", "=PMT(0.06/12,60,-20000,0,1)", "=PMT(0,12,1200)", "=FV(0.05/12,120,-200)", "=FV(0.04,10,-1000,-5000,1)", "=PV(0.08/12,240,-1500)", "=PV(0,10,-100)",
+  "=IPMT(0.05/12,1,360,300000)", "=IPMT(0.05/12,12,360,300000)", "=PPMT(0.05/12,12,360,300000)", "=IPMT(0.06/12,2,60,-20000,0,1)", "=NPER(0.05/12,-1500,200000)", "=NPER(0,-100,1000)", "=NPER(0.1,-100,10000)",
+  "=RATE(360,-1610.46,300000)", "=RATE(10,-100,800)", "=NPV(0.1,-1000,300,400,500)", "=IRR({-1000,300,400,500})", "=IRR({-100,-50,200,40})", "=IRR({1,2,3})",
+  "=XNPV(0.09,{-10000,2750,4250,3250,2750},{39448,39508,39751,39859,39904})", "=XIRR({-10000,2750,4250,3250,2750},{39448,39508,39751,39859,39904})", "=MIRR({-120000,39000,30000,21000,37000,46000},0.1,0.12)",
+  "=CUMIPMT(0.09/12,360,125000,13,24,0)", "=CUMPRINC(0.09/12,360,125000,13,24,0)", "=EFFECT(0.0525,4)", "=NOMINAL(0.053543,4)", "=RRI(96,10000,11000)", "=PDURATION(0.025,2000,2200)", "=FVSCHEDULE(1,{0.09,0.11,0.1})",
+  "=SLN(30000,7500,10)", "=SYD(30000,7500,10,1)", "=DDB(2400,300,10,1)", "=DDB(2400,300,10,2)", "=DDB(2400,300,10,10)", "=DB(1000000,100000,6,1,7)", "=DB(1000000,100000,6,2,7)", "=DB(1000000,100000,6,7,7)", "=ISPMT(0.1/12,1,36,8000000)", "=DOLLARDE(1.02,16)", "=DOLLARFR(1.125,16)",
+  // distributions and tests
+  "=NORM.DIST(42,40,1.5,TRUE)", "=NORM.DIST(42,40,1.5,FALSE)", "=NORMDIST(1,0,1,TRUE)", "=NORM.INV(0.908789,40,1.5)", "=NORM.S.DIST(1.333,TRUE)", "=NORM.S.INV(0.908789)", "=NORMSINV(0.001)", "=NORMSDIST(-3)", "=STANDARDIZE(42,40,1.5)", "=GAUSS(2)", "=PHI(0.75)",
+  "=ERF(1)", "=ERF(0,1.5)", "=ERFC(1)", "=ERF(-0.3)", "=GAMMA(5)", "=GAMMA(2.5)", "=GAMMA(-1.5)", "=GAMMALN(10)", "=GAMMA.DIST(10.00001131,9,2,FALSE)", "=GAMMA.DIST(10.00001131,9,2,TRUE)", "=GAMMA.INV(0.068094,9,2)",
+  "=BINOM.DIST(6,10,0.5,FALSE)", "=BINOM.DIST(6,10,0.5,TRUE)", "=BINOMDIST(3,8,0.3,TRUE)", "=BINOM.INV(6,0.5,0.75)", "=CRITBINOM(10,0.3,0.5)", "=NEGBINOM.DIST(10,5,0.25,FALSE)", "=NEGBINOM.DIST(10,5,0.25,TRUE)", "=HYPGEOM.DIST(1,4,8,20,TRUE)", "=HYPGEOM.DIST(1,4,8,20,FALSE)",
+  "=POISSON.DIST(2,5,TRUE)", "=POISSON.DIST(2,5,FALSE)", "=EXPON.DIST(0.2,10,TRUE)", "=EXPON.DIST(0.2,10,FALSE)", "=WEIBULL.DIST(105,20,100,TRUE)", "=WEIBULL.DIST(105,20,100,FALSE)", "=LOGNORM.DIST(4,3.5,1.2,TRUE)", "=LOGNORM.DIST(4,3.5,1.2,FALSE)", "=LOGNORM.INV(0.039084,3.5,1.2)",
+  "=BETA.DIST(2,8,10,TRUE,1,3)", "=BETA.DIST(2,8,10,FALSE,1,3)", "=BETADIST(0.4,2,3)", "=BETA.INV(0.685470,8,10,1,3)",
+  "=T.DIST(60,1,TRUE)", "=T.DIST(8,3,FALSE)", "=T.DIST.2T(1.959999998,60)", "=T.DIST.RT(1.959999998,60)", "=TDIST(1.96,60,2)", "=T.INV(0.75,2)", "=T.INV.2T(0.546449,60)", "=TINV(0.05,10)",
+  "=CHISQ.DIST(0.5,1,TRUE)", "=CHISQ.DIST(2,3,FALSE)", "=CHISQ.DIST.RT(18.307,10)", "=CHIDIST(3,2)", "=CHISQ.INV(0.93,1)", "=CHISQ.INV.RT(0.050001,10)", "=CHITEST({58,35;11,25;10,23},{45.35,47.65;17.56,18.44;16.09,16.91})",
+  "=F.DIST(15.2069,6,4,TRUE)", "=F.DIST(15.2069,6,4,FALSE)", "=F.DIST.RT(15.2069,6,4)", "=F.INV(0.01,6,4)", "=F.INV.RT(0.01,6,4)", "=FDIST(3,5,10)",
+  "=CONFIDENCE.NORM(0.05,2.5,50)", "=CONFIDENCE.T(0.05,1,50)", "=CONFIDENCE(0.1,3,30)", "=Z.TEST(G1:G10,40)", "=Z.TEST(G1:G10,40,20)", "=T.TEST(E1:E5,G1:G5,2,1)", "=T.TEST(E1:E8,G1:G8,2,2)", "=T.TEST(E1:E8,G1:G8,1,3)", "=F.TEST(E1:E8,G1:G8)",
+  "=FISHER(0.75)", "=FISHERINV(0.972955)", "=KURT(E1:E8)", "=SKEW(E1:E8)", "=SKEW.P(E1:E8)", "=PERMUT(100,3)", "=PERMUTATIONA(3,2)", "=PROB({0,1,2,3},{0.2,0.3,0.1,0.4},2)", "=PROB({0,1,2,3},{0.2,0.3,0.1,0.4},1,3)",
+  // engineering, matrices, misc
+  "=BIN2DEC(1100100)", "=BIN2DEC(1111111111)", "=DEC2BIN(9,4)", "=DEC2BIN(-100)", "=HEX2DEC(\"A5\")", "=HEX2DEC(\"FFFFFFFF5B\")", "=DEC2HEX(100,4)", "=DEC2HEX(-54)", "=OCT2DEC(54)", "=DEC2OCT(58,3)", "=BIN2HEX(11111011,4)", "=HEX2BIN(\"F\",8)", "=OCT2HEX(100,4)", "=DEC2BIN(600)",
+  "=BITAND(13,25)", "=BITOR(23,10)", "=BITXOR(5,3)", "=BITLSHIFT(4,2)", "=BITRSHIFT(13,2)", "=DELTA(5,4)", "=DELTA(5,5)", "=GESTEP(-4,-5)", "=CONVERT(1,\"lbm\",\"kg\")", "=CONVERT(68,\"F\",\"C\")", "=CONVERT(2.5,\"ft\",\"sec\")", "=CONVERT(6,\"mi\",\"km\")", "=CONVERT(1,\"gal\",\"l\")",
+  "=ROMAN(499)", "=ROMAN(1999)", "=ARABIC(\"MCMXCIX\")", "=ARABIC(\"-XIV\")", "=SERIESSUM(PI()/4,0,2,{1,-0.5,0.041666667,-0.001388889})", "=MDETERM({1,3,8,5;1,3,6,1;1,1,1,0;7,3,10,2})", "=MDETERM({3,6;1,1})", "=SUM(MINVERSE({4,-1;2,0}))", "=INDEX(MINVERSE({4,-1;2,0}),1,2)", "=MINVERSE({1,2;2,4})", "=SUM(MUNIT(3))",
+  "=TEXTJOIN(\",\",TRUE,FREQUENCY(G1:G10,{25,50,75}))", "=INDEX(TREND(G1:G5,E1:E5,{6;7}),2,1)", "=INDEX(GROWTH({33100,47300,69000,102000,150000},{11,12,13,14,15},{16}),1,1)", "=INDEX(LINEST(G1:G5,E1:E5),1,1)", "=INDEX(LINEST(G1:G5,E1:E5),1,2)",
+  "=ISBETWEEN(5,1,10)", "=ISBETWEEN(10,1,10,TRUE,FALSE)", "=ENCODEURL(\"a b&c\")", "=HYPERLINK(\"https://x.com\",\"site\")",
+  // database
+  "=DSUM(J1:M8,\"Salary\",{\"Dept\";\"Ops\"})", "=DAVERAGE(J1:M8,3,{\"Dept\";\"IT\"})", "=DCOUNT(J1:M8,\"Salary\",{\"Salary\";\">60\"})", "=DCOUNTA(J1:M8,\"Name\",{\"Dept\",\"Salary\";\"Ops\",\">52\"})", "=DMAX(J1:M8,\"Salary\",{\"Dept\";\"IT\"})",
+  "=DMIN(J1:M8,\"Salary\",{\"Dept\";\"Ops\";\"HR\"})", "=DGET(J1:M8,\"Name\",{\"Salary\";90})", "=DGET(J1:M8,\"Name\",{\"Dept\";\"IT\"})", "=DPRODUCT(J1:M8,\"Salary\",{\"Dept\";\"HR\"})", "=DSTDEV(J1:M8,\"Salary\",{\"Dept\";\"IT\"})", "=DVARP(J1:M8,\"Salary\",{\"Dept\";\"Ops\"})",
+  // QUERY (results joined into one cell)
+  "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J where L > 60\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J, L where K = 'Ops' order by L desc\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select K, sum(L) group by K\"))",
+  "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select K, count(J), avg(L) group by K order by count(J) desc\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J order by L limit 3\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J order by L limit 2 offset 1\",1))",
+  "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select max(L), min(L)\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J where J contains 'e'\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J where J starts with 'C' or J ends with 'y'\"))",
+  "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J where J like '_e%'\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J where J matches '[A-C].*'\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J, L*2 where L >= 70 label L*2 'Double'\"))",
+  "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J where year(M) = 2020\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J, month(M) where month(M) < 3\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select K, sum(L) group by K pivot\"))",
+  "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select sum(L) pivot K\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J where M > date '2020-06-01' and K != 'IT'\"))", "=TEXTJOIN(\",\",TRUE,QUERY(J1:M8,\"select J where not K = 'Ops'\"))",
+  "=ROWS(QUERY(J1:M8,\"select *\"))", "=ROWS(QUERY(J2:M8,\"select *\",0))", "=QUERY(J1:M8,\"select J where L > 1000\")", "=QUERY(J1:M8,\"select Z\")", "=QUERY(J1:M8,\"selec J\")", "=INDEX(QUERY(J1:M8,\"select sum(L)\"),1,1)", "=INDEX(QUERY(J1:M8,\"select sum(L) label sum(L) 'Total'\"),1,1)",
+  "=TEXTJOIN(\",\",TRUE,QUERY({1,\"a\";2,\"b\";3,\"c\"},\"select Col2 where Col1 > 1\"))", "=TEXTJOIN(\",\",TRUE,QUERY(G1:H10,\"select H where G > 50 and G < 90\"))",
 ];

@@ -7,6 +7,10 @@ import { textFunctions } from "./text.js";
 import { dateFunctions } from "./dates.js";
 import { lookupFunctions } from "./lookup.js";
 import { arrayFunctions } from "./arrays.js";
+import { financeFunctions } from "./finance.js";
+import { distributionFunctions } from "./distributions.js";
+import { moreFunctions } from "./more.js";
+import { queryFunctions } from "./query.js";
 
 let catalog = null;
 
@@ -14,7 +18,7 @@ export function functionCatalog() {
   if (catalog) return catalog;
   const map = new Map();
   const all = () => map;
-  for (const list of [mathFunctions(all), statsFunctions(), logicFunctions(), textFunctions(), dateFunctions(), lookupFunctions(), arrayFunctions()]) {
+  for (const list of [mathFunctions(all), statsFunctions(), logicFunctions(), textFunctions(), dateFunctions(), lookupFunctions(), arrayFunctions(), financeFunctions(), distributionFunctions(), moreFunctions(), queryFunctions()]) {
     for (const d of list) {
       if (map.has(d.name)) throw new Error(`Function ${d.name} defined twice`);
       map.set(d.name, d);
