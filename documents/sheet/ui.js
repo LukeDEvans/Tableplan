@@ -20,6 +20,7 @@ import { FORMATS } from "./engine/number-format.js";
 import { readRef, indexToCol } from "./engine/parser.js";
 import { geometry, drawGrid, displayOf, a1Of, DEF_W, DEF_H } from "./grid.js";
 import { toCsv, parseCsv } from "./csv.js";
+import { createFilterUI } from "./filter-ui.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const safeColor = (c) => (/^#[0-9a-f]{3,8}$/i.test(String(c || "")) ? c : null);
@@ -39,6 +40,7 @@ const ICS = {
   wrap: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h13a3 3 0 0 1 0 6h-4M15 16l-2 2 2 2M4 18h5"/></svg>',
   borders: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16"/><path d="M12 4v16M4 12h16" stroke-dasharray="2 2"/></svg>',
   fill: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 13l6-8 6 8-6 6z"/><path d="M19 15s2 2.5 2 3.5a2 2 0 0 1-4 0c0-1 2-3.5 2-3.5"/></svg>',
+  filter: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6 7.5V19l-4-2v-4.5z"/></svg>',
   sum: 'Σ', tabs: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
 };
 
@@ -120,7 +122,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   // ---- undo (only my edits) -----------------------------------------------------------------
   const undoScope = () => {
     const types = [session.ydoc.getArray("tabs"), session.ydoc.getMap("styles"), session.ydoc.getMap("names")];
-    for (const t of model.tabIds()) for (const p of ["tab", "rows", "cols", "cells", "rowmeta", "colmeta", "merges"]) types.push(p === "rows" || p === "cols" ? session.ydoc.getArray(`${p}:${t}`) : session.ydoc.getMap(`${p}:${t}`));
+    for (const t of model.tabIds()) for (const p of ["tab", "rows", "cols", "cells", "rowmeta", "colmeta", "merges", "filters"]) types.push(p === "rows" || p === "cols" ? session.ydoc.getArray(`${p}:${t}`) : session.ydoc.getMap(`${p}:${t}`));
     return types;
   };
   const undo = new Y.UndoManager(undoScope(), { trackedOrigins: new Set([LOCAL]), captureTimeout: 400 });
@@ -137,6 +139,8 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   const scroller = $("[data-scroll]"), sizer = $("[data-sizer]"), canvas = $("[data-canvas]");
   const formulaEl = $("[data-formula]"), nameBox = $("[data-namebox]"), cellEdit = $("[data-celledit]");
   const sizeOK = () => model.filledCells() <= MAX_CELLS;
+  const fx = createFilterUI({ root, model, engine, st, schedule: (o) => schedule(o), cellRect: (r, c) => cellRect(r, c), scroller, toast, isPhone });
+  let filterHead = null;
 
   // ---- drawing --------------------------------------------------------------------------------
   function schedule({ geom = true } = {}) {
@@ -146,13 +150,13 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   }
   function draw() {
     if (!model.tabIds().includes(st.tab)) st.tab = model.tabIds()[0];
-    if (geomDirty) { g = geometry(model, st.tab, st.zoom); geomDirty = false; }
+    if (geomDirty) { g = geometry(model, st.tab, st.zoom, fx.hidden()); filterHead = fx.head(); geomDirty = false; }
     clampSel();
     sizer.style.width = `${g.width + g.headW + 60}px`;
     sizer.style.height = `${g.height + g.headH + 60}px`;
     const w = scroller.clientWidth, h = scroller.clientHeight;
     const peers = peerCells();
-    drawGrid(canvas, model, engine, st.tab, g, { scrollX: st.scrollX, scrollY: st.scrollY, w, h, sel: st.sel, peers, editing: st.editing, dpr: window.devicePixelRatio || 1 });
+    drawGrid(canvas, model, engine, st.tab, g, { scrollX: st.scrollX, scrollY: st.scrollY, w, h, sel: st.sel, peers, editing: st.editing, dpr: window.devicePixelRatio || 1, filter: filterHead });
     drawTabs();
     syncToolbar();
     if (!st.editing) showFormulaBar();
@@ -292,6 +296,8 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       return;
     }
     if (st.editing) commitEdit();
+    const fcol = fx.buttonAt(h);
+    if (fcol >= 0) { e.preventDefault(); select(h.r, fcol); fx.openPanel(fcol); return; }
     if (h.edgeCol >= 0) { drag = { kind: "colsize", i: h.edgeCol, start: e.clientX, size: g.cw[h.edgeCol] / st.zoom }; scroller.setPointerCapture(e.pointerId); return; }
     if (h.edgeRow >= 0) { drag = { kind: "rowsize", i: h.edgeRow, start: e.clientY, size: g.rh[h.edgeRow] / st.zoom }; scroller.setPointerCapture(e.pointerId); return; }
     if (h.inColHead && h.inRowHead) { select(0, 0, g.rows.length - 1, g.cols.length - 1, { r: 0, c: 0 }); return; }
@@ -668,7 +674,8 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     <button type="button" class="sh-icon" data-act="align" title="Horizontal align" aria-label="Horizontal align">${IC.alignLeft}</button>
     <button type="button" class="sh-icon" data-act="wrap" title="Text wrapping" aria-label="Text wrapping">${ICS.wrap}</button>
     <span class="sh-sep"></span>
-    <button type="button" class="sh-icon sh-txt" data-act="functions" title="Functions" aria-label="Functions">${ICS.sum}</button>`;
+    <button type="button" class="sh-icon sh-txt" data-act="functions" title="Functions" aria-label="Functions">${ICS.sum}</button>
+    <button type="button" class="sh-icon" data-act="filter" title="Create a filter" aria-label="Create a filter">${ICS.filter}</button>`;
   tb.querySelector("[data-font]").addEventListener("change", (e) => applyStyle({ font: e.target.value === "Arial" ? null : e.target.value }));
   tb.querySelector("[data-size]").addEventListener("change", (e) => applyStyle({ size: Number(e.target.value) === 10 ? null : Number(e.target.value) }));
 
@@ -680,6 +687,8 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     if (document.activeElement !== font) font.value = FONTS.includes(a.font) ? a.font : "Arial";
     if (document.activeElement !== size) { const v = String(a.size || 10); if (![...size.options].some((o) => o.value === v)) size.add(new Option(v, v)); size.value = v; }
     for (const k of ["bold", "italic", "strike"]) tb.querySelector(`[data-act=${k}]`)?.classList.toggle("is-on", !!a[k]);
+    const fb = tb.querySelector("[data-act=filter]"), on = Boolean(model.filterOf(st.tab, "filter")) && !fx.view;
+    fb.classList.toggle("is-on", on); fb.title = fx.view ? "Close filter view" : on ? "Remove filter" : "Create a filter"; fb.setAttribute("aria-label", fb.title);
   }
 
   // ---- menus ---------------------------------------------------------------------------
@@ -767,6 +776,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       { label: `Sort sheet by column ${indexToCol(s().c)}, Z → A`, run: () => sortRows(false, true) },
       { label: "Sort range A → Z", run: () => sortRows(true, false), disabled: s().r1 === s().r2 },
       { label: "Sort range Z → A", run: () => sortRows(false, false), disabled: s().r1 === s().r2 },
+      { sep: true }, ...fx.menu(),
       { sep: true }, { label: "Named ranges…", run: namedRanges },
     ],
   };
@@ -842,6 +852,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       case "align": openMenu(alignItems(), at); break;
       case "wrap": openMenu(wrapItems(), at); break;
       case "functions": openMenu(["SUM", "AVERAGE", "COUNT", "MAX", "MIN", "IF", "SUMIF", "VLOOKUP", "XLOOKUP", "FILTER", "UNIQUE", "TODAY"].map((f) => ({ label: f, run: () => insertFunction(f) })), at); break;
+      case "filter": fx.toggle(); break;
       case "find": openFind(); break;
       case "find-close": $("[data-find]").hidden = true; break;
       case "find-next": findNext(); break;
@@ -948,6 +959,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   }
   function switchTab(t) {
     if (st.editing && !isFormulaText(currentEditText())) commitEdit();
+    fx.close();
     st.tab = t;
     scroller.scrollTop = 0; scroller.scrollLeft = 0; st.scrollX = st.scrollY = 0;
     st.sel = { r: 0, c: 0, r1: 0, c1: 0, r2: 0, c2: 0 };
@@ -1195,6 +1207,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   document.addEventListener("keydown", onKeyGlobal);
   async function close() {
     if (st.editing) commitEdit();
+    fx.destroy();
     statusEl.textContent = "Saving…";
     stopBridge();
     engine.close();
@@ -1218,6 +1231,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     // a cell's centre on screen (QA clicks there)
     cellCenter: (r, c) => { const R = cellRect(r, c), b = scroller.getBoundingClientRect(); return { x: b.left + R.x + R.w / 2, y: b.top + R.y + R.h / 2, w: R.w, h: R.h, right: b.left + R.x + R.w, bottom: b.top + R.y + R.h }; },
     shown: (r, c) => displayOf(model, engine, st.tab, r, c).text,
+    fx, rowShown: (r) => g.rh[r] > 0,
     idle: () => engine.whenIdle(),
   };
   return { close, model, engine };

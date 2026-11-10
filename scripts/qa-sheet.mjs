@@ -199,6 +199,51 @@ try {
   const csv = await a.evaluate(() => window.__shared[0]?.text || "");
   check(csv.includes("$12.000") && csv.includes("42"), "Download as CSV writes what's shown", csv.slice(0, 80));
 
+  console.log("Filters");
+  await a.evaluate(() => {
+    const S = window.__S, t = S.st.tab;
+    [["Name", "Dept", "Pay"], ["Ann", "Ops", "50"], ["Bob", "IT", "70"], ["Cy", "Ops", "55"], ["Dee", "IT", "90"], ["Eve", "HR", "40"], ["Gus", "IT", "80"]]
+      .forEach((row, i) => row.forEach((x, j) => S.model.setInput(t, 40 + i, j, x)));
+    S.select(41, 0);
+  });
+  await a.click(".sh-toolbar [data-act=filter]");
+  await wait(80);
+  const fb = await a.evaluate(() => { const S = window.__S; const f = S.model.filterOf(S.st.tab, "filter"); return f && S.fx.head(); });
+  check(fb && fb.r === 40 && fb.r2 === 46 && fb.c1 === 0 && fb.c2 === 2, "Create a filter finds the table around the cell", JSON.stringify(fb));
+  await a.evaluate(() => window.__S.select(40, 1));
+  await wait(40);
+  const hb = await center(a, 40, 1);
+  await a.mouse.click(hb.right - 8, hb.y);
+  await wait(80);
+  check(await a.$(".sh-filter") !== null, "the header button opens the filter panel");
+  check(await a.$eval(".sh-filter [data-f-list]", (el) => el.textContent.replace(/\s+/g, " ")).then((t) => /HR\s*1/.test(t) && /IT\s*3/.test(t) && /Ops\s*2/.test(t)), "the panel lists the column's values with counts");
+  await a.click(".sh-filter [data-f-list] label:has-text('IT') input");
+  await shot(a, "04-filter-panel");
+  await a.click(".sh-filter [data-f=ok]");
+  await wait(120);
+  const shownRows = () => a.evaluate(() => [40, 41, 42, 43, 44, 45, 46].filter((r) => window.__S.rowShown(r)));
+  check(JSON.stringify(await shownRows()) === "[40,41,43,45]", "unticking IT hides the IT rows", JSON.stringify(await shownRows()));
+  await shot(a, "04-filter");
+  const mj = await openAs("marijane");
+  await mj.waitForFunction(() => !window.__S.rowShown(42) && window.__S.rowShown(41), null, { timeout: 8000 }).then(() => check(true, "the tab's filter is the same for Marijane")).catch(() => check(false, "the tab's filter is the same for Marijane"));
+  await a.bringToFront(); // drawing runs in the page in front, as on a real screen
+  await a.evaluate(() => window.__S.fx.newView());
+  await wait(80);
+  check(await a.$eval(".sh-viewbar", (el) => !el.hidden && el.textContent.includes("Filter 1")), "a filter view shows its bar");
+  await a.evaluate(() => { const S = window.__S, t = S.st.tab; S.model.setCriteria(t, S.fx.view, S.model.colIds(t)[1], { hide: ["IT", "Ops"] }); S.select(0, 0); });
+  await wait(150);
+  check(JSON.stringify(await shownRows()) === "[40,45]", "in my filter view I hide Ops too", JSON.stringify(await shownRows()));
+  await wait(600);
+  check(await mj.evaluate(() => window.__S.rowShown(41) && window.__S.rowShown(43) && !window.__S.rowShown(42)), "my filter view doesn't change what Marijane sees");
+  await shot(a, "05-filter-view");
+  await a.click(".sh-viewbar [data-vb=exit]");
+  await wait(100);
+  check(JSON.stringify(await shownRows()) === "[40,41,43,45]" && await a.$eval(".sh-viewbar", (el) => el.hidden), "closing the view goes back to the tab's filter");
+  await clickCell(a, 41, 0);
+  await a.keyboard.press("ArrowDown");
+  check(await a.$eval("[data-namebox]", (el) => el.value) === "A44", "arrow keys skip filtered-out rows", await a.$eval("[data-namebox]", (el) => el.value));
+  await mj.close();
+
   console.log("Dark theme");
   const dk = await openAs("luke", { query: "&theme=dark" });
   await shot(dk, "03-dark");
@@ -213,6 +258,17 @@ try {
     const fit = await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
     check(fit, `nothing runs off the side at ${width}px`);
     check(await p.$eval("[data-act=start-edit]", (el) => !el.hidden), "opens to view with the pencil showing");
+    await p.evaluate(() => { const S = window.__S; S.select(40, 0); if (!S.model.filterOf(S.st.tab, "filter")) S.fx.toggle(); });
+    await wait(80);
+    await p.evaluate(() => window.__S.fx.openPanel(1));
+    await wait(80);
+    check(await p.evaluate(() => { const el = document.querySelector(".sh-filter.is-sheet"); if (!el) return false; const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= window.innerWidth + 1; }), "the filter panel is a sheet from the bottom that fits");
+    await shot(p, `04-phone-${width}-filter`);
+    await p.keyboard.press("Escape");
+    await wait(40);
+    check(await p.$(".sh-filter") === null, "Escape closes the filter panel");
+    await p.evaluate(() => window.__S.select(0, 0));
+    await wait(60);
     check(await p.$eval(".sh-toolbar", (el) => getComputedStyle(el).display === "none"), "no laptop toolbar on the phone");
     await shot(p, `04-phone-${width}-view`);
     await p.click("[data-act=start-edit]");

@@ -126,3 +126,31 @@
   .sh-top [data-act=phone-menu] { display: none; }
   .sh-keys { display: none !important; }
 }
+
+/* filters (filter-ui.js) */
+.sh-filter { position: absolute; z-index: 35; width: 300px; max-height: 80%; overflow-y: auto; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.sh-filter.is-sheet { left: 0; right: 0; bottom: 0; width: auto; max-height: 75%; border-radius: 14px 14px 0 0; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+.sh-filter details { border-top: 1px solid var(--line); padding-top: 6px; }
+.sh-filter summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.sh-filter select, .sh-filter input[type=text], .sh-filter input[type=search] { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+.sh-f-sort { display: flex; gap: 6px; }
+.sh-f-sort .sh-btn { flex: 1; }
+.sh-f-row { display: flex; gap: 10px; align-items: center; }
+.sh-link { border: 0; background: none; color: var(--accent); padding: 4px 0; cursor: pointer; font: inherit; }
+.sh-f-count { margin-left: auto; color: var(--muted); font-size: 0.85em; }
+.sh-f-list { max-height: 220px; overflow-y: auto; margin-top: 6px; }
+.sh-f-list label { display: flex; align-items: center; gap: 8px; padding: 5px 2px; cursor: pointer; }
+.sh-f-list label span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-f-list small, .sh-f-more { color: var(--muted); }
+.sh-f-more { font-size: 0.85em; margin: 6px 2px; }
+.sh-f-colour { display: block; margin-top: 6px; }
+.sh-f-foot { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.sh-btn.is-primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.sh-viewbar { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--ink); color: var(--bg); flex: none; min-width: 0; }
+.sh-viewbar .sh-vb-label { font-size: 0.8em; opacity: 0.8; flex: none; }
+.sh-viewbar .sh-vb-name { border: 0; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; padding: 2px 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-viewbar .sh-vb-note { font-size: 0.8em; opacity: 0.8; margin-left: auto; white-space: nowrap; }
+.sh-viewbar .sh-btn { padding: 2px 8px; }
+.sh-viewbar .sh-icon { color: inherit; }
+@media (max-width: 420px) { .sh-viewbar .sh-vb-note { display: none; } .sh-viewbar .sh-btn { margin-left: auto; } }
+.sh-f-list input[type=checkbox] { width: auto; height: auto; flex: none; margin: 0; }

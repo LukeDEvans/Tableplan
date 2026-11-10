@@ -267,6 +267,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 
 
 ## P2
+- [ ] **[P2] Sheet filters: no "custom formula is" condition yet** (sheets · documents/sheet/filters.js CONDITIONS · 2026-11-10)
+      Sheets' filter offers "Custom formula is" (e.g. `=B2>AVERAGE(B:B)`). Not built: it needs the engine to evaluate one formula per row, which now means a round trip to the worker. → Add it with conditional formatting, which needs the same per-cell formula evaluation (a "rule formula" request to engine/host.js). Verdict: KNOWN GAP.
 - [ ] **[P2] Word processor: saving is read-then-write without a conditional PUT** (documents · documents/editor/doc-model.js mergeAndSave · 2026-11-09, independent review)
       Device B reads, A writes, B writes: A's edits leave storage until A saves or reopens (A's device copy repairs it). Lost only if A's copy is gone and A never reopens. Suggestion: R2 conditional PUT on the ETag (needs doc-storage to sign If-Match) and retry the merge. Verdict: open.
 - [ ] **[P2] Word processor: a Safe document's content isn't bound to a version, so a server could serve an older copy unnoticed** (documents · documents/editor/store-safe.js saveContent · 2026-11-09, independent review)
@@ -481,6 +483,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+- [ ] **[P3] qa:sheet missed one check once, during a screenshot run** (sheets · scripts/qa-sheet.mjs Filters section · 2026-11-10)
+      `node scripts/qa-sheet.mjs <dir>` reported 60/61 once; four reruns (three plain, one with screenshots) were 61/61 and the run didn't print which check missed. Most likely a timing wait around the two-person filter-view steps, where screenshots add delay. → If it shows up again, note which check and swap the fixed wait for a `waitForFunction`. Verdict: NOT REPRODUCED.
 - [x] **[P3] Kept copies outlive a purge, and the 200 MB cap counts raw bytes** (documents · documents/library.js:243 purge, documents/ui.js:161 openedFilesCache · 2026-11-03)
       `purge` removes `rev:`/`meta:` but not `blob:<scope>/<id>/content` or its `blobidx` entry, so a file deleted for good keeps its ciphertext on every device that opened it until evicted (undecryptable — the wrapped key went with the row — but the space stays). Values are stored as base64 JSON inside AES-GCM, so 200 MB of blobs is ~270 MB on disk, doubled during a passkey move. → Remove the cache entry in `purge`; count stored size. Verdict: CONFIRMED (code read).
       ✅ 2026-11-04: Fixed on `claude/documents-later`: `purge` calls `blobCache.drop`; sizes count `storedSize` (base64 + wrapper).

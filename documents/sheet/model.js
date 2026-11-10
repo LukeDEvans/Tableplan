@@ -15,6 +15,11 @@
 //   "rowmeta:<id>"  Map    rowId → { h?, hidden? }
 //   "colmeta:<id>"  Map    colId → { w?, hidden? }
 //   "merges:<id>"   Map    mergeId → { r1, c1, r2, c2 } (ids of the corners)
+//   "filters:<id>"  Map    "filter" → the tab's filter { top, bottom, left, right } (ids),
+//                          "view:<vid>" → a filter view { name, top, bottom, left, right },
+//                          "crit:<owner>:<colId>" → that column's criteria (filters.js);
+//                          owner is "filter" or a view id. Per column, so two people
+//                          filtering different columns don't overwrite each other.
 //   "styles"        Map    style id → style (content-addressed: the same style has the same id)
 //   "names"         Map    UPPER name → { tab, kind, r1, c1, r2, c2 } (a bound reference)
 //
@@ -90,6 +95,7 @@ export function createSheetModel(ydoc) {
   const rowMeta = (id) => ydoc.getMap(`rowmeta:${id}`);
   const colMeta = (id) => ydoc.getMap(`colmeta:${id}`);
   const merges = (id) => ydoc.getMap(`merges:${id}`);
+  const filtersMap = (id) => ydoc.getMap(`filters:${id}`);
 
   const tx = (fn, origin = LOCAL) => { let out; ydoc.transact(() => { out = fn(); }, origin); return out; };
   const uniq = (arr) => { const seen = new Set(); const out = []; for (const x of arr) if (typeof x === "string" && !seen.has(x)) { seen.add(x); out.push(x); } return out; };
@@ -524,8 +530,60 @@ export function createSheetModel(ydoc) {
     return out;
   }
 
+  // ---- filters and filter views (filters.js) --------------------------------------------------
+
+  const specKey = (owner) => (owner === "filter" ? "filter" : `view:${owner}`);
+  function filterOf(tab, owner = "filter") {
+    const m = filtersMap(tab);
+    const base = m.get(specKey(owner));
+    if (!base) return null;
+    const criteria = {};
+    const p = `crit:${owner}:`;
+    for (const [k, v] of m.entries()) if (k.startsWith(p) && v) criteria[k.slice(p.length)] = v;
+    return { owner, ...base, criteria };
+  }
+  function setFilter(tab, owner, { top, bottom = null, left, right, name }) {
+    tx(() => {
+      const m = filtersMap(tab);
+      const prev = m.get(specKey(owner)) || {};
+      const next = { top, bottom: bottom || null, left, right };
+      if (owner !== "filter") next.name = String(name ?? prev.name ?? "Filter view").slice(0, 100);
+      m.set(specKey(owner), next);
+    });
+  }
+  function setCriteria(tab, owner, colId, crit) {
+    tx(() => {
+      const m = filtersMap(tab), k = `crit:${owner}:${colId}`;
+      const clean = crit && cleanCriteria(crit);
+      if (clean) m.set(k, clean); else m.delete(k);
+    });
+  }
+  function removeFilter(tab, owner = "filter") {
+    tx(() => {
+      const m = filtersMap(tab);
+      m.delete(specKey(owner));
+      const p = `crit:${owner}:`;
+      for (const k of [...m.keys()]) if (k.startsWith(p)) m.delete(k);
+    });
+  }
+  function filterViews(tab) {
+    const out = [];
+    for (const [k, v] of filtersMap(tab).entries()) if (k.startsWith("view:") && v) out.push({ id: k.slice(5), name: v.name || "Filter view" });
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  // A new filter view, starting from the given spec (or the tab's filter, as Sheets does).
+  function newFilterView(tab, from, name) {
+    const id = newId();
+    tx(() => {
+      setFilter(tab, id, { ...from, name: name || `Filter ${filterViews(tab).length + 1}` });
+      for (const [colId, crit] of Object.entries(from.criteria || {})) setCriteria(tab, id, colId, crit);
+    });
+    return id;
+  }
+
   return {
     ydoc, grid, LOCAL,
+    filterOf, setFilter, setCriteria, removeFilter, filterViews, newFilterView,
     init, tidy, filledCells, searchText,
     tabIds, tabInfo, addTab, renameTab, setTabProps, removeTab, moveTab,
     rowIds, colIds, size: (tab) => ({ rows: ix(tab).rows.length, cols: ix(tab).cols.length }),
@@ -544,6 +602,22 @@ export function createSheetModel(ydoc) {
 
 // Number formats chosen by typing (US locale).
 export const AUTO_FORMATS = { percent: "0.00%", currency: '"$"#,##0.00', date: "m/d/yyyy", time: "h:mm:ss AM/PM", datetime: "m/d/yyyy h:mm:ss" };
+
+// Criteria as stored: only known fields, bounded sizes.
+export function cleanCriteria(c) {
+  const out = {};
+  if (Array.isArray(c.hide) && c.hide.length) out.hide = [...new Set(c.hide.map((x) => String(x).slice(0, 500)))].slice(0, 10000);
+  if (c.cond?.op && typeof c.cond.op === "string") {
+    out.cond = { op: c.cond.op.slice(0, 20) };
+    if (c.cond.a !== undefined && c.cond.a !== null) out.cond.a = String(c.cond.a).slice(0, 500);
+    if (c.cond.b !== undefined && c.cond.b !== null) out.cond.b = String(c.cond.b).slice(0, 500);
+  }
+  const col = {};
+  if (COLOR_RE.test(c.color?.fill || "")) col.fill = c.color.fill;
+  if (COLOR_RE.test(c.color?.text || "")) col.text = c.color.text;
+  if (col.fill || col.text) out.color = col;
+  return Object.keys(out).length ? out : null;
+}
 
 export function cleanTabName(name) {
   return String(name ?? "").replace(/[\u0000-\u001f[\]*?/\\:]/g, "").trim().slice(0, 100);

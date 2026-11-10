@@ -76,6 +76,15 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
   (QA, tests) awaits `whenIdle()`. The page falls back to running the engine itself if
   the worker fails; keep that path tested.
 
+## Filters
+- The tab's filter is shared; a filter view changes only what its user sees (which
+  view you're in is local state in `filter-ui.js`, never written to the doc). Both are
+  stored by ids in `filters:<tab>`; criteria are one key per column
+  (`crit:<owner>:<colId>`) so concurrent edits to different columns merge.
+- Values lists and "by values" match the *shown* text (as Sheets), errors by code,
+  "" is (Blanks). A column's list ignores its own criteria.
+- A filter change of any origin must redraw: `filter-ui.js` watches `filters:*` types.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->
 - files: `documents/sheet/*.js`, `documents/sheet/engine/*.js`, `documents/sheet/engine/functions/*.js`

@@ -14,10 +14,11 @@ export const HEAD_W = 46;
 export const HEAD_H = 24;
 
 // Sizes of a tab's rows/columns with prefix sums for fast position lookups.
-export function geometry(model, tab, zoom = 1) {
+// filtered: row indexes a filter hides (filters.js), drawn like hidden rows.
+export function geometry(model, tab, zoom = 1, filtered = null) {
   const rows = model.rowIds(tab), cols = model.colIds(tab);
   const rh = new Float64Array(rows.length), cw = new Float64Array(cols.length);
-  rows.forEach((id, i) => { const m = model.rowMeta(tab, id); rh[i] = m.hidden ? 0 : (m.h || DEF_H) * zoom; });
+  rows.forEach((id, i) => { const m = model.rowMeta(tab, id); rh[i] = m.hidden || filtered?.has(i) ? 0 : (m.h || DEF_H) * zoom; });
   cols.forEach((id, i) => { const m = model.colMeta(tab, id); cw[i] = m.hidden ? 0 : (m.w || DEF_W) * zoom; });
   const ry = new Float64Array(rows.length + 1), cx = new Float64Array(cols.length + 1);
   for (let i = 0; i < rows.length; i++) ry[i + 1] = ry[i] + rh[i];
@@ -237,6 +238,29 @@ export function drawGrid(canvas, model, engine, tab, g, view) {
   }
   ctx.fillStyle = C.line; ctx.fillRect(0, oy - 1, W, 1); ctx.fillRect(ox - 1, 0, 1, H);
   ctx.fillStyle = C.head; ctx.fillRect(0, 0, ox - 1, oy - 1);
+  // a filter: a button on each header cell (filled when that column filters), and a
+  // band down the edges of the range so it's clear what the filter covers
+  if (view.filter) {
+    const F = view.filter;
+    ctx.save(); ctx.beginPath(); ctx.rect(ox, oy, W - ox, H - oy); ctx.clip();
+    if (g.rh[F.r] > 0) for (let c = F.c1; c <= F.c2; c++) {
+      if (!g.cw[c]) continue;
+      const R = rectOf(F.r, c, F.r, c);
+      if (R.x > W || R.x + R.w < ox) continue;
+      const s2 = Math.min(16 * g.zoom, R.h - 4), bx = R.x + R.w - s2 - 3, by = R.y + (R.h - s2) / 2;
+      const on = F.active.has(c);
+      ctx.fillStyle = on ? C.accent : C.head; ctx.fillRect(bx, by, s2, s2);
+      ctx.strokeStyle = on ? C.accent : C.line; ctx.lineWidth = 1; ctx.strokeRect(bx + 0.5, by + 0.5, s2 - 1, s2 - 1);
+      // a funnel
+      ctx.fillStyle = on ? C.bg : C.headInk;
+      const m = s2 / 2, cx0 = bx + m, cy0 = by + m;
+      ctx.beginPath(); ctx.moveTo(cx0 - m * 0.55, cy0 - m * 0.45); ctx.lineTo(cx0 + m * 0.55, cy0 - m * 0.45); ctx.lineTo(cx0 + m * 0.12, cy0 + m * 0.05); ctx.lineTo(cx0 + m * 0.12, cy0 + m * 0.5); ctx.lineTo(cx0 - m * 0.12, cy0 + m * 0.35); ctx.lineTo(cx0 - m * 0.12, cy0 + m * 0.05); ctx.closePath(); ctx.fill();
+    }
+    const B = rectOf(F.r, F.c1, F.r2, F.c2);
+    ctx.strokeStyle = view.filter.view ? C.headInk : C.accent; ctx.globalAlpha = 0.6; ctx.lineWidth = 1; ctx.setLineDash([]);
+    ctx.strokeRect(B.x + 0.5, B.y + 0.5, B.w - 1, B.h - 1);
+    ctx.restore();
+  }
   // frozen dividers
   ctx.fillStyle = C.freeze;
   if (g.fr) ctx.fillRect(0, oy + g.frozenH - 2, W, 3);
