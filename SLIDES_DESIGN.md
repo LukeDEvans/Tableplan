@@ -20,6 +20,27 @@ Goal: a Google Slides replacement inside the **Document** page, completing the s
 
 ---
 
+## Build status (2026-11-10)
+
+Steps 1–9 of §13 are built on `claude/slides` (Luke: "Start on 1-9 now"); building started before PR #223 merged, importing the word processor's session / live channel / stores from `documents/editor/` where they are now (a one-line change for each import when they move to `documents/collab/`).
+
+| Step | State |
+|---|---|
+| 1 Editor core | Built: slides as DOM in a 1920 × 1080 space; text boxes with the word processor's extensions; ~40 shapes, lines and connectors with arrowheads, images (crop, mask, recolour, alt text), groups, snapping guides, align/distribute, stacking, lock, flip/rotate; filmstrip with drag to reorder, sections, skip; per-person undo (each move is a step); copy/paste of items and whole slides; find & replace. |
+| 2 Themes & layouts | Built: 12 themes plus Classic, Household and Urban Greens from the app's palettes; colours stored as theme roles; the 11 layouts with placeholders that move and restyle on a layout change. |
+| 3 Saving, co-editing, the Safe | Built through the shared session; Safe file type `application/vnd.live.slides`. **Needs the migration** `migrations/2026-11-10-documents-slides-versions.sql` (your OK) before everyday presentations can keep versions. |
+| 4 Presenting on the laptop | Built: full screen, keys and clickers, number + Enter, B / W, presenter view window (now, next step, notes, timer, clock), auto-advance and looping. |
+| 5 Transitions & animations | Built: 7 transitions, 11 effects, on click / with / after, by paragraph, delays; preview in the editor. |
+| 6 iPhone | Built: view first then pencil, filmstrip along the bottom, + to insert, swipe through, Present on the phone; **AirPlay** (`PresentScreen` plugin + `slides-tv.html`) and the **phone as a remote** (presence only). The two native plugins need a TestFlight build to try. |
+| 7 Tables, notes, comments, versions | Built: tables with row/column identities, speaker notes, comment threads on slides (with @mentions), version history with a filmstrip preview and restore. |
+| 8 Video & audio | Built: YouTube / Vimeo / file links; uploads up to 60 MB (audio 20 MB), compressed to 720p on the iPhone (`VideoCompress` plugin, from Photos). **No `doc-storage` change was needed**: media are stored as the same `i<hash>` parts images use (that function's 70 MB limit). |
+| 9 Templates | Built: Blank, Trip recap, Photo album, Family year in review, Business pitch, Project update, Talk or lesson, Party or event; and "Start from one of yours" (a copy). |
+| 10–11 | Not started, as planned (linked charts wait for the spreadsheet's charts; PowerPoint for its OOXML helpers). PDF / PNG export and Google Slides import are step 11. |
+
+Known gaps in what's built (in ISSUES.md): the 2 GB media nudge counts one presentation, not all of them; media no longer used aren't cleaned up yet (nothing is ever deleted, which is safe but uses space); clips can't be trimmed in the app before upload (trim in Photos); on the TV, build animations play as they do on the laptop but have only been checked in a desktop browser.
+
+---
+
 ## 1. How it fits, and why the wait
 
 Slides is mostly pieces the other two editors already make:
