@@ -120,6 +120,16 @@ through the engine.
   don't turn them into newest-wins.
 - TTS cache identity is content-addressed — changing what feeds the hash invalidates
   every cached clip (cost + egress). Flag before changing it.
+- Podcasts play from a download on the iPhone (Luke, 2026-11-11, "download then play"):
+  `EpisodeDownload` + "Episode downloads" in `LiveTtsPlugin.swift`. A downloaded file
+  plays first (Caches/LivePodcasts; removed when the episode finishes, after 3 weeks
+  unplayed, or over 2 GB). A new episode started from the beginning plays from its
+  download as it arrives, so what is heard and what is kept are one fetch. An episode
+  picked up part-way with no file streams as before while the download runs for next
+  time. The next queued episode is fetched ahead on Wi-Fi only. Anything that goes wrong
+  falls back to the stream at the same spot. Songs, radio and plain-http audio are
+  untouched. No web-code change: the plugin decides. Why: hosts put ads in per request,
+  so a stream that reconnects can continue in a different file (the jump back).
 - An episode stuck short of its end (iPhone): the native player's stall watch
   (`checkAudioStall` in `LiveTtsPlugin.swift`) treats a stall in the last stretch, with
   the network up, as finished, and reconnects a stall earlier in the episode (twice at
