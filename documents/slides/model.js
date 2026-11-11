@@ -35,7 +35,7 @@ export const newId = rid;
 const NUM = new Set(["x", "y", "w", "h", "rot", "sw", "opacity", "size", "lineH", "radius", "pad", "rows", "cols", "start", "end", "volume"]);
 const STR = new Set(["t", "z", "grp", "role", "name", "fill", "stroke", "dash", "shape", "font", "color", "align", "valign", "autofit", "media", "alt", "mask", "a1", "a2", "kind", "link", "play", "fit", "recolor", "poster", "posterUrl"]);
 const BOOL = new Set(["flipH", "flipV", "lock", "bold", "italic", "shadow", "loop", "mute", "controls", "acrossSlides"]);
-const OBJ = new Set(["crop", "colW", "rowH", "cells", "conn"]);
+const OBJ = new Set(["crop", "colW", "rowH", "cells", "conn", "src", "cache"]); // src/cache: linked charts and tables (linked.js)
 export const ITEM_KEYS = Object.freeze([...NUM, ...STR, ...BOOL, ...OBJ]);
 
 const clampNum = (k, v) => {
@@ -546,6 +546,31 @@ export function createSlidesModel(ydoc) {
     });
     return true;
   }
+  // A linked table's cells from its spreadsheet (linked.js): the table takes the range's
+  // size and text; formatting typed on the slide is replaced by the spreadsheet's.
+  // → true if anything changed.
+  function setTableText(sid, iid, grid) {
+    const im = itemMap(sid, iid);
+    if (!im?.get("rowIds")) return false;
+    const rows = Math.max(1, Math.min(MAX_ROWS, grid.length)), cols = Math.max(1, Math.min(MAX_COLS, Math.max(1, ...grid.map((r) => r.length))));
+    const before = JSON.stringify(tableData(im));
+    tx(() => {
+      const ra = im.get("rowIds"), ca = im.get("colIds"), cm = im.get("cellmap");
+      while (ra.length < rows) ra.push([rid()]);
+      if (ra.length > rows) ra.delete(rows, ra.length - rows);
+      while (ca.length < cols) ca.push([rid()]);
+      if (ca.length > cols) ca.delete(cols, ca.length - cols);
+      const rIds = ra.toArray(), cIds = ca.toArray();
+      const want = new Map();
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const cell = cleanCell(grid[r]?.[c]); if (cell) want.set(`${rIds[r]}.${cIds[c]}`, cell); }
+      for (const k of [...cm.keys()]) if (!want.has(k)) cm.delete(k);
+      for (const [k, v] of want) if (JSON.stringify(cm.get(k)) !== JSON.stringify(v)) cm.set(k, v);
+      const w = im.get("colW");
+      if (Array.isArray(w) && w.length !== cols) im.delete("colW");
+    });
+    return JSON.stringify(tableData(im)) !== before;
+  }
+
   function tableDelete(sid, iid, axis, at) {
     const im = itemMap(sid, iid);
     const arr = im?.get(axis === "row" ? "rowIds" : "colIds");
@@ -626,7 +651,7 @@ export function createSlidesModel(ydoc) {
     slideIds, slide, items, item, text, notes, anims, slideMap, itemMap,
     addSlide, duplicateSlides, deleteSlides, moveSlides, setSlide, setLayout,
     addItem, updateItems, deleteItems, copyItems, pasteItems, exportSlides, importSlides, restack, group, ungroup, groupOf,
-    setAnims, addMedia, mediaInfo, usedMedia, tableCell, tableInsert, tableDelete,
+    setAnims, addMedia, mediaInfo, usedMedia, tableCell, tableInsert, tableDelete, setTableText,
     tidy, searchText,
     transact: tx,
   };

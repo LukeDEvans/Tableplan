@@ -732,6 +732,14 @@ export async function mountDocumentPage(root, deps) {
       pickVideo: vc ? async (o) => { const r = await vc.pick(o); if (!r || r.cancelled) return null; const b = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0)); return new Blob([b], { type: r.mime || "video/mp4" }); } : null,
       share: (blob, name, mime) => shareBlob(blob, name, mime),
       rename: (n) => { const x = ui.files.find((y) => y.id === f.id); if (x) x.name = n; },
+      // linked charts and tables (SLIDES_DESIGN.md §6): this view's everyday spreadsheets only
+      sheets: (() => {
+        const scope = ui.scope;
+        return {
+          list: async () => ui.files.filter((x) => x.kind === "sheet" && !x.deletedAt).map((x) => ({ id: x.id, name: x.name })),
+          open: async (id) => (await slidesHost()).storeFor({ storage, transport, scope, fileId: id }),
+        };
+      })(),
     };
   };
   async function openPresentation(f, { startEditing = false } = {}) {

@@ -947,7 +947,14 @@ export async function mountDocuments(root, deps) {
       const people = (deps.household?.()?.members || []).map((m) => ({ id: m.user_id, name: m.display_name || "Someone" }));
       safeDoc = await openSlidesFor({
         store, file: { id: f.id, name: f.name, scope }, me, startEditing,
-        deps: { liveOpen: deps.liveDocChannel || null, toast: deps.toast, isNative: deps.isNative, isSafe: true, people, presentScreen: deps.nativePresentScreen?.() || null, rename: () => {} },
+        deps: {
+          liveOpen: deps.liveDocChannel || null, toast: deps.toast, isNative: deps.isNative, isSafe: true, people, presentScreen: deps.nativePresentScreen?.() || null, rename: () => {},
+          // linked charts and tables: spreadsheets in this same Safe only
+          sheets: {
+            list: async () => ui.files.filter((x) => x.mime === SAFE_SHEET_MIME && !x.deletedAt).map((x) => ({ id: x.id, name: x.name })),
+            open: async (id) => createSafeDocStore({ storage, transport, library, scope, fileId: id, fileKey: await library.docKey(scope, id) }),
+          },
+        },
         onClose: () => { safeDoc = null; if (visible && ui.scope === scope) refresh(gen, scope).then(() => draw()).catch(() => {}); },
       });
       if (!safeDoc?.close) safeDoc = null;

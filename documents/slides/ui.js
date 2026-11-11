@@ -1079,6 +1079,7 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
         { label: "Line", act: "tool-line" },
         { label: "Arrow", act: "tool-arrow" },
         { label: "Table…", act: "table" },
+        ...(deps.sheets ? [{ label: "Chart from a spreadsheet…", act: "linked-chart" }, { label: "Table from a spreadsheet…", act: "linked-table" }] : []),
         { label: "Video…", act: "video" },
         { label: "Audio…", act: "audio" },
         { sep: true },
@@ -1191,6 +1192,7 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
         btn("clear-format", IC.clear, "Clear formatting", { disabled: !ed }));
     }
     if (one?.t === "image") parts.push(btn("crop", IC.crop, "Crop and mask"), btn("panel", SI.format, "Format options", { arg: "format" }));
+    if (one?.src) parts.push(sep, `<button type="button" class="sl-btn sl-tb-btn" data-act="link-update" title="Update from ${esc(one.src.name || "the spreadsheet")}">Update</button>`, `<button type="button" class="sl-btn sl-tb-btn" data-act="link-unlink" title="Keep it as it is now, without the link">Unlink</button>`);
     if (!sel.length && !ed) parts.push(btn("panel", SI.bg, "Background", { arg: "background" }), btn("panel", SI.layout, "Layout", { arg: "layout" }), btn("panel", SI.theme, "Theme", { arg: "theme" }), btn("panel", SI.transition, "Transition", { arg: "transition" }));
     else parts.push(sep, btn("arrange-menu", SI.arrange, "Arrange"), btn("panel", SI.animate, "Animate", { arg: "animate" }), btn("panel", SI.format, "Format options", { arg: "format" }));
     tb.innerHTML = parts.join("");
@@ -1311,6 +1313,15 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
         if (value === "ok") insertTable(Math.max(1, Math.min(20, Number(form.r.value) || 3)), Math.max(1, Math.min(10, Number(form.c.value) || 3)));
         return;
       }
+      case "linked-chart": case "linked-table": {
+        if (!deps.sheets) return;
+        const { insertLinkedDialog } = await import("./linked-ui.js");
+        const id = await insertLinkedDialog({ root, kind: act === "linked-chart" ? "chart" : "table", model, sid: st.slide, sheets: deps.sheets, toast });
+        if (id) { renderStage(); select([id]); }
+        return;
+      }
+      case "link-update": return refreshLinked({ onlySlide: st.slide, say: true });
+      case "link-unlink": return setItems({ src: null });
       case "video": case "audio": {
         const { addMediaDialog } = await import("./av.js");
         return addMediaDialog({ root, kind: act, model, store, media, sid: st.slide, deps, toast, onAdded: (id) => { renderStage(); select([id]); } });
@@ -1320,7 +1331,7 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
       case "line-menu":
         return popover(root, anchor, menuHtml([{ label: "Line", act: "line", arg: "straight" }, { label: "Arrow", act: "line", arg: "arrow" }, { label: "Elbow connector", act: "line", arg: "elbow" }, { label: "Curved connector", act: "line", arg: "curve" }]), { onClick: (b) => setTool({ kind: "line", arrow: b.dataset.arg === "arrow", lineKind: ["elbow", "curve"].includes(b.dataset.arg) ? b.dataset.arg : "straight" }) });
       case "insert-menu":
-        return popover(root, anchor, menuHtml([{ label: "Text box", act: "tool-text" }, { label: "Photo or picture", act: "image" }, { label: "Take a photo", act: "camera" }, { label: "Shape", act: "shape-menu" }, { label: "Line or arrow", act: "line-menu" }, { label: "Table", act: "table" }, { label: "Video", act: "video" }, { label: "Audio", act: "audio" }, { sep: true }, { label: "New slide", act: "new-slide" }]), { onClick: (b) => { setTimeout(() => runAct(b.dataset.act, b.dataset.arg, $("[data-act=insert-menu]")), 0); } });
+        return popover(root, anchor, menuHtml([{ label: "Text box", act: "tool-text" }, { label: "Photo or picture", act: "image" }, { label: "Take a photo", act: "camera" }, { label: "Shape", act: "shape-menu" }, { label: "Line or arrow", act: "line-menu" }, { label: "Table", act: "table" }, ...(deps.sheets ? [{ label: "Chart from a spreadsheet", act: "linked-chart" }, { label: "Table from a spreadsheet", act: "linked-table" }] : []), { label: "Video", act: "video" }, { label: "Audio", act: "audio" }, { sep: true }, { label: "New slide", act: "new-slide" }]), { onClick: (b) => { setTimeout(() => runAct(b.dataset.act, b.dataset.arg, $("[data-act=insert-menu]")), 0); } });
       case "fill-color": return colorPicker(root, anchor, { theme: model.theme(), current: selItems()[0]?.fill, onPick: (c) => setItems({ fill: c || "none" }) });
       case "stroke-color": return colorPicker(root, anchor, { theme: model.theme(), current: selItems()[0]?.stroke, onPick: (c) => setItems(c ? { stroke: c, sw: selItems()[0]?.sw || 2 } : { stroke: null, sw: 0 }) });
       case "stroke-weight": return popover(root, anchor, menuHtml([1, 2, 3, 4, 6, 8, 12, 16, 24].map((w) => ({ label: `${w} px`, act: "sw", arg: w, on: selItems()[0]?.sw === w }))), { onClick: (b) => setItems({ sw: Number(b.dataset.arg), ...(selItems()[0]?.stroke ? {} : { stroke: "@dk1" }) }) });
@@ -1593,6 +1604,16 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
   film.refresh();
   mountNotes();
   updateToolbar();
+
+  // ---- linked charts and tables (linked.js): bring them up to date when it opens ------------------
+  async function refreshLinked({ onlySlide = null, say = false } = {}) {
+    if (!deps.sheets || !editingAllowed()) { if (say) toast("Linked items update when you're editing."); return; }
+    const { refreshLinks } = await import("./linked.js");
+    const r = await refreshLinks(model, deps.sheets, { onlySlide });
+    if (r.updated) { invalidateAll(); renderStage(); }
+    if (say || r.updated) toast(r.updated ? `Updated ${r.updated} linked item${r.updated === 1 ? "" : "s"} from their spreadsheets.` : r.failed ? "Its spreadsheet couldn't be read; it shows what it last had." : "Already up to date.");
+  }
+  if (deps.sheets && model.slideIds().some((sid) => model.items(sid).some((it) => it.src))) setTimeout(() => refreshLinked().catch(() => {}), 400);
 
   // ---- closing -------------------------------------------------------------------------------------
   let closed = false;

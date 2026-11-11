@@ -328,3 +328,14 @@
 .sl-slide svg { stroke: none; fill: none; stroke-width: 0; display: block; }
 .sl-slide { user-select: none; -webkit-user-select: none; }
 .sl-slide .sl-text.is-live { user-select: text; -webkit-user-select: text; }
+.sl-chart { position: absolute; inset: 0; }
+.sl-chart svg { width: 100%; height: 100%; display: block; }
+.sl-chart svg rect:first-child[fill="transparent"] { fill: transparent; }
+.sl-tb-btn { padding: 4px 10px; font-size: 0.8rem; flex: none; }
+.wp-dialog-box.sl-link-dialog { width: min(720px, 100%); }
+.sl-link-charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; max-height: 50vh; overflow-y: auto; }
+.sl-link-chart { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; border: 2px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 6px; cursor: pointer; text-align: left; }
+.sl-link-chart.is-on { border-color: var(--accent); }
+.sl-link-chart small { color: var(--muted); }
+.sl-link-svg { width: 100%; display: block; background: #fff; border-radius: 6px; overflow: hidden; }
+.sl-link-svg svg { width: 100%; height: auto; display: block; }

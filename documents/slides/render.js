@@ -12,6 +12,12 @@ import { resolveColor, resolveFont, backgroundCss, decoSvg, PLACEHOLDER_PROMPTS 
 import { shapePath, dashArray } from "./shapes.js";
 import { fontStack, ensureFont } from "../editor/fonts.js";
 import { fragmentHasText } from "./model.js";
+import { renderChart } from "../sheet/chart-svg.js";
+import { cleanChartCache } from "./linked.js";
+
+const hexRgb = (h) => { const x = parseInt(String(h).slice(1), 16); return [(x >> 16) & 255, (x >> 8) & 255, x & 255]; };
+const mixHex = (a, b, t) => `#${hexRgb(a).map((v, i) => Math.round(v * (1 - t) + hexRgb(b)[i] * t).toString(16).padStart(2, "0")).join("")}`;
+const isDarkHex = (h) => { const [r, g, b] = hexRgb(h); return 0.299 * r + 0.587 * g + 0.114 * b < 128; };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const n = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -109,7 +115,15 @@ function itemHtml(it, ctx) {
 
   if (it.t === "table") return `<div ${attrs}>${tableHtml(it, ctx)}</div>`;
 
-  if (it.t === "chart") return `<div ${attrs}><div class="sl-chart-wait">Chart</div></div>`;
+  if (it.t === "chart") {
+    const c = cleanChartCache(it.cache);
+    if (!c) return `<div ${attrs}><div class="sl-chart-wait">Chart</div></div>`;
+    const T = { surface: resolveColor(it.fill, theme) || "transparent", ink: theme.colors.dk1, muted: theme.colors.dk2, grid: mixHex(theme.colors.dk1, theme.colors.lt1, 0.82), dark: isDarkHex(theme.colors.lt1) };
+    // drawn at a smaller size and scaled up, so chart text reads at about 10 pt on the slide
+    const k = 2.4;
+    const svg = renderChart(c.data, c.spec, { w: Math.max(40, Math.round(n(it.w) / k)), h: Math.max(40, Math.round(n(it.h) / k)), theme: T });
+    return `<div ${attrs}><div class="sl-chart">${svg}</div></div>`;
+  }
 
   // text and shapes: an optional shape drawn under the text
   let under = "";
