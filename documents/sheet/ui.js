@@ -424,6 +424,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       if (lk === "u" && !st.viewing) { e.preventDefault(); toggleStyle("underline"); return; }
       if (lk === "a") { e.preventDefault(); select(0, 0, g.rows.length - 1, g.cols.length - 1, { r: 0, c: 0 }); return; }
       if (lk === "f") { e.preventDefault(); openFind(); return; }
+      if (lk === "p") { e.preventDefault(); openPrint(); return; }
       if (lk === "s") { e.preventDefault(); session.save(); return; }
     }
     const moves = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
@@ -775,6 +776,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
 
   const menus = {
     file: () => [
+      { label: deps.nativePdf ? "Download as PDF…" : "Print or save as PDF…", keys: "⌘P", run: openPrint },
       { label: "Download as Excel (.xlsx)", run: downloadXlsx },
       { label: "Download as CSV (this tab)", run: downloadCsv },
       { label: "Import an Excel file (as new tabs)…", run: importXlsx, disabled: st.viewing },
@@ -1221,6 +1223,41 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     for (let i = 0; i <= r; i++) { const row = []; for (let j = 0; j <= c; j++) row.push(displayOf(model, engine, st.tab, i, j).text); rows.push(row); }
     const blob = new Blob([toCsv(rows)], { type: "text/csv" });
     await deps.share?.(blob, `${file.name} - ${model.tabInfo(st.tab).name}.csv`, "text/csv");
+  }
+  // ---- print / PDF ----------------------------------------------------------------------------
+  function openPrint() {
+    closePop();
+    const dlg = document.createElement("div");
+    dlg.className = "sh-dialog";
+    dlg.setAttribute("role", "dialog");
+    dlg.setAttribute("aria-label", "Print");
+    const multi = st.sel.r1 !== st.sel.r2 || st.sel.c1 !== st.sel.c2;
+    dlg.innerHTML = `<div class="sh-dialog-box"><strong>${deps.nativePdf ? "Download as PDF" : "Print or save as PDF"}</strong>
+      <label class="sh-rx-field">What<select data-pr="what"><option value="tab">This tab</option><option value="all">All tabs</option>${multi ? '<option value="sel">The selected cells</option>' : ""}</select></label>
+      <label class="sh-rx-field">Page<select data-pr="orient"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label>
+      <label class="sh-rx-field">Scale<select data-pr="fit"><option value="normal">100%</option><option value="width">Fit to page width</option></select></label>
+      <label class="sh-ce-check"><input type="checkbox" class="live-toggle" data-pr="grid" checked> Gridlines</label>
+      <div class="sh-rx-foot"><button type="button" class="sh-btn" data-pr="cancel">Cancel</button><button type="button" class="sh-btn is-primary" data-pr="go">${deps.nativePdf ? "Download" : "Print"}</button></div></div>`;
+    root.appendChild(dlg);
+    const val = (k) => dlg.querySelector(`[data-pr=${k}]`);
+    dlg.addEventListener("click", async (e) => {
+      const a = e.target.closest("[data-pr]")?.dataset.pr;
+      if (e.target === dlg || a === "cancel") { dlg.remove(); return; }
+      if (a !== "go") return;
+      const what = val("what").value;
+      const opts = {
+        tabs: what === "all" ? model.tabIds().filter((t) => !model.tabInfo(t).hidden) : [st.tab],
+        range: what === "sel" ? { r1: st.sel.r1, c1: st.sel.c1, r2: st.sel.r2, c2: st.sel.c2 } : null,
+        landscape: val("orient").value === "landscape", fit: val("fit").value, gridlines: val("grid").checked,
+        hits: (id) => engine.ruleHits?.(id) || null,
+      };
+      dlg.remove();
+      try {
+        await engine.whenIdle?.();
+        const { printSheet } = await import("./print.js");
+        await printSheet(model, engine, opts, { name: nameInput.value || file.name, nativePdf: deps.nativePdf || null, share: deps.share });
+      } catch (err) { toast(err?.message || "That couldn't be printed."); }
+    });
   }
   async function downloadXlsx() {
     await engine.whenIdle?.();

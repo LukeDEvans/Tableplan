@@ -254,3 +254,9 @@
 .sh-vp-scroll { position: relative; flex: 1; overflow: auto; min-height: 0; }
 .sh-vp-scroll canvas { position: absolute; left: 0; top: 0; pointer-events: none; }
 .sh-vp-space { position: absolute; left: 0; top: 0; width: 1px; height: 1px; }
+
+/* print dialog (ui.js openPrint) */
+.sh-dialog { position: absolute; inset: 0; z-index: 45; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--ink) 30%, transparent); padding: 16px; }
+.sh-dialog-box { width: min(360px, 100%); background: var(--surface); color: var(--ink); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 12px 32px color-mix(in srgb, var(--ink) 25%, transparent); }
+.sh-dialog-box select { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+.sh-dialog-box .sh-rx-foot { padding: 6px 0 0; border: 0; }

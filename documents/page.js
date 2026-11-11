@@ -690,6 +690,7 @@ export async function mountDocumentPage(root, deps) {
         deps: {
           liveOpen: deps.liveDocChannel || null, toast: deps.toast, isNative: deps.isNative,
           share: (blob, name, mime) => shareBlob(blob, name, mime),
+          nativePdf: deps.nativePdfExport?.() ? (o) => deps.nativePdfExport().render(o).then((r) => r.pdf) : null,
           rename: (n) => { const x = ui.files.find((y) => y.id === f.id); if (x) x.name = n; },
         },
         onClose: () => { openDoc = null; if (visible && ui.scope === scope) refresh(gen, scope).then(() => draw()).catch(() => {}); },

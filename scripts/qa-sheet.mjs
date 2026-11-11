@@ -462,6 +462,26 @@ try {
   await a.evaluate(() => window.__S.idle());
   check(await a.evaluate((n) => { const S = window.__S; const t = S.model.tabIds()[n]; return S.st.tab === t && S.engine.valueAt(t, 71, 0) === "Ann"; }, tabsBefore), "importing that file adds its tabs with the data", String(tabsBefore));
 
+  console.log("Print / PDF");
+  await a.evaluate(() => { window.print = () => { const c = document.querySelector(".shp-print"); window.__printed = { pages: c ? c.querySelectorAll(".shp-page").length : 0, html: c ? c.outerHTML : "" }; window.dispatchEvent(new Event("afterprint")); }; });
+  await a.click(`.sh-tabs [data-tab="${homeTab}"]`).catch(() => {});
+  await a.keyboard.press("Control+p").catch(() => {});
+  if (!(await a.$(".sh-dialog"))) { await a.evaluate(() => document.querySelector("[data-menu=file]").click()); await a.click(".sh-menu button:has-text('Print')"); }
+  check(await a.$(".sh-dialog") !== null, "File → Print opens the print choices");
+  await a.selectOption(".sh-dialog [data-pr=fit]", "width");
+  await a.click(".sh-dialog [data-pr=go]");
+  await a.waitForFunction(() => window.__printed, null, { timeout: 8000 });
+  const printed = await a.evaluate(() => window.__printed);
+  check(printed.pages >= 1 && printed.html.includes("Café") === false && printed.html.includes(">Name<"), "the tab is laid out on pages for the printer", `${printed.pages} pages`);
+  check(!(await a.$(".shp-print")), "the print pages are cleaned up afterwards");
+  if (SHOTS) {
+    const pp = await ctx.newPage();
+    await pp.setViewportSize({ width: 900, height: 1150 });
+    await pp.setContent(`<!doctype html><html><body style="margin:0;background:#888">${printed.html.replace("position: fixed; left: -100000px", "position: static")}</body></html>`);
+    await pp.screenshot({ path: `${SHOTS}/12-print-page.png` });
+    await pp.close();
+  }
+
   console.log("Dark theme");
   const dk = await openAs("luke", { query: "&theme=dark" });
   await shot(dk, "03-dark");
