@@ -215,10 +215,10 @@ export async function exportPptx(model, { media = null, chartPng = svgToPng } = 
     try { bytes = await media?.bytes(id); } catch { bytes = null; }
     if (!bytes) { mediaFiles.set(id, null); return null; }
     const type = sniffType(bytes);
-    const ext = { "image/png": "png", "image/jpeg": "jpeg", "image/gif": "gif", "image/webp": "png", "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/wav": "wav", "audio/ogg": "ogg" }[type] || extHint || "bin";
+    const ext = { "image/png": "png", "image/jpeg": "jpeg", "image/gif": "gif", "image/webp": "webp", "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/wav": "wav", "audio/ogg": "ogg" }[type] || extHint || "bin";
     const path = `ppt/media/media${++mediaN}.${ext}`;
     z.put(path, bytes);
-    ct.defaults.set(ext, type === "image/webp" ? "image/png" : type);
+    ct.defaults.set(ext, type);
     mediaFiles.set(id, path);
     return path;
   }

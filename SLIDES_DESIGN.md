@@ -22,7 +22,7 @@ Goal: a Google Slides replacement inside the **Document** page, completing the s
 
 ## Build status (2026-11-10)
 
-Steps 1–9 of §13 are built on `claude/slides` (Luke: "Start on 1-9 now"); building started before PR #223 merged, importing the word processor's session / live channel / stores from `documents/editor/` where they are now (a one-line change for each import when they move to `documents/collab/`).
+Steps 1–11 of §13 are built (1–9 first; 10–11 once the spreadsheet's charts and Excel landed). Steps 1–9 were built on `claude/slides` (Luke: "Start on 1-9 now"); building started before PR #223 merged, importing the word processor's session / live channel / stores from `documents/editor/` where they are now (a one-line change for each import when they move to `documents/collab/`).
 
 | Step | State |
 |---|---|
@@ -35,7 +35,8 @@ Steps 1–9 of §13 are built on `claude/slides` (Luke: "Start on 1-9 now"); bui
 | 7 Tables, notes, comments, versions | Built: tables with row/column identities, speaker notes, comment threads on slides (with @mentions), version history with a filmstrip preview and restore. |
 | 8 Video & audio | Built: YouTube / Vimeo / file links; uploads up to 60 MB (audio 20 MB), compressed to 720p on the iPhone (`VideoCompress` plugin, from Photos). **No `doc-storage` change was needed**: media are stored as the same `i<hash>` parts images use (that function's 70 MB limit). |
 | 9 Templates | Built: Blank, Trip recap, Photo album, Family year in review, Business pitch, Project update, Talk or lesson, Party or event; and "Start from one of yours" (a copy). |
-| 10–11 | Not started, as planned (linked charts wait for the spreadsheet's charts; PowerPoint for its OOXML helpers). PDF / PNG export and Google Slides import are step 11. |
+| 10 Linked charts & tables | Built (2026-11-10, after the spreadsheet's charts landed): Insert › Chart / Table from a spreadsheet; the chart is the spreadsheet's own (same renderer), worked out by its formula engine on the device; a cached copy shows offline; refreshed when the deck opens, Update and Unlink on the toolbar. A Safe deck lists only Safe spreadsheets, an everyday deck only everyday ones. |
+| 11 In & out | Built: **PDF** (slides; slides with notes; handouts 2, 3 with lines, 6 a page) by the print dialog on the laptop, the native PDF plugin on the iPhone. **PNG** of one slide or all (zipped), 1920 or 3840 px on the laptop; a native snapshot on the iPhone (`PresentScreen.snapshot`). **PowerPoint out** (our own writer; checked by opening in python-pptx and LibreOffice). **PowerPoint in** (our own reader with layout/master placeholder inheritance and charts from their saved data; checked on a python-pptx deck and our own files), from + › Open a PowerPoint file and "Edit as a presentation" on kept .pptx files. **Google Slides**: Drive exports each deck as PowerPoint (the read-only Drive scope the Docs connection already has — no new Google setup), brought over through the `gdocs` function in pieces, then the PowerPoint reader. Needs one deploy (your OK); Drive won't export decks over 10 MB (they're told to download the .pptx from Google instead). Not yet: animations and comments in PowerPoint files (both ways); linked charts go out to PowerPoint as pictures. |
 
 Known gaps in what's built (in ISSUES.md): the 2 GB media nudge counts one presentation, not all of them; media no longer used aren't cleaned up yet (nothing is ever deleted, which is safe but uses space); clips can't be trimmed in the app before upload (trim in Photos); on the TV, build animations play as they do on the laptop but have only been checked in a desktop browser.
 

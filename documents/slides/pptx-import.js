@@ -59,7 +59,18 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 // ---- the package --------------------------------------------------------------------------------------
 function openPackage(bytes) {
   let files;
-  try { files = unzipSync(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)); } catch { throw new Error("That file isn't a PowerPoint (.pptx) file."); }
+  // Unpacking is capped by each entry's stated size (fflate never writes past it), so a
+  // small file can't ask for gigabytes: one entry up to 80 MB, 300 MB in all. A first pass
+  // only reads the list of entries, so a file over the total is refused before any unpacking.
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const keep = (f) => f.originalSize <= 80 * 1024 * 1024;
+  let total = 0;
+  try { unzipSync(u8, { filter: (f) => { if (keep(f)) total += f.originalSize; return false; } }); } catch { throw new Error("That file isn't a PowerPoint (.pptx) file."); }
+  const tooBig = total > 300 * 1024 * 1024;
+  if (!tooBig) {
+    try { files = unzipSync(u8, { filter: keep }); } catch { throw new Error("That file isn't a PowerPoint (.pptx) file."); }
+  }
+  if (tooBig) throw new Error("That PowerPoint file unpacks to more than 300 MB, which is more than can be opened here.");
   if (!files["ppt/presentation.xml"]) throw new Error("That file isn't a PowerPoint (.pptx) file.");
   const xmlCache = new Map();
   const xml = (p) => { if (!files[p]) return null; if (!xmlCache.has(p)) xmlCache.set(p, parseXml(strFromU8(files[p]))); return xmlCache.get(p); };
@@ -577,13 +588,13 @@ export async function pptxIntoModel(model, bytes, { putMedia }) {
     let id = null;
     if (b) {
       const mime = sniffType(b);
-      if (/^(image\/(png|jpeg|gif|webp|svg\+xml)|video\/|audio\/)/.test(mime)) {
+      if (/^(image\/(png|jpeg|gif|webp)|video\/|audio\/)/.test(mime)) {
         if (b.length > 70 * 1024 * 1024) notes.add("A video larger than 70 MB was left out.");
         else {
           id = await putMedia(b, mime);
           if (id && !model.mediaInfo(id)) model.addMedia(id, { kind: mime.startsWith("video/") ? "video" : mime.startsWith("audio/") ? "audio" : "image", mime, size: b.length });
         }
-      } else notes.add("Some pictures in old Windows formats (EMF/WMF) were left out.");
+      } else notes.add("Some pictures in formats that can't be shown here (such as EMF, WMF or SVG) were left out.");
     }
     mediaIds.set(part, id);
     return id;

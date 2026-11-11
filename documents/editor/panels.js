@@ -42,7 +42,7 @@ export function openDialog(host, { title, body = "", actions = [{ label: "Cancel
     document.addEventListener("keydown", onKey, true);
     form.addEventListener("submit", (e) => { e.preventDefault(); const a = actions.find((x) => x.primary); done(a ? a.value : "ok"); });
     form.addEventListener("click", (e) => {
-      const b = e.target.closest("button[data-i]");
+      const b = e.target.closest(".wp-dialog-actions button[data-i]"); // only the dialog's own buttons; a body may have its own
       if (b && b.type !== "submit") done(actions[Number(b.dataset.i)].value);
     });
     wrap.addEventListener("mousedown", (e) => { if (e.target === wrap) done(null); });

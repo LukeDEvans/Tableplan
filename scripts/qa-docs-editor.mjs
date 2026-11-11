@@ -89,7 +89,7 @@ try {
   check(await a.$eval(pm, (el) => [...el.querySelectorAll("span[style]")].some((s) => /Georgia/.test(s.style.fontFamily))), "font: Georgia");
   await a.click("[data-cmd=sizeUp]");
   await a.keyboard.type(" bigger");
-  check(await a.$eval(pm, (el) => [...el.querySelectorAll("span[style]")].some((s) => s.style.fontSize === "12pt")), "font size up to 12");
+  check(await a.$eval(pm, (el) => [...el.querySelectorAll("span[style]")].some((s) => /^(12pt|calc\(12 \* var\(--pt, 1pt\)\))$/.test(s.style.fontSize))), "font size up to 12");
   // colour
   await press(a, "Shift+Home");
   await a.click("[data-pop=color]");

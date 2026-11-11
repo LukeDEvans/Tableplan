@@ -3,6 +3,9 @@
 // Supabase Realtime, so two pages in one browser can edit together.
 import { openSlidesEditor } from "/documents/slides/ui.js";
 import * as Y from "yjs";
+import { sheetYdoc } from "/documents/sheet/host.js";
+import { rangeFromA1 } from "/documents/sheet/rules.js";
+import { docToContent } from "/documents/editor/doc-model.js";
 import { toB64 } from "/documents/slides/tv-protocol.js";
 window.__tvState = () => toB64(Y.encodeStateAsUpdate(window.__S.model.ydoc));
 
@@ -59,7 +62,15 @@ window.__sh = await openSlidesEditor({
   store, file: FILE, me: ME, startEditing: params.get("view") !== "1",
   deps: {
     liveOpen, toast: (m) => window.__toasts.push(m),
-    share: async (b, name, mime) => { window.__shared.push({ name, mime, text: await b.text() }); },
+    share: async (b, name, mime) => { const bytes = new Uint8Array(await b.arrayBuffer()); window.__shared.push({ name, mime, size: bytes.length, head: Array.from(bytes.slice(0, 8)) }); },
+    // a spreadsheet to link to (built here; SLIDES_DESIGN.md §6)
+    sheets: (() => {
+      const { ydoc, model } = sheetYdoc({ tables: [{ name: "Budget", rows: [["Month", "Food", "Gas"], ["Jan", "300", "80"], ["Feb", "320", "85"], ["Mar", "290", "90"]] }] });
+      const tab = model.tabIds()[0];
+      model.setChart(tab, null, { type: "column", title: "Spending", range: rangeFromA1(model, tab, "A1:C4") });
+      window.__sheet = { ydoc, model, tab, content: () => docToContent(ydoc) };
+      return { list: async () => [{ id: "sheet1", name: "Budget" }], open: async () => ({ loadContent: async () => docToContent(ydoc) }) };
+    })(),
   },
   onClose: () => { window.__closed = true; },
 });

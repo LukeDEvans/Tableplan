@@ -34,11 +34,11 @@ export async function insertLinkedDialog({ root, kind, model, sid, sheets, toast
           pick.innerHTML = `<div class="sl-link-charts">${all.map((c, i) => {
             const res = computeLink(reader, { tab: c.tab, chart: c.id });
             const svg = res.cache ? renderChart(res.cache.data, res.cache.spec, { w: 220, h: 140 }) : "";
-            return `<button type="button" class="sl-link-chart" data-i="${i}"><span class="sl-link-svg">${svg}</span><span>${esc(c.title || "Untitled chart")}</span><small>${esc(c.tabName)}</small></button>`;
+            return `<button type="button" class="sl-link-chart" data-c="${i}"><span class="sl-link-svg">${svg}</span><span>${esc(c.title || "Untitled chart")}</span><small>${esc(c.tabName)}</small></button>`;
           }).join("")}</div>`;
-          pick.querySelectorAll("[data-i]").forEach((b) => b.addEventListener("click", () => {
-            pick.querySelectorAll("[data-i]").forEach((x) => x.classList.toggle("is-on", x === b));
-            const c = all[Number(b.dataset.i)];
+          pick.querySelectorAll("[data-c]").forEach((b) => b.addEventListener("click", () => {
+            pick.querySelectorAll("[data-c]").forEach((x) => x.classList.toggle("is-on", x === b));
+            const c = all[Number(b.dataset.c)];
             picked = { tab: c.tab, chart: c.id };
           }));
         } else {

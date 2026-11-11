@@ -53,7 +53,15 @@ You are the **Slides** agent for **Live / Tableplan**: `doc_pfiles.kind = 'slide
   over presence: counts of Next/Back, not single commands).
 - `av.js` (video/audio, `VideoCompress` plugin on iPhone), `media.js` (images: resized
   on the device, stored once by hash as `i<id>` parts, the same part type video uses).
-- `templates.js` (eight built in), `text.js`, `host.js` (what the Document page loads).
+- `templates.js` (eight built in), `text.js`, `host.js` (what the Document page loads; also
+  `createSlidesFromPptx`, `googleSlidesApi`).
+- `linked.js` + `linked-ui.js` — charts and tables linked to spreadsheets: `src` (file, tab,
+  chart or range by ids) + `cache` (checked by `cleanChartCache`); the spreadsheet's own
+  `chart-svg.js`, engine and `charts.js` do the work. Refreshed when a deck opens.
+- `export.js` (PDF via print / native PDF; PNG via canvas, or `PresentScreen.snapshot` on
+  iPhone), `pptx-export.js` and `pptx-import.js` (our own OOXML; fast-xml-parser in
+  order-preserving mode). Google Slides come in as Drive's PowerPoint export through the
+  `gdocs` function (`slidesPptx`, in 3 MB pieces), then `pptx-import.js`.
 
 ## Rules
 - Never `tableplan_states`. No polling: presenting and the remote ride presence on the
@@ -66,7 +74,10 @@ You are the **Slides** agent for **Live / Tableplan**: `doc_pfiles.kind = 'slide
   Google Slides, and deploys each need Luke's OK.
 
 ## Checks
-- `test/documents-slides-model.test.js`, `test/documents-slides-more.test.js`.
+- `test/documents-slides-model.test.js`, `test/documents-slides-more.test.js`,
+  `test/documents-slides-linked.test.js`, `test/documents-slides-pptx.test.js` (fixture
+  `test/fixtures/slides-python-pptx.pptx`; writes `test/.out/slides-export.pptx` — open it in
+  LibreOffice to look), `test/documents-slides-gdocs-fn.test.js`.
 - `node scripts/qa-slides.mjs [shots-dir]` — headless Chromium against the real
   modules: laptop editing, two people at once, presenting, the phone.
 

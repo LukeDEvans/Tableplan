@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import * as Y from "yjs";
-import { unzipSync, strFromU8 } from "fflate";
+import { unzipSync, strFromU8, zipSync } from "fflate";
 import { createSlidesModel, fragmentText } from "../documents/slides/model.js";
 import { buildTemplate } from "../documents/slides/templates.js";
 import { exportPptx } from "../documents/slides/pptx-export.js";
@@ -64,6 +64,31 @@ describe("PowerPoint in", () => {
     const m = createSlidesModel(new Y.Doc());
     await expect(pptxIntoModel(m, new Uint8Array([1, 2, 3]), { putMedia: async () => null })).rejects.toThrow(/PowerPoint/);
   });
+});
+
+describe("PowerPoint in — hostile files", () => {
+  it("won't unpack a small file into hundreds of megabytes", async () => {
+    const real = unzipSync(new Uint8Array(readFileSync("test/fixtures/slides-python-pptx.pptx")));
+    const pad = new Uint8Array(90 * 1024 * 1024);
+    const files = { ...real };
+    for (let i = 0; i < 5; i++) files[`ppt/junk${i}.bin`] = [pad, { level: 1 }];
+    const bomb = zipSync(files);
+    expect(bomb.length).toBeLessThan(2 * 1024 * 1024);
+    const model = createSlidesModel(new Y.Doc());
+    model.init();
+    // Every padded entry is over the per-entry cap, so they're skipped and the deck still opens.
+    const r = await pptxIntoModel(model, bomb, { putMedia: async (b) => contentId(b) });
+    expect(r.slides).toBeGreaterThan(0);
+  }, 60000);
+  it("refuses a file whose entries add up to more than 300 MB", async () => {
+    const real = unzipSync(new Uint8Array(readFileSync("test/fixtures/slides-python-pptx.pptx")));
+    const pad = new Uint8Array(70 * 1024 * 1024);
+    const files = { ...real };
+    for (let i = 0; i < 5; i++) files[`ppt/junk${i}.bin`] = [pad, { level: 1 }];
+    const model = createSlidesModel(new Y.Doc());
+    model.init();
+    await expect(pptxIntoModel(model, zipSync(files), { putMedia: async (b) => contentId(b) })).rejects.toThrow(/300 MB/);
+  }, 60000);
 });
 
 describe("PowerPoint out", () => {

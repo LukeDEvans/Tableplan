@@ -50,6 +50,7 @@ await ctx.route(`${appUrl}/qa-slides.html*`, (r) => {
 const errors = [];
 async function openAs(who, { size = null, query = "" } = {}) {
   const page = await ctx.newPage();
+  page.setDefaultTimeout(20000);
   if (size) await page.setViewportSize(size);
   page.on("pageerror", (e) => errors.push(`${who}: ${e.message}`));
   page.on("console", (m) => { if (m.type() === "error" && !/favicon|Failed to load resource|WebSocket|\[vite\]/.test(m.text())) errors.push(`${who} console: ${m.text()}`); });
@@ -304,6 +305,59 @@ try {
     await shot(tv, "08-tv");
   }
   await tv.close();
+
+  console.log("Linked chart and table");
+  await S(a, () => { window.__S.runAct("linked-chart"); }); // opens a dialog; not awaited
+  await a.waitForSelector(".sl-link-dialog select[name=file]");
+  await a.selectOption(".sl-link-dialog select[name=file]", "sheet1");
+  await a.waitForSelector(".sl-link-chart");
+  check(await a.$eval(".sl-link-chart", (el) => el.textContent.includes("Spending")), "the spreadsheet's chart is offered with a preview");
+  await a.click(".sl-link-chart");
+  await a.click(".sl-link-dialog .primary-btn");
+  await wait(300);
+  const lchart = (await items(a)).find((i) => i.t === "chart");
+  check(!!lchart?.src?.chart && lchart.cache?.data?.series?.length === 2, "a linked chart is placed with its data", JSON.stringify(lchart?.cache?.spec));
+  check(await a.$eval(".sl-stage .sl-t-chart svg", (el) => el.querySelectorAll("rect, path").length > 4), "and drawn on the slide");
+  await a.evaluate(() => { const { model, tab } = window.__sheet; model.setInput(tab, 1, 1, "999"); });
+  await S(a, () => window.__S.runAct("link-update"));
+  await wait(400);
+  check((await items(a)).find((i) => i.t === "chart").cache.data.series[0].values[0] === 999, "Update brings in the spreadsheet's new numbers");
+  await S(a, () => { window.__S.runAct("linked-table"); }); // opens a dialog; not awaited
+  await a.waitForSelector(".sl-link-dialog select[name=file]");
+  await a.selectOption(".sl-link-dialog select[name=file]", "sheet1");
+  await a.waitForSelector(".sl-link-dialog input[name=a1]");
+  await a.fill(".sl-link-dialog input[name=a1]", "A1:B3");
+  await a.click(".sl-link-dialog .primary-btn");
+  await wait(300);
+  const ltable = (await items(a)).find((i) => i.t === "table" && i.src);
+  check(ltable?.rows === 3 && ltable.cells["1.1"]?.text === "999", "a linked table comes in with the cells' values", JSON.stringify(ltable?.cells));
+  await shot(a, "09-linked");
+
+  console.log("Download");
+  const dl = async (value) => {
+    const n0 = await a.evaluate(() => window.__shared.length);
+    await S(a, () => { window.__S.runAct("download"); }); // opens a dialog; not awaited
+    await a.waitForSelector(".wp-dialog select[name=kind]");
+    await a.selectOption(".wp-dialog select[name=kind]", value);
+    await a.click(".wp-dialog .primary-btn");
+    await a.waitForFunction((n) => window.__shared.length > n, n0, { timeout: 30000 }).catch(() => {});
+    return a.evaluate(() => window.__shared[window.__shared.length - 1]);
+  };
+  const pptx = await dl("pptx");
+  check(pptx?.name?.endsWith(".pptx") && pptx.head[0] === 0x50 && pptx.head[1] === 0x4b && pptx.size > 5000, "PowerPoint download is a zip package", JSON.stringify(pptx));
+  const png = await dl("png:one");
+  check(png?.name?.endsWith(".png") && png.head[1] === 0x50 && png.size > 3000, "a picture of the slide is a PNG", JSON.stringify(png));
+  const zip = await dl("png:all");
+  check(zip?.name?.endsWith(".zip") && zip.head[0] === 0x50, "every slide as pictures comes zipped", JSON.stringify(zip));
+  await a.evaluate(() => { window.__printPages = -1; window.print = () => { window.__printPages = document.querySelectorAll(".sl-print .sl-print-page").length; window.dispatchEvent(new Event("afterprint")); }; });
+  await S(a, () => { window.__S.runAct("download"); }); // opens a dialog; not awaited
+  await a.waitForSelector(".wp-dialog select[name=kind]");
+  await a.selectOption(".wp-dialog select[name=kind]", "pdf:handout6");
+  await a.click(".wp-dialog .primary-btn");
+  await a.waitForFunction(() => window.__printPages >= 0, null, { timeout: 30000 }).catch(() => {});
+  const N2 = await S(a, () => window.__S.model.slideIds().filter((id) => !window.__S.model.slide(id).skip).length);
+  check(await a.evaluate(() => window.__printPages) === Math.ceil(N2 / 6), "PDF handouts lay six slides to a page", String(await a.evaluate(() => window.__printPages)));
+  check(await a.$(".sl-print") === null, "and the print pages are cleaned up");
 
   console.log("Saving");
   await S(a, () => window.__S.session.save());

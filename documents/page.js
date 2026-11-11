@@ -545,6 +545,7 @@ export async function mountDocumentPage(root, deps) {
     else if (act === "pptx-to-slides") powerPointFileToSlides();
     else if (act === "add-word") { closeAddMenu(); pickWordFiles(); }
     else if (act === "add-google") { closeAddMenu(); googleImport(); }
+    else if (act === "add-google-slides") { closeAddMenu(); googleImport("slides"); }
     else if (act === "docx-to-doc") wordFileToDocument();
     else if (act === "scan") scanDocument();
     else if (act === "close-viewer") { closeViewer(); ui.error = ""; draw(); }
@@ -626,7 +627,8 @@ export async function mountDocumentPage(root, deps) {
       <button type="button" role="menuitem" data-act="add-csv">Open a CSV file as a spreadsheet</button>
       <button type="button" role="menuitem" data-act="add-xlsx">Open an Excel file as a spreadsheet</button>
       <button type="button" role="menuitem" data-act="add-pptx">Open a PowerPoint file as a presentation</button>
-      <button type="button" role="menuitem" data-act="add-google">Bring over Google Docs</button>`;
+      <button type="button" role="menuitem" data-act="add-google">Bring over Google Docs</button>
+      <button type="button" role="menuitem" data-act="add-google-slides">Bring over Google Slides</button>`;
     const r = anchor.getBoundingClientRect();
     addMenu.style.top = `${r.bottom + 6}px`;
     addMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
@@ -900,13 +902,17 @@ export async function mountDocumentPage(root, deps) {
 
   // Google Docs: browse Drive (documents and folders), pick, bring over. A picked
   // folder becomes a Document folder of the same name with its documents in it.
-  async function googleImport() {
+  async function googleImport(what = "docs") {
+    const slides = what === "slides";
     const h = await host();
-    const api = h.googleDocsApi({ getToken: deps.getToken });
+    const sh = slides ? await slidesHost() : null;
+    const api = slides ? sh.googleSlidesApi({ getToken: deps.getToken }) : h.googleDocsApi({ getToken: deps.getToken });
+    const fileKind = slides ? "slides" : "doc";
+    const label = slides ? "Google Slides" : "Google Docs";
     const box = document.createElement("div");
     box.className = "wp-dialog docs-gdocs";
-    box.innerHTML = `<div class="wp-dialog-box docs-gdocs-box" role="dialog" aria-modal="true" aria-label="Bring over Google Docs">
-      <h3>Bring over Google Docs</h3><div data-g-body><p class="msg-muted">Looking in your Google Drive…</p></div>
+    box.innerHTML = `<div class="wp-dialog-box docs-gdocs-box" role="dialog" aria-modal="true" aria-label="Bring over ${label}">
+      <h3>Bring over ${label}</h3><div data-g-body><p class="msg-muted">Looking in your Google Drive…</p></div>
       <div class="wp-dialog-actions"><button type="button" class="secondary-btn" data-g="cancel">Close</button><button type="button" class="primary-btn" data-g="go" disabled>Bring over</button></div></div>`;
     root.appendChild(box);
     const body = box.querySelector("[data-g-body]");
@@ -923,14 +929,14 @@ export async function mountDocumentPage(root, deps) {
         do { const r = await api.list(path[path.length - 1].id, token); items = items.concat(r.items); token = r.nextPageToken; } while (token && items.length < 1000);
       } catch (e) {
         if (e.code === "CONSENT") {
-          body.innerHTML = `<p>To bring your documents over, Live needs to read your Google Drive and Docs (read-only). Nothing is changed or deleted in Google.</p>
+          body.innerHTML = `<p>To bring your ${slides ? "presentations" : "documents"} over, Live needs to read your Google Drive and Docs (read-only). Nothing is changed or deleted in Google.</p>
             <button type="button" class="primary-btn" data-g="consent">Connect Google Docs</button>`;
         } else body.innerHTML = `<p class="msg-error">${esc(e.message)}</p>`;
         return;
       }
       body.innerHTML = `<div class="docs-gdocs-path">${path.map((p, i) => `<button type="button" class="link-btn" data-g-path="${i}">${esc(p.name)}</button>`).join(" › ")}</div>
-        <ul class="docs-gdocs-list">${items.map((it) => `<li><label><input type="checkbox" data-g-pick="${esc(it.id)}" data-kind="${it.kind}" data-name="${esc(it.name)}"${picked.has(it.id) ? " checked" : ""}> ${it.kind === "folder" ? "📁" : "📄"} ${esc(it.name)}</label>${it.kind === "folder" ? ` <button type="button" class="link-btn" data-g-open="${esc(it.id)}" data-name="${esc(it.name)}">Open ›</button>` : ""}</li>`).join("") || `<li class="msg-muted">Nothing here.</li>`}</ul>
-        <p class="msg-muted">Documents come into ${esc(ui.title)}${currentFolder() ? `, in “${esc(ui.folders.find((x) => x.id === currentFolder())?.name || "")}”` : ""}. Nothing is changed in Google.</p>`;
+        <ul class="docs-gdocs-list">${items.map((it) => `<li><label><input type="checkbox" data-g-pick="${esc(it.id)}" data-kind="${it.kind}" data-name="${esc(it.name)}"${picked.has(it.id) ? " checked" : ""}> ${it.kind === "folder" ? "📁" : slides ? "▶" : "📄"} ${esc(it.name)}</label>${it.kind === "folder" ? ` <button type="button" class="link-btn" data-g-open="${esc(it.id)}" data-name="${esc(it.name)}">Open ›</button>` : ""}</li>`).join("") || `<li class="msg-muted">Nothing here.</li>`}</ul>
+        <p class="msg-muted">${slides ? "Presentations" : "Documents"} come into ${esc(ui.title)}${currentFolder() ? `, in “${esc(ui.folders.find((x) => x.id === currentFolder())?.name || "")}”` : ""}. Nothing is changed in Google.</p>`;
     }
     box.addEventListener("click", async (e) => {
       const g = e.target.closest("[data-g]")?.dataset.g;
@@ -948,10 +954,10 @@ export async function mountDocumentPage(root, deps) {
         const jobs = [];
         const folderIdHere = currentFolder();
         for (const [id, it] of picked) {
-          if (it.kind === "doc") jobs.push({ id, name: it.name, folderId: folderIdHere });
+          if (it.kind === fileKind) jobs.push({ id, name: it.name, folderId: folderIdHere });
           else {
             let docs = [];
-            try { let tok = null; do { const r = await api.list(id, tok); docs = docs.concat(r.items.filter((x) => x.kind === "doc")); tok = r.nextPageToken; } while (tok && docs.length < 500); } catch { /* reported below */ }
+            try { let tok = null; do { const r = await api.list(id, tok); docs = docs.concat(r.items.filter((x) => x.kind === fileKind)); tok = r.nextPageToken; } while (tok && docs.length < 500); } catch { /* reported below */ }
             let fid = null;
             try { fid = await library.folderNamed(ui.scope, it.name); } catch { fid = folderIdHere; }
             for (const d of docs) jobs.push({ id: d.id, name: d.name, folderId: fid });
@@ -964,8 +970,13 @@ export async function mountDocumentPage(root, deps) {
           n++;
           body.innerHTML = `<p>Bringing over ${n} of ${jobs.length}: ${esc(j.name)}…</p>`;
           try {
-            const conv = await api.convert(j.id);
-            await h.createDocFile({ library, storage, transport, scope, folderId: j.folderId, name: j.name, converted: conv, me: { id: userId, name: myName() } });
+            if (slides) {
+              const bytes = await api.pptx(j.id);
+              await sh.createSlidesFromPptx({ library, storeFor: (fid) => sh.storeFor({ storage, transport, scope, fileId: fid }), scope, folderId: j.folderId, name: j.name, bytes });
+            } else {
+              const conv = await api.convert(j.id);
+              await h.createDocFile({ library, storage, transport, scope, folderId: j.folderId, name: j.name, converted: conv, me: { id: userId, name: myName() } });
+            }
           } catch (err) { failed.push(`${j.name} (${err.message})`); }
         }
         busy = false;
