@@ -332,6 +332,30 @@ try {
   const ltable = (await items(a)).find((i) => i.t === "table" && i.src);
   check(ltable?.rows === 3 && ltable.cells["1.1"]?.text === "999", "a linked table comes in with the cells' values", JSON.stringify(ltable?.cells));
   await shot(a, "09-linked");
+  // Something copied in a Safe presentation, pasted into this everyday one, asks first.
+  const safePaste = () => S(a, () => {
+    const S = window.__S;
+    S.st.focus = "stage";
+    const ch = S.model.items(S.st.slide).find((i) => i.t === "chart" && i.src);
+    const data = S.model.copyItems(S.st.slide, [ch.id]);
+    const dt = new DataTransfer();
+    dt.setData("text/plain", "live-slides:" + JSON.stringify({ kind: "items", data, safe: true }));
+    document.querySelector(".sl-stage").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  const nCharts = async () => (await items(a)).filter((i) => i.t === "chart").length;
+  const c0 = await nCharts();
+  await safePaste();
+  await a.waitForSelector(".wp-dialog h3");
+  check(await a.$eval(".wp-dialog h3", (el) => el.textContent === "Paste from the Safe?"), "pasting from the Safe into an everyday deck asks first");
+  await a.click(".wp-dialog .secondary-btn");
+  await wait(200);
+  check((await nCharts()) === c0, "Cancel pastes nothing");
+  await safePaste();
+  await a.waitForSelector(".wp-dialog .primary-btn");
+  await a.click(".wp-dialog .primary-btn");
+  await wait(300);
+  const charts = (await items(a)).filter((i) => i.t === "chart");
+  check(charts.length === c0 + 1 && charts.filter((i) => !i.src).length === 1, "Paste anyway brings it in, no longer linked");
 
   console.log("Download");
   const dl = async (value) => {

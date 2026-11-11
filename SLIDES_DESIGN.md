@@ -126,7 +126,7 @@ Slides is mostly pieces the other two editors already make:
 - The slide stores the link (spreadsheet file id, chart or range by **row/column identity**, so it follows the data when rows move) **and a cached copy of the values** in `links`. The cached copy shows instantly, offline, and for anyone who can't open the spreadsheet.
 - **Staying current:** when the presentation opens, each link refreshes in the background (the spreadsheet's state is loaded read-only and computed in the sheet's worker), and changed charts update. **Open point 3** (live versus Google's manual "Update" button).
 - Charts use the spreadsheet's own SVG renderer and styling, so a chart looks identical in both places. "Unlink" turns it into a plain chart with its last values.
-- **The Safe:** a Safe presentation can link to Safe or everyday spreadsheets; an **everyday presentation can't link to a Safe spreadsheet** (it would copy Safe numbers out as plain text). Same for comments' previews.
+- **The Safe:** a Safe presentation can link to Safe or everyday spreadsheets; an **everyday presentation can't link to a Safe spreadsheet** (it would copy Safe numbers out as plain text). Same for comments' previews. **Pasting from a Safe presentation into an everyday one asks first** ("Paste from the Safe?", Luke 2026-11-10); a linked chart or table pasted across loses its link and keeps what it shows.
 - Plain tables (not linked) are their own item: rows and columns, merged cells, cell fills and borders, rich text in cells.
 
 ---

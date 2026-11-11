@@ -29,6 +29,9 @@ You are the **Slides** agent for **Live / Tableplan**: `doc_pfiles.kind = 'slide
   clip** (≈3 min at 720p), audio 20 MB; a nudge at 2 GB of media.
 - Defaults: 16:9; linked charts refresh when the deck opens; laser pointer and drawing
   while presenting come later; outside sharing by export only.
+- **Safe → everyday paste warns first** (Luke, 2026-11-10): "Paste from the Safe?" with
+  Cancel / Paste anyway; anything pasted across the Safe line (either way) drops its
+  spreadsheet links (`ui.js` `crossPaste` / `unlinkAll`).
 - **Build order:** linked charts wait for the spreadsheet's charts, PowerPoint for its
   OOXML helpers (SLIDES_DESIGN §13 steps 10–11) — don't build separate versions.
 

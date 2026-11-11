@@ -6,7 +6,8 @@
 // formula engine and the copy updated if it changed.
 //
 // A Safe presentation can link to Safe spreadsheets; an everyday one only to everyday
-// spreadsheets (the Document page only offers those), so Safe numbers never leave it.
+// spreadsheets (the Document page only offers those). Pasting from a Safe deck into an everyday
+// one asks first and drops the link (ui.js crossPaste; Luke, 2026-11-10).
 
 import { createSheetModel } from "../sheet/model.js";
 import { connectEngine } from "../sheet/bridge.js";

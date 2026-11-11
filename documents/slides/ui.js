@@ -40,6 +40,13 @@ const mediaIdsIn = (data) => {
   walk(data);
   return [...ids];
 };
+// Linked charts and tables lose their link when they cross between the Safe and everyday
+// documents (each side can only reach its own spreadsheets); what they show stays.
+const unlinkAll = (data) => {
+  const walk = (v) => { if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === "object") { if (v.src && (v.t === "chart" || v.t === "table")) delete v.src; Object.values(v).forEach(walk); } };
+  walk(data);
+  return data;
+};
 const MIN = 8;
 const SI = {
   present: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>',
@@ -149,6 +156,7 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
   root.classList.toggle("is-viewing", st.viewing);
   root.classList.toggle("is-phone", isPhone());
 
+  const inSafe = store?.kind === "safe";
   const media = mediaCache(store, { onLoad: () => { invalidateAll(); renderStage(); } });
   const mediaUrl = (id) => media.url(id);
 
@@ -854,10 +862,10 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
   let clip = null; // { kind: "items" | "slides", data }
   function copy(cut = false, e = null) {
     if (st.focus === "film" && st.slideSel.length) {
-      clip = { kind: "slides", data: model.exportSlides(st.slideSel) };
+      clip = { kind: "slides", data: model.exportSlides(st.slideSel), safe: inSafe };
       if (cut) { deleteSlides(st.slideSel); }
     } else if (st.sel.length) {
-      clip = { kind: "items", data: model.copyItems(st.slide, st.sel), from: st.slide };
+      clip = { kind: "items", data: model.copyItems(st.slide, st.sel), from: st.slide, safe: inSafe };
       if (cut) deleteSel();
     } else return false;
     clipMedia.clear();
@@ -887,7 +895,24 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
     }
     if (!c) return;
     e?.preventDefault();
+    if (!!c.safe !== inSafe) { crossPaste(c); return; }
     bringMedia(c.data).then(() => doPaste(c));
+  }
+  // Pasting from a Safe presentation into an everyday one asks first (Luke, 2026-11-10):
+  // out here it isn't end-to-end encrypted. Into the Safe needs no question. Either way,
+  // links to spreadsheets are dropped, since each side reaches only its own.
+  async function crossPaste(c) {
+    if (c.safe && !inSafe) {
+      const { value } = await openDialog(root, {
+        title: "Paste from the Safe?",
+        body: `<p>This came from a presentation in the Safe. Pasted here, it (with any pictures, video and chart numbers) is kept like your everyday documents, not end-to-end encrypted.</p>`,
+        actions: [{ label: "Cancel", value: null }, { label: "Paste anyway", value: "ok", primary: true }],
+      });
+      if (value !== "ok") return;
+    }
+    const data = unlinkAll(structuredClone(c.data));
+    await bringMedia(data);
+    doPaste({ ...c, data });
   }
   // Media the pasted things use that this presentation doesn't have yet.
   async function bringMedia(data) {

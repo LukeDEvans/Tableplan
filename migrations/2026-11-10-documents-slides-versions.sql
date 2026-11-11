@@ -1,5 +1,5 @@
 -- Presentations keep version history like documents (SLIDES_DESIGN.md §7, §12;
--- needs Luke's OK before it's applied). The guard accepted everyday version rows
+-- applied 2026-11-10 with Luke's OK). The guard accepted everyday version rows
 -- only for kind 'doc' and 'sheet'; it now accepts 'slides' too. Nothing else changes.
 --
 -- Additive only: create or replace of one function; no DROP.
