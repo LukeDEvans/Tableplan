@@ -244,7 +244,7 @@ Test without Netlify deploys (TestFlight on the phone, `npm run dev:local` on th
 
 Branch `claude/spreadsheet`, draft PR #224 (base `claude/word-processor`, PR #223, still open). Everything in §15 is committed, pushed and green in CI (last: `0a77b76` print/PDF). Nothing deployed. Next, in order:
 
-1. **Re-run the reviewer** on the commits since `abc1d49` (charts, pivots, comments/versions, Excel, print): the 2026-11-10 run stopped at a usage limit before logging anything. Fix what it finds, as after the first review (`abc1d49`).
+1. ~~Re-run the reviewer~~ — done 2026-11-11: five findings (print XSS, ranges breaking when an edge row is deleted, stack overflow on big imports, Excel tab names over 31 characters, the Google import stopping at a blank stretch), all fixed in `35a6e3a`.
 2. **Google Sheets import** — built (§15). Needs the `gdocs` function deployed (Luke's OK); then bring over one of Luke's real spreadsheets and compare it with Google, and fix what differs.
 3. Open items in ISSUES.md tagged `sheets` (filter custom formula, view-only sorting in filter views, reject rules on paste/fill, sparklines / chart on its own tab / chart data table, pivot styling & date grouping, a byte-exact Google .xlsx fixture + the A10:C34 merge question, Excel import tab-name collisions).
 4. After PR #223 merges: move shared editor code to `documents/collab/` (§11).
