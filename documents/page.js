@@ -40,6 +40,7 @@ export async function mountDocumentPage(root, deps) {
   const library = createEverydayLibrary({ transport, storage });
   // The word processor (WORD_PROCESSOR_DESIGN.md): loaded the first time a document is made or opened.
   const host = () => import("./editor/host.js");
+  const sheetHost = () => import("./sheet/host.js"); // the spreadsheet (SPREADSHEET_DESIGN.md)
   const myName = () => deps.myDisplayName?.() || household()?.members.find((m) => m.user_id === userId)?.display_name || "Me";
   const people = () => (household()?.members || []).map((m) => ({ id: m.user_id, name: m.display_name || "Someone" }));
   let openDoc = null; // the editor while a document is open
@@ -207,7 +208,7 @@ export async function mountDocumentPage(root, deps) {
     const folder = ui.folder === "all" ? ui.folders.find((x) => x.id === f.folderId)?.name : "";
     const who = ui.kind === "household" && f.addedBy && f.addedBy !== userId ? ` · added by ${esc(nameOf(f.addedBy))}` : "";
     return `<li><button type="button" class="docs-file" data-open="${esc(f.id)}">
-      <span class="docs-thumb${f.kind === "doc" ? " is-doc" : ""}" data-thumb="${esc(f.id)}" aria-hidden="true">${f.kind === "doc" ? "Aa" : esc(glyphFor(f.mime))}</span>
+      <span class="docs-thumb${f.kind === "doc" ? " is-doc" : f.kind === "sheet" ? " is-sheet" : ""}" data-thumb="${esc(f.id)}" aria-hidden="true">${f.kind === "doc" ? "Aa" : f.kind === "sheet" ? "▦" : esc(glyphFor(f.mime))}</span>
       <span class="docs-file-text"><span class="docs-file-name">${esc(f.name)}</span>
       <span class="docs-file-meta">${esc(meta)}${folder ? ` · ${esc(folder)}` : ""}${who}</span></span></button></li>`;
   }
@@ -258,6 +259,8 @@ export async function mountDocumentPage(root, deps) {
         ${v.ready && quickLook && v.bytes?.length <= QUICKLOOK_PLAIN_MAX ? `<button type="button" class="secondary-btn" data-act="quicklook">Open</button>` : ""}
         ${v.ready && !inTrash ? `<button type="button" class="secondary-btn" data-act="share">Share</button>` : ""}
         ${v.ready && !inTrash && f.mime === DOCX_MIME ? `<button type="button" class="primary-btn" data-act="docx-to-doc">Edit as a document</button>` : ""}
+        ${v.ready && !inTrash && f.mime === "text/csv" ? `<button type="button" class="primary-btn" data-act="csv-to-sheet">Edit as a spreadsheet</button>` : ""}
+        ${v.ready && !inTrash && f.mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ? `<button type="button" class="primary-btn" data-act="xlsx-to-sheet">Edit as a spreadsheet</button>` : ""}
       </div>
       <div class="docs-viewer-body">${body}</div>
       <div class="docs-viewer-foot">
@@ -530,6 +533,11 @@ export async function mountDocumentPage(root, deps) {
     } else if (act === "add") toggleAddMenu(t.closest("[data-act]"));
     else if (act === "add-upload") { closeAddMenu(); view.querySelector("[data-file-input]")?.click(); }
     else if (act === "new-doc") { closeAddMenu(); newDocument(); }
+    else if (act === "new-sheet") { closeAddMenu(); newSpreadsheet(); }
+    else if (act === "add-csv") { closeAddMenu(); pickCsvFiles(); }
+    else if (act === "csv-to-sheet") csvFileToSheet();
+    else if (act === "add-xlsx") { closeAddMenu(); pickExcelFiles(); }
+    else if (act === "xlsx-to-sheet") excelFileToSheet();
     else if (act === "add-word") { closeAddMenu(); pickWordFiles(); }
     else if (act === "add-google") { closeAddMenu(); googleImport(); }
     else if (act === "docx-to-doc") wordFileToDocument();
@@ -606,9 +614,12 @@ export async function mountDocumentPage(root, deps) {
     addMenu.className = "docs-add-menu";
     addMenu.setAttribute("role", "menu");
     addMenu.innerHTML = `<button type="button" role="menuitem" data-act="new-doc">New document</button>
+      <button type="button" role="menuitem" data-act="new-sheet">New spreadsheet</button>
       <button type="button" role="menuitem" data-act="add-upload">Upload a file</button>
       <button type="button" role="menuitem" data-act="add-word">Open a Word file as a document</button>
-      <button type="button" role="menuitem" data-act="add-google">Bring over Google Docs</button>`;
+      <button type="button" role="menuitem" data-act="add-csv">Open a CSV file as a spreadsheet</button>
+      <button type="button" role="menuitem" data-act="add-xlsx">Open an Excel file as a spreadsheet</button>
+      <button type="button" role="menuitem" data-act="add-google">Bring over Google Docs and Sheets</button>`;
     const r = anchor.getBoundingClientRect();
     addMenu.style.top = `${r.bottom + 6}px`;
     addMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
@@ -619,6 +630,7 @@ export async function mountDocumentPage(root, deps) {
   const docStore = async (scope, fileId) => (await host()).storeFor({ storage, transport, scope, fileId });
 
   async function openDocument(f, { startEditing = false } = {}) {
+    if (f?.kind === "sheet") return openSpreadsheet(f, { startEditing });
     if (openDoc) return;
     const scope = ui.scope;
     openDoc = "opening";
@@ -665,6 +677,94 @@ export async function mountDocumentPage(root, deps) {
     return id;
   }
 
+  // ---- spreadsheets (SPREADSHEET_DESIGN.md §10) ----
+  async function openSpreadsheet(f, { startEditing = false } = {}) {
+    if (openDoc) return;
+    const scope = ui.scope;
+    openDoc = "opening";
+    try {
+      const h = await sheetHost();
+      const store = h.storeFor({ storage, transport, scope, fileId: f.id });
+      openDoc = await h.openSheetFor({
+        store, file: { id: f.id, name: f.name, scope }, me: { id: userId, name: myName() }, startEditing,
+        deps: {
+          liveOpen: deps.liveDocChannel || null, toast: deps.toast, isNative: deps.isNative,
+          share: (blob, name, mime) => shareBlob(blob, name, mime),
+          nativePdf: deps.nativePdfExport?.() ? (o) => deps.nativePdfExport().render(o).then((r) => r.pdf) : null,
+          rename: (n) => { const x = ui.files.find((y) => y.id === f.id); if (x) x.name = n; },
+        },
+        onClose: () => { openDoc = null; if (visible && ui.scope === scope) refresh(gen, scope).then(() => draw()).catch(() => {}); },
+      });
+      if (!openDoc?.close) openDoc = null;
+    } catch (e) {
+      openDoc = null;
+      ui.error = e?.message || "That spreadsheet couldn't be opened.";
+      draw();
+    }
+  }
+
+  async function newSpreadsheet(tables = null, name = "Untitled spreadsheet", { xlsx = null } = {}) {
+    const scope = ui.scope;
+    const folderId = currentFolder();
+    let id;
+    let notes = null;
+    await run(tables || xlsx ? "Making the spreadsheet…" : "Making a new spreadsheet…", async (sc, my) => {
+      const h = await sheetHost();
+      id = await h.createSheetFile({ library, scope: sc, folderId, name, tables, xlsx, onNotes: (n) => { notes = n; } });
+      await refresh(my, sc);
+    });
+    if (notes?.length) deps.toast?.(`Opened. Not everything carried over: ${notes.slice(0, 3).join(" ")}`);
+    const f = id && ui.scope === scope && ui.files.find((x) => x.id === id);
+    if (f) openSpreadsheet(f, { startEditing: true });
+    return id;
+  }
+
+  function pickCsvFiles() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,.tsv,text/csv,text/tab-separated-values";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > 30 * 1024 * 1024) { ui.error = "That file is larger than 30 MB."; draw(); return; }
+      const name = displayName(file.name);
+      const h = await sheetHost();
+      await newSpreadsheet(h.csvTables(await file.text(), "Sheet1"), name);
+    };
+    input.click();
+  }
+
+  function pickExcelFiles() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > 30 * 1024 * 1024) { ui.error = "That file is larger than 30 MB."; draw(); return; }
+      try { await newSpreadsheet(null, displayName(file.name), { xlsx: new Uint8Array(await file.arrayBuffer()) }); }
+      catch (e) { ui.error = e?.message || "That Excel file couldn't be opened."; draw(); }
+    };
+    input.click();
+  }
+  async function excelFileToSheet() {
+    const v = ui.viewer;
+    const f = ui.files.find((x) => x.id === v?.id);
+    if (!f || !v.bytes) return;
+    closeViewer();
+    try { await newSpreadsheet(null, displayName(f.name), { xlsx: v.bytes }); }
+    catch (e) { ui.error = e?.message || "That Excel file couldn't be opened."; draw(); }
+  }
+
+  async function csvFileToSheet() {
+    const v = ui.viewer;
+    const f = ui.files.find((x) => x.id === v?.id);
+    if (!f || !v.bytes) return;
+    closeViewer();
+    const h = await sheetHost();
+    await newSpreadsheet(h.csvTables(new TextDecoder().decode(v.bytes), "Sheet1"), f.name);
+  }
+
   function pickWordFiles() {
     const input = document.createElement("input");
     input.type = "file";
@@ -693,15 +793,15 @@ export async function mountDocumentPage(root, deps) {
     await importWordBytes(v.bytes, f.name);
   }
 
-  // Google Docs: browse Drive (documents and folders), pick, bring over. A picked
-  // folder becomes a Document folder of the same name with its documents in it.
+  // Google Docs and Sheets: browse Drive (documents, spreadsheets and folders), pick, bring
+  // over. A picked folder becomes a Document folder of the same name with its files in it.
   async function googleImport() {
     const h = await host();
     const api = h.googleDocsApi({ getToken: deps.getToken });
     const box = document.createElement("div");
     box.className = "wp-dialog docs-gdocs";
-    box.innerHTML = `<div class="wp-dialog-box docs-gdocs-box" role="dialog" aria-modal="true" aria-label="Bring over Google Docs">
-      <h3>Bring over Google Docs</h3><div data-g-body><p class="msg-muted">Looking in your Google Drive…</p></div>
+    box.innerHTML = `<div class="wp-dialog-box docs-gdocs-box" role="dialog" aria-modal="true" aria-label="Bring over Google Docs and Sheets">
+      <h3>Bring over Google Docs and Sheets</h3><div data-g-body><p class="msg-muted">Looking in your Google Drive…</p></div>
       <div class="wp-dialog-actions"><button type="button" class="secondary-btn" data-g="cancel">Close</button><button type="button" class="primary-btn" data-g="go" disabled>Bring over</button></div></div>`;
     root.appendChild(box);
     const body = box.querySelector("[data-g-body]");
@@ -718,14 +818,14 @@ export async function mountDocumentPage(root, deps) {
         do { const r = await api.list(path[path.length - 1].id, token); items = items.concat(r.items); token = r.nextPageToken; } while (token && items.length < 1000);
       } catch (e) {
         if (e.code === "CONSENT") {
-          body.innerHTML = `<p>To bring your documents over, Live needs to read your Google Drive and Docs (read-only). Nothing is changed or deleted in Google.</p>
+          body.innerHTML = `<p>To bring your documents and spreadsheets over, Live needs to read your Google Drive and Docs (read-only). Nothing is changed or deleted in Google.</p>
             <button type="button" class="primary-btn" data-g="consent">Connect Google Docs</button>`;
         } else body.innerHTML = `<p class="msg-error">${esc(e.message)}</p>`;
         return;
       }
       body.innerHTML = `<div class="docs-gdocs-path">${path.map((p, i) => `<button type="button" class="link-btn" data-g-path="${i}">${esc(p.name)}</button>`).join(" › ")}</div>
-        <ul class="docs-gdocs-list">${items.map((it) => `<li><label><input type="checkbox" data-g-pick="${esc(it.id)}" data-kind="${it.kind}" data-name="${esc(it.name)}"${picked.has(it.id) ? " checked" : ""}> ${it.kind === "folder" ? "📁" : "📄"} ${esc(it.name)}</label>${it.kind === "folder" ? ` <button type="button" class="link-btn" data-g-open="${esc(it.id)}" data-name="${esc(it.name)}">Open ›</button>` : ""}</li>`).join("") || `<li class="msg-muted">Nothing here.</li>`}</ul>
-        <p class="msg-muted">Documents come into ${esc(ui.title)}${currentFolder() ? `, in “${esc(ui.folders.find((x) => x.id === currentFolder())?.name || "")}”` : ""}. Nothing is changed in Google.</p>`;
+        <ul class="docs-gdocs-list">${items.map((it) => `<li><label><input type="checkbox" data-g-pick="${esc(it.id)}" data-kind="${it.kind}" data-name="${esc(it.name)}"${picked.has(it.id) ? " checked" : ""}> ${it.kind === "folder" ? "📁" : it.kind === "sheet" ? "📊" : "📄"} ${esc(it.name)}</label>${it.kind === "folder" ? ` <button type="button" class="link-btn" data-g-open="${esc(it.id)}" data-name="${esc(it.name)}">Open ›</button>` : ""}</li>`).join("") || `<li class="msg-muted">Nothing here.</li>`}</ul>
+        <p class="msg-muted">They come into ${esc(ui.title)}${currentFolder() ? `, in “${esc(ui.folders.find((x) => x.id === currentFolder())?.name || "")}”` : ""}. Nothing is changed in Google.</p>`;
     }
     box.addEventListener("click", async (e) => {
       const g = e.target.closest("[data-g]")?.dataset.g;
@@ -743,28 +843,35 @@ export async function mountDocumentPage(root, deps) {
         const jobs = [];
         const folderIdHere = currentFolder();
         for (const [id, it] of picked) {
-          if (it.kind === "doc") jobs.push({ id, name: it.name, folderId: folderIdHere });
+          if (it.kind === "doc" || it.kind === "sheet") jobs.push({ id, name: it.name, kind: it.kind, folderId: folderIdHere });
           else {
             let docs = [];
-            try { let tok = null; do { const r = await api.list(id, tok); docs = docs.concat(r.items.filter((x) => x.kind === "doc")); tok = r.nextPageToken; } while (tok && docs.length < 500); } catch { /* reported below */ }
+            try { let tok = null; do { const r = await api.list(id, tok); docs = docs.concat(r.items.filter((x) => x.kind === "doc" || x.kind === "sheet")); tok = r.nextPageToken; } while (tok && docs.length < 500); } catch { /* reported below */ }
             let fid = null;
             try { fid = await library.folderNamed(ui.scope, it.name); } catch { fid = folderIdHere; }
-            for (const d of docs) jobs.push({ id: d.id, name: d.name, folderId: fid });
+            for (const d of docs) jobs.push({ id: d.id, name: d.name, kind: d.kind, folderId: fid });
           }
         }
         const failed = [];
+        const sheetNotes = new Set();
         let n = 0;
         const scope = ui.scope;
         for (const j of jobs) {
           n++;
           body.innerHTML = `<p>Bringing over ${n} of ${jobs.length}: ${esc(j.name)}…</p>`;
           try {
-            const conv = await api.convert(j.id);
-            await h.createDocFile({ library, storage, transport, scope, folderId: j.folderId, name: j.name, converted: conv, me: { id: userId, name: myName() } });
+            if (j.kind === "sheet") {
+              const wb = await api.sheet(j.id, { onProgress: ({ tab, row, rows }) => { body.innerHTML = `<p>Bringing over ${n} of ${jobs.length}: ${esc(j.name)} — ${esc(tab)}${row ? `, row ${row.toLocaleString()}` : ""}…</p>`; } });
+              const sh = await sheetHost();
+              await sh.createSheetFile({ library, scope, folderId: j.folderId, name: j.name, workbook: wb, onNotes: (ns) => { for (const x of ns) sheetNotes.add(x); } });
+            } else {
+              const conv = await api.convert(j.id);
+              await h.createDocFile({ library, storage, transport, scope, folderId: j.folderId, name: j.name, converted: conv, me: { id: userId, name: myName() } });
+            }
           } catch (err) { failed.push(`${j.name} (${err.message})`); }
         }
         busy = false;
-        body.innerHTML = `<p>Brought over ${jobs.length - failed.length} of ${jobs.length}.</p>${failed.length ? `<p class="msg-error">Didn't come over: ${esc(failed.join("; "))}</p>` : ""}`;
+        body.innerHTML = `<p>Brought over ${jobs.length - failed.length} of ${jobs.length}.</p>${failed.length ? `<p class="msg-error">Didn't come over: ${esc(failed.join("; "))}</p>` : ""}${sheetNotes.size ? `<p class="msg-muted">Not everything in the spreadsheets carried over:</p><ul class="docs-gdocs-notes">${[...sheetNotes].slice(0, 8).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}`;
         box.querySelector("[data-g=cancel]").textContent = "Done";
         picked.clear();
         try { await refresh(gen, scope); draw(); } catch { /* next open */ }

@@ -27,6 +27,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export const MIME_TYPES = Object.freeze([
   "application/vnd.live.doc", // a Live document (the word processor; WORD_PROCESSOR_DESIGN.md §12)
+  "application/vnd.live.sheet", // a Live spreadsheet (SPREADSHEET_DESIGN.md §9)
   "application/pdf",
   "image/jpeg", "image/png", "image/heic", "image/heif", "image/webp", "image/gif",
   "text/plain", "text/csv",
