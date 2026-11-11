@@ -20,6 +20,12 @@ Each entry: what shipped · PR · post-deploy steps.
   Post-deploy: switch Inbox → AI Trash → Inbox quickly several times (no error; returning is
   instant); archive something, go to another folder and back (it's gone); get a new email while
   in another folder, go back to Inbox (it's there).
+- **Listen (iPhone): a podcast no longer sticks a few seconds before its end** · #PRNUM · **TestFlight
+  build** (native only; no Netlify deploy, nothing changes on the laptop). An episode stuck in its
+  last stretch with the network up counts as finished (marked played, the queue moves on); one stuck
+  earlier reconnects at the same spot; play after a stall reopens the episode there. Post-TestFlight:
+  play the last minute of a few episodes, phone unlocked and locked, and check each ends and the
+  next one starts; the Weekly Show episode that stuck at 1:21:21 should finish within about 15 s.
 - **Listen (iPhone): an interrupted read carries on; skip within an article** · #220 · **TestFlight
   build** (native + bundled web code; the laptop's web voice is unchanged). After a text or other short
   interruption the article resumes by itself, and play always works (fresh synthesizer from the last

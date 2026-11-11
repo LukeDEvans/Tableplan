@@ -32,4 +32,15 @@ describe("LiveTts plugin contract", () => {
     expect(resume).toMatch(/lastRangeAt/);
     expect(resume).not.toMatch(/var resumed = synth\.isSpeaking && !synth\.isPaused/);
   });
+  it("finishes an episode that sticks just short of its end, and reopens a stuck player on resume", () => {
+    // Luke, 2026-11-11: an episode stopped at 1:21:21 of 1:21:35 and pause / play
+    // didn't move it. The player was waiting for sound the file doesn't have.
+    const watch = swift.slice(swift.indexOf("private func checkAudioStall"), swift.indexOf("// Live only: keep a short"));
+    expect(watch).toMatch(/nearEnd/);
+    expect(watch).toMatch(/itemFinished\(failed: false\)/);
+    expect(watch).toMatch(/guard networkUp else \{ return \}/); // offline is not "finished"
+    expect(swift).toMatch(/if item\.kind == \.audio \{ armStallWatch\(\) \}/);
+    const resume = swift.slice(swift.indexOf("private func doResume"), swift.indexOf("@objc private func handleInterruption"));
+    expect(resume).toMatch(/audioStuck/);
+  });
 });

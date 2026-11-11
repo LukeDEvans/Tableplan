@@ -5,6 +5,7 @@ import AVFoundation
 import MediaPlayer
 import MusicKit
 import Combine
+import Network
 
 // Native playback queue for the Media "listen" flow: on-device text-to-speech
 // (AVSpeechSynthesizer) for articles, plus an AVPlayer for audio files (podcast
@@ -136,6 +137,27 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     // sent with the final ttsFinish so the app can say why a station won't play.
     private var liveLastError = ""
     private var liveStartedId = ""
+    // Podcast stall watch. An episode can stop a few seconds short of its end
+    // and never finish: the length the player shows is an estimate for some MP3
+    // files, so the sound runs out before the "played to end" notice can fire,
+    // and the player waits for more for ever (Luke, 2026-11-11: stuck at 1:21:21
+    // of 1:21:35, and pause / play didn't move it). Stuck in the last stretch
+    // with the network up counts as finished; stuck earlier reconnects.
+    private var stallTimer: Timer?
+    private var stallSince: Date?
+    private var stallCheckPos: Double = -1
+    private var stallPlayerMoved = false
+    private var audioStuck = false
+    private var stallReconnects = 0
+    private var stallReconnectId = ""
+    private var stallReconnectPos: Double = -1
+    private var stallBgTask: UIBackgroundTaskIdentifier = .invalid
+    private let pathMonitor = NWPathMonitor()
+    private var networkUp = true
+    private static let stallEndWait: TimeInterval = 8        // in the last stretch, after it had been playing
+    private static let stallEndWaitFresh: TimeInterval = 15  // in the last stretch, on a player that hasn't played yet
+    private static let stallReconnectWait: TimeInterval = 20 // earlier in the episode
+    private static let stallMaxReconnects = 2
 
     // Apple Music state (appleMusic items). musicToken changes on every start so a
     // late callback from an earlier song is ignored.
@@ -171,6 +193,11 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleMediaReset(_:)),
             name: AVAudioSession.mediaServicesWereResetNotification, object: nil)
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let up = path.status == .satisfied
+            DispatchQueue.main.async { self?.networkUp = up }
+        }
+        pathMonitor.start(queue: DispatchQueue.global(qos: .utility))
     }
 
     @objc func getVoices(_ call: CAPPluginCall) {
@@ -527,6 +554,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             p.replaceCurrentItem(with: nil)
         }
         timeObserver = nil
+        stallTimer?.invalidate()
+        stallTimer = nil
+        clearStall()
         if let o = endObserver { NotificationCenter.default.removeObserver(o) }
         if let o = failObserver { NotificationCenter.default.removeObserver(o) }
         endObserver = nil
@@ -900,6 +930,86 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             p.seek(to: CMTime(seconds: position, preferredTimescale: 600))
         }
         p.playImmediately(atRate: max(0.5, min(3.0, rate)))
+        if item.kind == .audio { armStallWatch() }
+    }
+
+    // MARK: - Podcast stall watch
+
+    private func armStallWatch() {
+        stallTimer?.invalidate()
+        clearStall()
+        stallCheckPos = -1
+        stallPlayerMoved = false
+        audioStuck = false
+        let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.checkAudioStall() }
+        RunLoop.main.add(t, forMode: .common)
+        stallTimer = t
+    }
+
+    private func clearStall() {
+        stallSince = nil
+        if stallBgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(stallBgTask)
+            stallBgTask = .invalid
+        }
+    }
+
+    // How close to the end a stall counts as "the sound ran out": the last 2% of
+    // the episode, at least 45 s and at most 2 min.
+    private static func stallTail(_ duration: Double) -> Double {
+        return min(120, max(45, duration * 0.02))
+    }
+
+    // Every 2 s while an episode is loaded. Does nothing while paused, while the
+    // position moves, or while the phone is offline (the player carries on by
+    // itself when the connection is back).
+    private func checkAudioStall() {
+        guard let item = current, item.kind == .audio, !userPaused,
+              let p = player, let playerItem = p.currentItem,
+              playerItem.status == .readyToPlay, p.timeControlStatus != .paused else {
+            clearStall()
+            return
+        }
+        let pos = currentAudioPosition()
+        if abs(pos - stallCheckPos) > 0.2 {
+            if stallCheckPos >= 0 { stallPlayerMoved = true }
+            stallCheckPos = pos
+            audioStuck = false
+            clearStall()
+            return
+        }
+        let now = Date()
+        guard let since = stallSince else {
+            stallSince = now
+            // Locked phone: ask for time to sort this out before iOS suspends an
+            // app that has gone quiet.
+            if stallBgTask == .invalid {
+                stallBgTask = UIApplication.shared.beginBackgroundTask(withName: "LiveTtsStall") { [weak self] in
+                    DispatchQueue.main.async { self?.clearStall() }
+                }
+            }
+            return
+        }
+        let stalledFor = now.timeIntervalSince(since)
+        if stalledFor >= LiveTtsPlugin.stallEndWait { audioStuck = true }
+        guard networkUp else { return }
+        let dur = currentAudioDuration()
+        let nearEnd = dur > 0 && dur - pos <= LiveTtsPlugin.stallTail(dur)
+        if nearEnd {
+            let wait = stallPlayerMoved ? LiveTtsPlugin.stallEndWait : LiveTtsPlugin.stallEndWaitFresh
+            guard stalledFor >= wait else { return }
+            NSLog("[LiveTts] episode stuck %.0f s short of its end — treating it as finished", dur - pos)
+            clearStall()
+            itemFinished(failed: false)
+        } else if stalledFor >= LiveTtsPlugin.stallReconnectWait {
+            if stallReconnectId != item.id || pos > stallReconnectPos + 30 { stallReconnects = 0 }
+            guard stallReconnects < LiveTtsPlugin.stallMaxReconnects else { return }
+            stallReconnects += 1
+            stallReconnectId = item.id
+            stallReconnectPos = pos
+            NSLog("[LiveTts] episode stuck at %.0f s — reconnecting (try %ld)", pos, stallReconnects)
+            start(item, audioPosition: pos)
+        }
     }
 
     // Live only: keep a short, readable reason for the last stream that stopped.
@@ -1109,7 +1219,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
                 restartSpeech(item)
             }
         case .audio:
-            if let p = player, p.currentItem != nil {
+            // A player that was stuck (see the stall watch) won't start again by
+            // being told to play: open the episode afresh at the same spot.
+            if let p = player, p.currentItem != nil, !(audioStuck && networkUp) {
                 p.playImmediately(atRate: max(0.5, min(3.0, rate)))
                 updateNowPlaying(playing: true)
             } else {
