@@ -20,7 +20,7 @@ Each entry: what shipped · PR · post-deploy steps.
   Post-deploy: switch Inbox → AI Trash → Inbox quickly several times (no error; returning is
   instant); archive something, go to another folder and back (it's gone); get a new email while
   in another folder, go back to Inbox (it's there).
-- **Listen (iPhone): podcasts download to the phone and play from the file** · #PRNUM · **TestFlight
+- **Listen (iPhone): podcasts download to the phone and play from the file** · #227 · **TestFlight
   build** (native only; no Netlify deploy, nothing changes on the laptop). An episode with a file on
   the phone plays from it; a new episode started from the beginning plays from its download as it
   arrives; one picked up part-way with no file streams as before and is downloaded for next time. The
