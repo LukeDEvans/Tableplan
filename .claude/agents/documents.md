@@ -207,7 +207,7 @@ Everyday files with `kind = 'doc'` are Live documents, edited in `documents/edit
 - Content = the file's `content` part: "LDOC" + deflate(Yjs update) (`doc-model.js`). Saving merges what's stored first (`mergeAndSave`), so offline edits and races converge; never write a document without merging.
 - Images are parts `i<32 hex>`, version snapshots `v<slot>` parts with a `doc_pversions` row (slots h00–h23 / d01–d31 / w00–w52 / n<hex>, overwritten in place — storage stays bounded). `doc-storage` and `documents/storage.js` both accept these parts (EDITOR_PART_RE); keep them in step.
 - Live co-editing: Supabase Realtime private broadcast channel `livedoc:<scope>:<file id>` (realtime.messages policies use doc_can_access), joined only while a document is open and only sending while someone else is in (`live.js`). app.js `openLiveDocChannel`.
-- Google Docs import: `netlify/functions/gdocs.js` (reads only, the caller's own Google connection with read-only Drive + Docs scopes, asked via `gcal-auth?docs=1` — a calendar-agent file, changed for this) → `gdocs-import.js` on the device.
+- Google Docs import: `netlify/functions/gdocs.js` (reads only, the caller's own Google connection with read-only Drive + Docs scopes, asked via `gcal-auth?docs=1` — a calendar-agent file, changed for this) → `gdocs-import.js` on the device. The same picker brings over Google Sheets (`sheetMeta` / `sheetRows` actions, same read-only Drive scope) → `documents/sheet/gsheets-import.js` (the sheets agent's).
 - Suggesting mode is `suggest.js` (`suggestTransaction`, pure, tested); comments live in the Y.Doc (`doc-model.js` threads) with a `comment` mark on the text.
 - QA: `npm run qa:docs-editor` (51 checks; stand-in store + BroadcastChannel for Realtime).
 

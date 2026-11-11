@@ -131,6 +131,16 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
   `_xlfn.`; array results as `t="array" ref=…`. On import, skip an array formula's other
   cells (our engine refills them) and ignore Google's "custom" default row heights and
   column widths. Sizes are set with `setRowMeta/setColMeta(…, { size })`.
+- One writer for every import: readers make a plain workbook (`readXlsx`, `gsheetToWorkbook`)
+  and `workbookIntoModel` fills the model. Add a new kind of thing there once, not per format.
+
+## Google Sheets
+- Read with the read-only Drive scope (no `spreadsheets.readonly` needed) through
+  `netlify/functions/gdocs.js` (`sheetMeta`, `sheetRows` in blocks — Netlify answers ≤ 6 MB),
+  converted on the device by `gsheets-import.js`. Take `userEnteredValue` only: a spill's
+  other cells and a pivot's output have just `effectiveValue` (pivots come over as values,
+  flooded out from the anchor cell). Google's defaults (Arial 10, 21px rows, 100px columns,
+  white fill, black text) aren't styles. Notes become comment threads; Drive comments don't.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->

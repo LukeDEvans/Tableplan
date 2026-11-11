@@ -13,7 +13,8 @@
 import { unzipSync, strFromU8 } from "fflate";
 import { XMLParser } from "fast-xml-parser";
 import { parse, print, colToIndex } from "./engine/parser.js";
-import { shift } from "./engine/binding.js";
+import { shift, storedFromText } from "./engine/binding.js";
+import { addCellThread } from "./history.js";
 import { DEF_W, DEF_H } from "./grid.js";
 
 const ARRAYS = new Set(["sheet", "row", "c", "si", "r", "xf", "font", "fill", "border", "numFmt", "mergeCell", "col", "definedName", "Relationship", "dataValidation", "conditionalFormatting", "cfRule", "cfvo", "color", "dxf", "rPh"]);
@@ -33,6 +34,14 @@ const text = (n) => {
 };
 const richText = (si) => (si.t !== undefined ? text(si.t) : (si.r || []).map((r) => text(r.t)).join(""));
 const cellRef = (ref) => { const m = /^\$?([A-Z]+)\$?(\d+)$/.exec(ref || ""); return m ? { r: Number(m[2]) - 1, c: colToIndex(m[1]) } : null; };
+// "A2:B", "A:A", "B3" → bounds; an open bottom is r2 null.
+const openRangeRef = (ref) => {
+  const m = /^\$?([A-Z]+)\$?(\d+)?(?::\$?([A-Z]+)\$?(\d+)?)?$/i.exec(String(ref || "").trim());
+  if (!m) return null;
+  const c1 = colToIndex(m[1].toUpperCase()), c2 = m[3] ? colToIndex(m[3].toUpperCase()) : c1;
+  const r1 = m[2] ? Number(m[2]) - 1 : 0, r2 = m[3] ? (m[4] ? Number(m[4]) - 1 : null) : m[2] ? r1 : null;
+  return { r1: r2 === null ? r1 : Math.min(r1, r2), r2: r2 === null ? null : Math.max(r1, r2), c1: Math.min(c1, c2), c2: Math.max(c1, c2) };
+};
 const rangeRef = (ref) => { const [a, b] = String(ref || "").split(":"); const p = cellRef(a), q = b ? cellRef(b) : p; return p && q ? { r1: Math.min(p.r, q.r), c1: Math.min(p.c, q.c), r2: Math.max(p.r, q.r), c2: Math.max(p.c, q.c) } : null; };
 
 function tint(hex, t) {
@@ -225,11 +234,20 @@ export function readXlsx(bytes) {
   return { sheets, names, notes: [...notes] };
 }
 
-// Fills an empty model from .xlsx bytes. → { notes: [text…] }
+// Fills an empty model from .xlsx bytes. → { notes: [text…], tabs }
 export function xlsxIntoModel(model, bytes) {
   const wb = readXlsx(bytes);
   if (!wb.sheets.length) throw new Error("That file has no worksheets.");
-  const notes = [...wb.notes];
+  return workbookIntoModel(model, wb);
+}
+
+// Writes a workbook (readXlsx's shape, also what gsheets-import.js makes) into a model:
+// into an empty one, or as new tabs of an open one. → { notes, tabs }
+//   sheet: { name, cells: [{ r, c, formula?, value, style?, note? }], rows: [{ r, h?, hidden? }],
+//            cols: [{ c, w?, hidden? }], merges, frozen: { rows, cols }, color?, gridlines,
+//            hidden?, validation: [...], formats: [...], charts?: [...] }
+export function workbookIntoModel(model, wb) {
+  const notes = [...(wb.notes || [])];
   let unreadable = 0;
   let importedTabs = [];
   model.ydoc.transact(() => {
@@ -243,6 +261,8 @@ export function xlsxIntoModel(model, bytes) {
       else tab = model.addTab({ name: s.name, rows, cols });
       tabs.push(tab);
     });
+    const tabNamed = (name) => (name === undefined || name === null ? null : tabs.find((t) => model.tabInfo(t).name.toLowerCase() === String(name).toLowerCase()) || model.tabIds().find((t) => model.tabInfo(t).name.toLowerCase() === String(name).toLowerCase()) || null);
+    let threadN = 0;
     // values and formulas after every tab exists, so cross-tab references bind
     wb.sheets.forEach((s, i) => {
       const tab = tabs[i];
@@ -251,10 +271,15 @@ export function xlsxIntoModel(model, bytes) {
         if (x.formula) {
           const res = model.setInput(tab, x.r, x.c, x.formula);
           if (res?.error || res?.ok === false) { unreadable++; input = valueText(x.value); if (input !== null) model.setInput(tab, x.r, x.c, input); }
-        } else if (x.value !== null) model.setInput(tab, x.r, x.c, valueText(x.value));
+        } else if (x.value !== null && x.value !== undefined) model.setInput(tab, x.r, x.c, valueText(x.value));
         if (x.style && Object.keys(x.style).length) model.setStyle(tab, x.r, x.c, x.r, x.c, x.style);
       }
       const rowIds = model.rowIds(tab), colIds = model.colIds(tab);
+      for (const x of s.cells) {
+        if (!x.note || x.r >= rowIds.length || x.c >= colIds.length) continue;
+        const id = `imp-${Date.now().toString(36)}-${(threadN++).toString(36)}`;
+        addCellThread(model.ydoc, { id, tab, row: rowIds[x.r], col: colIds[x.c], quote: "", text: String(x.note).slice(0, 5000), user: { id: "import", name: x.noteBy || "Note" } });
+      }
       for (const r of s.rows) if (r.r < rowIds.length) model.setRowMeta(tab, r.r, r.r, { ...(r.h ? { size: Math.max(8, Math.min(800, r.h)) } : {}), ...(r.hidden ? { hidden: true } : {}) });
       for (const c of s.cols) if (c.c < colIds.length) model.setColMeta(tab, c.c, c.c, { ...(c.w ? { size: Math.max(10, Math.min(1000, c.w)) } : {}), ...(c.hidden ? { hidden: true } : {}) });
       for (const m of s.merges) model.mergeRange(tab, m.r1, m.c1, m.r2, m.c2);
@@ -266,19 +291,46 @@ export function xlsxIntoModel(model, bytes) {
       if (s.hidden && wb.sheets.length > 1) props.hidden = true;
       if (Object.keys(props).length) model.setTabProps(tab, props);
       const rg = (b) => ({ top: rowIds[b.r1], bottom: rowIds[Math.min(b.r2, rowIds.length - 1)], left: colIds[b.c1], right: colIds[Math.min(b.c2, colIds.length - 1)] });
+      const bindF = (f) => { try { return storedFromText(String(f).startsWith("=") ? f : `=${f}`, model.grid, tab); } catch { return null; } };
       for (const v of s.validation) {
         const ranges = v.ranges.map(rg).filter((x) => x.top && x.left);
         if (!ranges.length) continue;
-        if (v.type === "list") model.setRule(tab, null, { kind: "valid", type: "list", ranges, items: v.items, display: "chip", reject: v.reject });
-        else if (v.type === "number") model.setRule(tab, null, { kind: "valid", type: "number", op: v.op, a: v.a, b: v.b, ranges, reject: v.reject });
-        else notes.push("Dropdowns from a range and custom-formula validation weren't brought over yet.");
+        const base = { kind: "valid", ranges, reject: Boolean(v.reject), ...(v.help ? { help: String(v.help).slice(0, 500) } : {}) };
+        if (v.type === "list") model.setRule(tab, null, { ...base, type: "list", items: v.items, display: v.display || "chip" });
+        else if (v.type === "number") model.setRule(tab, null, { ...base, type: "number", op: v.op, a: v.a, b: v.b });
+        else if (v.type === "text" || v.type === "date") model.setRule(tab, null, { ...base, type: v.type, op: v.op, a: v.a, b: v.b });
+        else if (v.type === "checkbox") model.setRule(tab, null, { ...base, type: "checkbox", ...(v.checked !== undefined ? { checked: String(v.checked) } : {}), ...(v.unchecked !== undefined ? { unchecked: String(v.unchecked) } : {}) });
+        else if (v.type === "range") {
+          if (typeof v.source === "string") { const t = v.source.replace(/^=/, ""), bang = t.lastIndexOf("!"); const b = openRangeRef(t.slice(bang + 1)); v.source = b ? { ...b, sheet: bang > 0 ? t.slice(0, bang).replace(/^'(.*)'$/, "$1").replace(/''/g, "'") : null } : null; }
+          if (!v.source) { notes.push("A dropdown from a range couldn't be read."); continue; }
+          const st = v.source.sheet ? tabNamed(v.source.sheet) : tab;
+          if (!st) { notes.push("A dropdown from a range on a missing tab wasn't brought over."); continue; }
+          const sr = model.rowIds(st), sc = model.colIds(st);
+          const b = v.source;
+          const source = { tab: st, top: b.r1 === null ? null : sr[Math.min(b.r1, sr.length - 1)], bottom: b.r2 === null ? null : sr[Math.min(b.r2, sr.length - 1)], left: sc[Math.min(b.c1, sc.length - 1)], right: sc[Math.min(b.c2, sc.length - 1)] };
+          model.setRule(tab, null, { ...base, type: "range", source, display: v.display || "chip" });
+        } else if (v.type === "formula") {
+          const f = bindF(v.f);
+          if (f) model.setRule(tab, null, { ...base, type: "formula", f }); else notes.push("A custom-formula validation rule couldn't be read.");
+        } else notes.push("Some data validation wasn't brought over.");
       }
-      for (const f of [...s.formats].sort((a, b) => a.prio - b.prio)) {
+      for (const f of [...s.formats].sort((a, b) => (a.prio ?? 0) - (b.prio ?? 0))) {
         const ranges = f.ranges.map(rg).filter((x) => x.top && x.left);
         if (!ranges.length) continue;
         if (f.scale) model.setRule(tab, null, { kind: "format", type: "scale", ranges, ...f.scale });
-        else if (f.cond.op !== "formula") model.setRule(tab, null, { kind: "format", type: "single", ranges, cond: f.cond, style: f.style });
-        else notes.push("Conditional formats with a custom formula weren't brought over yet.");
+        else if (f.cond.op === "formula") {
+          const fx = bindF(f.cond.f);
+          if (fx) model.setRule(tab, null, { kind: "format", type: "single", ranges, cond: { op: "formula", f: fx }, style: f.style });
+          else notes.push("A conditional format with a custom formula couldn't be read.");
+        } else model.setRule(tab, null, { kind: "format", type: "single", ranges, cond: f.cond, style: f.style });
+      }
+      if (s.filter && s.filter.r1 < rowIds.length && s.filter.c1 < colIds.length) model.setFilter(tab, "filter", { ...rg({ ...s.filter, r2: s.filter.r2 ?? s.filter.r1 }), bottom: s.filter.r2 === null || s.filter.r2 === undefined ? null : rowIds[Math.min(s.filter.r2, rowIds.length - 1)] });
+      for (const ch of s.charts || []) {
+        const b = ch.range;
+        if (!b || b.r1 >= rowIds.length || b.c1 >= colIds.length) continue;
+        const { range: _r, pos, ...rest } = ch;
+        const at = { row: rowIds[Math.min(pos?.r ?? 0, rowIds.length - 1)], col: colIds[Math.min(pos?.c ?? 0, colIds.length - 1)], dx: Math.max(0, pos?.dx || 0), dy: Math.max(0, pos?.dy || 0), w: Math.max(160, Math.min(1600, pos?.w || 480)), h: Math.max(120, Math.min(1200, pos?.h || 300)) };
+        model.setChart(tab, null, { ...rest, range: rg(b), pos: at });
       }
     });
     for (const n of wb.names) {

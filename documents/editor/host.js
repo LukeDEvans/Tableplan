@@ -83,6 +83,32 @@ export function googleDocsApi({ fetchImpl = (...a) => fetch(...a), base = "/.net
   }
   return {
     list: (folderId = null, pageToken = null) => call({ action: "list", folderId, pageToken }),
+    // A Google Sheets file as a workbook (sheet/gsheets-import.js) — tab by tab, in blocks of
+    // rows, fewer at a time when Google's answer is too large for one reply.
+    async sheet(fileId, { onProgress = () => {} } = {}) {
+      const { gsheetToWorkbook } = await import("../sheet/gsheets-import.js");
+      const { meta, hasComments } = await call({ action: "sheetMeta", fileId });
+      const rowsByTab = {};
+      const grids = (meta.sheets || []).filter((s) => !s.properties?.sheetType || s.properties.sheetType === "GRID");
+      for (const s of grids) {
+        const title = s.properties.title;
+        const total = Math.min(s.properties.gridProperties?.rowCount || 1000, 200_000);
+        const blocks = (rowsByTab[title] = []);
+        let start = 0, count = 2000;
+        while (start < total) {
+          onProgress({ tab: title, row: start, rows: total });
+          let r;
+          try { r = await call({ action: "sheetRows", fileId, sheet: title, start, count: Math.min(count, total - start) }); }
+          catch (e) { if (/too large|413/.test(e.message) && count > 50) { count = Math.floor(count / 2); continue; } throw e; }
+          if (!r.data?.rowData?.length) break; // nothing below here
+          blocks.push(r.data);
+          start += Math.min(count, total - start);
+        }
+      }
+      const wb = gsheetToWorkbook(meta, rowsByTab, { hasComments });
+      wb.title = meta.properties?.title || "Untitled spreadsheet";
+      return wb;
+    },
     async convert(fileId, { prepareImage = async (b) => b } = {}) {
       const { gdocToDoc, attachComments } = await import("./gdocs-import.js");
       const { doc, comments, images } = await call({ action: "get", fileId });

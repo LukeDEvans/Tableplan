@@ -462,6 +462,32 @@ try {
   await a.evaluate(() => window.__S.idle());
   check(await a.evaluate((n) => { const S = window.__S; const t = S.model.tabIds()[n]; return S.st.tab === t && S.engine.valueAt(t, 71, 0) === "Ann"; }, tabsBefore), "importing that file adds its tabs with the data", String(tabsBefore));
 
+  console.log("Google Sheets");
+  const gTabs = await a.evaluate(async () => {
+    const { gsheetToWorkbook } = await import("/documents/sheet/gsheets-import.js");
+    const { workbookIntoModel } = await import("/documents/sheet/xlsx-import.js");
+    const S = window.__S;
+    const src = (r1, r2, c1, c2) => ({ sources: [{ sheetId: 7, startRowIndex: r1, endRowIndex: r2, startColumnIndex: c1, endColumnIndex: c2 }] });
+    const meta = { properties: { title: "From Google" }, sheets: [{ properties: { sheetId: 7, title: "From Google", gridProperties: { rowCount: 100, frozenRowCount: 1 } },
+      charts: [{ spec: { title: "Spend", basicChart: { chartType: "COLUMN", headerCount: 1, domains: [{ domain: { sourceRange: src(0, 4, 0, 1) } }], series: [{ series: { sourceRange: src(0, 4, 1, 2) } }] } }, position: { overlayPosition: { anchorCell: { sheetId: 7, rowIndex: 1, columnIndex: 4 }, widthPixels: 360, heightPixels: 220 } } }] }] };
+    const val = (x) => ({ userEnteredValue: x });
+    const box = { dataValidation: { condition: { type: "BOOLEAN" } } };
+    const rowData = [["Item", "Cost", "Paid"], ["Rent", 1200, true], ["Food", 450, false], ["Fun", 90, true]].map((row, i) => ({ values: row.map((x, j) => ({ ...(typeof x === "number" ? val({ numberValue: x }) : typeof x === "boolean" ? val({ boolValue: x }) : val({ stringValue: x })), ...(i && j === 2 ? box : {}), ...(i === 0 ? { userEnteredFormat: { textFormat: { bold: true } } } : {}) })) }));
+    rowData.push({ values: [val({ stringValue: "Total" }), val({ formulaValue: "=SUM(B2:B4)" })] });
+    const before = S.model.tabIds().length;
+    workbookIntoModel(S.model, gsheetToWorkbook(meta, { "From Google": [{ startRow: 0, startColumn: 0, rowData }] }));
+    const t = S.model.tabIds()[before];
+    S.goTab?.(t);
+    return { before, t };
+  });
+  await a.click(`.sh-tabs [data-tab="${gTabs.t}"]`).catch(() => {});
+  await a.evaluate(() => window.__S.idle());
+  await a.waitForTimeout(300);
+  check(await a.evaluate((t) => window.__S.engine.valueAt(t, 4, 1) === 1740, gTabs.t), "a Google Sheets file comes in with its formulas working");
+  check(await a.evaluate((t) => window.__S.model.rulesOf(t).some((r) => r.type === "checkbox"), gTabs.t), "its checkboxes come over as checkboxes");
+  check(await a.waitForSelector(".sh-chart svg", { timeout: 5000 }).then(() => true).catch(() => false), "its chart is drawn");
+  if (SHOTS) await a.screenshot({ path: `${SHOTS}/google-sheets.png` });
+
   console.log("Print / PDF");
   await a.evaluate(() => { window.print = () => { const c = document.querySelector(".shp-print"); window.__printed = { pages: c ? c.querySelectorAll(".shp-page").length : 0, html: c ? c.outerHTML : "" }; window.dispatchEvent(new Event("afterprint")); }; });
   await a.click(`.sh-tabs [data-tab="${homeTab}"]`).catch(() => {});

@@ -279,6 +279,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 
 
 ## P2
+- [ ] **[P2] Google Sheets import is tested only against answers shaped from the API docs, not a real one** (sheets · documents/sheet/gsheets-import.js, netlify/functions/gdocs.js sheetMeta/sheetRows · 2026-11-11)
+      The function can't be called from here until it's deployed, so the mapping was written to the documented Sheets API shapes (test/documents-sheet-gsheets.test.js). Likely places for surprises: number-format patterns Google writes that our formatter reads differently, theme colour names, chart specs with several domains, very wide tabs (columnMetadata comes back per block), and the 5.5 MB block limit. → After the deploy, bring over one of Luke's real spreadsheets, compare tab by tab with Google, and record one real `sheetRows` answer (with personal data removed) as a fixture. Verdict: OPEN (post-deploy check).
 - [ ] **[P2] Excel: a byte-exact file exported by Google Sheets isn't in the tests yet, and one merge reading is unconfirmed** (sheets · test/documents-sheet-xlsx.test.js · 2026-11-10)
       Google's .xlsx export came back through the Drive tool as base64 that had to be copied by hand; its two worksheet parts failed their checksums, so it wasn't committed. The readable text showed our A10:C10 merge as A10:C34, which may be the copy, not Google. The reader is tested against a hand-written file with every quirk seen. → Capture the export with a tool that saves it straight to a file (or through the Sheets API path), commit it as a fixture, and check the merge. Verdict: OPEN.
 - [ ] **[P3] Excel import as new tabs: a formula naming a tab whose name was taken binds to the existing tab** (sheets · documents/sheet/xlsx-import.js · 2026-11-10)
@@ -506,6 +508,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+- [ ] **[P3] Charts: the title sits on top of the highest y-axis label** (sheets · documents/sheet/chart-svg.js · 2026-11-11)
+      Seen in the qa:sheet screenshot of a column chart: "Spend" and "1,250" touch at the top left. → Leave a few pixels between the title block and the plot's top tick (or start the axis labels below the title's baseline). Verdict: OPEN (seen, cosmetic).
 - [ ] **[P3] Pivot tables: no bold headers/totals, no date grouping, no calculated fields yet** (sheets · documents/sheet/pivot.js · 2026-11-10)
       Sheets bolds a pivot's header and total rows, can group a date field by month / quarter / year, and offers calculated fields (a value from a formula). Ours shows plain cells and groups by the exact value. → Styling needs the grid to know a cell is a pivot header (the worker could send it with the answer); date grouping and calculated fields are settings additions in pivot.js. Verdict: KNOWN GAP.
 - [ ] **[P3] Sheets: every custom-formula rule is re-evaluated at every cell on every batch, and the 100,000-cell cap cuts off silently** (sheets · documents/sheet/engine/host.js:42-66 evaluateRules · 2026-11-10, review of e032ae5)
