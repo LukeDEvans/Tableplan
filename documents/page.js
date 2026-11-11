@@ -260,6 +260,7 @@ export async function mountDocumentPage(root, deps) {
         ${v.ready && !inTrash ? `<button type="button" class="secondary-btn" data-act="share">Share</button>` : ""}
         ${v.ready && !inTrash && f.mime === DOCX_MIME ? `<button type="button" class="primary-btn" data-act="docx-to-doc">Edit as a document</button>` : ""}
         ${v.ready && !inTrash && f.mime === "text/csv" ? `<button type="button" class="primary-btn" data-act="csv-to-sheet">Edit as a spreadsheet</button>` : ""}
+        ${v.ready && !inTrash && f.mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ? `<button type="button" class="primary-btn" data-act="xlsx-to-sheet">Edit as a spreadsheet</button>` : ""}
       </div>
       <div class="docs-viewer-body">${body}</div>
       <div class="docs-viewer-foot">
@@ -535,6 +536,8 @@ export async function mountDocumentPage(root, deps) {
     else if (act === "new-sheet") { closeAddMenu(); newSpreadsheet(); }
     else if (act === "add-csv") { closeAddMenu(); pickCsvFiles(); }
     else if (act === "csv-to-sheet") csvFileToSheet();
+    else if (act === "add-xlsx") { closeAddMenu(); pickExcelFiles(); }
+    else if (act === "xlsx-to-sheet") excelFileToSheet();
     else if (act === "add-word") { closeAddMenu(); pickWordFiles(); }
     else if (act === "add-google") { closeAddMenu(); googleImport(); }
     else if (act === "docx-to-doc") wordFileToDocument();
@@ -615,6 +618,7 @@ export async function mountDocumentPage(root, deps) {
       <button type="button" role="menuitem" data-act="add-upload">Upload a file</button>
       <button type="button" role="menuitem" data-act="add-word">Open a Word file as a document</button>
       <button type="button" role="menuitem" data-act="add-csv">Open a CSV file as a spreadsheet</button>
+      <button type="button" role="menuitem" data-act="add-xlsx">Open an Excel file as a spreadsheet</button>
       <button type="button" role="menuitem" data-act="add-google">Bring over Google Docs</button>`;
     const r = anchor.getBoundingClientRect();
     addMenu.style.top = `${r.bottom + 6}px`;
@@ -698,15 +702,17 @@ export async function mountDocumentPage(root, deps) {
     }
   }
 
-  async function newSpreadsheet(tables = null, name = "Untitled spreadsheet") {
+  async function newSpreadsheet(tables = null, name = "Untitled spreadsheet", { xlsx = null } = {}) {
     const scope = ui.scope;
     const folderId = currentFolder();
     let id;
-    await run(tables ? "Making the spreadsheet…" : "Making a new spreadsheet…", async (sc, my) => {
+    let notes = null;
+    await run(tables || xlsx ? "Making the spreadsheet…" : "Making a new spreadsheet…", async (sc, my) => {
       const h = await sheetHost();
-      id = await h.createSheetFile({ library, scope: sc, folderId, name, tables });
+      id = await h.createSheetFile({ library, scope: sc, folderId, name, tables, xlsx, onNotes: (n) => { notes = n; } });
       await refresh(my, sc);
     });
+    if (notes?.length) deps.toast?.(`Opened. Not everything carried over: ${notes.slice(0, 3).join(" ")}`);
     const f = id && ui.scope === scope && ui.files.find((x) => x.id === id);
     if (f) openSpreadsheet(f, { startEditing: true });
     return id;
@@ -725,6 +731,28 @@ export async function mountDocumentPage(root, deps) {
       await newSpreadsheet(h.csvTables(await file.text(), "Sheet1"), name);
     };
     input.click();
+  }
+
+  function pickExcelFiles() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > 30 * 1024 * 1024) { ui.error = "That file is larger than 30 MB."; draw(); return; }
+      try { await newSpreadsheet(null, displayName(file.name), { xlsx: new Uint8Array(await file.arrayBuffer()) }); }
+      catch (e) { ui.error = e?.message || "That Excel file couldn't be opened."; draw(); }
+    };
+    input.click();
+  }
+  async function excelFileToSheet() {
+    const v = ui.viewer;
+    const f = ui.files.find((x) => x.id === v?.id);
+    if (!f || !v.bytes) return;
+    closeViewer();
+    try { await newSpreadsheet(null, displayName(f.name), { xlsx: v.bytes }); }
+    catch (e) { ui.error = e?.message || "That Excel file couldn't be opened."; draw(); }
   }
 
   async function csvFileToSheet() {

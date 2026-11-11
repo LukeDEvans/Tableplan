@@ -279,6 +279,10 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 
 
 ## P2
+- [ ] **[P2] Excel: a byte-exact file exported by Google Sheets isn't in the tests yet, and one merge reading is unconfirmed** (sheets · test/documents-sheet-xlsx.test.js · 2026-11-10)
+      Google's .xlsx export came back through the Drive tool as base64 that had to be copied by hand; its two worksheet parts failed their checksums, so it wasn't committed. The readable text showed our A10:C10 merge as A10:C34, which may be the copy, not Google. The reader is tested against a hand-written file with every quirk seen. → Capture the export with a tool that saves it straight to a file (or through the Sheets API path), commit it as a fixture, and check the merge. Verdict: OPEN.
+- [ ] **[P3] Excel import as new tabs: a formula naming a tab whose name was taken binds to the existing tab** (sheets · documents/sheet/xlsx-import.js · 2026-11-10)
+      Importing into an open spreadsheet renames a colliding tab ("Sheet1" → a unique name), but the file's formulas still say 'Sheet1'!… and bind to the spreadsheet's own Sheet1. → Rewrite those tab names in the imported formulas before binding. Verdict: KNOWN GAP.
 - [ ] **[P2] Sheet charts: not built yet — SPARKLINE in cells, a chart on its own tab, a data-table view** (sheets · documents/sheet/chart-ui.js · 2026-11-10)
       SPARKLINE still evaluates to an empty cell (the worker would need to send its numbers with the cell's answer for the grid to draw it); "Move to own tab" isn't offered; the chart rules ask for a table view of a chart's numbers for people who can't read the colours (today: hover tips and the legend). → Do with the next chart pass. Verdict: KNOWN GAP.
 - [x] **[P2] Sheets: when the worker dies, values it had sent that no longer exist stay on screen** (sheets · documents/sheet/worker-client.js:54-61 fail, :82 receive · 2026-11-10, review of 9d106b6)

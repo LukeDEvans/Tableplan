@@ -449,6 +449,19 @@ try {
   check(await a.$$eval(".sh-history .sh-vh-item", (els) => els.some((el) => el.textContent.includes("Before restoring"))), "what was there is kept as a version first");
   await a.click(".sh-history [data-hx=close]");
 
+  console.log("Excel");
+  await a.evaluate(() => { window.__shared.length = 0; document.querySelector("[data-menu=file]").click(); });
+  await a.click(".sh-menu button:has-text('Download as Excel')");
+  await a.waitForFunction(() => window.__shared.some((x) => x.name.endsWith(".xlsx")), null, { timeout: 8000 }).then(() => check(true, "File → Download as Excel makes an .xlsx")).catch(() => check(false, "File → Download as Excel makes an .xlsx"));
+  const tabsBefore = await a.evaluate(() => window.__S.model.tabIds().length);
+  const xlsxBytes = await a.evaluate(async () => { const { toXlsx } = await import("/documents/sheet/xlsx-export.js"); return Array.from(toXlsx(window.__S.model, window.__S.engine)); });
+  await a.evaluate(() => document.querySelector("[data-menu=file]").click());
+  const [chooser] = await Promise.all([a.waitForEvent("filechooser"), a.click(".sh-menu button:has-text('Import an Excel file')")]);
+  await chooser.setFiles({ name: "Copy.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(xlsxBytes) });
+  await a.waitForFunction((n) => window.__S.model.tabIds().length > n, tabsBefore, { timeout: 8000 });
+  await a.evaluate(() => window.__S.idle());
+  check(await a.evaluate((n) => { const S = window.__S; const t = S.model.tabIds()[n]; return S.st.tab === t && S.engine.valueAt(t, 71, 0) === "Ann"; }, tabsBefore), "importing that file adds its tabs with the data", String(tabsBefore));
+
   console.log("Dark theme");
   const dk = await openAs("luke", { query: "&theme=dark" });
   await shot(dk, "03-dark");

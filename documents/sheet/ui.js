@@ -775,7 +775,9 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
 
   const menus = {
     file: () => [
+      { label: "Download as Excel (.xlsx)", run: downloadXlsx },
       { label: "Download as CSV (this tab)", run: downloadCsv },
+      { label: "Import an Excel file (as new tabs)…", run: importXlsx, disabled: st.viewing },
       { label: "Open a CSV file…", run: () => importCsv() },
       { sep: true },
       { label: "Rename", run: () => { nameInput.focus(); nameInput.select(); } },
@@ -1219,6 +1221,32 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     for (let i = 0; i <= r; i++) { const row = []; for (let j = 0; j <= c; j++) row.push(displayOf(model, engine, st.tab, i, j).text); rows.push(row); }
     const blob = new Blob([toCsv(rows)], { type: "text/csv" });
     await deps.share?.(blob, `${file.name} - ${model.tabInfo(st.tab).name}.csv`, "text/csv");
+  }
+  async function downloadXlsx() {
+    await engine.whenIdle?.();
+    try {
+      const { toXlsx } = await import("./xlsx-export.js");
+      const bytes = toXlsx(model, engine);
+      await deps.share?.(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `${nameInput.value || file.name}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    } catch (e) { toast(e?.message || "The Excel file couldn't be made."); }
+  }
+  function importXlsx() {
+    if (st.viewing) return;
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    input.onchange = async () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      if (f.size > 30 * 1024 * 1024) { toast("That file is larger than 30 MB."); return; }
+      try {
+        const { xlsxIntoModel } = await import("./xlsx-import.js");
+        const { notes, tabs } = xlsxIntoModel(model, new Uint8Array(await f.arrayBuffer()));
+        refreshUndoScope();
+        if (tabs[0]) switchTab(tabs[0]);
+        toast(notes.length ? `Imported. Not everything carried over: ${notes.slice(0, 3).join(" ")}` : `Imported ${tabs.length} tab${tabs.length === 1 ? "" : "s"}.`);
+      } catch (e) { toast(e?.message || "That Excel file couldn't be read."); }
+    };
+    input.click();
   }
   function importCsv() {
     const input = document.createElement("input");

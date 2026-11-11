@@ -125,6 +125,13 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
   anchor `{ tab, row, col }` by ids (`history.js`). Restoring a version
   (`restoreSheet`) copies every root type except `comments` in one transaction.
 
+## Excel
+- Our own writer/reader (`xlsx-export.js` / `xlsx-import.js`). Cache every formula's
+  answer in `<v>` (Google and Excel show it before recalculating); prefix newer functions
+  `_xlfn.`; array results as `t="array" ref=…`. On import, skip an array formula's other
+  cells (our engine refills them) and ignore Google's "custom" default row heights and
+  column widths. Sizes are set with `setRowMeta/setColMeta(…, { size })`.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->
 - files: `documents/sheet/*.js`, `documents/sheet/engine/*.js`, `documents/sheet/engine/functions/*.js`
