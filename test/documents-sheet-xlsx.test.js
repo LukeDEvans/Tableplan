@@ -149,3 +149,28 @@ describe("reading .xlsx", () => {
     expect(b.model.rulesOf(t).map((r) => r.items)).toEqual([["Yes", "No"]]);
   });
 });
+
+describe("Excel's tab-name rules", () => {
+  it("shortens long or clashing names and writes formulas with the names Excel will see", () => {
+    const b = book();
+    const long = "Household budget for the whole year 2026";
+    b.model.init({ tabName: long });
+    const t1 = b.model.tabIds()[0];
+    const t2 = b.model.addTab({ name: `${long} copy` });
+    const t3 = b.model.addTab({ name: "Q1 plan" });
+    b.model.setInput(t1, 0, 0, "5");
+    b.model.setInput(t3, 0, 0, "7");
+    b.model.setInput(t2, 0, 0, `='${long}'!A1*2`);
+    b.model.setInput(t2, 0, 1, "='Q1 plan'!A1+1");
+    b.model.setName("Total", `'${long}'!A1`, t2);
+    const wb = readXlsx(toXlsx(b.model, b.engine));
+    const names = wb.sheets.map((s) => s.name);
+    expect(names).toEqual(["Household budget for the whole", "Household budget for the wh (2)", "Q1 plan"]);
+    expect(new Set(names.map((n) => n.toLowerCase())).size).toBe(3);
+    const back = book();
+    xlsxIntoModel(back.model, toXlsx(b.model, b.engine));
+    const [, u2] = back.model.tabIds();
+    expect([back.engine.valueAt(u2, 0, 0), back.engine.valueAt(u2, 0, 1)]).toEqual([10, 8]);
+    expect(back.model.nameList().map((n) => n.name)).toEqual(["Total"]);
+  });
+});

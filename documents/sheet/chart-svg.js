@@ -188,13 +188,13 @@ export function renderChart(data, spec, { w = 480, h = 300, theme = {} } = {}) {
   let xs = null;
   if (scatter) {
     const xv = (data.xNumbers || []).filter((v) => v !== null);
-    xs = niceScale(Math.min(...xv), Math.max(...xv));
+    xs = niceScale(xv.reduce((a, b) => Math.min(a, b), Infinity), xv.reduce((a, b) => Math.max(a, b), -Infinity));
   }
 
   // room for labels and axis titles
   const yTicks = []; for (let v = ys.min; v <= ys.max + ys.step * 1e-6 && yTicks.length < 20; v += ys.step) yTicks.push(Math.abs(v) < ys.step * 1e-9 ? 0 : v);
   const valueLabelW = Math.max(...yTicks.map((v) => textW(fmtNum(v, pct)))) + 8;
-  const catLabelW = Math.min(110, Math.max(20, ...cats.map((c) => textW(fit(c, 110))))) + 8;
+  const catLabelW = Math.min(110, cats.reduce((m, c) => Math.max(m, textW(fit(c, 110))), 20)) + 8;
   let left = P + (spec.yTitle ? 18 : 0) + (horizontal ? catLabelW : valueLabelW);
   bottom -= 18 + (spec.xTitle ? 18 : 0);
   right -= 4;

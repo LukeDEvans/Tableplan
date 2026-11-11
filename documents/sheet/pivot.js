@@ -34,8 +34,8 @@ function aggregate(fn, vals) {
     case "COUNT": return n;
     case "COUNTUNIQUE": return new Set(vals.filter((v) => !blank(v)).map(groupKey)).size;
     case "AVERAGE": return n ? mean() : null;
-    case "MAX": return n ? Math.max(...nums) : 0;
-    case "MIN": return n ? Math.min(...nums) : 0;
+    case "MAX": return n ? nums.reduce((a, b) => (b > a ? b : a), -Infinity) : 0;
+    case "MIN": return n ? nums.reduce((a, b) => (b < a ? b : a), Infinity) : 0;
     case "MEDIAN": { if (!n) return null; const s = [...nums].sort((a, b) => a - b); return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; }
     case "PRODUCT": return n ? nums.reduce((a, b) => a * b, 1) : 0;
     case "STDEV": return n > 1 ? Math.sqrt(ss() / (n - 1)) : null;
@@ -186,6 +186,6 @@ export function computePivot(table, settings) {
     out.push([...line, ...lineCells(data)]);
   }
   // pad to a rectangle
-  const w = Math.max(...out.map((r) => r.length));
+  const w = out.reduce((m, r) => Math.max(m, r.length), 0);
   return out.map((r) => [...r, ...Array(w - r.length).fill(null)]);
 }

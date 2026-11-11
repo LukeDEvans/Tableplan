@@ -1081,7 +1081,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     const need = r + rows.length - g.rows.length;
     if (need > 0) model.insertRows(st.tab, g.rows.length, need);
     session.ydoc.transact(() => { rows.forEach((row, i) => row.forEach((v, j) => { if (c + j < g.cols.length) model.setInput(st.tab, r + i, c + j, v); })); }, LOCAL);
-    select(r, c, r + rows.length - 1, c + Math.max(...rows.map((x) => x.length)) - 1, { r, c });
+    select(r, c, r + rows.length - 1, c + rows.reduce((m, x) => Math.max(m, x.length), 0) - 1, { r, c });
   }
   root.addEventListener("copy", (e) => { if (st.editing || !scroller.contains(document.activeElement) && document.activeElement !== scroller) return; e.preventDefault(); clipboard("copy"); e.clipboardData?.setData("text/plain", internalClip.text); });
   root.addEventListener("cut", (e) => { if (st.editing || st.viewing || document.activeElement !== scroller) return; e.preventDefault(); clipboard("cut"); e.clipboardData?.setData("text/plain", internalClip.text); });
@@ -1293,7 +1293,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       if (!f) return;
       if (f.size > 30 * 1024 * 1024) { toast("That file is larger than 30 MB."); return; }
       const rows = parseCsv(await f.text());
-      const id = model.addTab({ name: f.name.replace(/\.[^.]+$/, ""), rows: Math.max(1000, rows.length + 50), cols: Math.max(26, ...rows.map((x) => x.length)) });
+      const id = model.addTab({ name: f.name.replace(/\.[^.]+$/, ""), rows: Math.max(1000, rows.length + 50), cols: rows.reduce((m, x) => Math.max(m, x.length), 26) });
       session.ydoc.transact(() => rows.forEach((row, i) => row.forEach((v, j) => { if (v !== "") model.setInput(id, i, j, v); })), LOCAL);
       refreshUndoScope();
       switchTab(id);

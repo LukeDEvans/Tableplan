@@ -71,3 +71,20 @@ describe("printing", () => {
     expect(pages[0].html).not.toContain("outside");
   });
 });
+
+describe("printing what another device wrote", () => {
+  it("never puts raw values from the shared doc into the page markup", () => {
+    const b = book(20, 6);
+    const evil = '"><img src=x onerror=alert(1)>';
+    b.model.setInput(b.t, 0, 0, "Hello");
+    b.model.setStyle(b.t, 0, 0, 0, 0, { bold: true });
+    const sid = b.model.cellAt(b.t, 0, 0).s;
+    b.model.ydoc.getMap("styles").set(sid, { bold: true, halign: evil, valign: evil, size: evil }); // as a tampered device would
+    b.model.setChart(b.t, null, { type: "column", range: rangeFromA1(b.model, b.t, "A1:A1"), pos: { row: b.model.rowIds(b.t)[2], col: b.model.colIds(b.t)[1], dx: evil, dy: evil, w: evil, h: evil } });
+    const { pages } = layoutPages(b.model, b.engine, { tabs: [b.t] });
+    const html = pages.map((p) => p.html).join("");
+    expect(html).toContain(">Hello<");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("onerror");
+  });
+});

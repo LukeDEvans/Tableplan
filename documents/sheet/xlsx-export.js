@@ -10,7 +10,7 @@
 
 import { zipSync, strToU8 } from "fflate";
 import { indexToCol, refToA1 } from "./engine/parser.js";
-import { unbind } from "./engine/binding.js";
+import { unbind, formulaText } from "./engine/binding.js";
 import { isErr } from "./engine/values.js";
 import { DEF_W, DEF_H } from "./grid.js";
 
@@ -90,6 +90,20 @@ export function toXlsx(model, engine) {
   const sheetEntries = [];
   const definedNames = [];
 
+  // Excel's tab names: at most 31 characters, none of []:*?/\, unique ignoring case. Formulas
+  // and named ranges are written with these names, so references between tabs still meet.
+  const xlNames = new Map(), used = new Set();
+  for (const tab of tabs) {
+    const base = (String(model.tabInfo(tab).name || "Sheet").replace(/[[\]:*?/\\]/g, " ").replace(/^'+|'+$/g, "").trim() || "Sheet").slice(0, 31).trim();
+    let name = base, n = 2;
+    while (used.has(name.toLowerCase())) { const sfx = ` (${n++})`; name = base.slice(0, 31 - sfx.length).trim() + sfx; }
+    used.add(name.toLowerCase());
+    xlNames.set(tab, name);
+  }
+  const xgrid = Object.create(model.grid);
+  xgrid.tabName = (t) => (xlNames.has(t) ? xlNames.get(t) : model.grid.tabName(t));
+  const xlText = (tab, r, c, f) => { if (f.src) return model.inputText(tab, r, c); try { return formulaText(f, xgrid, tab); } catch { return model.inputText(tab, r, c); } };
+
   tabs.forEach((tab, ti) => {
     const info = model.tabInfo(tab);
     const rows = model.rowIds(tab), cols = model.colIds(tab);
@@ -114,7 +128,7 @@ export function toXlsx(model, engine) {
       const v = engine.valueAt(tab, r, c);
       let f = "";
       if (cell.f) {
-        const text = model.inputText(tab, r, c);
+        const text = xlText(tab, r, c, cell.f);
         const pivot = /^=PIVOT\.TABLE\(/i.test(text);
         const fi = engine.formulaInfo?.(tab, rid, cid);
         const spill = fi?.spill && !fi.blocked ? fi.spill : null;
@@ -168,7 +182,7 @@ export function toXlsx(model, engine) {
       + (merges.length ? `<mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${a1(m.r1, m.c1)}:${a1(m.r2, m.c2)}"/>`).join("")}</mergeCells>` : "")
       + (dv.length ? `<dataValidations count="${dv.length}">${dv.join("")}</dataValidations>` : "")
       + `<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`);
-    sheetEntries.push({ name: info.name, hidden: !!info.hidden, n: ti + 1 });
+    sheetEntries.push({ name: xlNames.get(tab), hidden: !!info.hidden, n: ti + 1 });
   });
 
   // named ranges
@@ -179,10 +193,10 @@ export function toXlsx(model, engine) {
     try { n = unbind(ref, model.grid, tab); } catch { continue; }
     if (!n || n.t !== "ref" || n.bad) continue;
     const abs = { ...n, sheet: null, ar1: true, ac1: true, ar2: true, ac2: true };
-    definedNames.push(`<definedName name="${xmlEsc(name)}">'${xmlEsc(model.tabInfo(tab).name.replace(/'/g, "''"))}'!${xmlEsc(refToA1(abs))}</definedName>`);
+    definedNames.push(`<definedName name="${xmlEsc(name)}">'${xmlEsc(xlNames.get(tab).replace(/'/g, "''"))}'!${xmlEsc(refToA1(abs))}</definedName>`);
   }
 
-  files["xl/workbook.xml"] = strToU8(HEAD + `<workbook ${NS}><bookViews><workbookView/></bookViews><sheets>${sheetEntries.map((s) => `<sheet name="${xmlEsc(s.name.slice(0, 31))}" sheetId="${s.n}"${s.hidden ? ' state="hidden"' : ""} r:id="rId${s.n}"/>`).join("")}</sheets>${definedNames.length ? `<definedNames>${definedNames.join("")}</definedNames>` : ""}<calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>`);
+  files["xl/workbook.xml"] = strToU8(HEAD + `<workbook ${NS}><bookViews><workbookView/></bookViews><sheets>${sheetEntries.map((s) => `<sheet name="${xmlEsc(s.name)}" sheetId="${s.n}"${s.hidden ? ' state="hidden"' : ""} r:id="rId${s.n}"/>`).join("")}</sheets>${definedNames.length ? `<definedNames>${definedNames.join("")}</definedNames>` : ""}<calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>`);
   const n = sheetEntries.length;
   files["xl/_rels/workbook.xml.rels"] = strToU8(HEAD + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheetEntries.map((s) => `<Relationship Id="rId${s.n}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${s.n}.xml"/>`).join("")}<Relationship Id="rId${n + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId${n + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>`);
   files["xl/styles.xml"] = strToU8(stylesXml(styleList));

@@ -91,6 +91,11 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
   ranges, rule ranges and rule formulas (all refs), validation sources, filters and views,
   named ranges. A single-cell ref in a cell's formula follows its row. Anything new that
   stores a range by row id must be added there.
+- Deleting rows or columns uses the same walker (`shrink`): a range edge on a deleted line
+  moves inward (first edge to the next line left, last edge to the line before), so
+  `=SUM(A1:A5)` becomes `=SUM(A1:A4)` when row 1 goes, as in Sheets; a range wholly
+  deleted and a single cell that went become #REF!. Deleting a filter's header row ends it.
+- Never `Math.max(...bigArray)`: it overflows the call stack around 125k items. Loop.
 - Nothing that writes the shared doc happens in view mode (st.viewing) or from a finger
   landing to scroll: checkboxes act on a tap (pointerup), Sort is hidden in filter views.
 

@@ -347,7 +347,12 @@ export function createSheetModel(ydoc) {
     const n = Math.max(1, count | 0);
     if (ids.length - n < 1) return { ok: false, error: kind === "rows" ? "A tab needs at least one row." : "A tab needs at least one column." };
     const gone = new Set(ids.slice(at, at + n));
+    // ranges with an edge on a deleted line shrink to the lines that are left (as in Sheets)
+    const after = ids[at + n], before = ids[at - 1];
+    const toAfter = new Map(), toBefore = new Map();
+    for (const id of gone) { if (after !== undefined) toAfter.set(id, after); if (before !== undefined) toBefore.set(id, before); }
     tx(() => {
+      keepRangesInPlace(tab, toAfter, { atEnd: toBefore, kind, all: false, shrink: true });
       const raw = arr.toArray();
       for (let i = raw.length - 1; i >= 0; i--) if (gone.has(raw[i])) arr.delete(i, 1);
       // the cells of deleted lines go too (a formula pointing at them becomes #REF!)
@@ -401,22 +406,36 @@ export function createSheetModel(ydoc) {
     });
   }
 
-  function keepRangesInPlace(tab, at) {
+  // Re-pin range edges that sit on lines that moved or went: `at` maps a line id to the id a
+  // range's first edge (top / left) should hold now, `atEnd` the same for its last edge
+  // (bottom / right). Sorting pins both edges to the same place (ranges stay in place);
+  // deleting moves a first edge to the next line left and a last edge to the line before, so
+  // a range shrinks as in Sheets. `all` re-pins single cells in rule formulas too (sorting).
+  function keepRangesInPlace(tab, at, { atEnd = at, kind = "rows", all = true, shrink = false } = {}) {
     const pin = (id) => (at.has(id) ? at.get(id) : id);
-    const RANGE = new Set(["range", "open", "rows"]);
-    // stored formula { f, refs } living on homeTab; all = also single cells
-    const pinStored = (stored, homeTab, all) => {
+    const pinEnd = (id) => (atEnd.has(id) ? atEnd.get(id) : id);
+    const R = kind === "rows";
+    // deleting: a range with both edges on deleted lines is gone (#REF!), not turned inside out
+    const whollyGone = (a, b) => shrink && at.has(a) && atEnd.has(b);
+    const [k1, k2] = R ? ["r1", "r2"] : ["c1", "c2"];
+    const [e1, e2] = R ? ["top", "bottom"] : ["left", "right"];
+    const RANGE = new Set(["range", "open", "rows", "cols"]);
+    // stored formula { f, refs } living on homeTab; single = also single cells
+    const pinStored = (stored, homeTab, single) => {
       let changed = false;
       const refs = stored.refs.map((r) => {
-        if ((r.s || homeTab) !== tab || !(all || RANGE.has(r.k))) return r;
+        if ((r.s || homeTab) !== tab || !(single || RANGE.has(r.k)) || whollyGone(r[k1], r[k2])) return r;
         const n = { ...r };
-        if (r.r1 !== undefined) n.r1 = pin(r.r1);
-        if (r.r2 !== undefined) n.r2 = pin(r.r2);
-        if (n.r1 !== r.r1 || n.r2 !== r.r2) changed = true;
+        const one = !RANGE.has(r.k);
+        if (r[k1] !== undefined) n[k1] = pin(r[k1]);
+        if (r[k2] !== undefined) n[k2] = one ? pin(r[k2]) : pinEnd(r[k2]);
+        if (n[k1] !== r[k1] || n[k2] !== r[k2]) changed = true;
         return n;
       });
       return changed ? { ...stored, refs } : null;
     };
+    const edges = (g) => (whollyGone(g[e1], g[e2]) ? g : { ...g, [e1]: pin(g[e1]), [e2]: g[e2] === null || g[e2] === undefined ? g[e2] : pinEnd(g[e2]) });
+    const moved = (a, b) => a[e1] !== b[e1] || a[e2] !== b[e2];
     for (const t of tabIds()) {
       const m = cells(t);
       for (const [k, x] of m.entries()) {
@@ -428,33 +447,35 @@ export function createSheetModel(ydoc) {
       for (const [id, r] of rm.entries()) {
         if (!r) continue;
         let n = r, touched = false;
-        if (t === tab && r.ranges) { const ranges = r.ranges.map((g) => ({ ...g, top: pin(g.top), bottom: pin(g.bottom) })); if (JSON.stringify(ranges) !== JSON.stringify(r.ranges)) { n = { ...n, ranges }; touched = true; } }
-        if (r.source?.tab === tab) { const source = { ...r.source, top: pin(r.source.top), bottom: pin(r.source.bottom) }; if (source.top !== r.source.top || source.bottom !== r.source.bottom) { n = { ...n, source }; touched = true; } }
-        if (r.cond?.f) { const f = pinStored(r.cond.f, t, true); if (f) { n = { ...n, cond: { ...r.cond, f } }; touched = true; } }
-        if (r.f) { const f = pinStored(r.f, t, true); if (f) { n = { ...n, f }; touched = true; } }
+        if (t === tab && r.ranges) { const ranges = r.ranges.map(edges); if (ranges.some((g, i) => moved(g, r.ranges[i]))) { n = { ...n, ranges }; touched = true; } }
+        if (r.source?.tab === tab) { const source = edges(r.source); if (moved(source, r.source)) { n = { ...n, source }; touched = true; } }
+        if (r.cond?.f) { const f = pinStored(r.cond.f, t, all); if (f) { n = { ...n, cond: { ...r.cond, f } }; touched = true; } }
+        if (r.f) { const f = pinStored(r.f, t, all); if (f) { n = { ...n, f }; touched = true; } }
         if (touched) rm.set(id, n);
       }
     }
+    const posKey = R ? "row" : "col";
     for (const t of tabIds()) {
       const cm = chartsMap(t);
       for (const [id, c] of cm.entries()) {
         if (!c) continue;
         let n = c;
-        if (t === tab && c.range && (at.has(c.range.top) || at.has(c.range.bottom))) n = { ...n, range: { ...c.range, top: pin(c.range.top), bottom: pin(c.range.bottom) } };
-        if (t === tab && c.pos && at.has(c.pos.row)) n = { ...n, pos: { ...c.pos, row: pin(c.pos.row) } }; // a chart stays where it was on screen
+        if (t === tab && c.range) { const range = edges(c.range); if (moved(range, c.range)) n = { ...n, range }; }
+        if (t === tab && c.pos && (at.has(c.pos[posKey]) || atEnd.has(c.pos[posKey]))) n = { ...n, pos: { ...c.pos, [posKey]: at.has(c.pos[posKey]) ? pin(c.pos[posKey]) : pinEnd(c.pos[posKey]) } }; // a chart stays where it was on screen
         if (n !== c) cm.set(id, n);
       }
     }
     const fm = filtersMap(tab);
     for (const [k, v] of fm.entries()) {
       if (!v || k.startsWith("crit:")) continue;
-      const top = pin(v.top), bottom = v.bottom ? pin(v.bottom) : v.bottom;
-      if (top !== v.top || bottom !== v.bottom) fm.set(k, { ...v, top, bottom });
+      if (shrink && R && at.has(v.top)) continue; // deleting the header row ends the filter (its column settings meant that header)
+      const nv = edges(v);
+      if (moved(nv, v)) fm.set(k, nv);
     }
     for (const [k, v] of names.entries()) {
-      if (!v || (v.sheet || null) !== tab || !RANGE.has(v.kind)) continue;
-      const r1 = pin(v.r1), r2 = pin(v.r2);
-      if (r1 !== v.r1 || r2 !== v.r2) names.set(k, { ...v, r1, r2 });
+      if (!v || (v.sheet || null) !== tab || !RANGE.has(v.kind) || whollyGone(v[k1], v[k2])) continue;
+      const a = v[k1] === undefined ? v[k1] : pin(v[k1]), b = v[k2] === undefined ? v[k2] : pinEnd(v[k2]);
+      if (a !== v[k1] || b !== v[k2]) names.set(k, { ...v, [k1]: a, [k2]: b });
     }
   }
 

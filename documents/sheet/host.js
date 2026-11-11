@@ -26,7 +26,7 @@ export function sheetYdoc({ tables = null, xlsx = null, workbook = null } = {}) 
   let first = true;
   for (const t of tables) {
     const rows = t.rows || [];
-    const nRows = Math.max(DEFAULT_ROWS, rows.length + 50), nCols = Math.max(DEFAULT_COLS, ...rows.map((r) => r.length));
+    const nRows = Math.max(DEFAULT_ROWS, rows.length + 50), nCols = rows.reduce((m, r) => Math.max(m, r.length), DEFAULT_COLS);
     if (first) { model.init({ tabName: t.name || "Sheet1", rows: nRows, cols: nCols }); first = false; }
     else model.addTab({ name: t.name, rows: nRows, cols: nCols });
     const tab = model.tabIds()[model.tabIds().length - 1];

@@ -253,8 +253,11 @@ export function workbookIntoModel(model, wb) {
   model.ydoc.transact(() => {
     const tabs = importedTabs;
     wb.sheets.forEach((s, i) => {
-      const maxR = Math.max(0, ...s.cells.map((x) => x.r), ...s.rows.map((x) => x.r), ...s.merges.map((m) => m.r2));
-      const maxC = Math.max(0, ...s.cells.map((x) => x.c), ...s.cols.map((x) => x.c), ...s.merges.map((m) => m.c2));
+      let maxR = 0, maxC = 0; // a loop, not Math.max(...): a big tab overflows the call stack
+      for (const x of s.cells) { if (x.r > maxR) maxR = x.r; if (x.c > maxC) maxC = x.c; }
+      for (const x of s.rows) if (x.r > maxR) maxR = x.r;
+      for (const x of s.cols) if (x.c > maxC) maxC = x.c;
+      for (const m of s.merges) { if (m.r2 > maxR) maxR = m.r2; if (m.c2 > maxC) maxC = m.c2; }
       const rows = Math.max(1000, maxR + 51), cols = Math.max(26, maxC + 2);
       let tab;
       if (i === 0 && !model.tabIds().length) { model.init({ tabName: s.name, rows, cols }); tab = model.tabIds()[0]; }

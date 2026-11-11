@@ -97,7 +97,8 @@ export function layoutPages(model, engine, { tabs, range = null, landscape = fal
           let text = "";
           if (d.text && !(d.check?.rule?.type === "checkbox" && d.check.valid)) {
             const right = c + 1 <= cb && !model.cellAt(tab, r, c + 1) && !m && d.align === "left" && st.wrap !== "wrap" && st.wrap !== "clip";
-            const t = [`color:${safeColor(d.color) || "#000000"}`, `font-size:${(st.size || 10) * 1.333}px`, `font-family:${st.font ? `'${String(st.font).replace(/['";]/g, "")}', ` : ""}Arial, sans-serif`, `text-align:${d.align}`, `justify-content:${{ left: "flex-start", center: "center", right: "flex-end" }[d.align]}`, `align-items:${{ top: "flex-start", middle: "center", bottom: "flex-end" }[st.valign || "bottom"]}`];
+            const align = ["left", "center", "right"].includes(d.align) ? d.align : "left";
+            const t = [`color:${safeColor(d.color) || "#000000"}`, `font-size:${(Math.min(400, Math.max(1, Number(st.size) || 10))) * 1.333}px`, `font-family:${st.font ? `'${String(st.font).replace(/['";]/g, "")}', ` : ""}Arial, sans-serif`, `text-align:${align}`, `justify-content:${{ left: "flex-start", center: "center", right: "flex-end" }[align]}`, `align-items:${{ top: "flex-start", middle: "center", bottom: "flex-end" }[st.valign] || "flex-end"}`];
             if (st.bold) t.push("font-weight:700");
             if (st.italic) t.push("font-style:italic");
             if (st.underline || st.strike) t.push(`text-decoration:${[st.underline && "underline", st.strike && "line-through"].filter(Boolean).join(" ")}`);
@@ -119,7 +120,8 @@ export function layoutPages(model, engine, { tabs, range = null, landscape = fal
         if (ch.x >= pageRight || ch.x + ch.w <= pageLeft || ch.y >= pageBottom || ch.y + ch.h <= y0) continue;
         if (ch.x < pageLeft || ch.y < y0) continue; // drawn on the page holding its top-left corner
         const svg = renderChart(chartData(readGrid(model, tab, ch.spec, cell) || [], ch.spec), ch.spec, { w: Math.round(ch.w), h: Math.round(ch.h), theme: chartTheme });
-        html += `<div class="shp-chart" style="left:${ch.x - pageLeft}px;top:${ch.y - pageTop}px;width:${ch.w}px;height:${ch.h}px">${svg}</div>`;
+        const px = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : 0);
+        html += `<div class="shp-chart" style="left:${px(ch.x - pageLeft)}px;top:${px(ch.y - pageTop)}px;width:${px(ch.w)}px;height:${px(ch.h)}px">${svg}</div>`;
       }
       pages.push({ tab, html, scale });
     }

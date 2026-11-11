@@ -21,8 +21,8 @@ export const HEAD_H = 24;
 export function geometry(model, tab, zoom = 1, filtered = null) {
   const rows = model.rowIds(tab), cols = model.colIds(tab);
   const rh = new Float64Array(rows.length), cw = new Float64Array(cols.length);
-  rows.forEach((id, i) => { const m = model.rowMeta(tab, id); rh[i] = m.hidden || filtered?.has(i) ? 0 : (m.h || DEF_H) * zoom; });
-  cols.forEach((id, i) => { const m = model.colMeta(tab, id); cw[i] = m.hidden ? 0 : (m.w || DEF_W) * zoom; });
+  rows.forEach((id, i) => { const m = model.rowMeta(tab, id); rh[i] = m.hidden || filtered?.has(i) ? 0 : (Number(m.h) || DEF_H) * zoom; });
+  cols.forEach((id, i) => { const m = model.colMeta(tab, id); cw[i] = m.hidden ? 0 : (Number(m.w) || DEF_W) * zoom; });
   const ry = new Float64Array(rows.length + 1), cx = new Float64Array(cols.length + 1);
   for (let i = 0; i < rows.length; i++) ry[i + 1] = ry[i] + rh[i];
   for (let i = 0; i < cols.length; i++) cx[i + 1] = cx[i] + cw[i];

@@ -100,8 +100,7 @@ export function googleDocsApi({ fetchImpl = (...a) => fetch(...a), base = "/.net
           let r;
           try { r = await call({ action: "sheetRows", fileId, sheet: title, start, count: Math.min(count, total - start) }); }
           catch (e) { if (/too large|413/.test(e.message) && count > 50) { count = Math.floor(count / 2); continue; } throw e; }
-          if (!r.data?.rowData?.length) break; // nothing below here
-          blocks.push(r.data);
+          if (r.data) blocks.push(r.data); // an empty block can have rows with data below it: read to the end
           start += Math.min(count, total - start);
         }
       }

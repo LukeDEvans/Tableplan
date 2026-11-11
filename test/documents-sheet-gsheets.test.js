@@ -163,7 +163,7 @@ describe("into a spreadsheet", () => {
 });
 
 describe("fetching a Google Sheets file", () => {
-  it("reads each grid tab in blocks, asks for fewer rows when an answer is too large, stops at the end", async () => {
+  it("reads each grid tab in blocks to its last row, past blank stretches, asking for fewer rows when an answer is too large", async () => {
     const { googleDocsApi } = await import("../documents/editor/host.js");
     const asked = [];
     const fetchImpl = async (_url, init) => {
@@ -172,13 +172,13 @@ describe("fetching a Google Sheets file", () => {
       const ok = (data) => ({ ok: true, status: 200, json: async () => data });
       if (body.action === "sheetMeta") return ok({ meta: { properties: { title: "Big one" }, sheets: [{ properties: { sheetId: 0, title: "A", gridProperties: { rowCount: 5000 } } }, { properties: { sheetId: 9, title: "Chart", sheetType: "OBJECT" } }] }, hasComments: false });
       if (body.count > 1000) return { ok: false, status: 413, json: async () => ({ error: "too large" }) };
-      if (body.start >= 2000) return ok({ data: { startRow: body.start } });
+      if (body.start === 2000) return ok({ data: { startRow: body.start } }); // a blank stretch, with data after it
       return ok({ data: { startRow: body.start, rowData: [{ values: [{ userEnteredValue: { numberValue: body.start } }] }] } });
     };
     const api = googleDocsApi({ fetchImpl, getToken: async () => "t" });
     const wb = await api.sheet("abcdefghijkl");
-    expect(asked.filter((x) => x.action === "sheetRows").map((x) => [x.start, x.count])).toEqual([[0, 2000], [0, 1000], [1000, 1000], [2000, 1000]]);
+    expect(asked.filter((x) => x.action === "sheetRows").map((x) => [x.start, x.count])).toEqual([[0, 2000], [0, 1000], [1000, 1000], [2000, 1000], [3000, 1000], [4000, 1000]]);
     expect(wb.title).toBe("Big one");
-    expect(wb.sheets[0].cells.map((x) => [x.r, x.value])).toEqual([[0, 0], [1000, 1000]]);
+    expect(wb.sheets[0].cells.map((x) => [x.r, x.value])).toEqual([[0, 0], [1000, 1000], [3000, 3000], [4000, 4000]]);
   });
 });
