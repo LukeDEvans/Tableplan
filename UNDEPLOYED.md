@@ -20,6 +20,15 @@ Each entry: what shipped · PR · post-deploy steps.
   Post-deploy: switch Inbox → AI Trash → Inbox quickly several times (no error; returning is
   instant); archive something, go to another folder and back (it's gone); get a new email while
   in another folder, go back to Inbox (it's there).
+- **Listen (iPhone): podcasts download to the phone and play from the file** · #227 · **TestFlight
+  build** (native only; no Netlify deploy, nothing changes on the laptop). An episode with a file on
+  the phone plays from it; a new episode started from the beginning plays from its download as it
+  arrives; one picked up part-way with no file streams as before and is downloaded for next time. The
+  next queued episode is fetched ahead on Wi-Fi only. Files go when the episode finishes, after 3
+  weeks unplayed, or over 2 GB. Anything that goes wrong falls back to streaming at the same spot.
+  Post-TestFlight: start a new episode, lock the phone and walk out of Wi-Fi range (it should keep
+  playing with no jump back); pause, come back later, resume (same spot); let one episode run into the
+  next with the phone locked; check an episode you finish is marked played.
 - **Listen (iPhone): a podcast no longer sticks a few seconds before its end** · #225 · **TestFlight
   build** (native only; no Netlify deploy, nothing changes on the laptop). An episode stuck in its
   last stretch with the network up counts as finished (marked played, the queue moves on); one stuck
