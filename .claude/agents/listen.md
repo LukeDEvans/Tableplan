@@ -120,6 +120,11 @@ through the engine.
   don't turn them into newest-wins.
 - TTS cache identity is content-addressed — changing what feeds the hash invalidates
   every cached clip (cost + egress). Flag before changing it.
+- An episode stuck short of its end (iPhone): the native player's stall watch
+  (`checkAudioStall` in `LiveTtsPlugin.swift`) treats a stall in the last stretch, with
+  the network up, as finished, and reconnects a stall earlier in the episode (twice at
+  most). Offline is never "finished". Play after a stall reopens the episode at the same
+  spot (Luke, 2026-11-11).
 - Background audio, lock-screen controls and native TTS only behave on the phone;
   headless Chromium can't prove them.
 
