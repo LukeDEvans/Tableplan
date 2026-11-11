@@ -106,6 +106,7 @@ export function renderChart(data, spec, { w = 480, h = 300, theme = {} } = {}) {
   // titles
   if (spec.title) { parts.push(`<text x="${P}" y="${top + 13}" font-size="14" font-weight="600" fill="${T.ink}" ${font}>${esc(fit(spec.title, w - 2 * P, 14))}</text>`); top += 20; }
   if (spec.subtitle) { parts.push(`<text x="${P}" y="${top + 11}" font-size="12" fill="${T.muted}" ${font}>${esc(fit(spec.subtitle, w - 2 * P, 12))}</text>`); top += 17; }
+  if (spec.title || spec.subtitle) top += 10; // the top tick label is centred on its line
 
   const empty = (msg) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="${esc(spec.title || "Chart")}"><rect width="${w}" height="${h}" fill="${T.surface}"/>${parts.join("")}<text x="${w / 2}" y="${h / 2}" text-anchor="middle" font-size="12" fill="${T.muted}" ${font}>${esc(msg)}</text></svg>`;
   if (!series.length) return empty("No numbers in the chart's range");
