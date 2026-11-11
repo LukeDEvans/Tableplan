@@ -120,6 +120,11 @@ files in the Document page (and the Safe), edited in `documents/sheet/`.
 - `pivot-ui.js` reads and writes that formula; the formula bar shows "Pivot table…"
   (read-only) for it. Menus (`.sh-menu`, z 40) sit above side panels (z 34–35).
 
+## Comments and versions
+- Comment threads reuse the word processor's (`editor/doc-model.js`) with a `cell`
+  anchor `{ tab, row, col }` by ids (`history.js`). Restoring a version
+  (`restoreSheet`) copies every root type except `comments` in one transaction.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. -->
 - files: `documents/sheet/*.js`, `documents/sheet/engine/*.js`, `documents/sheet/engine/functions/*.js`

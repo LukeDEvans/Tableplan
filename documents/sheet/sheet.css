@@ -12,6 +12,8 @@
   --sheet-sel-fill: color-mix(in srgb, var(--accent) 12%, transparent);
   --sheet-freeze: color-mix(in srgb, var(--ink) 30%, var(--bg));
   --sheet-error: var(--tomato, #d93025);
+  --sheet-changed: color-mix(in srgb, var(--accent) 26%, var(--bg));
+  --sheet-comment: color-mix(in srgb, var(--accent) 70%, var(--ink));
   position: fixed; inset: 0; z-index: 2000;
   display: flex; flex-direction: column;
   background: var(--bg); color: var(--ink);
@@ -223,3 +225,32 @@
 .sh-pv-item .sh-f-list { max-height: 150px; }
 .sh-pv-item .sh-f-list input[type=checkbox] { width: auto; height: auto; flex: none; margin: 0; }
 .sh-formula.is-pivot, [data-formula].is-pivot { color: var(--muted); font-style: italic; }
+
+/* comments and version history (history-ui.js) */
+.sh-cm-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.sh-cm-card.is-new { border-color: var(--sheet-accent); }
+.sh-cm-card.is-resolved { opacity: 0.7; }
+.sh-cm-cell { align-self: flex-start; border: 0; background: none; padding: 0; color: var(--sheet-accent); font: inherit; font-size: 0.85em; font-weight: 600; cursor: pointer; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-cm-cell span { color: var(--muted); font-weight: 400; }
+.sh-cm-who { font-size: 0.85em; }
+.sh-cm-who small { color: var(--muted); }
+.sh-cm-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.92em; }
+.sh-cm-card textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; resize: vertical; min-height: 0; }
+.sh-cm-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.sh-cm-actions.is-small { justify-content: flex-start; gap: 12px; }
+.sh-cm-resolved { padding: 8px 14px 12px; flex: none; }
+.sh-vh-day { font-size: 0.8em; font-weight: 600; color: var(--muted); margin-top: 6px; }
+.sh-vh-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.sh-vh-item small { color: var(--muted); }
+.sh-vh-item.is-on { border-color: var(--sheet-accent); box-shadow: 0 0 0 1px var(--sheet-accent); }
+.sh-vpreview { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--sheet-bg); }
+@media (min-width: 701px) { .has-side-panel .sh-vpreview { right: 320px; } } /* beside the versions panel; on a phone the panel is a sheet over it */
+.sh-vp-bar { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--sheet-head); border-bottom: 1px solid var(--sheet-line); flex: none; min-width: 0; }
+.sh-vp-bar > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-vp-bar small { color: var(--muted); }
+.sh-vp-tabs { display: flex; gap: 4px; padding: 4px 10px; overflow-x: auto; flex: none; border-bottom: 1px solid var(--sheet-line); }
+.sh-vp-tabs button { border: 0; background: none; color: var(--muted); font: inherit; padding: 4px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.sh-vp-tabs button.is-on { background: var(--sheet-head-sel); color: var(--ink); }
+.sh-vp-scroll { position: relative; flex: 1; overflow: auto; min-height: 0; }
+.sh-vp-scroll canvas { position: absolute; left: 0; top: 0; pointer-events: none; }
+.sh-vp-space { position: absolute; left: 0; top: 0; width: 1px; height: 1px; }

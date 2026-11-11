@@ -84,6 +84,7 @@ export function drawGrid(canvas, model, engine, tab, g, view) {
     head: cssVar(host, "--sheet-head", "#f8f9fa"), headInk: cssVar(host, "--sheet-head-ink", "#5f6368"), headSel: cssVar(host, "--sheet-head-sel", "#d3e3fd"),
     accent: cssVar(host, "--sheet-accent", "#1a73e8"), selFill: cssVar(host, "--sheet-sel-fill", "rgba(26,115,232,0.10)"), freeze: cssVar(host, "--sheet-freeze", "#c0c4c8"),
     error: cssVar(host, "--sheet-error", "#d93025"),
+    changed: cssVar(host, "--sheet-changed", "rgba(237,161,0,0.28)"), comment: cssVar(host, "--sheet-comment", "#eda100"),
   };
   ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
   const showGrid = model.tabInfo(tab).gridlines;
@@ -118,6 +119,14 @@ export function drawGrid(canvas, model, engine, tab, g, view) {
     for (const r of rows) for (const c of cols) {
       const st = view.rules && !view.rules.empty ? dOf(r, c).st : model.style(model.cellAt(tab, r, c)?.s);
       if (st?.fill) { ctx.fillStyle = st.fill; ctx.fillRect(xOf(c, cp), yOf(r, rp), g.cw[c], g.rh[r]); }
+      // a version preview: cells that differ from now
+      if (view.changed?.has(`${g.rows[r]}.${g.cols[c]}`)) { ctx.fillStyle = C.changed; ctx.fillRect(xOf(c, cp), yOf(r, rp), g.cw[c], g.rh[r]); }
+    }
+    // a mark in the corner of a cell with a comment
+    if (view.corners?.size) for (const r of rows) for (const c of cols) {
+      if (!view.corners.has(`${g.rows[r]}.${g.cols[c]}`) || !g.cw[c] || !g.rh[r]) continue;
+      const x = xOf(c, cp) + g.cw[c], y = yOf(r, rp), s2 = Math.min(8, g.rh[r] / 2);
+      ctx.fillStyle = C.comment; ctx.beginPath(); ctx.moveTo(x - s2, y); ctx.lineTo(x, y); ctx.lineTo(x, y + s2); ctx.closePath(); ctx.fill();
     }
     // grid lines
     if (showGrid) {

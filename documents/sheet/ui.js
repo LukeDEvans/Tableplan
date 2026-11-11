@@ -24,6 +24,7 @@ import { createFilterUI } from "./filter-ui.js";
 import { createRulesUI } from "./rules-ui.js";
 import { createChartUI } from "./chart-ui.js";
 import { createPivotUI, isPivotText } from "./pivot-ui.js";
+import { createHistoryUI } from "./history-ui.js";
 import { regionAround } from "./filters.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -149,6 +150,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
   let rulesC = null;
   const px = createPivotUI({ root, model, engine, st, schedule: (o) => schedule(o), toast, isPhone, openMenu: (items, at) => openMenu(items, at), cellRect: (r, c) => cellRect(r, c), select: (r, c) => select(r, c), regionAround,
     newTabWithName: (name) => { const id = model.addTab({ name, at: model.tabIds().indexOf(st.tab) + 1 }); refreshUndoScope(); switchTab(id); return id; } });
+  const hx = createHistoryUI({ root, model, engine, st, schedule: (o) => schedule(o), toast, isPhone, session, me, select: (r, c) => select(r, c), switchTab: (t) => switchTab(t), a1Of });
   const cx = createChartUI({ root, model, engine, st, schedule: (o) => schedule(o), toast, isPhone, openMenu: (items, at) => openMenu(items, at), share: deps.share, fileName: () => nameInput?.value || file.name, regionAround, scroller });
 
   // ---- drawing --------------------------------------------------------------------------------
@@ -166,7 +168,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     sizer.style.height = `${g.height + g.headH + 60}px`;
     const w = scroller.clientWidth, h = scroller.clientHeight;
     const peers = peerCells();
-    drawGrid(canvas, model, engine, st.tab, g, { scrollX: st.scrollX, scrollY: st.scrollY, w, h, sel: st.sel, peers, editing: st.editing, dpr: window.devicePixelRatio || 1, filter: filterHead, rules: rulesC });
+    drawGrid(canvas, model, engine, st.tab, g, { scrollX: st.scrollX, scrollY: st.scrollY, w, h, sel: st.sel, peers, editing: st.editing, dpr: window.devicePixelRatio || 1, filter: filterHead, rules: rulesC, corners: hx.corners() });
     cx.update(g, { data: fresh });
     drawTabs();
     syncToolbar();
@@ -777,6 +779,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       { label: "Open a CSV file…", run: () => importCsv() },
       { sep: true },
       { label: "Rename", run: () => { nameInput.focus(); nameInput.select(); } },
+      { label: "Version history", run: () => { fx.close(); hx.openVersions(); } },
       { label: `Size: ${model.filledCells().toLocaleString()} filled cells`, disabled: true },
     ],
     edit: () => [
@@ -794,6 +797,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
         { label: `Up to column ${indexToCol(s().c)}`, run: () => model.setTabProps(st.tab, { frozenCols: s().c + 1 }) },
       ] },
       { label: model.tabInfo(st.tab).gridlines ? "Hide gridlines" : "Show gridlines", run: () => model.setTabProps(st.tab, { gridlines: !model.tabInfo(st.tab).gridlines }) },
+      { label: "Comments", run: () => { fx.close(); hx.openComments(); } },
       { label: "Zoom", sub: [50, 75, 90, 100, 125, 150, 200].map((z) => ({ label: `${z}%`, run: () => { st.zoom = z / 100; schedule(); } })) },
     ],
     insert: () => [
@@ -801,7 +805,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
       { label: `${nRows()} row${nRows() > 1 ? "s" : ""} below`, run: () => model.insertRows(st.tab, s().r2 + 1, nRows()) },
       { label: `${nCols()} column${nCols() > 1 ? "s" : ""} left`, run: () => model.insertCols(st.tab, s().c1, nCols()) },
       { label: `${nCols()} column${nCols() > 1 ? "s" : ""} right`, run: () => model.insertCols(st.tab, s().c2 + 1, nCols()) },
-      { sep: true }, { label: "Chart", run: () => cx.insert(), disabled: st.viewing }, { label: "Pivot table", run: () => px.insert(), disabled: st.viewing }, { label: "New tab", run: newTab }, { label: "Note", run: editNote },
+      { sep: true }, { label: "Chart", run: () => cx.insert(), disabled: st.viewing }, { label: "Pivot table", run: () => px.insert(), disabled: st.viewing }, { label: "Comment", run: () => { fx.close(); hx.openComments({ add: true }); }, disabled: st.viewing }, { label: "New tab", run: newTab }, { label: "Note", run: editNote },
       { label: "Function", sub: ["SUM", "AVERAGE", "COUNT", "MAX", "MIN", "IF", "VLOOKUP", "XLOOKUP", "SUMIF", "TODAY"].map((f) => ({ label: f, run: () => insertFunction(f) })) },
     ],
     format: () => [
@@ -1254,6 +1258,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     rx.destroy();
     cx.destroy();
     px.destroy();
+    hx.destroy();
     statusEl.textContent = "Saving…";
     stopBridge();
     engine.close();
@@ -1277,7 +1282,7 @@ export async function openSheetEditor({ store, file, me, deps = {}, host = docum
     // a cell's centre on screen (QA clicks there)
     cellCenter: (r, c) => { const R = cellRect(r, c), b = scroller.getBoundingClientRect(); return { x: b.left + R.x + R.w / 2, y: b.top + R.y + R.h / 2, w: R.w, h: R.h, right: b.left + R.x + R.w, bottom: b.top + R.y + R.h }; },
     shown: (r, c) => displayOf(model, engine, st.tab, r, c).text,
-    fx, rx, cx, px, rowShown: (r) => g.rh[r] > 0, rules: () => rulesC,
+    fx, rx, cx, px, hx, rowShown: (r) => g.rh[r] > 0, rules: () => rulesC,
     idle: () => engine.whenIdle(),
   };
   return { close, model, engine };
