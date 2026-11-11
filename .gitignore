@@ -25,3 +25,4 @@ ios/App/build/
 
 # Local live task checkpoint (usage-limit resume aid) — not committed
 PROGRESS.md
+test/.out/

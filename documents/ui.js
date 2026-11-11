@@ -949,6 +949,12 @@ export async function mountDocuments(root, deps) {
         store, file: { id: f.id, name: f.name, scope }, me, startEditing,
         deps: {
           liveOpen: deps.liveDocChannel || null, toast: deps.toast, isNative: deps.isNative, isSafe: true, people, presentScreen: deps.nativePresentScreen?.() || null, rename: () => {},
+          nativePdf: deps.nativePdfExport?.() ? (o) => deps.nativePdfExport().render(o).then((r) => r.pdf) : null,
+          share: async (blob, fileName, mime) => {
+            const { saveFile } = await import("../save-file.js");
+            const file = new File([blob], fileName, { type: mime });
+            if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: fileName }); } catch (e) { if (e?.name !== "AbortError") throw e; } } else await saveFile(blob, fileName);
+          },
           // linked charts and tables: spreadsheets in this same Safe only
           sheets: {
             list: async () => ui.files.filter((x) => x.mime === SAFE_SHEET_MIME && !x.deletedAt).map((x) => ({ id: x.id, name: x.name })),

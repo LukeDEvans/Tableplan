@@ -47,6 +47,24 @@ export async function templateName(id) {
   return TEMPLATES.find((t) => t.id === id)?.name || "Untitled presentation";
 }
 
+// A presentation from a PowerPoint file: the file row first (so its store exists), then
+// pictures and video into that store, then the content.
+export async function createSlidesFromPptx({ library, storeFor, scope, folderId, name, bytes }) {
+  const { pptxIntoModel } = await import("./pptx-import.js");
+  const { mediaId } = await import("./media.js");
+  const id = crypto.randomUUID();
+  const empty = new Y.Doc();
+  createSlidesModel(empty).init();
+  await library.addFile(scope, { id, content: docToContent(empty), text: " ", folderId, kind: "slides", meta: { name, mime: SLIDES_MIME, pages: 1 } });
+  const store = storeFor(id);
+  const ydoc = new Y.Doc();
+  const model = createSlidesModel(ydoc);
+  model.init();
+  const { notes } = await pptxIntoModel(model, bytes, { putMedia: async (b) => { const mid = await mediaId(store, b); await store.images.put(mid, b); return mid; } });
+  await store.saveContent(docToContent(ydoc));
+  return { id, notes };
+}
+
 // "Start from one of yours": a copy of another presentation (its slides, theme and
 // uploaded pictures and video, which are copied part by part; comments aren't).
 export async function copySlidesFile({ library, storeFor, scope, folderId, fromId, name }) {

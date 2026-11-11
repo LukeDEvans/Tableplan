@@ -1053,6 +1053,8 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
         { label: "Page setup…", act: "page-setup" },
         { label: "Version history", act: "panel", arg: "versions" },
         { label: "Name current version…", act: "name-version" },
+        { sep: true },
+        { label: "Download…", act: "download" },
       ];
       case "edit": return [
         { label: "Undo", act: "undo", keys: L("Ctrl+Z"), disabled: !undo.canUndo() },
@@ -1399,6 +1401,7 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
         if (v?.trim()) { await session.snapshot(v.trim()); toast("Version named."); }
         return;
       }
+      case "download": return downloadDialog();
       case "start-edit": return setViewing(false);
       case "phone-menu": return phoneMenu(anchor);
       default: return undefined;
@@ -1428,6 +1431,7 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
       { label: "Comments", act: "panel", arg: "comments" },
       { label: "Version history", act: "panel", arg: "versions" },
       { label: "Page setup", act: "page-setup" },
+      { label: "Download…", act: "download" },
     ]), { onClick: (b) => { if (b.dataset.act === "stop-edit") setViewing(true); else runAct(b.dataset.act, b.dataset.arg, anchor); } });
   }
 
@@ -1439,6 +1443,43 @@ export async function openSlidesEditor({ store, file, me, deps = {}, host = docu
     notesEditor?.setEditable(!v);
     renderStage();
     updateToolbar();
+  }
+
+  async function downloadDialog() {
+    const { value, form } = await openDialog(root, {
+      title: "Download",
+      body: `<label>As<select name="kind">
+          <option value="pdf:slides">PDF — slides</option>
+          <option value="pdf:notes">PDF — slides with speaker notes</option>
+          <option value="pdf:handout2">PDF — handouts, 2 slides a page</option>
+          <option value="pdf:handout3">PDF — handouts, 3 slides a page with lines for notes</option>
+          <option value="pdf:handout6">PDF — handouts, 6 slides a page</option>
+          <option value="pptx">PowerPoint (.pptx)</option>
+          <option value="png:one">Picture (PNG) — this slide</option>
+          <option value="png:all">Pictures (PNG) — every slide, zipped</option>
+        </select></label>
+        ${deps.presentScreen ? "" : `<label>Picture size<select name="size"><option value="1920">1920 px wide</option><option value="3840">3840 px wide (4K)</option></select></label>`}`,
+      actions: [{ label: "Cancel", value: null }, { label: "Download", value: "ok", primary: true }],
+    });
+    if (value !== "ok") return;
+    const [what, how] = form.kind.value.split(":");
+    const share = deps.share || (async (blob, name) => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 30000); });
+    stopEditingText();
+    statusEl.textContent = "Getting it ready…";
+    try {
+      if (what === "pdf") {
+        const { exportPdf } = await import("./export.js");
+        await exportPdf({ model, media, layout: how, name: currentName(), nativePdf: deps.nativePdf || null, share });
+      } else if (what === "png") {
+        const { exportPng } = await import("./export.js");
+        await exportPng({ model, media, sid: how === "one" ? st.slide : null, width: Number(form.size?.value) || 1920, name: currentName(), share, snapshot: deps.presentScreen || null });
+      } else if (what === "pptx") {
+        const { exportPptx } = await import("./pptx-export.js");
+        const bytes = await exportPptx(model, { media });
+        await share(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }), `${currentName().replace(/[\\/:*?"<>|]+/g, " ").trim() || "Presentation"}.pptx`, "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      }
+    } catch (e) { toast(e?.message || "That couldn't be made."); }
+    showStatus(session.state);
   }
 
   async function pageSetup() {

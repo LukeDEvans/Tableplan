@@ -262,6 +262,7 @@ export async function mountDocumentPage(root, deps) {
         ${v.ready && !inTrash && f.mime === DOCX_MIME ? `<button type="button" class="primary-btn" data-act="docx-to-doc">Edit as a document</button>` : ""}
         ${v.ready && !inTrash && f.mime === "text/csv" ? `<button type="button" class="primary-btn" data-act="csv-to-sheet">Edit as a spreadsheet</button>` : ""}
         ${v.ready && !inTrash && f.mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ? `<button type="button" class="primary-btn" data-act="xlsx-to-sheet">Edit as a spreadsheet</button>` : ""}
+        ${v.ready && !inTrash && f.mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ? `<button type="button" class="primary-btn" data-act="pptx-to-slides">Edit as a presentation</button>` : ""}
       </div>
       <div class="docs-viewer-body">${body}</div>
       <div class="docs-viewer-foot">
@@ -540,6 +541,8 @@ export async function mountDocumentPage(root, deps) {
     else if (act === "csv-to-sheet") csvFileToSheet();
     else if (act === "add-xlsx") { closeAddMenu(); pickExcelFiles(); }
     else if (act === "xlsx-to-sheet") excelFileToSheet();
+    else if (act === "add-pptx") { closeAddMenu(); pickPowerPointFiles(); }
+    else if (act === "pptx-to-slides") powerPointFileToSlides();
     else if (act === "add-word") { closeAddMenu(); pickWordFiles(); }
     else if (act === "add-google") { closeAddMenu(); googleImport(); }
     else if (act === "docx-to-doc") wordFileToDocument();
@@ -622,6 +625,7 @@ export async function mountDocumentPage(root, deps) {
       <button type="button" role="menuitem" data-act="add-word">Open a Word file as a document</button>
       <button type="button" role="menuitem" data-act="add-csv">Open a CSV file as a spreadsheet</button>
       <button type="button" role="menuitem" data-act="add-xlsx">Open an Excel file as a spreadsheet</button>
+      <button type="button" role="menuitem" data-act="add-pptx">Open a PowerPoint file as a presentation</button>
       <button type="button" role="menuitem" data-act="add-google">Bring over Google Docs</button>`;
     const r = anchor.getBoundingClientRect();
     addMenu.style.top = `${r.bottom + 6}px`;
@@ -731,6 +735,7 @@ export async function mountDocumentPage(root, deps) {
       presentScreen: deps.nativePresentScreen?.() || null,
       pickVideo: vc ? async (o) => { const r = await vc.pick(o); if (!r || r.cancelled) return null; const b = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0)); return new Blob([b], { type: r.mime || "video/mp4" }); } : null,
       share: (blob, name, mime) => shareBlob(blob, name, mime),
+      nativePdf: deps.nativePdfExport?.() ? (o) => deps.nativePdfExport().render(o).then((r) => r.pdf) : null,
       rename: (n) => { const x = ui.files.find((y) => y.id === f.id); if (x) x.name = n; },
       // linked charts and tables (SLIDES_DESIGN.md §6): this view's everyday spreadsheets only
       sheets: (() => {
@@ -796,6 +801,42 @@ export async function mountDocumentPage(root, deps) {
       await newSpreadsheet(h.csvTables(await file.text(), "Sheet1"), name);
     };
     input.click();
+  }
+
+  // PowerPoint in (SLIDES_DESIGN.md §10): a new presentation from a .pptx, its pictures and video into its own store
+  async function newPresentationFromPptx(bytes, name) {
+    const scope = ui.scope;
+    const folderId = currentFolder();
+    let id, notes = [];
+    await run("Opening the PowerPoint file…", async (sc, my) => {
+      const h = await slidesHost();
+      ({ id, notes } = await h.createSlidesFromPptx({ library, storeFor: (fid) => h.storeFor({ storage, transport, scope: sc, fileId: fid }), scope: sc, folderId, name, bytes }));
+      await refresh(my, sc);
+    });
+    if (notes?.length) deps.toast?.(`Opened. Not everything carried over: ${notes.slice(0, 3).join(" ")}`);
+    const f = id && ui.scope === scope && ui.files.find((x) => x.id === id);
+    if (f) openPresentation(f, { startEditing: true });
+  }
+  function pickPowerPointFiles() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > 300 * 1024 * 1024) { ui.error = "That file is larger than 300 MB."; draw(); return; }
+      try { await newPresentationFromPptx(new Uint8Array(await file.arrayBuffer()), displayName(file.name)); }
+      catch (e) { ui.error = e?.message || "That PowerPoint file couldn't be opened."; draw(); }
+    };
+    input.click();
+  }
+  async function powerPointFileToSlides() {
+    const v = ui.viewer;
+    const f = ui.files.find((x) => x.id === v?.id);
+    if (!f || !v.bytes) return;
+    closeViewer();
+    try { await newPresentationFromPptx(v.bytes, displayName(f.name)); }
+    catch (e) { ui.error = e?.message || "That PowerPoint file couldn't be opened."; draw(); }
   }
 
   function pickExcelFiles() {

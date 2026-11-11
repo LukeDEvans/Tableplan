@@ -16,6 +16,8 @@ import Capacitor
 //   • open() → { opened } (false when no TV is connected)
 //   • send({ msg })
 //   • close()
+//   • snapshot({ x, y, width, height }) → { png } — a picture of part of the app's own
+//     page (CSS px), at the screen's resolution, for exporting a slide as a picture
 //   • events: "screen" { connected }, "message" { msg }
 @objc(PresentScreenPlugin)
 public class PresentScreenPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandler {
@@ -25,7 +27,8 @@ public class PresentScreenPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHa
         CAPPluginMethod(name: "status", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "send", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "snapshot", returnType: CAPPluginReturnPromise)
     ]
 
     private var tvWindow: UIWindow?
@@ -121,6 +124,26 @@ public class PresentScreenPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHa
         DispatchQueue.main.async { [weak self] in
             self?.teardown()
             call.resolve()
+        }
+    }
+
+    @objc func snapshot(_ call: CAPPluginCall) {
+        let rect = CGRect(x: call.getDouble("x") ?? 0, y: call.getDouble("y") ?? 0, width: call.getDouble("width") ?? 0, height: call.getDouble("height") ?? 0)
+        DispatchQueue.main.async { [weak self] in
+            guard let web = self?.bridge?.webView, rect.width > 0, rect.height > 0 else {
+                call.reject("Nothing to capture")
+                return
+            }
+            let cfg = WKSnapshotConfiguration()
+            cfg.rect = rect
+            cfg.afterScreenUpdates = true
+            web.takeSnapshot(with: cfg) { image, error in
+                guard let png = image?.pngData() else {
+                    call.reject(error?.localizedDescription ?? "The picture couldn't be taken")
+                    return
+                }
+                call.resolve(["png": png.base64EncodedString()])
+            }
         }
     }
 
