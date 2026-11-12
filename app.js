@@ -79,6 +79,7 @@ import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, ded
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { SETTING_STAMP_KEYS, settingsSnapshot, stampSettingChanges, mergeTrackedSettings, localSettingsAhead } from './settings-sync.js';
 import { clearLocalAccountState, accountTransitionKind, signOutWasExplicit } from './auth-account-reset.js';
+import { createSecondStepModule, secondStepNeeded, oauthReturnError, stripOauthReturnError, oauthErrorMessage } from './auth-second-step.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
 import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnostics.js';
 import { describeCapabilities } from './platform-capabilities.js';
@@ -780,6 +781,15 @@ let localDevMode = false;
 // during boot (auto-entered via the live_local_dev flag) before the gate code's
 // line executes — a later `let` would be in its TDZ then. See updateAppLockState.
 let authCheckCompleted = false;
+// Authenticator-code step + iPhone Face ID lock (auth-second-step.js). Created up
+// here so boot can use it; every dep is an import or deferred, so no TDZ.
+const secondStep = createSecondStepModule({
+  getClient: () => supabaseClient,
+  escapeHtml: (...a) => escapeHtml(...a),
+  nativeDocumentsLock,
+  isNativeApp,
+  storage: localStorage,
+});
 // Memoized getPlanEventsForRange results, keyed by range; a small LRU so paging
 // months/weeks and the zoom ladder can reuse recent ranges. Cleared on persist,
 // iCal fetch, and full state replacement so it can never go stale.
@@ -2580,7 +2590,11 @@ function bindEvents() {
   }
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
-  document.getElementById("lockSignInBtn")?.addEventListener("click", () => elements.authDialog.showModal());
+  document.getElementById("lockSignInBtn")?.addEventListener("click", (e) => {
+    if (e.currentTarget.dataset.secondStep) secondStep.waitForCode();
+    else elements.authDialog.showModal();
+  });
+  secondStep.bind();
   // Local-dev escape hatch on the gate — only shown on localhost.
   const lockDevBtn = document.getElementById("lockDevSignInBtn");
   if (lockDevBtn && isLocalDevHost()) {
@@ -3370,16 +3384,26 @@ async function initializeSupabaseAuth() {
     return;
   }
 
+  // A Google/Apple sign-in that failed comes back with the reason on the URL.
+  // Read it before Supabase sees the URL, then show it on the gate (auth-second-step.js).
+  const oauthFailure = oauthReturnError(window.location.href);
+  if (oauthFailure) history.replaceState(null, "", stripOauthReturnError(window.location.href));
+
   supabaseClient = window.supabase.createClient(supabaseBaseUrl(), supabaseConfig().anonKey);
   const { data, error } = await supabaseClient.auth.getSession();
   if (error) {
     authCheckCompleted = true;
     updateAppLockState(); // reveal the sign-in button rather than sticking on "Checking…"
-    updateAuthUi("Could not check sign-in.");
+    updateAuthUi(oauthFailure ? oauthErrorMessage(oauthFailure) : "Could not check sign-in.");
     return;
   }
 
-  authSession = data.session;
+  let bootSession = data.session;
+  // Signed in, but this account has an authenticator code and this session
+  // hasn't given it yet: hold the boot at "One more step" (the gate stays shut,
+  // nothing loads) until the code is entered or the person signs out.
+  if (secondStepNeeded(bootSession)) bootSession = await secondStep.waitForCode();
+  authSession = bootSession;
   authCheckCompleted = true;
   // Record the booting account BEFORE registering the listener so Supabase's
   // INITIAL_SESSION event reads as a same-account 'refresh' (no-op) — the boot
@@ -3387,6 +3411,8 @@ async function initializeSupabaseAuth() {
   // and a subsequent sign-in is a clean 'first'.
   stateAccountId = authSession?.user?.id || authSession?.user?.email || null;
   updateAppLockState();
+  if (oauthFailure && !authSession?.access_token) updateAuthUi(oauthErrorMessage(oauthFailure));
+  secondStep.startFaceIdLock(() => !!authSession?.access_token);
   if (authSession?.access_token) { warmMailStatus(); warmMailList(); warmPageNotifs(); syncShareTokenForSession(true); refreshNewsTicker(); }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     // Multi-tab account isolation: classify the change against the account whose
@@ -3394,6 +3420,11 @@ async function initializeSupabaseAuth() {
     // auth changes to every tab via localStorage), so a stale tab left on account A
     // reacts here when another tab signs out or signs in as a different account.
     const kind = accountTransitionKind(stateAccountId, session);
+    // A fresh sign-in on an account with an authenticator code: stop at the code
+    // step and keep the app shut. Verifying fires this listener again with the
+    // upgraded session, which then loads as a normal first sign-in. Read from the
+    // session itself — awaiting auth calls in here can deadlock supabase-js.
+    if (kind === "first" && secondStepNeeded(session)) { secondStep.waitForCode(); return; }
     authSession = session;
     updateAppLockState();
     updateAuthUi();
@@ -18753,6 +18784,7 @@ function renderContextSettingsDialog(kind) {
     "voice": "Voice",
     "podcasts": "Podcasts",
     "display": "Display",
+    "sign-in": "Sign-in",
     "beta": "Beta",
     "link-test": "Link Test",
     "ai-log": "AI Action Log"
@@ -18771,6 +18803,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="pages">Pages</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
+        <button type="button" data-context-settings-action="sign-in">Sign-in</button>
         <button type="button" data-context-settings-action="export-data">Export My Data</button>
       </div>
       ${isAdmin ? `
@@ -18788,6 +18821,12 @@ function renderContextSettingsDialog(kind) {
       ` : ""}
       ${buildVersionLineHtml()}
     `;
+    return;
+  }
+
+  // Sign-in: authenticator code + Face ID (auth-second-step.js).
+  if (kind === "sign-in") {
+    secondStep.renderSettings(elements.contextSettingsBody);
     return;
   }
 
@@ -19672,6 +19711,7 @@ function handleContextSettingsAction(event) {
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
     "display": () => renderContextSettingsDialog("display"),
     "voice": () => renderContextSettingsDialog("voice"),
+    "sign-in": () => renderContextSettingsDialog("sign-in"),
     "restore-backup": () => openFromSettingsWithBack(elements.restoreDialog, openRestoreDialog),
     "export-data": () => closeAndRun(exportMyData),
     "reload-app": () => reloadForNewerBuild(),
