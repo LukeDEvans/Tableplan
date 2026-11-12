@@ -76,6 +76,7 @@ import { saveFile } from './save-file.js';
 import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_TEXT_PREVIEW_MAX, attachmentViewKind, attachmentBlobType, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
+import { normalizeMovedOut, mergeMovedOut, stripMovedOut } from './finance-move.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { SETTING_STAMP_KEYS, settingsSnapshot, stampSettingChanges, mergeTrackedSettings, localSettingsAhead } from './settings-sync.js';
 import { clearLocalAccountState, accountTransitionKind, signOutWasExplicit } from './auth-account-reset.js';
@@ -368,7 +369,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt", "financeMovedOut"],
   config:    ["mailAiSettings", "mailMoveMemory", "themeMode", "collapsedSections", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -387,6 +388,12 @@ const STATE_SECTIONS = {
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
 // 7 (2026-09-30): financeTxnSourceSetAt added (financeTxnSource is latest-choice-wins).
+// NEXT: 8, with the deploy that switches account moves on (FINANCE_SPLIT_DESIGN.md
+//   §8.6) — for financeMovedOut (what a move between Household and Personal took out
+//   of a finance row). Held at 7 on purpose (Luke, 2026-11-12: no deploy until the
+//   app-wide work is done): a bump now would stop the not-yet-deployed web app
+//   saving finance. Safe meanwhile: no move can run before that deploy, and the
+//   database trigger alone keeps financeMovedOut and strips what it lists.
 const STATE_SCHEMA_VERSION = 7;
 
 const SECTION_SCOPE = {
@@ -613,6 +620,37 @@ async function refreshActiveSectionFromServer(stateId, section, keys, { ifChange
   if (sectionRowId(stateId, section) !== rowId) { keepRowAsShadow(stateId, section, rows[0]); return; }
   mergeRemoteSectionRow(section, keys, rows[0]);
   mirrorStateToLocalStorage();
+  render();
+}
+
+// After the server moved accounts between Household and Personal
+// (FINANCE_SPLIT_DESIGN.md §8) both finance rows were rewritten. Take this view's
+// row exactly as it now is — never merge: this device's copy still holds what
+// moved — forget the other view's off-screen copy, and re-check whether this
+// person now has personal finance (which decides what Personal's Finance reads).
+async function reloadFinanceAfterMove() {
+  const keys = STATE_SECTIONS.finance;
+  const stateId = supabaseConfig().stateId;
+  const rowId = sectionRowId(stateId, "finance");
+  const res = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
+    { headers: supabaseHeaders(), cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`Couldn't reload finance (${res.status}).`);
+  const row = (await res.json())[0];
+  if (sectionRowId(stateId, "finance") !== rowId) return; // the view changed meanwhile; its own load covers it
+  const draft = { ...state };
+  for (const key of keys) delete draft[key];
+  for (const key of keys) if (row?.state && key in row.state) draft[key] = row.state[key];
+  const written = lastWrittenSections;
+  applyStoredState(draft);
+  if (written) {
+    lastWrittenSections = written;
+    lastWrittenSections.finance = JSON.stringify(extractSectionData(keys)); // equals the server: nothing to send back
+  }
+  if (row) lastSeenSectionStamp[rowId] = row.updated_at;
+  if (shadowSections.finance) { delete shadowSections.finance; persistShadowSections(); }
+  await loadPersonalFinanceFlag();
   render();
 }
 
@@ -1984,6 +2022,8 @@ const _finance = createFinanceModule({
   // member's own (`u-<id>`) for their personal accounts (FINANCE_SPLIT_DESIGN.md).
   getFinanceStoreGroupId: () => (sectionScope("finance") === "personal" ? (authSession?.user?.id ? `u-${authSession.user.id}` : null) : (userGroup?.id || null)),
   getFinanceScope: () => sectionScope("finance"),
+  canMoveFinanceAccounts: () => Boolean(userGroup?.role === "admin" && authSession?.user?.id && !localDevMode) || Boolean(localDevMode && window.__financeMoveQa),
+  reloadFinanceAfterMove: (...a) => reloadFinanceAfterMove(...a),
   openHouseholdFinance: () => { if (currentViewList().includes("household")) { currentViewKey.chosen = true; applyView("household", { keepPage: true }); } },
   canUseFinanceStore: () => !localDevMode && canUseCloudStorage() && !!authSession?.access_token,
   fetchSupabaseJson: (...a) => fetchSupabaseJson(...a),
@@ -4192,6 +4232,11 @@ function setupDiagnostics() {
     openPlanEventForQa: (id, dateKey) => { if (!localDevMode) return null; showPlanApp(); openPlanEventDetail(id, dateKey); return true; },
     openTripForQa: (id) => { if (!localDevMode) return null; openExploreTrip(id); return true; },
     openPageForQa: (name) => { if (!localDevMode) return null; ({ finance: showFinanceApp, shop: showShopApp, contacts: showContactsApp, news: showNewsApp, media: showMediaApp })[name]?.(); return activeAppArea; },
+    // The account move screen (scripts/qa-finance-move.mjs). Local dev only.
+    financeMoveSeedForQa: (accounts) => { if (!localDevMode) return null; state.financeAccounts = normalizeFinanceAccounts(accounts, createId); return true; },
+    financeAccountsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.financeAccounts || [])) : null),
+    personalFinanceFlagForQa: () => (localDevMode ? hasPersonalFinance : null),
+    financeRecheckLinkForQa: () => (localDevMode ? checkFinanceLinkStatus() : null),
     financeSeedAccount: () => {
       if (!localDevMode) return null;
       state.financeAccounts = normalizeFinanceAccounts([{ id: "qa-acct", owner: "Joint", name: "QA Savings", kind: "cash", manualBalance: 5000 }], createId);
@@ -5628,6 +5673,7 @@ function defaultState() {
     financeGoals: [],
     financeTxnSource: "feed", // "feed" (SimpleFIN 45-day window) | "store" (durable finance_transactions) — FINANCE_TRANSACTIONS_DESIGN.md §5.5
     financeTxnSourceSetAt: "", // when financeTxnSource was last chosen; merge keeps the latest choice
+    financeMovedOut: { epoch: 0, accounts: [], linked: [], txns: [] }, // what a move took out of this finance row (finance-move.js); only the server's move changes it
     financeAccountLabels: [],
     financeAccountSubLabels: {},
     financePersonal: [],
@@ -5826,6 +5872,7 @@ function normalizeState(parsed) {
     financeGoals: normalizeFinanceGoals(parsed?.financeGoals),
     financeTxnSource: parsed?.financeTxnSource === "store" ? "store" : "feed",
     financeTxnSourceSetAt: typeof parsed?.financeTxnSourceSetAt === "string" && !Number.isNaN(Date.parse(parsed.financeTxnSourceSetAt)) ? parsed.financeTxnSourceSetAt : "",
+    financeMovedOut: normalizeMovedOut(parsed?.financeMovedOut),
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
@@ -7537,6 +7584,19 @@ function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
   // the rules above only where a stamp exists. Also merges the per-section
   // stamp maps ("configSettingStamps", "mediaSettingStamps",
   // "grocerySettingStamps", "recreateSettingStamps", "planSettingStamps") — see settings-sync.js.
+  // Finance: what a move between Household and Personal took out of this row
+  // (FINANCE_SPLIT_DESIGN.md §8). The record from the later move wins; the side
+  // that hadn't seen that move contributes no month totals (they still count
+  // what moved, and the app rebuilds them); and whatever the record lists is
+  // removed from the merged copy, so this device can't show or re-send it.
+  {
+    const { movedOut, stale } = mergeMovedOut(newer.financeMovedOut, older.financeMovedOut);
+    merged.financeMovedOut = movedOut;
+    if (stale) merged.financeMonthActuals = normalizeFinanceMonthActuals((stale === "newer" ? older : newer).financeMonthActuals);
+    const stripped = stripMovedOut(merged);
+    if (stripped !== merged) for (const key of STATE_SECTIONS.finance) if (key in stripped) merged[key] = stripped[key];
+  }
+
   mergeTrackedSettings(merged, newer, older);
 
   // Preserve the actual data timestamp — only persist() (user-initiated changes) should advance it.
