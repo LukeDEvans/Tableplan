@@ -20,6 +20,16 @@ Each entry: what shipped · PR · post-deploy steps.
   Post-deploy: switch Inbox → AI Trash → Inbox quickly several times (no error; returning is
   instant); archive something, go to another folder and back (it's gone); get a new email while
   in another folder, go back to Inbox (it's there).
+- **Listen: Podcasts' Shows and Books match the Watch page** · #226 · **Both a TestFlight build
+  (iPhone) and a Netlify deploy (laptop web)** — client only (`app.js` + `styles.css`); no function,
+  env var or migration. Shows and Books use Watch's cover grid, four a row on a phone. Tapping a show
+  opens a panel under its row with its 5 most recent episodes; "All episodes" there opens the full
+  list (bundle settings). Tapping a book opens a panel with author, format, library availability and
+  the library / Libby / Audible links; its ⋯ is Shelves & options. Not yet tried on a real iPhone.
+  Post-TestFlight / post-deploy: on Podcasts › Shows, check four covers a row, tap a show (panel
+  opens under its row, grid stays), play an episode from the panel, open another show in the same
+  row and one in a lower row, then All episodes and Back; on Books, tap a cover (panel, library
+  availability fills in), open its ⋯ menu, and drag a cover onto a wishlist tab on the laptop.
 - **Listen (iPhone): podcasts download to the phone and play from the file** · #227 · **TestFlight
   build** (native only; no Netlify deploy, nothing changes on the laptop). An episode with a file on
   the phone plays from it; a new episode started from the beginning plays from its download as it
