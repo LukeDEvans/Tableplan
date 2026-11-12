@@ -40,6 +40,7 @@
     "qa:messaging-ui": "node scripts/qa-messaging-ui.mjs",
     "qa:documents-ui": "node scripts/qa-documents-ui.mjs",
     "check:messaging-migration": "node scripts/check-messaging-migration.mjs",
+    "check:finance-move-guard": "node scripts/check-finance-move-guard-migration.mjs migrations/2026-11-11-finance-move-guard.sql",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },
