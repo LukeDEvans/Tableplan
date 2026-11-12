@@ -1524,18 +1524,23 @@ function receiptScanIntro() {
 // The header scanner's entry: one tap from anywhere in the app. In the live app the
 // photos are sent straight off to be read (scan and go); the dialog never opens.
 // ocrPages: the document camera's own text recognition, when it did any.
+// Returns the id the receipt will have when the read comes back ("" when the scan
+// goes through the review dialog instead, where the id isn't known yet), so the
+// copy kept in Document can point at it.
 function openReceiptScanWithFiles(files, { ocrPages = null } = {}) {
   const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 6);
-  if (!list.length) return;
+  if (!list.length) return "";
   if (scanAndGoAvailable()) {
-    sendReceiptForReading(list, { ocrPages }).catch(() => {});
-    return;
+    const id = createId("receipt");
+    sendReceiptForReading(list, { ocrPages, id }).catch(() => {});
+    return id;
   }
   openReceiptScanDialog();
   receiptScanFiles = list;
   receiptImageEdits = retainScanImageEdits(receiptScanFiles, receiptImageEdits);
   updateReceiptScanSelectionStatus();
   scanReceiptImages();
+  return "";
 }
 
 function replaceReceiptScanFiles() {
@@ -1669,11 +1674,11 @@ function boundedOcrPages(pages) {
   return out.some((rows) => rows.length) ? out : null;
 }
 
-async function sendReceiptForReading(files, { ocrPages = null, edits = null } = {}) {
+async function sendReceiptForReading(files, { ocrPages = null, edits = null, id: presetId = "" } = {}) {
   const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 6);
   if (!list.length) return false;
   trackUsage("claude_receipt_scan");
-  const id = createId("receipt");
+  const id = presetId || createId("receipt");
   writeReceiptQueue(ReceiptQueue.addToQueue(readReceiptQueue(), {
     id,
     at: new Date().toISOString(),

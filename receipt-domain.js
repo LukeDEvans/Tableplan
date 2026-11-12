@@ -77,6 +77,14 @@ return {
       fees: number(receipt?.fees),
       discounts: number(receipt?.discounts),
       total: number(receipt?.total),
+      // What bookkeeping needs beyond the total (FINANCE_AUDIT D5). All optional:
+      // a tip printed on the receipt (not part of `total`), the paying card's last
+      // 4 digits when printed, who scanned it, and which view it belongs to
+      // ("" = household; "personal" = that person's own purchase).
+      tip: Math.max(0, number(receipt?.tip)),
+      paymentLast4: /^\d{4}$/.test(text(receipt?.paymentLast4)) ? text(receipt.paymentLast4) : "",
+      scannedBy: text(receipt?.scannedBy),
+      view: text(receipt?.view) === "personal" ? "personal" : "",
       imageUrl: text(receipt?.imageUrl),
       fileRef: text(receipt?.fileRef),
       imageRefs: normalizeImageRefs(receipt?.imageRefs),
@@ -319,6 +327,10 @@ return {
       source: receipt.source || "scan",
       externalId: receipt.externalId || "",
       financeTxnId: receipt.financeTxnId || "",
+      tip: number(receipt.tip),
+      last4: receipt.paymentLast4 || "",
+      view: receipt.view || "",
+      needsReview: Boolean(receipt.extraction && receipt.extraction.status && receipt.extraction.status !== "ok"),
       hasImage: (receipt.imageRefs || []).length > 0,
       items: (receipt.lineItems || []).map((line) => ({ name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
       portions: receiptFinancePortions(receipt)

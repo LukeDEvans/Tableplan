@@ -8,6 +8,7 @@ import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
 import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 import { linkOutAttrs } from './link-out.js';
+import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL } from './receipt-matcher.js';
 import { banksForAccounts, billerForBill, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
@@ -970,7 +971,6 @@ let financeReceiptsImported = false;
 let financeReceiptsLoadedAt = 0;
 let financeReceiptsInFlight = false;
 const RECEIPT_INBOX_MIN_INTERVAL_MS = 2 * 60 * 1000;
-const RECEIPT_MATCH_DAYS = 4;
 
 async function loadFinanceReceipts() {
   if (financeReceiptsInFlight) return;
@@ -981,6 +981,7 @@ async function loadFinanceReceipts() {
     const data = await callNetlifyFunction("simplefin", { action: "receipts" });
     const result = Array.isArray(data?.receipts) ? importFinanceInboxReceipts(data.receipts) : 0;
     const changed = typeof result === "number" ? result : (result?.added || 0) + (result?.updated || 0);
+    if (changed) autoLinkFinanceReceipts();
     if (changed && getActiveAppArea() === "finance") renderFinancePage();
   } finally {
     financeReceiptsInFlight = false;
@@ -996,21 +997,61 @@ function financeReceiptList() {
   try { return receiptsForFinance() || []; } catch { return []; }
 }
 
-function receiptMatchesTxn(r, t) {
-  if ((t.amount || 0) >= 0 || !(Number(r.total) > 0)) return false;
-  if (Math.abs(Math.abs(t.amount) - Number(r.total)) > 0.02) return false;
-  if (!r.date) return true;
-  return Math.abs(new Date(t.posted || 0).getTime() - new Date(r.date).getTime()) <= RECEIPT_MATCH_DAYS * 86400000;
+// Which transaction each receipt belongs to (receipt-matcher.js): store name,
+// dates, a tip, the card's last 4; one receipt per transaction. Worked out once
+// per set of transactions and receipts, not per row.
+let financeReceiptFitCache = null;
+function financeReceiptFits() {
+  const txns = financeLabeledTxns();
+  const list = financeReceiptList();
+  const sig = `${list.length}:${list.reduce((n, r) => n + (r.financeTxnId ? 1 : 0), 0)}:${list[0]?.id || ""}:${list[list.length - 1]?.id || ""}`;
+  if (financeReceiptFitCache && financeReceiptFitCache.txns === txns && financeReceiptFitCache.sig === sig) return financeReceiptFitCache;
+  const spend = txns.filter((t) => (t.amount || 0) < 0);
+  const byReceipt = matchReceipts(list, spend);
+  const byTxn = new Map();
+  const byId = new Map(list.map((r) => [r.id, r]));
+  for (const [receiptId, fit] of byReceipt) byTxn.set(fit.txn.id, { receipt: byId.get(receiptId), fit });
+  financeReceiptFitCache = { txns, sig, byReceipt, byTxn, list };
+  return financeReceiptFitCache;
 }
 
-// The receipt for a spend transaction: the one already linked to it (itemized
-// earlier), else an unlinked receipt with the same total (±2¢) dated within
-// 4 days. Used to prefill the split editor with categorized portions.
-function financeReceiptForTxn(t, list = financeReceiptList()) {
+// The receipt for a spend transaction: the one linked to it, else the one that
+// fits it. Used to prefill the split editor with categorized portions.
+function financeReceiptForTxn(t) {
   if (!t || (t.amount || 0) >= 0) return null;
-  return list.find((r) => r.financeTxnId === t.id)
-    || list.find((r) => !r.financeTxnId && receiptMatchesTxn(r, t))
-    || null;
+  return financeReceiptFits().byTxn.get(t.id)?.receipt || null;
+}
+
+// What Document shows on a receipt's file: what was read, and its charge.
+function financeReceiptInfo(receiptId) {
+  const list = financeReceiptList();
+  const r = list.find((x) => x.id === receiptId);
+  if (!r) return null;
+  const haveTxns = Boolean(financeLive?.accounts?.length);
+  const fit = haveTxns ? financeReceiptFits().byReceipt.get(receiptId) || null : null;
+  // Before Finance has loaded this visit, only a saved link is known.
+  const status = !haveTxns && r.financeTxnId ? "matched" : receiptStatus(r, fit);
+  return {
+    id: r.id, store: r.merchant || "", date: r.date || "", total: Number(r.total) || 0, tip: Number(r.tip) || 0,
+    source: r.source || "scan", status, statusLabel: RECEIPT_STATUS_LABEL[status] || "",
+    known: haveTxns || Boolean(r.financeTxnId),
+    items: (r.items || []).map((i) => ({ name: i.name || "", price: Number(i.price) || 0, category: i.category ? financeTxnLabelName(i.category) || "" : "" })),
+    txn: fit?.txn ? { id: fit.txn.id, posted: fit.txn.posted || "", name: fit.txn.displayName || fit.txn.description || "", account: fit.txn.account || "", amount: Number(fit.txn.amount) || 0 } : null,
+  };
+}
+
+// A certain match (same amount, right dates, same store, no twin charge) links
+// itself, so the receipt stays with its transaction after either scrolls out of
+// the window. Anything less waits for a tap. Bounded: only unlinked receipts.
+function autoLinkFinanceReceipts() {
+  let linked = 0;
+  for (const [receiptId, fit] of financeReceiptFits().byReceipt) {
+    if (fit.confidence !== "sure") continue;
+    linkReceiptToFinanceTxn(receiptId, fit.txn.id);
+    linked += 1;
+  }
+  if (linked) financeReceiptFitCache = null;
+  return linked;
 }
 
 let financeLinkStatusChecking = false;
@@ -1074,6 +1115,7 @@ async function refreshFinanceLive(force = false) {
   invalidateFinanceLabeled(); // fresh accounts payload — the cache (now decoupled from financeLive) needs a nudge
   updateFinanceMonthActuals();
   updateFinanceRecurring();
+  autoLinkFinanceReceipts();
   setPageNotifCount("finance", financeBellCount());
   if (financeHistory === null) loadFinanceHistory();
   if (!financeReceiptsImported) loadFinanceReceipts().catch(() => {});
@@ -3207,7 +3249,8 @@ function renderFinancePage() {
   }
   const catActual = (g, c) => catActuals.get(`${g.id}:${c.id}`) || 0;
   // Money out with no category in the viewed month: what every total leaves out.
-  const uncatThis = financeUncategorizedByMonth(allTxns).get(monthKey) || { spend: 0, count: 0 };
+  const uncatByMonth = financeUncategorizedByMonth(allTxns);
+  const uncatThis = uncatByMonth.get(monthKey) || { spend: 0, count: 0 };
   const skippedMerchants = Object.values((state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {}).filter(Boolean).length;
   // A past month shows its saved totals. When stored history covers the whole
   // month and adds up differently (something was categorized later), offer to
@@ -4153,18 +4196,15 @@ function renderFinancePage() {
   // spend transaction (the reverse of financeReceiptForTxn). Drives the receipts
   // inbox + itemize prompt. Only recent receipts: older ones' charges are out of
   // the loaded transaction window, and the list holds every receipt ever saved.
-  const rSpendTxns = allTxns.filter((t) => (t.amount || 0) < 0);
   const rCutoff = Date.now() - 45 * 86400000;
   const rRecent = financeReceiptList()
     .filter((r) => Number(r.total) > 0 && (!r.date || new Date(r.date).getTime() >= rCutoff))
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   const rMatched = [], rUnmatched = [];
-  const rClaimed = new Set(rRecent.map((r) => r.financeTxnId).filter(Boolean));
+  const rFits = financeReceiptFits().byReceipt;
   for (const r of rRecent) {
-    const t = r.financeTxnId
-      ? rSpendTxns.find((x) => x.id === r.financeTxnId)
-      : rSpendTxns.find((x) => !rClaimed.has(x.id) && receiptMatchesTxn(r, x));
-    if (t) { rClaimed.add(t.id); rMatched.push({ r, t }); } else rUnmatched.push(r);
+    const t = rFits.get(r.id)?.txn;
+    if (t) rMatched.push({ r, t }); else rUnmatched.push(r);
   }
   const itemizable = rMatched.filter(({ r, t }) => t.label !== "split" && (r.portions || r.items || []).length > 1);
 
@@ -4271,6 +4311,7 @@ function renderFinancePage() {
   const cfIn = showActuals ? incomeActual : null;
   const cfOut = monthActualSpend;
   const cfNet = (cfIn != null && cfOut != null) ? cfIn - cfOut : null;
+  const cfUncat = cashflow.series.reduce((s, m) => s + (uncatByMonth.get(m.month)?.spend || 0), 0);
   const cashFlowCard = cashflow.hasData ? `
     <div class="fin-card fin-insights-card">
       <div class="fin-subhead fin-accounts-title">Cash flow</div>
@@ -4291,6 +4332,7 @@ function renderFinancePage() {
           </div>`).join("")}
       </div>
       <div class="fin-cf-legend"><span class="fin-cf-key in">Money in</span><span class="fin-cf-key out">Money out</span></div>
+      ${cfUncat > 0 ? `<p class="fin-hint">Money out counts categorized spending. Not counted over these months: ${formatFinMoney(cfUncat)} uncategorized.</p>` : ""}
     </div>` : "";
   const subs = (state.financeRecurring || []).filter((r) => r.active !== false).sort((a, b) => (b.lastAmount || 0) - (a.lastAmount || 0));
   const subsTotal = subs.reduce((s, r) => s + (r.lastAmount || 0), 0);
@@ -5281,5 +5323,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeReceiptInfo, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

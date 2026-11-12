@@ -9224,6 +9224,9 @@ function documentsDeps() {
     toast: (text) => showMailToast(text),
     openMessages: () => { localStorage.setItem(MESSAGE_TAB_KEY, "messages"); showMailApp(); },
     fileReceipts: (scope) => fileWaitingReceipts(scope),
+    // A receipt file shows what was read from it and whether it's matched to a charge.
+    receiptInfo: (receiptId) => _finance.financeReceiptInfo(receiptId),
+    openReceipt: (receiptId) => openReceiptDetail(receiptId),
   };
 }
 
@@ -18162,8 +18165,8 @@ function scanReceiptFromHeader(files, options = {}) {
   const images = files.filter((f) => /^image\//.test(f.type || ""));
   if (!images.length) return;
   const { camera = false, ...scanOptions } = options;
-  openReceiptScanWithFiles(images, scanOptions);
-  queueReceiptForDocuments(images, { camera });
+  const receiptId = openReceiptScanWithFiles(images, scanOptions);
+  queueReceiptForDocuments(images, { camera, receiptId });
 }
 
 // Every scanned receipt is also kept in Household's Document › Receipts, an everyday
@@ -18183,12 +18186,12 @@ function receiptOutbox() {
   })().catch((e) => { receiptOutboxPromise = null; throw e; });
   return receiptOutboxPromise.then((o) => o.outbox);
 }
-async function queueReceiptForDocuments(files, { camera = false } = {}) {
+async function queueReceiptForDocuments(files, { camera = false, receiptId = "" } = {}) {
   if (localDevMode || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return;
   const scope = userGroup.id; // filed only into the household it was scanned in
   try {
     const pages = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
-    await (await receiptOutbox()).queue(pages, { scope, camera });
+    await (await receiptOutbox()).queue(pages, { scope, camera, receiptId });
   } catch { return; /* best-effort: the receipt itself is unaffected */ }
   fileWaitingReceipts(scope).catch(() => {}); // now; whatever fails waits for the next try
 }

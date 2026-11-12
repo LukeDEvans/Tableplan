@@ -25648,6 +25648,17 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
 .docs-file-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .docs-file-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .docs-file-meta { font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-chip { flex: none; align-self: center; margin-left: 8px; padding: 2px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.docs-chip.is-matched, .docs-chip.is-itemized { background: color-mix(in srgb, #1e7a46 14%, transparent); color: #17603a; }
+.docs-chip.is-needs-look { background: color-mix(in srgb, #b3261e 12%, transparent); color: #8c1d18; }
+.docs-receipt { flex: none; max-height: 40%; overflow: auto; padding: 10px 14px; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); font-size: 0.88rem; }
+.docs-receipt-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.docs-receipt-total { margin-left: auto; font-weight: 800; }
+.docs-receipt-lines { list-style: none; margin: 8px 0; padding: 0; }
+.docs-receipt-lines li { display: flex; gap: 10px; padding: 4px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.docs-receipt-item { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-receipt-cat { color: var(--muted); white-space: nowrap; }
+.docs-receipt-price { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .docs-empty { padding: 24px 4px; text-align: center; }
 .docs-viewer { position: absolute; inset: 0; z-index: 30; background: var(--bg); color: var(--ink); display: flex; flex-direction: column; min-height: 0; }
 .docs-viewer-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }

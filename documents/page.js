@@ -111,6 +111,8 @@ export async function mountDocumentPage(root, deps) {
     library.purgeExpired(scope).catch(() => {});
     if (ui.kind === "household") await fileWaitingReceipts(my, scope);
     if (my !== gen) return;
+    if (ui.kind === "household") await nameReceiptFiles(my, scope).catch(() => {});
+    if (my !== gen) return;
     await checkBanners(my, scope);
     if (my === gen) draw();
   }
@@ -194,14 +196,43 @@ export async function mountDocumentPage(root, deps) {
     </nav>`;
   }
 
+  // A receipt's file points at its receipt (source.receiptId, set when it's filed).
+  // The app answers what was read from it and whether a charge matches it.
+  const money = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+  function receiptOf(f) {
+    const id = f?.source?.receiptId;
+    if (!id || !deps.receiptInfo) return null;
+    try { return deps.receiptInfo(id) || null; } catch { return null; }
+  }
+  const receiptChip = (r) => (r?.statusLabel && r.known ? `<span class="docs-chip is-${esc(r.status)}">${esc(r.statusLabel)}</span>` : "");
+
+  // A receipt filed before its read came back is named "Receipt · <date>". Once the
+  // store is known, give it its real name and date. A few per visit, best-effort.
+  async function nameReceiptFiles(my, scope) {
+    const stale = ui.files.filter((f) => !f.deletedAt && /^Receipt · /.test(f.name) && receiptOf(f)?.store).slice(0, 5);
+    for (const f of stale) {
+      const r = receiptOf(f);
+      const name = `${r.store} · ${r.date || f.documentDate || ""}`.replace(/ · $/, "").slice(0, 200);
+      try {
+        await library.rename(scope, f.id, name);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(r.date) && r.date !== f.documentDate) await library.setDocumentDate(scope, f.id, r.date);
+      } catch { return; }
+      if (my !== gen || scope !== ui.scope) return;
+    }
+    if (stale.length) await refresh(my, scope);
+  }
+
   function fileRow(f) {
-    const meta = [dateLabel(f.documentDate || f.createdAt), f.pages > 1 ? `${f.pages} pages` : "", sizeLabel(f.size)].filter(Boolean).join(" · ");
+    const receipt = receiptOf(f);
+    const meta = receipt
+      ? [dateLabel(receipt.date || f.documentDate || f.createdAt), receipt.total ? money(receipt.total) : "", receipt.items.length ? `${receipt.items.length} item${receipt.items.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")
+      : [dateLabel(f.documentDate || f.createdAt), f.pages > 1 ? `${f.pages} pages` : "", sizeLabel(f.size)].filter(Boolean).join(" · ");
     const folder = ui.folder === "all" ? ui.folders.find((x) => x.id === f.folderId)?.name : "";
     const who = ui.kind === "household" && f.addedBy && f.addedBy !== userId ? ` · added by ${esc(nameOf(f.addedBy))}` : "";
     return `<li><button type="button" class="docs-file" data-open="${esc(f.id)}">
       <span class="docs-thumb" data-thumb="${esc(f.id)}" aria-hidden="true">${esc(glyphFor(f.mime))}</span>
       <span class="docs-file-text"><span class="docs-file-name">${esc(f.name)}</span>
-      <span class="docs-file-meta">${esc(meta)}${folder ? ` · ${esc(folder)}` : ""}${who}</span></span></button></li>`;
+      <span class="docs-file-meta">${esc(meta)}${folder ? ` · ${esc(folder)}` : ""}${who}</span></span>${receiptChip(receipt)}</button></li>`;
   }
 
   function libraryView() {
@@ -242,6 +273,15 @@ export async function mountDocumentPage(root, deps) {
     else if (v.text != null) body = `<pre class="docs-view-text"></pre>`;
     else if (v.ready) body = quickLook ? `<p class="msg-muted">Tap Open to view it.</p>` : `<p class="msg-muted">This kind of file can't be shown here. Use Share to open it in another app.</p>`;
     const inTrash = Boolean(f.deletedAt);
+    const receipt = receiptOf(f);
+    const receiptPanel = receipt ? `
+      <section class="docs-receipt" aria-label="What was read from this receipt">
+        <div class="docs-receipt-head"><strong>${esc(receipt.store || "Receipt")}</strong><span>${esc(dateLabel(receipt.date))}</span><span class="docs-receipt-total">${esc(money(receipt.total))}</span>${receiptChip(receipt)}</div>
+        ${receipt.items.length ? `<ul class="docs-receipt-lines">${receipt.items.map((i) => `<li><span class="docs-receipt-item">${esc(i.name)}</span><span class="docs-receipt-cat">${esc(i.category)}</span><span class="docs-receipt-price">${esc(money(i.price))}</span></li>`).join("")}</ul>` : ""}
+        ${receipt.tip ? `<p class="msg-muted">Tip ${esc(money(receipt.tip))}</p>` : ""}
+        ${receipt.txn ? `<p class="msg-muted">Charged ${esc(money(-receipt.txn.amount))}${receipt.txn.account ? ` to ${esc(receipt.txn.account)}` : ""} · ${esc(dateLabel(receipt.txn.posted))}</p>` : ""}
+        ${deps.openReceipt ? `<button type="button" class="secondary-btn" data-act="open-receipt" data-receipt="${esc(receipt.id)}">Edit receipt</button>` : ""}
+      </section>` : "";
     const folderOptions = ui.folders.map((x) => `<option value="${esc(x.id)}"${x.id === f.folderId ? " selected" : ""}>${esc(x.name)}</option>`).join("");
     return `<div class="docs-viewer" role="dialog" aria-modal="true" aria-label="${esc(f.name)}">
       <div class="docs-viewer-head">
@@ -251,6 +291,7 @@ export async function mountDocumentPage(root, deps) {
         ${v.ready && !inTrash ? `<button type="button" class="secondary-btn" data-act="share">Share</button>` : ""}
       </div>
       <div class="docs-viewer-body">${body}</div>
+      ${receiptPanel}
       <div class="docs-viewer-foot">
         ${inTrash
           ? `<button type="button" class="primary-btn" data-act="restore-file">Put back</button>`
@@ -521,6 +562,7 @@ export async function mountDocumentPage(root, deps) {
     else if (act === "close-viewer") { closeViewer(); ui.error = ""; draw(); }
     else if (act === "share") share();
     else if (act === "quicklook") openQuickLook();
+    else if (act === "open-receipt") deps.openReceipt?.(t.closest("[data-act]")?.dataset.receipt || "");
     else if (act === "trash-file") {
       const id = ui.viewer?.id;
       await run("Deleting…", async (scope, my) => { await library.trash(scope, id); if (my === gen) closeViewer(); await refresh(my, scope); deps.toast?.(`Moved to Recently deleted for ${RECENTLY_DELETED_DAYS} days.`); });

@@ -56,13 +56,13 @@ export function createReceiptOutbox(store, { now = () => Date.now() } = {}) {
   return {
     // pages: [{ bytes: Uint8Array, type: "image/jpeg" | … }]; scope: the household
     // it's for (filed only there); camera: pages from the document camera.
-    async queue(pages, { scope, camera = false } = {}) {
+    async queue(pages, { scope, camera = false, receiptId = "" } = {}) {
       if (!scope) return null;
       const kept = (pages || []).filter((p) => p?.bytes instanceof Uint8Array && p.bytes.length && /^image\//.test(pageType(p.type))).slice(0, MAX_PAGES);
       if (!kept.length || kept.reduce((n, p) => n + p.bytes.length, 0) > OUTBOX_ENTRY_MAX_BYTES) return null;
       const at = now();
       const key = `r:${String(at).padStart(15, "0")}:${Math.random().toString(36).slice(2, 10)}`;
-      await store.set(key, { at, scope, camera: Boolean(camera), attempts: 0, pages: kept.map((p) => ({ bytes: p.bytes, type: pageType(p.type) })) });
+      await store.set(key, { at, scope, camera: Boolean(camera), receiptId: String(receiptId || ""), attempts: 0, pages: kept.map((p) => ({ bytes: p.bytes, type: pageType(p.type) })) });
       await prune();
       return key;
     },
@@ -79,15 +79,18 @@ export function createReceiptOutbox(store, { now = () => Date.now() } = {}) {
 // match is the first scan receipt saved in the 15 minutes after it (a minute's
 // slack for clocks) that no other receipt in this run took. receipts: [{ id,
 // storeName, purchaseDate, createdAt, source }]; used: ids already taken.
-export function receiptLabel(at, receipts = [], used = new Set()) {
-  const near = (receipts || [])
+// `receiptId`: the id the scan was given (known for a scan-and-go receipt); that
+// receipt is used when it has arrived, and time is only the fallback.
+export function receiptLabel(at, receipts = [], used = new Set(), receiptId = "") {
+  const known = receiptId ? (receipts || []).find((r) => r?.id === receiptId && r.storeName) : null;
+  const near = known || (receiptId ? null : (receipts || [])
     .filter((r) => (r?.source || "scan") === "scan" && r?.storeName && r?.createdAt && !used.has(r.id))
     .map((r) => ({ r, gap: Date.parse(r.createdAt) - at }))
     .filter((x) => Number.isFinite(x.gap) && x.gap >= -60 * 1000 && x.gap <= 15 * 60 * 1000)
-    .sort((a, b) => a.gap - b.gap)[0]?.r;
+    .sort((a, b) => a.gap - b.gap)[0]?.r);
   if (near?.id) used.add(near.id);
   const date = near?.purchaseDate || isoDay(at);
-  return { name: `${near ? near.storeName : "Receipt"} · ${date}`.slice(0, 200), documentDate: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : isoDay(at) };
+  return { receiptId: receiptId || near?.id || "", name: `${near ? near.storeName : "Receipt"} · ${date}`.slice(0, 200), documentDate: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : isoDay(at) };
 }
 
 function isoDay(ms) {
@@ -193,12 +196,14 @@ export async function fileReceipts({
       try {
         let ids = Array.isArray(entry.fileIds) && entry.fileIds.length === keep.length ? entry.fileIds : null;
         if (!ids) { ids = keep.map(() => newId()); await outbox.put(entry.key, { ...entry, fileIds: ids }); }
-        const { name, documentDate } = receiptLabel(entry.at, receipts(), used);
+        const { name, documentDate, receiptId } = receiptLabel(entry.at, receipts(), used, entry.receiptId || "");
+        // The file points at its receipt, so Document can show what was read from it.
+        const source = receiptId ? { receiptId } : null;
         for (const [i, d] of keep.entries()) {
           if (await library.has(scope, ids[i])) continue; // stored before a crash
           const thumb = await makeThumb(d.first);
           await library.addFile(scope, {
-            id: ids[i], content: d.content, thumb, folderId,
+            id: ids[i], content: d.content, thumb, folderId, source,
             meta: { name: keep.length > 1 ? `${name} (${i + 1})` : name, mime: d.mime, pages: d.pages, documentDate, tags: ["receipt"] },
           });
         }

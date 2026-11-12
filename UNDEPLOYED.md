@@ -18,6 +18,14 @@ Each entry: what shipped · PR · post-deploy steps.
   counts a bill once; the allowance card is named Allowances. After the deploy, `daily-briefing`
   stops pulling the bank (until then it still tries at 13:00 UTC and gives up, as before).
 
+- **Receipts as records, part 1 (audit step 2)** · branch `claude/finance-true-numbers` · client only,
+  seen with a TestFlight build or a deploy: a scan's Document file points at its receipt
+  (`doc_pfiles.source.receiptId`); Document's receipt rows show store, date, total, items and a
+  Matched / Unmatched chip, the viewer lists the lines, and a file named "Receipt · <date>" is
+  renamed once the store is read; Finance matches receipts by store, dates, tip and card digits
+  (`receipt-matcher.js`) and links a certain match itself. New optional receipt fields: tip,
+  paymentLast4, scannedBy, view (the reader doesn't fill tip or card digits yet).
+
 - **Finance: moving accounts between Household and Personal (step 3)** · #232 · **needs a Netlify
   deploy to do anything** (the server action; the app's screen stays hidden until the server
   answers that it can move accounts). The database guard is already applied (2026-11-12).
