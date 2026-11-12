@@ -10,6 +10,13 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Views: removing something from Household no longer removes it from Personal** · PR pending ·
+  **TestFlight build and a Netlify deploy** (client-only shared sync code; each device is fixed
+  once it runs the new build — update Marijane's phone too). Deletes are kept per view: a show,
+  title, task or event removed in one view stays in any other view that holds the same one.
+  Older deletes still apply as before. No migration, no env vars. Post-deploy: add the same
+  title to Watch in Personal and in Household; remove it from Household; switch to Personal (it
+  is still there); remove it there too (gone from both, and it stays gone after a refresh).
 - **Listen: Podcasts' Shows and Books match the Watch page** · #226 · **TestFlight build**
   (client-only; the laptop needs a Netlify deploy). Four covers a row on a phone; tapping a show
   opens a panel under its row with its 5 most recent episodes (All episodes opens the full list,

@@ -45,7 +45,7 @@ import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRo
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { SPEED_MIN, SPEED_MAX, snapPlaybackSpeed, stepPlaybackSpeed, formatSpeedLabel, speedStepperHtml } from './playback-speed.js';
-import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
+import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, effectiveTombstones, tombstoneIdsFor, addTombstone, removeTombstone, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
@@ -4077,7 +4077,12 @@ function setupDiagnostics() {
     watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); (items || []).forEach((i) => i?.id && unrecordDeletion("watchItems", i.id)); persist(); if (activeAppArea === "watch") { activeWatchCategory = "all"; expandedWatchItemId = null; renderWatchPlanner(); } return true; },
     // The Watch list and its removals as saved (scripts/qa-watch-panel.mjs). Local dev only.
     watchItemsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.watchItems || [])) : null),
-    watchTombstonesForQa: () => (localDevMode ? [...(state.tombstones?.watchItems || [])] : null),
+    watchTombstonesForQa: () => (localDevMode ? [...deletedIdsFor("watchItems")] : null),
+    // Per-view delete lists (scripts/qa-view-deletes.mjs). Local dev only.
+    setViewForQa: (view) => { if (!localDevMode) return null; applyView(view); return currentViewKey(); },
+    watchDeleteForQa: (id) => { if (!localDevMode) return null; deleteWatchItem(id); return true; },
+    tombstonesForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.tombstones || {})) : null),
+    mergeForQa: (newer, older) => (localDevMode ? JSON.parse(JSON.stringify(mergeStates(newer, older))) : null),
     // Listen bell music shows (scripts/qa-music-shows.mjs): saved articles carrying a
     // musicShow, as the inbox sweep writes them. Local dev only.
     musicShowsSeedForQa: (articles) => { if (!localDevMode) return null; state.savedArticles = [...(state.savedArticles || []).filter((a) => !articles.some((b) => b.id === a.id)), ...articles]; persist(); musicShows.updateBadge(); return true; },
@@ -5148,7 +5153,7 @@ function saveTripBackup() {
     localStorage.setItem(TRIP_BACKUP_KEY, JSON.stringify({
       trips: state.trips || [],
       travelIdeas: state.travelIdeas || [],
-      tombstones: (state.tombstones?.trips || []),
+      tombstones: deletedIdsFor("trips"),
       savedAt: state.stateUpdatedAt
     }));
   } catch {}
@@ -5928,17 +5933,43 @@ function normalizeTombstones(raw) {
   return result;
 }
 
+// Per-view delete lists (state-sync.js): a key whose section has a row per view
+// records its deletes for the row they were made in, so removing something from
+// the household's list never removes the same id from a person's own.
+// → the owner of the row `key` is in right now: the person ("u-<id>"),
+// "household" or the business space's id; null for a key with one row for
+// everyone, or when the row can't be named yet. `scopeOf` lets a caller merging a row that is NOT
+// on screen (writeInactiveSection) name that row's scope.
+const TOMBSTONE_EXTRA_SECTIONS = { doPlanTasks: "do", financeCategories: "finance", financeLineItems: "finance", financeScenarios: "finance" };
+let stateKeySections = null;
+function tombstoneOwner(key, scopeOf = sectionScope) {
+  if (!stateKeySections) {
+    stateKeySections = {};
+    for (const [section, keys] of Object.entries(STATE_SECTIONS)) for (const k of keys) stateKeySections[k] = section;
+  }
+  const base = String(key || "").split(".")[0]; // "watchSettings.theaters" → watchSettings
+  const section = stateKeySections[base] || TOMBSTONE_EXTRA_SECTIONS[base];
+  if (!section || SECTION_SCOPE[section] !== "toggle") return null;
+  const scope = scopeOf(section);
+  if (scope === "personal") {
+    const uid = authSession?.user?.id;
+    return uid ? `u-${uid}` : (localDevMode ? "u-local" : null);
+  }
+  if (scope === "business") return businessSpace?.id || null;
+  // The delete lists live in the household's own row, so "household" needs no id
+  // (and doesn't depend on the group having loaded yet).
+  return "household";
+}
+
+// The deleted ids that apply to `key` in the view on screen.
+function deletedIdsFor(key) {
+  return tombstoneIdsFor(state.tombstones, key, tombstoneOwner(key));
+}
+
 function recordDeletion(arrayKey, id) {
   if (!id) return;
-  const idStr = String(id);
   if (!state.tombstones) state.tombstones = {};
-  if (!Array.isArray(state.tombstones[arrayKey])) state.tombstones[arrayKey] = [];
-  if (!state.tombstones[arrayKey].includes(idStr)) {
-    state.tombstones[arrayKey].push(idStr);
-    if (state.tombstones[arrayKey].length > MAX_TOMBSTONES_PER_KEY) {
-      state.tombstones[arrayKey] = state.tombstones[arrayKey].slice(-MAX_TOMBSTONES_PER_KEY);
-    }
-  }
+  addTombstone(state.tombstones, arrayKey, id, tombstoneOwner(arrayKey), MAX_TOMBSTONES_PER_KEY);
 }
 
 function recordDeletions(arrayKey, ids) {
@@ -5946,9 +5977,8 @@ function recordDeletions(arrayKey, ids) {
 }
 
 function unrecordDeletion(arrayKey, id) {
-  const idStr = String(id);
-  if (!state.tombstones?.[arrayKey]) return;
-  state.tombstones[arrayKey] = state.tombstones[arrayKey].filter(t => t !== idStr);
+  if (!state.tombstones) return;
+  removeTombstone(state.tombstones, arrayKey, id, tombstoneOwner(arrayKey));
 }
 
 function normalizeBirthdayCalendarSettings(settings) {
@@ -7199,18 +7229,22 @@ function priceObservationAgeDays(observation) {
 // an empty just-booted record can never erase populated cloud data; genuine
 // deletes propagate via tombstones. See that module's header for the WHY.
 
-function mergeStates(newer, older) {
+function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
   const merged = { ...newer };
 
   // Merge tombstones first so unionById can filter against the combined set
   merged.tombstones = mergeTombstones(newer.tombstones, older.tombstones);
+  // The deletes that apply to the rows being merged: each key resolved for the
+  // view its section is in (state-sync.js "Per-view delete lists"). Everything
+  // below filters against `dead`; `merged.tombstones` is the stored record.
+  const dead = effectiveTombstones(merged.tombstones, ownerOf);
 
   // Core merge primitives live in ./state-sync.js (extracted + unit-tested). The
   // unionById wrapper resolves this merge's per-key tombstone set (from the
   // combined tombstones above) and delegates; string/key unions alias directly.
   function unionById(a, b, tombstoneKey = null) {
-    const tombstoned = tombstoneKey && merged.tombstones?.[tombstoneKey]?.length
-      ? new Set(merged.tombstones[tombstoneKey])
+    const tombstoned = tombstoneKey && dead[tombstoneKey]?.length
+      ? new Set(dead[tombstoneKey])
       : null;
     return syncUnionById(a, b, tombstoned);
   }
@@ -7285,7 +7319,7 @@ function mergeStates(newer, older) {
   // WATCH_AUDIT.md decision 5). Membership is unionById's: either side's ids,
   // minus tombstones.
   merged.watchItems = mergeWatchItems(newer.watchItems, older.watchItems,
-    merged.tombstones?.watchItems?.length ? new Set(merged.tombstones.watchItems) : null);
+    dead.watchItems?.length ? new Set(dead.watchItems) : null);
 
   // Recurring charges are unique per MERCHANT, not per id — unioning by id let
   // each device's independently-created entry survive, piling up hundreds of
@@ -7317,9 +7351,9 @@ function mergeStates(newer, older) {
   // Finance records with nested child arrays: deep-merged so a just-booted
   // client's empty groups/people/personal budgets can never wipe the cloud's
   // categories, line items, or scenarios (see the merge helpers above).
-  merged.financeBudgetGroups = mergeFinanceBudgetGroups(newer.financeBudgetGroups, older.financeBudgetGroups, merged.tombstones);
-  merged.financePeople = mergeFinancePeople(newer.financePeople, older.financePeople, merged.tombstones);
-  merged.financePersonal = mergeFinancePersonal(newer.financePersonal, older.financePersonal, merged.tombstones);
+  merged.financeBudgetGroups = mergeFinanceBudgetGroups(newer.financeBudgetGroups, older.financeBudgetGroups, dead);
+  merged.financePeople = mergeFinancePeople(newer.financePeople, older.financePeople, dead);
+  merged.financePersonal = mergeFinancePersonal(newer.financePersonal, older.financePersonal, dead);
 
   // Publications are keyed by "key", not "id"
   {
@@ -7396,7 +7430,7 @@ function mergeStates(newer, older) {
     merged.groceryChecklist = {
       ...oCl,
       ...nCl,
-      config: LiveGrocerySources.mergeChecklistConfig(nCl.config, oCl.config, merged.tombstones?.[LiveGrocerySources.CHECKLIST_CONFIG_TOMBSTONES]),
+      config: LiveGrocerySources.mergeChecklistConfig(nCl.config, oCl.config, dead[LiveGrocerySources.CHECKLIST_CONFIG_TOMBSTONES]),
       provisional: unionByKey(nCl.provisional, oCl.provisional),
       submissions: unionByKey(nCl.submissions, oCl.submissions),
       seeded: Boolean(nCl.seeded || oCl.seeded),
@@ -7443,9 +7477,9 @@ function mergeStates(newer, older) {
   merged.groceryStoreItemSections = mergeGroceryStoreItemSections(newer.groceryStoreItemSections, older.groceryStoreItemSections);
 
   // ── Week/day plan structures: deep day-level merge ────────────────────────
-  merged.doPlans = mergeDoPlans(newer.doPlans, older.doPlans, merged.tombstones);
+  merged.doPlans = mergeDoPlans(newer.doPlans, older.doPlans, dead);
   merged.watchPlans = mergeWatchPlans(newer.watchPlans, older.watchPlans);
-  merged.playPlans = mergePlayPlans(newer.playPlans, older.playPlans, merged.tombstones);
+  merged.playPlans = mergePlayPlans(newer.playPlans, older.playPlans, dead);
 
   // ── Meal plans: deep slot-level merge ────────────────────────────────────
   merged.plans = mergePlanWeeks(newer.plans, older.plans);
@@ -8167,7 +8201,7 @@ function applyStoredState(storedState) {
     const tripBackup = loadTripBackup();
     if (tripBackup?.trips?.length) {
       const tombstonedIds = new Set([
-        ...(state.tombstones?.trips || []).map(String),
+        ...deletedIdsFor("trips").map(String),
         ...(tripBackup.tombstones || []).map(String)
       ]);
       const survivingTrips = tripBackup.trips.filter(t => t?.id != null && !tombstonedIds.has(String(t.id)));
@@ -21572,7 +21606,7 @@ function syncGoogleCalendarLinks({ force = false } = {}) {
     if (!status.connected) { gcalStatus = status; return false; }
     const proposals = proposeGoogleLinks(status.calendars, status.links, normalizeLinkedCalendars(state.calendars));
     if (proposals.length) status = { ...status, links: (await gcalApi.action(token, { action: "link", links: proposals })).links };
-    const tombstoned = new Set((state.tombstones?.calendars || []).map(String));
+    const tombstoned = new Set(deletedIdsFor("calendars").map(String));
     const rec = reconcileGoogleLinks(normalizeLinkedCalendars(state.calendars), status.links, status.calendars, tombstoned, { colorFor: (color, index) => normalizeCalendarColor(color, index) });
     for (const appCalendarId of rec.unlink) {
       try { status = { ...status, links: (await gcalApi.action(token, { action: "unlink", appCalendarId })).links }; } catch { /* retried next sync */ }
@@ -29392,7 +29426,7 @@ async function deletePlanEvent() {
   const afterChange = () => { persist(); if (activeAppArea === "plan") renderPlanPage(); else if (activeAppArea === "eat") renderPlanner(); };
   const restoreWhole = (snapshot) => () => {
     if ((state.planEvents || []).some((e) => e.id === id)) return; // already back
-    if (state.tombstones?.planEvents) state.tombstones.planEvents = state.tombstones.planEvents.filter((x) => x !== String(id));
+    unrecordDeletion("planEvents", id);
     state.planEvents = [...(state.planEvents || []), snapshot];
     afterChange();
   };
@@ -31923,7 +31957,8 @@ async function writeInactiveSection(section, scope, attempt = 0) {
   const { stateUpdatedAt: remoteTs, ...remoteData } = rows[0].state || {};
   const localFrag = { ...applyRowReset(section, keys, data, remoteData), tombstones: state.tombstones, stateUpdatedAt: now };
   const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
-  const merged = mergeStates(localFrag, remoteFrag);
+  // This row is not the one on screen: its deletes are its own scope's.
+  const merged = mergeStates(localFrag, remoteFrag, { ownerOf: (key) => tombstoneOwner(key, (s) => (s === section ? scope : sectionScope(s))) });
   const mergedFrag = {};
   for (const key of keys) { if (merged[key] !== undefined) mergedFrag[key] = merged[key]; }
   setShadowData(section, scope, mergedFrag);

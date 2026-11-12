@@ -280,6 +280,11 @@ client substrate; agents act through the typed tools above.
 - Any new synced **id-keyed list** must: give every record a stable `id`, be added
   to the `mergeStates` union list, and (for deletes) write a tombstone. Otherwise it
   will be clobbered or resurrected across devices.
+- **Deletes are per view where rows are** (2026-11-11): in a section with a row per view
+  (`SECTION_SCOPE` = `toggle`), `recordDeletion` stores the delete for the row it was made
+  in (`key@owner`, plus the plain key for older builds) and `mergeStates` applies only the
+  deletes of the row being merged (`state-sync.js` "Per-view delete lists"). Read them with
+  `deletedIdsFor(key)`.
 - **Settings merge by their own stamp, not the whole-state timestamp**
   (`settings-sync.js`). Any edit anywhere advances `stateUpdatedAt`, so
   "newer-wins" let a device with a stale setting put the old value back.
