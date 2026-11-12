@@ -1,6 +1,8 @@
 -- Finance: the move guard (FINANCE_SPLIT_DESIGN.md §8, step 3).
 --
--- NOT APPLIED YET — waits for Luke's OK with the rest of step 3.
+-- Applied to prod 2026-11-12 (Luke's OK). The function it replaced is kept in
+-- the database as public.tp_protect_finance_merge_before_move_guard (not
+-- attached to any trigger) so it can be put back.
 --
 -- tp_protect_finance_merge (BEFORE UPDATE on tableplan_states, rows "%:finance")
 -- deep-unions the per-transaction maps on every write, so that a device with an

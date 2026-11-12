@@ -697,7 +697,8 @@ const financeMove = { picked: new Set(), busy: "", report: null, error: "", resu
 function financeMoveDirection() { return financeScopeNow() === "personal" ? "toHousehold" : "toPersonal"; }
 function financeMoveReset() { financeMove.picked.clear(); financeMove.busy = ""; financeMove.report = null; financeMove.error = ""; financeMove.result = null; }
 function financeMoveBlock() {
-  if (!canMoveFinanceAccounts?.()) return "";
+  // Only once the server can do it (simplefin `status` says so after its deploy).
+  if (!canMoveFinanceAccounts?.() || !financeLinkStatus?.moves) return "";
   const toPersonal = financeMoveDirection() === "toPersonal";
   const accounts = (state.financeAccounts || []).filter((a) => a && a.id);
   if (!accounts.length && !financeMove.result) return "";

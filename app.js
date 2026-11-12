@@ -388,10 +388,13 @@ const STATE_SECTIONS = {
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
 // 7 (2026-09-30): financeTxnSourceSetAt added (financeTxnSource is latest-choice-wins).
-// 8 (2026-11-12): financeMovedOut added (what a move between Household and Personal
-//   took out of a finance row — FINANCE_SPLIT_DESIGN.md §8). A build that doesn't know
-//   it would keep showing, and re-sending, accounts that have moved.
-const STATE_SCHEMA_VERSION = 8;
+// NEXT: 8, with the deploy that switches account moves on (FINANCE_SPLIT_DESIGN.md
+//   §8.6) — for financeMovedOut (what a move between Household and Personal took out
+//   of a finance row). Held at 7 on purpose (Luke, 2026-11-12: no deploy until the
+//   app-wide work is done): a bump now would stop the not-yet-deployed web app
+//   saving finance. Safe meanwhile: no move can run before that deploy, and the
+//   database trigger alone keeps financeMovedOut and strips what it lists.
+const STATE_SCHEMA_VERSION = 7;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -4233,6 +4236,7 @@ function setupDiagnostics() {
     financeMoveSeedForQa: (accounts) => { if (!localDevMode) return null; state.financeAccounts = normalizeFinanceAccounts(accounts, createId); return true; },
     financeAccountsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.financeAccounts || [])) : null),
     personalFinanceFlagForQa: () => (localDevMode ? hasPersonalFinance : null),
+    financeRecheckLinkForQa: () => (localDevMode ? checkFinanceLinkStatus() : null),
     financeSeedAccount: () => {
       if (!localDevMode) return null;
       state.financeAccounts = normalizeFinanceAccounts([{ id: "qa-acct", owner: "Joint", name: "QA Savings", kind: "cash", manualBalance: 5000 }], createId);

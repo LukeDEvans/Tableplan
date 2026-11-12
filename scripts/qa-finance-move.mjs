@@ -44,11 +44,12 @@ try {
   page.on("pageerror", (e) => errors.push(String(e)));
   const calls = [];
   let failNext = "";
+  let serverMoves = false; // an older server (before the deploy) doesn't offer moves
   await page.route("**/.netlify/functions/simplefin", async (route) => {
     const body = JSON.parse(route.request().postData() || "{}");
     calls.push(body);
     const send = (data, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
-    if (body.action === "status") return send({ connected: true, connectedAt: "2026-01-01T00:00:00Z" });
+    if (body.action === "status") return send({ connected: true, connectedAt: "2026-01-01T00:00:00Z", ...(serverMoves ? { moves: true } : {}) });
     if (body.action === "accounts") return send({ accounts: [{ id: "B-JOINT", name: "Joint", balance: 1000, transactions: [] }], errors: [], cached: true, fetchedAt: new Date().toISOString() });
     if (body.action === "history") return send({ days: {} });
     if (body.action === "receipts") return send({ receipts: [] });
@@ -89,7 +90,12 @@ try {
   check(!(await page.$("[data-fin-move-pick]")), "not shown to someone who can't move accounts");
   await page.evaluate(() => { window.__financeMoveQa = true; });
   await openAccounts();
-  check(!!(await page.$("[data-fin-move-pick]")), "shown to the household's admin");
+  check(!(await page.$("[data-fin-move-pick]")), "not shown while the server can't move accounts yet (before its deploy)");
+  serverMoves = true;
+  await page.evaluate(() => window.__liveQA.financeRecheckLinkForQa());
+  await page.waitForTimeout(600);
+  await openAccounts();
+  check(!!(await page.$("[data-fin-move-pick]")), "shown to the household's admin once the server offers it");
   const pick = await text("[data-fin-move-pick]");
   check(/Joint Checking/.test(pick) && /Luke Card/.test(pick) && /Cash Jar \(manual\)/.test(pick), "lists every account, manual ones marked", pick.slice(0, 120));
   check(await page.evaluate(() => document.querySelector('[data-fin-action="move-review"]').disabled), "Review is off until an account is picked");

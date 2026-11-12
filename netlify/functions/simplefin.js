@@ -40,7 +40,9 @@ exports.handler = async (event) => {
   try {
     if (action === "status") {
       const row = await loadSecretRow(serviceKey, groupId);
-      return cors(json(200, { connected: Boolean(row?.state?.accessUrl), connectedAt: row?.state?.connectedAt || null }));
+      // `moves`: this server can move accounts between Household and Personal
+      // (action moveAccounts), so the app shows that screen only once it's deployed.
+      return cors(json(200, { connected: Boolean(row?.state?.accessUrl), connectedAt: row?.state?.connectedAt || null, moves: true }));
     }
 
     if (action === "setup") {

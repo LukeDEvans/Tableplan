@@ -10,6 +10,14 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Finance: moving accounts between Household and Personal (step 3)** · #232 · **needs a Netlify
+  deploy to do anything** (the server action; the app's screen stays hidden until the server
+  answers that it can move accounts). The database guard is already applied (2026-11-12).
+  **In the deploy commit:** set `STATE_SCHEMA_VERSION` to 8 (held at 7 until then, see the note
+  at the constant), and set `FINANCE_MOVE_ENABLED=1` in Netlify first; make a TestFlight build
+  from the same commit for both phones. Post-deploy: Household › Finance › Accounts shows
+  "Personal accounts" for Luke only; tick an account, **Review the move**, read the report, and
+  confirm only if it looks right (FINANCE_SPLIT_DESIGN.md §8.6 has the checks to run after).
 - **News: newspaper sign-in hints no longer suggest Apple** · #231 · **TestFlight build**
   (text only; the laptop needs a Netlify deploy). Sync Settings, the reader and the sign-in sheet
   say to use email and password, not Apple or Google. Post-TestFlight: none.

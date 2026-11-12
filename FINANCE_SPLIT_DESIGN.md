@@ -1,6 +1,6 @@
 # Finance: personal accounts — design & plan
 
-Status: **APPROVED (Luke, 2026-10-20; recommendations accepted, §3). Step 1 built (§6); its migration applied to prod 2026-10-20. Step 2 built (§7). Steps 1–2 deployed 2026-10-20.** **Step 3 built 2026-11-12 (§8), server and app: not merged, its migration not applied, a real move switched off, nothing moved. Left: merging a relinked personal account (§8.5).** Follows VIEWS_DESIGN.md decision 5 and Luke's choice of "Option 2" (2026-10-20): personal accounts are **truly private**, not just hidden, using **one SimpleFIN connection** that the server splits.
+Status: **APPROVED (Luke, 2026-10-20; recommendations accepted, §3). Step 1 built (§6); its migration applied to prod 2026-10-20. Step 2 built (§7). Steps 1–2 deployed 2026-10-20.** **Step 3 built and merged 2026-11-12 (§8), its guard migration applied; a real move stays switched off until the next deploy (§8.6). Nothing has moved. Left: merging a relinked personal account (§8.5).** Follows VIEWS_DESIGN.md decision 5 and Luke's choice of "Option 2" (2026-10-20): personal accounts are **truly private**, not just hidden, using **one SimpleFIN connection** that the server splits.
 
 Goal: Luke marks some accounts **Personal**. Their balances, transactions, labels and history then live only in Luke's own data. His wife's app never receives them, not even in the background. Household accounts work exactly as today.
 
@@ -144,7 +144,7 @@ Nobody owns a personal account yet, so step 2 also changes nothing anyone sees.
 
 ## 8. As built: step 3, the server half (branch `claude/finance-move-core`, 2026-11-12)
 
-Held for Luke: the branch isn't merged, the migration isn't applied, and a real move is switched off. No account is Personal and no data has moved.
+Merged 2026-11-12 with Luke's OK, and the guard migration applied; a real move is switched off until the next Netlify deploy (§8.6). No account is Personal and no data has moved.
 
 ### 8.1 What reading the live system changed about the plan
 
@@ -161,7 +161,7 @@ Reported as not moving cleanly: a return linked to a purchase in the other view 
 
 `from` records what left in **`financeMovedOut`** (`{ epoch, accounts, linked, txns }`); `stripMovedOut(section)` removes those from any copy. `moveBalanceHistory` moves the accounts' daily balances and recomputes each day's net worth.
 
-### 8.3 The database guard: `migrations/2026-11-11-finance-move-guard.sql` (not applied)
+### 8.3 The database guard: `migrations/2026-11-11-finance-move-guard.sql` (applied to prod 2026-11-12)
 
 Replaces the trigger function; every existing rule is kept. Adds:
 
@@ -178,7 +178,8 @@ Admin only, into the admin's own personal finance. A dry run unless `confirm: tr
 ### 8.5 The app half (same branch, 2026-11-12)
 
 - **The app knows `financeMovedOut`.** It is a finance-section key; `mergeStates` takes the record from the later move whole (`mergeMovedOut`), drops the month totals of the side that hadn't seen that move, and runs `stripMovedOut` on the merged copy, so a device can't show or re-send what moved. Only the server's move changes the record (the trigger enforces it).
-- **`STATE_SCHEMA_VERSION` 8.** From the first save by a build with this change, an older build can no longer save finance changes (the trigger's existing rule). Both phones and the web app need the build before it is used day to day; that is why the branch is held.
+- **`STATE_SCHEMA_VERSION` stays 7 until the deploy that switches moves on** (Luke, 2026-11-12: no Netlify deploy until the app-wide work is done). A bump now would stop the not-yet-deployed web app saving finance. It is safe to wait: no move can run before that deploy, and the trigger alone keeps `financeMovedOut` and strips what it lists, whatever build writes. The bump to 8 goes in the deploy commit (§8.6).
+- **The screen appears only when the server can do it:** `simplefin` `status` answers `moves: true` once this server is deployed; until then the app shows nothing new.
 - **Finance › Accounts › "Personal accounts"** (the household's admin only; in Personal it reads "Move back to Household"): tick accounts → **Review the move** (the server's dry run, nothing changes) → the report (per account: transactions, labels, notes, receipts, return links; history days; budget categories copied; merchants moved and copied; anything that can't move cleanly) → **Move N accounts** → the app reloads its finance row from the server (never merging its own older copy), re-reads the bank cache and the stored transactions, and re-checks whether this person has personal finance. A refusal from the server is shown in place.
 - **Checks:** `npm run qa:finance-move` (22, the screen at 390px with the server answered by canned responses), `test/finance-move.test.js` (`mergeMovedOut`), full suite, boot check, `qa:views` 118/118.
 - **Read, not built:** the boot-empty guard (`guardBootEmptyFinance`) and the trigger both act on whichever finance row is in play, `u-` rows included.
@@ -189,12 +190,10 @@ Admin only, into the admin's own personal finance. A dry run unless `confirm: tr
 
 ### 8.6 Before a real move
 
-In this order:
+Done 2026-11-12 (Luke's OK): the branch is merged, the guard migration is applied to prod (the previous function kept as `tp_protect_finance_merge_before_move_guard`), and a TestFlight build carries the app side. Still to do, in this order:
 
-1. Merge the branch; TestFlight build on **both** phones; Netlify deploy (the web app and the server action). From here older builds can't save finance.
-2. Apply the guard migration (Luke's OK for that migration; `create or replace function` only), then record it in `supabase_migrations.schema_migrations`.
-3. Set `FINANCE_MOVE_ENABLED=1` in Netlify and redeploy.
-4. In Household › Finance › Accounts, tick the accounts and read **Review the move**. Confirm only if the report looks right.
-5. Afterwards: the result line should say the accounts moved; run the read-only check as Marijane (RLS: none of the moved accounts' ids, transactions or balances readable), and look at Household and Personal Finance on both phones.
+1. **With the next Netlify deploy** (Luke decides when; he is saving deploys for when the app-wide work is done): set `STATE_SCHEMA_VERSION` to 8 in the deploy commit, set `FINANCE_MOVE_ENABLED=1` in Netlify before it, and make a TestFlight build from the same commit for both phones. From then older builds can't save finance.
+2. In Household › Finance › Accounts, tick the accounts and read **Review the move**. Confirm only if the report looks right.
+3. Afterwards: the result line should say the accounts moved; run the read-only check as Marijane (RLS: none of the moved accounts' ids, transactions or balances readable), and look at Household and Personal Finance on both phones.
 
 To undo: Personal › Finance › Accounts › "Move back to Household". The pre-move copies are in `finmovebackup_<groupId>` for 30 days.
