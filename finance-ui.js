@@ -1,5 +1,5 @@
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
-import { financeMonthsToSnapshot, financeOffsettingPairIds, financeTransferPairIds, financePendingDuplicates, localMonthKey, monthKeyOffset } from './finance-actuals.js';
+import { financeMonthsToSnapshot, financeOffsettingPairIds, financeTransferPairIds, financePendingDuplicates, localMonthKey, monthKeyOffset, financeMonthEntry, financeMonthEntryTotals, financeMonthEntriesMatch, financeTxnsCoverMonth, financeUncategorizedByMonth, financeProjectedSpend } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport, findDuplicateCsvAccount } from './finance-csv.js';
 import { saveFile } from './save-file.js';
@@ -2502,22 +2502,7 @@ function updateFinanceMonthActuals() {
   if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
   let changed = false;
   for (const month of monthsToWrite) {
-    const cats = {};
-    const incomeBy = {};
-    let incomeGot = 0;
-    for (const t of txns) {
-      if ((t.posted || "").slice(0, 7) !== month || !t.label) continue;
-      for (const p of financeTxnPortions(t)) {
-        if (p.label === "income" || p.label.startsWith("income:")) {
-          incomeGot += p.amount;
-          incomeBy[p.label] = Math.round(((incomeBy[p.label] || 0) + p.amount) * 100) / 100;
-        } else if (p.label.startsWith("cat:")) {
-          const k = p.label.slice(4);
-          cats[k] = Math.round(((cats[k] || 0) + p.amount) * 100) / 100;
-        }
-      }
-    }
-    const entry = { cats, income: Math.round(incomeGot * 100) / 100, incomeBy };
+    const entry = financeMonthEntry(txns, month, financeTxnPortions);
     if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) continue;
     state.financeMonthActuals[month] = entry;
     changed = true;
@@ -3146,6 +3131,21 @@ function applyBudgetSearch() {
 // Compact "when was this last synced" label. Bank data refreshes ~once a day,
 // so exact minutes matter less than "today / yesterday / a date" — that's the
 // low-cost freshness cue in place of a refresh button that would fetch nothing new.
+// The bank pull itself is old (the daily job or the bridge failed): say so once,
+// at the top, instead of leaving it to a line of small print under the list.
+const FINANCE_STALE_PULL_MS = 36 * 3600 * 1000;
+function financeStalePullBanner() {
+  if (!financeLinkStatus?.connected || financeLiveLoading || !financeLive?.at || !financeLive.accounts?.length) return "";
+  const age = Date.now() - financeLive.at;
+  if (!(age > FINANCE_STALE_PULL_MS)) return "";
+  const days = Math.max(2, Math.round(age / 86400000));
+  return `
+    <div class="fin-stale-banner" role="status">
+      <span>Bank data is ${days} days old.</span>
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="refresh-live">Refresh</button>
+    </div>`;
+}
+
 function finUpdatedLabel(ts) {
   if (!ts) return "";
   const d = new Date(ts);
@@ -3206,6 +3206,33 @@ function renderFinancePage() {
     incomeActual = Number(storedThis.income) || 0;
   }
   const catActual = (g, c) => catActuals.get(`${g.id}:${c.id}`) || 0;
+  // Money out with no category in the viewed month: what every total leaves out.
+  const uncatThis = financeUncategorizedByMonth(allTxns).get(monthKey) || { spend: 0, count: 0 };
+  const skippedMerchants = Object.values((state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {}).filter(Boolean).length;
+  // A past month shows its saved totals. When stored history covers the whole
+  // month and adds up differently (something was categorized later), offer to
+  // update the saved totals. Never automatic: saved history only changes by hand.
+  let staleSaved = null;
+  if (!isCurrentMonth && storedThis && haveLive && financeStoreActive() && financeTxnsCoverMonth(allTxns, monthKey, financeCurrentMonthKey())) {
+    const fresh = financeMonthEntry(allTxns, monthKey, financeTxnPortions);
+    if (!financeMonthEntriesMatch(storedThis, fresh)) staleSaved = { saved: financeMonthEntryTotals(storedThis), now: financeMonthEntryTotals(fresh) };
+  }
+  // Per-category charges this month, for the "at this rate" projection: a known
+  // bill or a rent-sized payment counts once instead of being extrapolated.
+  const recurringKeys = new Set((state.financeRecurring || []).filter((r) => r.active !== false && r.merchantKey).map((r) => r.merchantKey));
+  const catCharges = new Map();
+  if (isCurrentMonth && useLive) {
+    for (const t of allTxns) {
+      if (!t.label || (t.posted || "").slice(0, 7) !== monthKey) continue;
+      const merchantKey = financeMerchantKey(t.description || "");
+      for (const p of financeTxnPortions(t)) {
+        if (!p.label.startsWith("cat:")) continue;
+        const k = p.label.slice(4);
+        if (!catCharges.has(k)) catCharges.set(k, []);
+        catCharges.get(k).push({ amount: p.amount, merchantKey });
+      }
+    }
+  }
   const prevMonthKey = monthKeyOffset(monthKey, -1);
   const lastMo = storedMonths[prevMonthKey];
   const lastMoGroupActual = (g) => lastMo?.cats
@@ -3316,9 +3343,12 @@ function renderFinancePage() {
     const pctb = Math.min(100, Math.round((Math.max(0, actual) / budget) * 100));
     return `<div class="fin-budget-bar"><i class="${actual > budget ? "is-over" : ""}" style="width:${pctb}%"></i></div>`;
   };
-  const budgetPace = (actual, budget) => {
+  const projectedFor = (key, budget) => financeProjectedSpend(catCharges.get(key) || [], {
+    budget, dayOfMonth: bDayOfMonth, daysInMonth: bDaysInMonth, isRecurring: (c) => recurringKeys.has(c.merchantKey),
+  }).projected;
+  const budgetPace = (actual, budget, key) => {
     if (!isCurrentMonth || !showActuals || !(budget > 0) || !(actual > 0) || bDayOfMonth < 3) return "";
-    const projected = (actual / bDayOfMonth) * bDaysInMonth;
+    const projected = projectedFor(key, budget);
     const over = projected - budget;
     if (over > Math.max(1, budget * 0.03)) return `<span class="fin-budget-pace is-over">~${formatFinMoney(over)} over by month-end</span>`;
     if (actual > budget) return `<span class="fin-budget-pace is-over">over budget</span>`;
@@ -3336,7 +3366,7 @@ function renderFinancePage() {
         const budget = financeCategoryTotal(c);
         const actual = catActual(g, c);
         if (!(budget > 0) || !(actual > 0)) continue;
-        const projected = (actual / bDayOfMonth) * bDaysInMonth;
+        const projected = projectedFor(`${g.id}:${c.id}`, budget);
         const over = projected - budget;
         if (over > Math.max(1, budget * 0.03)) paceCategories.push({ group: g.label, name: c.name, over });
       }
@@ -3410,7 +3440,7 @@ function renderFinancePage() {
         <div class="fin-category" data-fin-cat-name="${escapeHtml((c.name || "").toLowerCase())}">
           ${rowHtml}
           ${showActuals ? budgetBar(actual, budget) : ""}
-          ${budgetPace(actual, budget)}
+          ${budgetPace(actual, budget, `${g.id}:${c.id}`)}
           ${open ? `
           <div class="fin-category-items">
             ${(() => {
@@ -3441,7 +3471,7 @@ function renderFinancePage() {
   const personalFree = (state.financePersonal || []).reduce((s, p) => s + financeItemsTotal(p.incomeItems) - financeItemsTotal(p.expenseItems), 0);
   const personalCard = `
     <div class="fin-card" data-fin-card="personal">
-      ${cardHead("card:personal", "Personal", `${formatFinMoney(personalFree)}/mo free`)}
+      ${cardHead("card:personal", "Allowances", `${formatFinMoney(personalFree)}/mo free`)}
       ${!personalOpen ? "" : (state.financePersonal || []).map((p) => {
         const inc = financeItemsTotal(p.incomeItems);
         const exp = financeItemsTotal(p.expenseItems);
@@ -4063,7 +4093,30 @@ function renderFinancePage() {
           <span class="fin-stat-label">${label} <span class="fin-budget-caret">${open ? "▴" : "▾"}</span></span>
           <span class="fin-stat-value">${value}</span>
         </button>`;
+  // What the totals leave out, and saved totals that have gone stale. Shown only
+  // when there is something to act on.
+  const truthMonthName = new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long" });
+  const truthCard = (showActuals && (uncatThis.count || staleSaved || skippedMerchants)) ? `
+    <div class="fin-card fin-truth-card" data-fin-card="truth">
+      ${uncatThis.count ? `
+      <button class="fin-truth-row fin-truth-btn" type="button" data-fin-action="show-uncategorized">
+        <span class="fin-truth-name">Uncategorized<span class="fin-of"> · ${uncatThis.count} transaction${uncatThis.count === 1 ? "" : "s"}, not in the totals below</span></span>
+        <span class="fin-truth-amt">${formatFinMoney(uncatThis.spend)}</span>
+        <span class="fin-truth-go" aria-hidden="true">›</span>
+      </button>` : ""}
+      ${staleSaved ? `
+      <div class="fin-truth-row">
+        <span class="fin-truth-name">${escapeHtml(truthMonthName)}'s saved totals are out of date<span class="fin-of"> · saved ${formatFinMoney(staleSaved.saved.spend)} spent, now ${formatFinMoney(staleSaved.now.spend)}</span></span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="update-saved-month">Update</button>
+      </div>` : ""}
+      ${skippedMerchants ? `
+      <div class="fin-truth-row">
+        <span class="fin-truth-name">${skippedMerchants} merchant${skippedMerchants === 1 ? " is" : "s are"} skipped from review<span class="fin-of"> · their charges never come up to categorize</span></span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="unskip-all-merchants">Bring back</button>
+      </div>` : ""}
+    </div>` : "";
   const budgetView = `
+    ${truthCard}
     ${budgetPaceCard}
     <div class="fin-card fin-monthly-budget" data-fin-card="monthly-budget">
       <div class="fin-budget-kpis">
@@ -4116,6 +4169,7 @@ function renderFinancePage() {
   const itemizable = rMatched.filter(({ r, t }) => t.label !== "split" && (r.portions || r.items || []).length > 1);
 
   const financeTabNav = `
+    ${financeStalePullBanner()}
     <div class="fin-tabs" role="tablist" aria-label="Finance sections">
       ${FINANCE_TABS.map((t) => {
         const dot = (t.id === "transactions" && hasTxnAttention) || (t.id === "accounts" && hasAcctAttention);
@@ -4256,15 +4310,17 @@ function renderFinancePage() {
     .map(([k, v]) => ({ key: k, name: financeTxnLabelName(`cat:${k}`), amount: Math.abs(Number(v) || 0) }))
     .filter((c) => c.amount > 0)
     .sort((a, b) => b.amount - a.amount);
-  const catTotal = catSpend.reduce((s, c) => s + c.amount, 0);
+  // Shares are of everything that left the accounts, so Uncategorized is a row too.
+  const catTotal = catSpend.reduce((s, c) => s + c.amount, 0) + uncatThis.spend;
   const reportRows = (() => {
     const top = catSpend.slice(0, 8);
     const restTotal = catSpend.slice(8).reduce((s, c) => s + c.amount, 0);
     const rows = [...top];
     if (restTotal > 0) rows.push({ key: "__other", name: "Other", amount: restTotal });
+    if (uncatThis.spend > 0) rows.push({ key: "__uncat", name: "Uncategorized", amount: uncatThis.spend });
     return rows;
   })();
-  const reportMax = reportRows[0]?.amount || 1;
+  const reportMax = Math.max(1, ...reportRows.map((r) => r.amount));
   const reportsCard = financeLinkStatus?.connected ? `
     <div class="fin-card fin-insights-card">
       <div class="fin-report-head">
@@ -4651,6 +4707,33 @@ function onFinanceGridClick(e) {
     persist();
     renderFinancePage();
     setPageNotifCount("finance", financeBellCount());
+    return;
+  }
+  if (action === "show-uncategorized") {
+    financeTab = "transactions";
+    Object.assign(financeTxnFilter, { q: "", kind: "unlabeled", account: "", from: "", to: "" });
+    renderFinancePage();
+    return;
+  }
+  if (action === "update-saved-month") {
+    // Same conditions as the offer: stored history must cover the whole month.
+    const month = financeViewMonth;
+    const txns = financeLabeledTxns();
+    if (month === financeCurrentMonthKey() || !financeStoreActive() || !financeTxnsCoverMonth(txns, month, financeCurrentMonthKey())) return;
+    if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
+    state.financeMonthActuals[month] = financeMonthEntry(txns, month, financeTxnPortions);
+    persist();
+    renderFinancePage();
+    return;
+  }
+  if (action === "unskip-all-merchants") {
+    // Merged across devices by key, so a skip is turned off (false), not deleted.
+    const skips = (state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {};
+    for (const k of Object.keys(skips)) skips[k] = false;
+    state.financeLabelSkips = skips;
+    persist();
+    setPageNotifCount("finance", financeBellCount());
+    renderFinancePage();
     return;
   }
   if (action === "skip-label-group") {

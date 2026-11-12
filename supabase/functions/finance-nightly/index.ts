@@ -29,9 +29,6 @@ import { snapshotFinanceBalances } from "./nightly.bundle.js";
 const STATUS_ID = "finnightly_status";
 const MIN_INTERVAL_MS = 30 * 60 * 1000;
 
-declare const Deno: { env: { get(name: string): string | undefined }; serve(handler: (req: Request) => Response | Promise<Response>): void };
-declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
-
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -87,7 +84,9 @@ export async function handle(req: Request): Promise<Response> {
     await writeStatus(supabaseUrl, serviceKey, { startedAt, finishedAt, ok, runs, ...(error ? { error } : {}), lastGood: ok ? finishedAt : (last?.lastGood || null) });
     console.log(`[fin-nightly] finished ok=${ok} households=${runs.length}`);
   })();
-  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) EdgeRuntime.waitUntil(work);
+  // Keep working after the 202 where the runtime allows it (Supabase does).
+  const edge = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
+  if (edge?.waitUntil) edge.waitUntil(work);
   else await work;
   return json(202, { started: startedAt });
 }

@@ -10,6 +10,14 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Finance: true numbers (audit step 1)** · branch `claude/finance-true-numbers` · the nightly bank
+  job is **already live** (Supabase Edge Function `finance-nightly` + pg_cron, 11:40 UTC; no deploy
+  needed). The page changes need a TestFlight build or a deploy to be seen: an Uncategorized row on
+  Budget and in "Where it went"; "Update" for a past month's saved totals when stored history
+  disagrees; "Bring back" for skipped merchants; a "Bank data is N days old" banner; "on pace"
+  counts a bill once; the allowance card is named Allowances. After the deploy, `daily-briefing`
+  stops pulling the bank (until then it still tries at 13:00 UTC and gives up, as before).
+
 - **Finance: moving accounts between Household and Personal (step 3)** · #232 · **needs a Netlify
   deploy to do anything** (the server action; the app's screen stays hidden until the server
   answers that it can move accounts). The database guard is already applied (2026-11-12).
