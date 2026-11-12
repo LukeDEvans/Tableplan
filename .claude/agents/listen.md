@@ -135,6 +135,10 @@ through the engine.
   the network up, as finished, and reconnects a stall earlier in the episode (twice at
   most). Offline is never "finished". Play after a stall reopens the episode at the same
   spot (Luke, 2026-11-11).
+- A tap on the episode the iPhone is already playing never starts it again (Luke,
+  2026-11-11): it shows the episode, and resumes it if paused (`episodeTapAction` in
+  `media-queue-order.js`, `keepNativeEpisodePlaying` in `app.js`). A start reopens at the
+  last saved spot, up to 15 s back.
 - Background audio, lock-screen controls and native TTS only behave on the phone;
   headless Chromium can't prove them.
 

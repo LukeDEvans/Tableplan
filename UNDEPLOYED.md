@@ -10,6 +10,11 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Listen (iPhone): tapping the episode that's playing no longer jumps it back** · PR pending ·
+  **TestFlight build** (bundled web code; nothing changes on the laptop, no Netlify deploy). A tap
+  on the row of the episode the phone is already playing just shows it; if it was paused it carries
+  on from the same spot. Post-TestFlight: while an episode plays, tap its row in the show's list,
+  in Recent and in the queue (no jump back); pause it, tap its row (it resumes where it was).
 - **Mail: no more "Quota exceeded" on fast folder switching** · #221 · **Both a TestFlight build
   and a Netlify deploy** (client + Netlify function; either can land first — each side ignores the
   other's new fields, so nothing breaks in between). Client (TestFlight / laptop deploy): read-ahead
