@@ -10,6 +10,9 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **News: newspaper sign-in hints no longer suggest Apple** · PR pending · **TestFlight build**
+  (text only; the laptop needs a Netlify deploy). Sync Settings, the reader and the sign-in sheet
+  say to use email and password, not Apple or Google. Post-TestFlight: none.
 - **Sign-in: authenticator code and Face ID to open the iPhone app** · #222 · **TestFlight build**
   for the phone (web code only, no Swift change); **the laptop needs a Netlify deploy**. Settings ›
   Sign-in → Authenticator code: set up once (Add to Passwords on iPhone/Mac, or scan the QR); after

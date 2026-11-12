@@ -39392,8 +39392,8 @@ function markPaperSignIn(key, on) {
 // How to sign in to a paper inside the app: Google's sign-in refuses embedded
 // browsers, so its page never verifies (Luke, 2026-10-28). Shown in the reader,
 // Sync Settings and (newer app builds) the sign-in sheet's own header.
-const PAPER_SIGNIN_HINT = "Use your email and password (or Apple). Google sign-in doesn't work in the app.";
-const PAPER_SIGNIN_SHEET_HINT = "Use email and password, not Google"; // one line in the sheet's header
+const PAPER_SIGNIN_HINT = "Use your email and password. Apple and Google sign-in don't work in the app.";
+const PAPER_SIGNIN_SHEET_HINT = "Use email and password, not Apple or Google"; // one line in the sheet's header
 
 // A phone-side read of a subscriber article came back cut off. If the phone
 // thinks it's signed in, its session has probably lapsed: check again (once per
@@ -39497,7 +39497,7 @@ function articlePaperLoginsSettingsHtml() {
           ${settingsInfoButton("paper-signins", "newspaper sign-ins")}
         </div>
         <p class="settings-panel-note">${escapeHtml(PAPER_SIGNIN_HINT)}</p>
-        ${settingsInfoPanel("paper-signins", "Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with Apple or with email and password: Google sign-in doesn't work inside apps.")}${rows}`;
+        ${settingsInfoPanel("paper-signins", "Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with email and password: Apple and Google sign-in don't work inside apps.")}${rows}`;
 }
 
 function bindArticlePaperLoginActions(root, article) {

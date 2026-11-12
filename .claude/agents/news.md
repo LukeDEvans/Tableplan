@@ -233,3 +233,6 @@ say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/`
 other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
 the client, and native `ios/` changes only ship this way), or both. Log anything real
 you notice but don't fix to `ISSUES.md`.
+- Newspaper sign-in in the app is email and password only (Luke tried Apple with a passkey,
+  2026-11-11: Apple's page never finishes inside the sheet). The hints say so; don't suggest
+  Apple or Google there.
