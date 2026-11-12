@@ -28,6 +28,7 @@
     "qa:views": "node scripts/qa-views.mjs",
     "qa:view-deletes": "node scripts/qa-view-deletes.mjs",
     "qa:finance-move": "node scripts/qa-finance-move.mjs",
+    "build:finance-nightly": "node scripts/build-finance-nightly.mjs",
     "qa:calendar-month": "node scripts/qa-calendar-month.mjs",
     "qa:meal-context": "node scripts/qa-meal-context.mjs",
     "qa:watch-search": "node scripts/qa-watch-search.mjs",
