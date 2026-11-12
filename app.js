@@ -4066,6 +4066,14 @@ function setupDiagnostics() {
     planScope: () => (localDevMode ? sectionScope("plan") : null),
     scopes: () => (localDevMode ? Object.fromEntries(VIEW_TOGGLE_SECTIONS.map((s) => [s, sectionScope(s)])) : null),
     businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
+    // Seed Listen's podcasts / books for the grid + panel QA. Local dev only.
+    listenSeedForQa: ({ podcasts, books } = {}) => {
+      if (!localDevMode) return null;
+      if (Array.isArray(podcasts)) state.podcasts = podcasts;
+      if (Array.isArray(books)) state.readingItems = books;
+      persist();
+      return true;
+    },
     watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); (items || []).forEach((i) => i?.id && unrecordDeletion("watchItems", i.id)); persist(); if (activeAppArea === "watch") { activeWatchCategory = "all"; expandedWatchItemId = null; renderWatchPlanner(); } return true; },
     // The Watch list and its removals as saved (scripts/qa-watch-panel.mjs). Local dev only.
     watchItemsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.watchItems || [])) : null),
@@ -23641,20 +23649,24 @@ function watchItemTemplate(item) {
 // and skips the panel's entry animation; opening a new row just places it. The
 // page scrolls only when a different poster was opened, and only enough to
 // show the panel — never on the re-render after an episode tick.
-let watchPanelLast = null; // { id, x, rowTop } of the panel as last drawn
+const gridPanelLast = {}; // per grid: { id, x, rowTop } of the panel as last drawn
 function placeWatchPanelPointer(root) {
   const detail = root?.querySelector("[data-watch-detail]");
-  if (!detail) { watchPanelLast = null; return; }
-  const id = detail.dataset.watchDetail;
-  const card = root.querySelector(`[data-watch-item="${CSS.escape(id)}"]`);
+  const card = detail ? root.querySelector(`[data-watch-item="${CSS.escape(detail.dataset.watchDetail)}"]`) : null;
+  placeGridPanelPointer(root, "watch", detail, card, detail?.dataset.watchDetail);
+}
+// Shared by every poster grid with an open panel (Watch, and Listen's Podcasts
+// and Books — Luke, 2026-11-11). `key` keeps each grid's last position apart.
+function placeGridPanelPointer(root, key, detail, card, id) {
+  if (!detail) { gridPanelLast[key] = null; return; }
   const poster = card?.querySelector(".watch-poster") || card;
   if (!poster) return;
   const d = detail.getBoundingClientRect();
   const p = poster.getBoundingClientRect();
   const x = Math.round(p.left + p.width / 2 - d.left);
   const rowTop = Math.round(p.top - root.getBoundingClientRect().top);
-  const prev = watchPanelLast;
-  watchPanelLast = { id, x, rowTop };
+  const prev = gridPanelLast[key];
+  gridPanelLast[key] = { id, x, rowTop };
   if (prev && prev.rowTop === rowTop) {
     detail.classList.add("is-steady"); // same row: no entry animation
     if (prev.id !== id && prev.x !== x && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
@@ -30343,6 +30355,7 @@ function refreshStalePodcastFeeds() {
         else if (activeMediaTab === "podcasts") {
           if (activePodcastTab === "recent") renderRecentEpisodes();
           else if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+          else if (activePodcastTab === "shows" && !activePodcastShowId) renderPodcastShowsGrid(); // an open panel's recent episodes
         }
       }
     }
@@ -31409,6 +31422,7 @@ function isArticlePubTab(tab) {
 // ─── Podcasts ─────────────────────────────────────────────────────────────────
 
 let activePodcastShowId = null;
+let expandedPodcastShowId = null; // the show whose panel is open in the Shows grid — this device's view, never saved
 let activePodcastTab = "shows";
 let activePodcastSavedCategory = "all";
 let podcastSavedCatInputActive = false;
@@ -31736,7 +31750,9 @@ function switchPodcastTab(tabId) {
     refreshStalePodcastFeeds(); // re-renders the list when fresh episodes land
   } else if (tabId === "shows") {
     activePodcastShowId = null;
+    expandedPodcastShowId = null;
     renderPodcastShowsGrid();
+    refreshStalePodcastFeeds(); // the panels list recent episodes; redraws the grid if any landed
   } else if (tabId === "saved") {
     renderPodcastSavedEpisodes();
   } else if (tabId === "search") {
@@ -32015,41 +32031,96 @@ function removePodcastFromCurrentScope(id) {
   renderPodcastShowsGrid();
 }
 
+// The Shows grid matches the Watch page (Luke, 2026-11-11): cover art four to
+// a row on a phone, and tapping a show opens a panel of its recent episodes
+// under that row — the grid stays put. "All episodes" in the panel opens the
+// show's full list (with its bundle settings), as tapping the show used to.
+const PODCAST_PANEL_EPISODES = 5;
+function podcastShowPanelHtml(show) {
+  const id = escapeHtml(show.id);
+  const all = Array.isArray(show.episodes) ? show.episodes : [];
+  const recent = [...all]
+    .sort((a, b) => (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0))
+    .slice(0, PODCAST_PANEL_EPISODES)
+    .map((e) => ({ ...e, showId: show.id, showTitle: show.title, showArt: show.art }));
+  const hasPlaylists = (state.podcastPlaylists || []).length > 0;
+  return `
+    <div class="watch-detail-row listen-detail-row" data-podcast-show-detail="${id}" role="region" aria-label="${escapeHtml(show.title)}">
+      <span class="watch-detail-pointer" aria-hidden="true"></span>
+      <div class="watch-detail-inner">
+        <div class="watch-detail-top">
+          <div class="watch-detail-head">
+            <span class="watch-detail-title">${escapeHtml(show.title)}</span>
+            <span class="watch-detail-sub">Recent episodes</span>
+          </div>
+          <button class="watch-detail-more" type="button" data-podcast-show-more="${id}" aria-label="More for ${escapeHtml(show.title)}" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+          </button>
+        </div>
+        ${show.lastError ? `<p class="podcast-feed-error" role="status">Not updating since ${escapeHtml(formatArticleDate(show.lastFetched))}: ${escapeHtml(show.lastError)}</p>` : ""}
+        ${recent.length
+          ? `<div class="listen-detail-episodes">${recent.map((e) => podcastEpisodeRowHtml(e, { showShowTitle: false, hasPlaylists })).join("")}</div>`
+          : `<p class="listen-detail-empty">No episodes yet.</p>`}
+        <button class="secondary-btn compact-btn listen-detail-all" type="button" data-podcast-show-all="${id}">All episodes</button>
+      </div>
+    </div>`;
+}
+
 function renderPodcastShowsGrid() {
   const listEl = document.getElementById("podcastEpisodeList");
   if (!listEl) return;
   const podcasts = [...(state.podcasts || [])].sort((a, b) =>
     (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }));
+  if (expandedPodcastShowId && !podcasts.some((p) => p.id === expandedPodcastShowId)) expandedPodcastShowId = null;
   const addCard = `
-    <button class="podcast-show-card podcast-show-card-add" type="button" id="podcastShowAddCard">
-      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      <span>Add show</span>
+    <button class="watch-card listen-card listen-card-add" type="button" id="podcastShowAddCard" aria-label="Add show">
+      <div class="watch-poster watch-poster--square watch-poster--ph">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="watch-card-meta"><span class="watch-card-title">Add show</span></div>
     </button>`;
 
-  if (!podcasts.length) {
-    listEl.innerHTML = `<div class="podcast-shows-grid">${addCard}</div>`;
-    listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
-    return;
-  }
-
-  listEl.innerHTML = `<div class="podcast-shows-grid">
-    ${podcasts.map(p => `
-      <button class="podcast-show-card" type="button" data-show-id="${escapeHtml(p.id)}">
-        ${p.art
-          ? `<img class="podcast-show-card-art" src="${escapeHtml(p.art)}" alt="${escapeHtml(p.title)}" loading="lazy">`
-          : `<div class="podcast-show-card-art podcast-show-card-art--placeholder"><svg viewBox="0 0 24 24" aria-hidden="true" width="32" height="32"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`}
-        <div class="podcast-show-card-title">${escapeHtml(p.title)}</div>
-        <div class="podcast-show-card-meta">${p.episodes?.length || 0} episode${p.episodes?.length === 1 ? "" : "s"}</div>
-      </button>
-    `).join("")}
+  listEl.innerHTML = `<div class="watch-grid listen-grid podcast-shows-grid">
+    ${podcasts.map((p) => {
+      const expanded = expandedPodcastShowId === p.id;
+      return `
+      <article class="watch-card listen-card${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-expanded="${expanded}" data-show-id="${escapeHtml(p.id)}">
+        <div class="watch-poster watch-poster--square${p.art ? "" : " watch-poster--ph"}">
+          ${p.art
+            ? `<img class="watch-poster-img" src="${escapeHtml(p.art)}" alt="" aria-hidden="true" loading="lazy">`
+            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4"/></svg>`}
+        </div>
+        <div class="watch-card-meta"><span class="watch-card-title">${escapeHtml(p.title)}</span></div>
+      </article>${expanded ? podcastShowPanelHtml(p) : ""}`;
+    }).join("")}
     ${addCard}
   </div>`;
 
-  listEl.querySelectorAll("[data-show-id]").forEach(btn => {
-    btn.addEventListener("click", () => openPodcastShow(btn.dataset.showId));
-    btn.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "show", btn.dataset.showId));
+  listEl.querySelectorAll(".listen-card[data-show-id]").forEach((card) => {
+    const toggle = () => {
+      expandedPodcastShowId = expandedPodcastShowId === card.dataset.showId ? null : card.dataset.showId;
+      renderPodcastShowsGrid();
+    };
+    card.addEventListener("click", toggle);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+    card.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "show", card.dataset.showId));
   });
+  listEl.querySelector("[data-podcast-show-more]")?.addEventListener("click", (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    openMediaShareMenu({
+      preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation(),
+      clientX: r.right - 200, clientY: r.bottom + 4,
+    }, "show", e.currentTarget.dataset.podcastShowMore);
+  });
+  listEl.querySelector("[data-podcast-show-all]")?.addEventListener("click", (e) => openPodcastShow(e.currentTarget.dataset.podcastShowAll));
   listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
+  const detail = listEl.querySelector("[data-podcast-show-detail]");
+  if (detail) wirePodcastEpisodeRows(detail);
+  placeGridPanelPointer(listEl, "podcasts", detail,
+    detail ? listEl.querySelector(`.listen-card[data-show-id="${CSS.escape(detail.dataset.podcastShowDetail)}"]`) : null,
+    detail?.dataset.podcastShowDetail);
 }
 
 function openPodcastShow(showId) {
@@ -41285,6 +41356,7 @@ async function callNetlifyFunction(name, body, { timeoutMs } = {}) {
 // Books folder: a horizontal tab bar (Audible / Libby / Kindle / Wishlist)
 // over a single content grid, matching the podcasts / saved-articles layout.
 let activeBookTab = "audible";
+let expandedReadingItemId = null; // the book whose panel is open in the Books grid — this device's view, never saved
 let bookCategoryInputActive = false;
 let draggedReadingItemId = null;
 function handleReadingItemDragStart(event) {
@@ -41333,7 +41405,7 @@ function renderBookTabs() {
 
   bar.querySelectorAll("[data-book-tab]").forEach((btn) => {
     const tabKey = btn.dataset.bookTab;
-    btn.addEventListener("click", () => { activeBookTab = tabKey; bookCategoryInputActive = false; renderBooksView(); });
+    btn.addEventListener("click", () => { activeBookTab = tabKey; bookCategoryInputActive = false; expandedReadingItemId = null; renderBooksView(); });
     // Custom wishlist tabs accept dragged books (drop = add to that wishlist).
     if (!BOOK_FORMAT_TABS.some((t) => t.key === tabKey)) {
       btn.addEventListener("dragover", (e) => {
@@ -41403,6 +41475,7 @@ function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
     : (i) => i.format === format;
 
   const allItems = readingItemsList().filter(filterFn);
+  if (expandedReadingItemId && !allItems.some((i) => i.id === expandedReadingItemId)) expandedReadingItemId = null;
   const active = allItems.filter(i => i.status !== "read");
   const reading = active.filter(i => i.status === "reading");
   const want = active.filter(i => i.status === "want");
@@ -41415,7 +41488,7 @@ function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
         <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         <span>${label}</span>
       </button>
-      <div class="watch-item-list">${items.map(item => readingItemTemplate(item)).join("")}</div>
+      <div class="watch-item-list watch-grid listen-grid">${items.map(item => readingCardTemplate(item)).join("")}</div>
     </div>`;
 
   const emptyHint = categoryId
@@ -41434,6 +41507,10 @@ function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
     </section>`;
 
   bindReadingControls(gridEl);
+  const detail = gridEl.querySelector("[data-reading-detail]");
+  placeGridPanelPointer(gridEl, "books", detail,
+    detail ? gridEl.querySelector(`[data-reading-item="${CSS.escape(detail.dataset.readingDetail)}"]`) : null,
+    detail?.dataset.readingDetail);
 }
 
 function renderReadingPlanner(formatFilter) {
@@ -41639,12 +41716,98 @@ function readingItemTemplate(item) {
   `;
 }
 
+// Books match the Watch page (Luke, 2026-11-11): covers four to a row on a
+// phone; tapping a cover opens the book's panel under that row (author, format,
+// library availability, and the library / Libby / Audible links). The ⋯ in the
+// panel is the same Shelves & options menu the old row had.
+function readingCardTemplate(item) {
+  const expanded = expandedReadingItemId === item.id;
+  const id = escapeHtml(item.id);
+  const card = `
+    <article class="watch-card listen-card reading-item${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-expanded="${expanded}" data-reading-item="${id}">
+      <div class="watch-poster${item.coverUrl ? "" : " watch-poster--ph"}">
+        ${item.coverUrl
+          ? `<img class="watch-poster-img" src="${escapeHtml(item.coverUrl)}" alt="" aria-hidden="true" loading="lazy" />`
+          : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`}
+      </div>
+      <div class="watch-card-meta"><span class="watch-card-title reading-item-title">${escapeHtml(item.title)}</span></div>
+    </article>`;
+  if (!expanded) return card;
+
+  const subParts = [];
+  if (item.authors?.length) subParts.push(item.authors.join(", "));
+  if (item.year) subParts.push(String(item.year));
+  if (item.pageCount) subParts.push(`${item.pageCount} pp`);
+  const formatLabels = { physical: "Physical", ebook: "eBook", audiobook: "Audiobook" };
+  const formatHtml = item.format
+    ? `<span class="reading-format-badge reading-format-${escapeHtml(item.format)}">${escapeHtml(formatLabels[item.format] || item.format)}</span>`
+    : "";
+  const libKey = getLibraryKey();
+  const linkIcon = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>`;
+  const detail = `
+    <div class="watch-detail-row listen-detail-row" data-reading-detail="${id}" role="region" aria-label="${escapeHtml(item.title)}">
+      <span class="watch-detail-pointer" aria-hidden="true"></span>
+      <div class="watch-detail-inner">
+        <div class="watch-detail-top">
+          <div class="watch-detail-head">
+            <span class="watch-detail-title">${escapeHtml(item.title)}</span>
+            ${subParts.length ? `<span class="watch-detail-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
+            ${formatHtml ? `<div class="listen-detail-badges">${formatHtml}</div>` : ""}
+            <div class="reading-item-avail" id="avail-${id}"></div>
+          </div>
+          <button class="watch-detail-more" type="button" data-reading-menu="${id}" title="Shelves & options" aria-label="Shelves and options for ${escapeHtml(item.title)}" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+          </button>
+        </div>
+        <div class="listen-detail-links">
+          <a class="reading-library-btn" href="${escapeHtml(hclCatalogUrl(item.title, item.authors))}" target="_blank" rel="noopener noreferrer" title="Find at ${escapeHtml(libKey.toUpperCase())} library catalog">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            Find at library
+          </a>
+          <a class="reading-library-btn reading-library-btn--libby" href="${escapeHtml(libbySearchUrl(item.title))}" target="_blank" rel="noopener noreferrer" title="Borrow in Libby">${linkIcon} Borrow in Libby</a>
+          <a class="reading-library-btn reading-library-btn--audible" href="${escapeHtml(audibleSearchUrl(item.title, item.authors))}" target="_blank" rel="noopener noreferrer" title="Find on Audible">${linkIcon} Listen on Audible</a>
+        </div>
+      </div>
+    </div>`;
+  return card + detail;
+}
+
 function bindReadingControls(root = document) {
   root.querySelectorAll("[data-reading-menu]").forEach((btn) => {
     btn.addEventListener("click", (e) => { e.stopPropagation(); openReadingItemMenu(e); });
   });
+  // The Books grid: tap a cover → toggle its panel (a real drag to a wishlist
+  // tab suppresses the click, as on Watch). The open panel checks the library.
+  root.querySelectorAll(".listen-card[data-reading-item]").forEach((card) => {
+    const toggle = () => {
+      expandedReadingItemId = expandedReadingItemId === card.dataset.readingItem ? null : card.dataset.readingItem;
+      renderBooksView();
+    };
+    card.addEventListener("click", toggle);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+  });
+  root.querySelectorAll("[data-reading-detail]").forEach((detail) => {
+    const itemId = detail.dataset.readingDetail;
+    const item = readingItemById(itemId);
+    const availEl = detail.querySelector(`#avail-${CSS.escape(itemId)}`);
+    if (!item || !availEl) return;
+    if (hclAvailabilityCache.has(itemId)) {
+      const cached = hclAvailabilityCache.get(itemId);
+      if (cached) renderHclAvailability(availEl, cached);
+      else availEl.textContent = "Checking library…"; // in flight; its reply fills the panel below
+      return;
+    }
+    availEl.textContent = "Checking library…";
+    loadHclAvailability(itemId, item.title, item.authors).then((res) => {
+      const live = document.getElementById(`avail-${itemId}`); // the panel may have redrawn meanwhile
+      if (live) renderHclAvailability(live, res);
+    });
+  });
   root.querySelectorAll("[data-reading-item]").forEach((article) => {
     article.addEventListener("contextmenu", openReadingItemMenu);
+    if (article.classList.contains("listen-card")) return; // availability loads when its panel opens
     article.addEventListener("mouseenter", () => {
       const itemId = article.dataset.readingItem;
       const item = readingItemById(itemId);
@@ -41784,7 +41947,8 @@ function openReadingItemMenu(event) {
   // Works whether triggered by right-click on the row or a click on the row's
   // menu (⋯) button.
   const itemId = event.currentTarget.closest?.("[data-reading-item]")?.dataset.readingItem
-    || event.currentTarget.dataset.readingItem;
+    || event.currentTarget.dataset.readingItem
+    || event.currentTarget.dataset.readingMenu; // the open panel's ⋯ sits outside the cover
   if (!itemId) return;
 
   const item = readingItemById(itemId);

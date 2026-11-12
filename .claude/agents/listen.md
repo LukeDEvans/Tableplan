@@ -66,6 +66,13 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
 - **Newsletter briefings live only in Listen (2026-10-16).** The Morning / The world
   in brief (saved articles `news-*`) reach the queue like any saved article; News no
   longer shows them anywhere. Keep them in the queue.
+- **Podcasts › Shows and Books look like the Watch page** (Luke, 2026-11-11): covers in
+  Watch's grid (`.watch-grid`, four a row on a phone); tapping a cover opens a panel under
+  its row (`.watch-detail-row`, pointer placed by the shared `placeGridPanelPointer`) and
+  the grid stays put — a show's panel lists its 5 most recent episodes with "All episodes"
+  opening the full list (bundle settings live there); a book's panel has author, format,
+  library availability and the library / Libby / Audible links. Don't bring back opening a
+  show as its own page on tap. QA: `node scripts/qa-listen-grid.mjs`.
 - **Books stays in Listen** for now (mostly audiobooks); how to organize non-audio
   books is undecided — don't move Kindle/Libby out.
 - **Saved articles still join the queue for read-aloud**; tapping one opens the
