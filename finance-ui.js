@@ -4139,8 +4139,19 @@ function renderFinancePage() {
   // What the totals leave out, and saved totals that have gone stale. Shown only
   // when there is something to act on.
   const truthMonthName = new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long" });
-  const truthCard = (showActuals && (uncatThis.count || staleSaved || skippedMerchants)) ? `
+  // The month in one line: spent of budgeted, what's left. Uncategorized sits right
+  // under it, so the three are never out of sight together.
+  const spentThis = [...catActuals.values()].reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const leftThis = expenses - spentThis;
+  const monthLine = showActuals && expenses > 0 ? `
+      <div class="fin-truth-row fin-month-line">
+        <span class="fin-truth-name">Spent ${formatFinMoney(spentThis)}<span class="fin-of"> of ${formatFinMoney(expenses)} budgeted</span></span>
+        <span class="fin-truth-amt${leftThis < 0 ? " is-over" : ""}">${leftThis < 0 ? `${formatFinMoney(-leftThis)} over` : `${formatFinMoney(leftThis)} left`}</span>
+      </div>
+      ${budgetBar(spentThis, expenses)}` : "";
+  const truthCard = (monthLine || (showActuals && (uncatThis.count || staleSaved || skippedMerchants))) ? `
     <div class="fin-card fin-truth-card" data-fin-card="truth">
+      ${monthLine}
       ${uncatThis.count ? `
       <button class="fin-truth-row fin-truth-btn" type="button" data-fin-action="show-uncategorized">
         <span class="fin-truth-name">Uncategorized<span class="fin-of"> · ${uncatThis.count} transaction${uncatThis.count === 1 ? "" : "s"}, not in the totals below</span></span>

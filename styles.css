@@ -22476,6 +22476,14 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-truth-name .fin-of { font-weight: 500; }
 .fin-truth-amt { font-weight: 800; white-space: nowrap; }
 .fin-truth-go { color: var(--muted); font-size: 1.1rem; }
+.fin-truth-amt.is-over { color: #b3261e; }
+.fin-month-line + .fin-budget-bar { margin: 0 2px 8px; }
+.fin-month-line + .fin-budget-bar + .fin-truth-row { border-top: none; }
+/* Laptop: Insights' cards flow into two columns instead of one long stack. */
+@media (min-width: 1000px) {
+  .fin-tab-body[data-fin-tab-body="insights"] { display: block; columns: 2; column-gap: 16px; }
+  .fin-tab-body[data-fin-tab-body="insights"] > * { break-inside: avoid; margin: 0 0 16px; }
+}
 .fin-truth-row .fin-add-btn { flex: none; margin: 0; }
 .fin-stale-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, #b3261e 10%, transparent); color: #8c1d18; font-size: 0.88rem; font-weight: 700; }
 .fin-stale-banner .fin-add-btn { flex: none; margin: 0; }
