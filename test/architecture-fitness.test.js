@@ -80,7 +80,7 @@ describe("fitness: every critical synced id-keyed list is registered in mergeSta
   // across devices. Guard the highest-risk collections against silent removal from
   // the merge. (New collections should be added here when they become sync-critical.)
   const app = code("app.js");
-  const body = app.slice(app.indexOf("function mergeStates(newer, older)"));
+  const body = app.slice(app.indexOf("function mergeStates(newer, older"));
   const mergeBody = body.slice(0, body.indexOf("\nfunction ", 1));
   const CRITICAL = [
     "planEvents", "planCalendars", "doTasks", "recipes", "contacts",

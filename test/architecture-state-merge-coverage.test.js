@@ -21,7 +21,7 @@ function stateSectionKeys() {
 }
 
 function mergeStatesBody() {
-  const start = src.indexOf("function mergeStates(newer, older) {");
+  const start = src.indexOf("function mergeStates(newer, older");
   const end = src.indexOf("\nfunction mergePlanWeeks", start);
   if (start < 0 || end < 0) throw new Error("mergeStates not found in app.js");
   return src.slice(start, end).replace(/\/\/.*$/gm, "");
