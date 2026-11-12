@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId } from "../media-queue-order.js";
+import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId, episodeTapAction } from "../media-queue-order.js";
 
 describe("the queue plays in the order Up Next lists", () => {
   it("after the current item, the top of the list is next", () => {
@@ -74,5 +74,22 @@ describe("a paused item keeps the Now Playing slot when nothing is loaded", () =
   it("an episode that was never started, or radio played last, holds nothing", () => {
     expect(heldQueueId({ lastHistory: { kind: "podcast", id: "paused" }, progress: {}, listIds: list })).toBe(null);
     expect(heldQueueId({ lastHistory: { kind: "radio", id: "mpr" }, listIds: list })).toBe(null);
+  });
+});
+
+describe("episodeTapAction (a tap on the episode the native player holds)", () => {
+  it("shows the playing episode instead of starting it again", () => {
+    expect(episodeTapAction({ tappedId: "a", sessionId: "a", paused: false })).toBe("show");
+  });
+  it("resumes it when it was paused", () => {
+    expect(episodeTapAction({ tappedId: "a", sessionId: "a", paused: true })).toBe("resume");
+  });
+  it("starts a different episode, or any episode when nothing is loaded", () => {
+    expect(episodeTapAction({ tappedId: "b", sessionId: "a" })).toBe("start");
+    expect(episodeTapAction({ tappedId: "a", sessionId: null })).toBe("start");
+    expect(episodeTapAction({ tappedId: "a" })).toBe("start");
+  });
+  it("lets the queue's own advance start an episode as usual", () => {
+    expect(episodeTapAction({ tappedId: "a", sessionId: "a", advance: true })).toBe("start");
   });
 });

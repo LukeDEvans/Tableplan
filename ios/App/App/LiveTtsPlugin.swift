@@ -5,6 +5,8 @@ import AVFoundation
 import MediaPlayer
 import MusicKit
 import Combine
+import Network
+import CryptoKit
 
 // Native playback queue for the Media "listen" flow: on-device text-to-speech
 // (AVSpeechSynthesizer) for articles, plus an AVPlayer for audio files (podcast
@@ -136,6 +138,45 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     // sent with the final ttsFinish so the app can say why a station won't play.
     private var liveLastError = ""
     private var liveStartedId = ""
+    // Podcast stall watch. An episode can stop a few seconds short of its end
+    // and never finish: the length the player shows is an estimate for some MP3
+    // files, so the sound runs out before the "played to end" notice can fire,
+    // and the player waits for more for ever (Luke, 2026-11-11: stuck at 1:21:21
+    // of 1:21:35, and pause / play didn't move it). Stuck in the last stretch
+    // with the network up counts as finished; stuck earlier reconnects.
+    private var stallTimer: Timer?
+    private var stallSince: Date?
+    private var stallCheckPos: Double = -1
+    private var stallPlayerMoved = false
+    private var audioStuck = false
+    private var stallReconnects = 0
+    private var stallReconnectId = ""
+    private var stallReconnectPos: Double = -1
+    private var stallBgTask: UIBackgroundTaskIdentifier = .invalid
+    private let pathMonitor = NWPathMonitor()
+    private var networkUp = true
+    private static let stallEndWait: TimeInterval = 8        // in the last stretch, after it had been playing
+    private static let stallEndWaitFresh: TimeInterval = 15  // in the last stretch, on a player that hasn't played yet
+    private static let stallReconnectWait: TimeInterval = 20 // earlier in the episode
+    // Episode downloads (see EpisodeDownload at the end of this file). An episode
+    // plays from its downloaded file when there is one; a new episode started
+    // from the beginning plays from its download as it arrives; anything else
+    // streams as before while the download carries on for next time.
+    private var downloads: [String: EpisodeDownload] = [:]
+    private enum AudioSource { case stream, feeding, file }
+    private var audioSource = AudioSource.stream
+    private var feedWaitSince: Date?
+    // Episodes whose download gave up this launch: stream them.
+    private var streamOnly: Set<String> = []
+    // Playing from an arriving download is new: if it ever fails to start while
+    // data is coming in, stop using it for this build and stream instead (the
+    // download still runs, so the next listen is from the file).
+    private static let feedOffKey = "LiveTtsFeedOff-" + ((Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "0")
+    private static let feedStartWait: TimeInterval = 20
+    private static let episodeCapBytes: Int64 = 2_000_000_000
+    private static let episodeMaxAge: TimeInterval = 21 * 24 * 3600
+    private static let episodeMinFreeBytes: Int64 = 500_000_000
+    private static let stallMaxReconnects = 2
 
     // Apple Music state (appleMusic items). musicToken changes on every start so a
     // late callback from an earlier song is ignored.
@@ -171,6 +212,12 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleMediaReset(_:)),
             name: AVAudioSession.mediaServicesWereResetNotification, object: nil)
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let up = path.status == .satisfied
+            DispatchQueue.main.async { self?.networkUp = up }
+        }
+        pathMonitor.start(queue: DispatchQueue.global(qos: .utility))
+        DispatchQueue.global(qos: .utility).async { LiveTtsPlugin.pruneEpisodes(keeping: []) }
     }
 
     @objc func getVoices(_ call: CAPPluginCall) {
@@ -304,6 +351,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         DispatchQueue.main.async {
             self.upcoming = items
             self.prefetchSongs(items)
+            self.prefetchNextEpisode()
             call.resolve(["count": items.count])
         }
     }
@@ -527,6 +575,11 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             p.replaceCurrentItem(with: nil)
         }
         timeObserver = nil
+        stallTimer?.invalidate()
+        stallTimer = nil
+        clearStall()
+        audioSource = .stream
+        feedWaitSince = nil
         if let o = endObserver { NotificationCenter.default.removeObserver(o) }
         if let o = failObserver { NotificationCenter.default.removeObserver(o) }
         endObserver = nil
@@ -861,7 +914,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
 
     private func startAudio(_ item: Item, at position: Double, url overrideUrl: URL? = nil) {
         guard let url = overrideUrl ?? item.url else { return }
-        let playerItem = AVPlayerItem(url: url)
+        let source = episodeSource(for: item, url: url, at: position)
+        let playerItem = source.0
+        audioSource = source.1
         let p = AVPlayer(playerItem: playerItem)
         p.automaticallyWaitsToMinimizeStalling = true
         player = p
@@ -881,6 +936,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             guard let self = self, self.player?.currentItem === playerItem else { return }
             let err = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
             self.noteLiveError(playerItem, err, url: url)
+            if self.fallBackToStream(reason: "stopped part-way") { return }
             self.itemFinished(failed: true)
         }
         statusObservation = playerItem.observe(\.status, options: [.new]) { [weak self] obs, _ in
@@ -888,6 +944,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             DispatchQueue.main.async {
                 guard let self = self, self.player?.currentItem === obs else { return }
                 self.noteLiveError(obs, obs.error, url: url)
+                if self.fallBackToStream(reason: "couldn't be opened") { return }
                 self.itemFinished(failed: true)
             }
         }
@@ -900,6 +957,291 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             p.seek(to: CMTime(seconds: position, preferredTimescale: 600))
         }
         p.playImmediately(atRate: max(0.5, min(3.0, rate)))
+        if item.kind == .audio { armStallWatch() }
+    }
+
+    // MARK: - Episode downloads
+
+    private static func episodeDir() -> URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        let dir = caches.appendingPathComponent("LivePodcasts", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    // The kept file's path without its extension (episode ids aren't file names).
+    private static func episodeBase(_ id: String) -> URL? {
+        let hash = SHA256.hash(data: Data(id.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+        return episodeDir()?.appendingPathComponent(hash)
+    }
+
+    private static func downloadedEpisode(_ id: String) -> URL? {
+        guard let base = episodeBase(id) else { return nil }
+        for ext in ["mp3", "m4a", "aac"] {
+            let u = base.appendingPathExtension(ext)
+            if FileManager.default.fileExists(atPath: u.path) { return u }
+        }
+        return nil
+    }
+
+    // Only real episodes over https: a song is already a file on the phone, and
+    // plain-http audio may only be loaded by the player itself (Info.plist).
+    private static func isEpisode(_ item: Item, url: URL?) -> Bool {
+        return item.kind == .audio && !item.isMusic && url?.scheme?.lowercased() == "https"
+    }
+
+    private static func hasRoomForEpisodes() -> Bool {
+        guard let dir = episodeDir(),
+              let free = (try? dir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+                .volumeAvailableCapacityForImportantUsage else { return true }
+        return free > episodeMinFreeBytes
+    }
+
+    // What the player should play for this item, and where it comes from.
+    private func episodeSource(for item: Item, url: URL, at position: Double) -> (AVPlayerItem, AudioSource) {
+        guard LiveTtsPlugin.isEpisode(item, url: url) else { return (AVPlayerItem(url: url), .stream) }
+        if let file = LiveTtsPlugin.downloadedEpisode(item.id) {
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+            // Exact length and exact seeking: free for a file on the phone.
+            let asset = AVURLAsset(url: file, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+            return (AVPlayerItem(asset: asset), .file)
+        }
+        guard !streamOnly.contains(item.id), LiveTtsPlugin.hasRoomForEpisodes(),
+              let d = ensureDownload(item, url: url, forPlayback: true, fromStart: position <= 1) else {
+            return (AVPlayerItem(url: url), .stream)
+        }
+        // A download can only be joined at its start. Picking up part-way streams
+        // this time; the file is there for the next start.
+        guard position <= 1, !UserDefaults.standard.bool(forKey: LiveTtsPlugin.feedOffKey) else {
+            return (AVPlayerItem(url: url), .stream)
+        }
+        return (AVPlayerItem(asset: d.makeAsset()), .feeding)
+    }
+
+    // The item's download, started if need be. forPlayback: it is (about to be)
+    // playing, so any connection will do, and every other unfinished download is
+    // dropped. Otherwise it is fetched ahead, on Wi-Fi only.
+    private func ensureDownload(_ item: Item, url: URL, forPlayback: Bool, fromStart: Bool) -> EpisodeDownload? {
+        if forPlayback {
+            for (id, other) in downloads where id != item.id {
+                other.cancel()
+                downloads[id] = nil
+            }
+        }
+        if let d = downloads[item.id] {
+            // One fetched ahead on Wi-Fi that is already arriving can be played from
+            // its start as it is; otherwise it's needed on any connection now.
+            if d.allowsExpensive || !forPlayback || (fromStart && d.progress().0 > 0) { return d }
+            d.cancel()
+            downloads[item.id] = nil
+        }
+        guard let base = LiveTtsPlugin.episodeBase(item.id) else { return nil }
+        let d = EpisodeDownload(id: item.id, remote: url, base: base, allowsExpensive: forPlayback)
+        let id = item.id
+        d.onFinished = { [weak self, weak d] file in
+            // A download that was replaced meanwhile has nothing more to say.
+            guard let self = self, let d = d, self.downloads[id] === d else { return }
+            self.downloadFinished(id, file: file)
+        }
+        downloads[id] = d
+        d.start()
+        return d
+    }
+
+    private func downloadFinished(_ id: String, file: URL?) {
+        let playingIt = current?.id == id && current?.kind == .audio
+        if file != nil {
+            // Keep the object while it is still feeding the player.
+            if !(playingIt && audioSource == .feeding) { downloads[id] = nil }
+            NSLog("[LiveTts] episode downloaded")
+            let keep = Set([current?.id].compactMap { $0 } + upcoming.map { $0.id })
+            DispatchQueue.global(qos: .utility).async { LiveTtsPlugin.pruneEpisodes(keeping: keep) }
+            prefetchNextEpisode()
+            return
+        }
+        downloads[id] = nil
+        streamOnly.insert(id)
+        NSLog("[LiveTts] episode download gave up — streaming it instead")
+        if playingIt && audioSource == .feeding { _ = fallBackToStream(reason: "download gave up") }
+    }
+
+    // Fetch the next episode in the queue ahead of time (Wi-Fi only, one at a
+    // time, and only once nothing else is downloading).
+    private func prefetchNextEpisode() {
+        guard downloads.values.allSatisfy({ $0.isDone }), LiveTtsPlugin.hasRoomForEpisodes() else { return }
+        for item in upcoming where LiveTtsPlugin.isEpisode(item, url: item.url) {
+            if LiveTtsPlugin.downloadedEpisode(item.id) != nil { continue }
+            if streamOnly.contains(item.id) { continue }
+            if let url = item.url { _ = ensureDownload(item, url: url, forPlayback: false, fromStart: true) }
+            return
+        }
+    }
+
+    // A played episode's file isn't needed again.
+    private func removeEpisode(_ id: String) {
+        if let d = downloads[id] { d.cancel(); downloads[id] = nil }
+        if let file = LiveTtsPlugin.downloadedEpisode(id) { try? FileManager.default.removeItem(at: file) }
+    }
+
+    // The current episode isn't playing from its download or its file: carry on
+    // from the same spot by streaming, as the app did before downloads. False
+    // when it was already streaming (the caller then treats the failure as real).
+    @discardableResult
+    private func fallBackToStream(reason: String) -> Bool {
+        guard let item = current, item.kind == .audio, audioSource != .stream else { return false }
+        NSLog("[LiveTts] episode %@ — streaming it instead", reason)
+        if audioSource == .file, let file = LiveTtsPlugin.downloadedEpisode(item.id) {
+            try? FileManager.default.removeItem(at: file) // a file that won't play is no use
+        }
+        if audioSource == .feeding, let d = downloads[item.id] {
+            // Data was arriving and the player still wouldn't take it: that is this
+            // code's fault, not the network's. Don't try it again on this build.
+            if d.progress().0 > 2 * 1024 * 1024 { UserDefaults.standard.set(true, forKey: LiveTtsPlugin.feedOffKey) }
+        }
+        streamOnly.insert(item.id)
+        if let d = downloads[item.id] { d.cancel(); downloads[item.id] = nil }
+        let pos = currentAudioPosition()
+        if userPaused {
+            // Paused: don't start making sound. Play reopens it (see doResume).
+            teardownPlayer()
+            lastAudioPosition = pos
+        } else {
+            start(item, audioPosition: pos)
+        }
+        return true
+    }
+
+    // A player fed by a download that hasn't become ready. Returns true while
+    // that is the state of things (the stall watch has nothing to measure yet).
+    private func checkFeedStart() -> Bool {
+        guard audioSource == .feeding, let item = current, item.kind == .audio,
+              let playerItem = player?.currentItem, playerItem.status == .unknown else {
+            feedWaitSince = nil
+            return false
+        }
+        guard networkUp, !userPaused else {
+            feedWaitSince = nil
+            return true
+        }
+        guard let since = feedWaitSince else {
+            feedWaitSince = Date()
+            return true
+        }
+        if Date().timeIntervalSince(since) >= LiveTtsPlugin.feedStartWait {
+            feedWaitSince = nil
+            fallBackToStream(reason: "didn't start from its download")
+        }
+        return true
+    }
+
+    // Tidy Caches/LivePodcasts: unfinished leftovers, files not played for three
+    // weeks, and the oldest files over the cap. Never the ones in `keeping`.
+    private static func pruneEpisodes(keeping ids: Set<String>) {
+        guard let dir = episodeDir(),
+              let files = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return }
+        let keepNames = Set(ids.compactMap { episodeBase($0)?.lastPathComponent })
+        var entries: [(URL, Int64, Date)] = []
+        for u in files {
+            let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let date = v?.contentModificationDate ?? .distantPast
+            let kept = keepNames.contains(u.deletingPathExtension().lastPathComponent)
+            let stalePart = u.pathExtension == "part" && Date().timeIntervalSince(date) > 3600
+            if !kept && (stalePart || Date().timeIntervalSince(date) > episodeMaxAge) {
+                try? FileManager.default.removeItem(at: u)
+            } else if u.pathExtension != "part" {
+                entries.append((u, Int64(v?.fileSize ?? 0), date))
+            }
+        }
+        var total = entries.reduce(Int64(0)) { $0 + $1.1 }
+        entries.sort { $0.2 < $1.2 } // oldest first
+        for (u, size, _) in entries where total > episodeCapBytes {
+            if keepNames.contains(u.deletingPathExtension().lastPathComponent) { continue }
+            try? FileManager.default.removeItem(at: u)
+            total -= size
+        }
+    }
+
+    // MARK: - Podcast stall watch
+
+    private func armStallWatch() {
+        stallTimer?.invalidate()
+        clearStall()
+        stallCheckPos = -1
+        stallPlayerMoved = false
+        audioStuck = false
+        let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.checkAudioStall() }
+        RunLoop.main.add(t, forMode: .common)
+        stallTimer = t
+    }
+
+    private func clearStall() {
+        stallSince = nil
+        if stallBgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(stallBgTask)
+            stallBgTask = .invalid
+        }
+    }
+
+    // How close to the end a stall counts as "the sound ran out": the last 2% of
+    // the episode, at least 45 s and at most 2 min.
+    private static func stallTail(_ duration: Double) -> Double {
+        return min(120, max(45, duration * 0.02))
+    }
+
+    // Every 2 s while an episode is loaded. Does nothing while paused, while the
+    // position moves, or while the phone is offline (the player carries on by
+    // itself when the connection is back).
+    private func checkAudioStall() {
+        if checkFeedStart() { return }
+        guard let item = current, item.kind == .audio, !userPaused,
+              let p = player, let playerItem = p.currentItem,
+              playerItem.status == .readyToPlay, p.timeControlStatus != .paused else {
+            clearStall()
+            return
+        }
+        let pos = currentAudioPosition()
+        if abs(pos - stallCheckPos) > 0.2 {
+            if stallCheckPos >= 0 { stallPlayerMoved = true }
+            stallCheckPos = pos
+            audioStuck = false
+            clearStall()
+            return
+        }
+        let now = Date()
+        guard let since = stallSince else {
+            stallSince = now
+            // Locked phone: ask for time to sort this out before iOS suspends an
+            // app that has gone quiet.
+            if stallBgTask == .invalid {
+                stallBgTask = UIApplication.shared.beginBackgroundTask(withName: "LiveTtsStall") { [weak self] in
+                    DispatchQueue.main.async { self?.clearStall() }
+                }
+            }
+            return
+        }
+        let stalledFor = now.timeIntervalSince(since)
+        if stalledFor >= LiveTtsPlugin.stallEndWait { audioStuck = true }
+        guard networkUp else { return }
+        let dur = currentAudioDuration()
+        // Waiting on a download that hasn't all arrived is not "the sound ran out".
+        let stillArriving = audioSource == .feeding && !(downloads[item.id]?.isDone ?? true)
+        let nearEnd = dur > 0 && dur - pos <= LiveTtsPlugin.stallTail(dur) && !stillArriving
+        if nearEnd {
+            let wait = stallPlayerMoved ? LiveTtsPlugin.stallEndWait : LiveTtsPlugin.stallEndWaitFresh
+            guard stalledFor >= wait else { return }
+            NSLog("[LiveTts] episode stuck %.0f s short of its end — treating it as finished", dur - pos)
+            clearStall()
+            itemFinished(failed: false)
+        } else if stalledFor >= LiveTtsPlugin.stallReconnectWait {
+            if stallReconnectId != item.id || pos > stallReconnectPos + 30 { stallReconnects = 0 }
+            guard stallReconnects < LiveTtsPlugin.stallMaxReconnects else { return }
+            stallReconnects += 1
+            stallReconnectId = item.id
+            stallReconnectPos = pos
+            NSLog("[LiveTts] episode stuck at %.0f s — reconnecting (try %ld)", pos, stallReconnects)
+            start(item, audioPosition: pos)
+        }
     }
 
     // Live only: keep a short, readable reason for the last stream that stopped.
@@ -996,6 +1338,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         let finishedId = current?.id ?? ""
         let nextItem = upcoming.removeFirst()
         start(nextItem)
+        prefetchNextEpisode()
         notifyListeners("ttsItemStart", data: [
             "id": nextItem.id,
             "kind": nextItem.kind.rawValue,
@@ -1039,6 +1382,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     private func finishCurrent(failed: Bool, error: String = "") {
         let finished = current
         let hasNext = !upcoming.isEmpty
+        if let f = finished, f.kind == .audio, !f.isMusic, !failed { removeEpisode(f.id) }
         notifyListeners("ttsFinish", data: [
             "id": finished?.id ?? "",
             "kind": finished?.kind.rawValue ?? "",
@@ -1109,7 +1453,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
                 restartSpeech(item)
             }
         case .audio:
-            if let p = player, p.currentItem != nil {
+            // A player that was stuck (see the stall watch) won't start again by
+            // being told to play: open the episode afresh at the same spot.
+            if let p = player, p.currentItem != nil, !(audioStuck && networkUp) {
                 p.playImmediately(atRate: max(0.5, min(3.0, rate)))
                 updateNowPlaying(playing: true)
             } else {
@@ -1291,5 +1637,340 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? 1.0 : 0.0
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+}
+
+// MARK: - Episode downloads
+//
+// One podcast episode, fetched once, front to back, into Caches/LivePodcasts.
+// While it arrives it can also feed the player (AVAssetResourceLoaderDelegate),
+// so what is heard and what is kept are the same bytes. That matters because
+// most podcast hosts put the ads in per request: a player that reconnects
+// part-way through a stream can be handed a file with different ads, and the
+// same spot in the file is then a few seconds earlier or later in the show
+// (Luke, 2026-11-11: episodes jumping back with the phone in his pocket).
+//
+// Everything below runs on `queue` (the URL session's delegate queue and the
+// resource loader's queue); start / cancel / makeAsset / progress are called
+// from the main thread.
+final class EpisodeDownload: NSObject, URLSessionDataDelegate, AVAssetResourceLoaderDelegate {
+    private enum Phase { case idle, loading, done, failed }
+
+    let id: String
+    let remote: URL
+    let allowsExpensive: Bool
+    // Main thread, once: the finished file, or nil when the download gave up.
+    var onFinished: ((URL?) -> Void)?
+
+    private let partURL: URL
+    private let baseURL: URL // the kept file, without its extension
+    private let urlExt: String
+    private let queue = DispatchQueue(label: "com.mrlukedevans.live.episode-download")
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var writer: FileHandle?
+    private var reader: FileHandle?
+    private var readPath: URL
+    private var phase = Phase.idle
+    private var total: Int64 = -1
+    private var received: Int64 = 0
+    private var skip: Int64 = 0 // a resume answered with the whole file: drop what we already hold
+    private var validator: String?
+    private var uti = "public.mp3"
+    private var ext = "mp3"
+    private var retries = 0
+    private var cancelled = false
+    private var pending: [AVAssetResourceLoadingRequest] = []
+
+    init(id: String, remote: URL, base: URL, allowsExpensive: Bool) {
+        self.id = id
+        self.remote = remote
+        self.baseURL = base
+        self.partURL = base.appendingPathExtension("part")
+        self.readPath = base.appendingPathExtension("part")
+        self.urlExt = remote.pathExtension.lowercased()
+        self.allowsExpensive = allowsExpensive
+        super.init()
+    }
+
+    // What kind of audio this is, or nil for something that isn't audio (an
+    // error page sent with a 200).
+    static func audioKind(mime: String?, pathExt: String) -> (uti: String, ext: String)? {
+        let m = (mime ?? "").lowercased()
+        if m.hasPrefix("text/") || m.contains("html") || m.contains("json") || m.contains("xml") { return nil }
+        if m.contains("mp4") || m.contains("m4a") || ["m4a", "mp4", "m4b"].contains(pathExt) {
+            return ("com.apple.m4a-audio", "m4a")
+        }
+        if m.contains("aac") || pathExt == "aac" { return ("public.aac-audio", "aac") }
+        return ("public.mp3", "mp3")
+    }
+
+    // MARK: Main-thread API
+
+    func start() {
+        queue.async {
+            guard self.phase == .idle, !self.cancelled else { return }
+            self.phase = .loading
+            self.open(resume: false)
+        }
+    }
+
+    // Stop and throw away a download that hasn't finished. A finished file stays.
+    func cancel() {
+        queue.async {
+            self.cancelled = true
+            self.onFinished = nil
+            guard self.phase == .loading || self.phase == .idle else { return }
+            self.phase = .failed
+            self.shutDown(removePart: true)
+            self.feed()
+        }
+    }
+
+    var isDone: Bool { return queue.sync { phase == .done } }
+
+    // (bytes received, total bytes or -1 before the host has answered)
+    func progress() -> (Int64, Int64) {
+        return queue.sync { (received, total) }
+    }
+
+    // An asset the player can play while the download is still arriving.
+    func makeAsset() -> AVURLAsset {
+        let name = ["mp3", "m4a", "aac"].contains(urlExt) ? urlExt : "mp3"
+        let asset = AVURLAsset(url: URL(string: "livepod://episode/\(baseURL.lastPathComponent).\(name)")!)
+        asset.resourceLoader.setDelegate(self, queue: queue)
+        return asset
+    }
+
+    // MARK: Download
+
+    private func open(resume: Bool) {
+        guard !cancelled, phase == .loading else { return }
+        if session == nil {
+            let cfg = URLSessionConfiguration.default
+            cfg.waitsForConnectivity = true
+            cfg.timeoutIntervalForRequest = 60
+            cfg.allowsExpensiveNetworkAccess = allowsExpensive
+            cfg.allowsConstrainedNetworkAccess = allowsExpensive
+            cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+            cfg.urlCache = nil
+            let ops = OperationQueue()
+            ops.underlyingQueue = queue
+            ops.maxConcurrentOperationCount = 1
+            session = URLSession(configuration: cfg, delegate: self, delegateQueue: ops)
+        }
+        var req = URLRequest(url: remote)
+        req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        if resume && received > 0 {
+            req.setValue("bytes=\(received)-", forHTTPHeaderField: "Range")
+            // Only carry on with the same file: a host that would send a different
+            // one answers with the whole thing instead (handled below).
+            if let v = validator { req.setValue(v, forHTTPHeaderField: "If-Range") }
+        }
+        let t = session?.dataTask(with: req)
+        task = t
+        t?.resume()
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard phase == .loading, dataTask === task, let http = response as? HTTPURLResponse else {
+            completionHandler(.cancel)
+            return
+        }
+        if received == 0 {
+            guard http.statusCode == 200, http.expectedContentLength > 0,
+                  let kind = EpisodeDownload.audioKind(mime: http.mimeType, pathExt: urlExt) else {
+                fail()
+                completionHandler(.cancel)
+                return
+            }
+            total = http.expectedContentLength
+            uti = kind.uti
+            ext = kind.ext
+            if let etag = http.value(forHTTPHeaderField: "ETag"), !etag.hasPrefix("W/") {
+                validator = etag
+            } else {
+                validator = http.value(forHTTPHeaderField: "Last-Modified")
+            }
+            FileManager.default.createFile(atPath: partURL.path, contents: nil)
+            writer = try? FileHandle(forWritingTo: partURL)
+            guard writer != nil else {
+                fail()
+                completionHandler(.cancel)
+                return
+            }
+        } else if http.statusCode == 206 {
+            // "bytes 1000-1999/2000": must carry on exactly where we stopped.
+            let range = http.value(forHTTPHeaderField: "Content-Range") ?? ""
+            let from = range.replacingOccurrences(of: "bytes ", with: "").split(separator: "-").first.flatMap { Int64($0) }
+            let whole = range.split(separator: "/").last.flatMap { Int64($0) }
+            guard from == received, whole == nil || whole == total else {
+                fail()
+                completionHandler(.cancel)
+                return
+            }
+        } else if http.statusCode == 200, http.expectedContentLength == total {
+            skip = received
+        } else {
+            fail()
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+        feed()
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard phase == .loading, dataTask === task, let w = writer else { return }
+        var chunk = data
+        if skip > 0 {
+            let drop = min(Int64(chunk.count), skip)
+            skip -= drop
+            chunk = Data(chunk.dropFirst(Int(drop)))
+            if chunk.isEmpty { return }
+        }
+        do {
+            try w.write(contentsOf: chunk)
+        } catch {
+            fail() // most likely a full disk
+            return
+        }
+        received += Int64(chunk.count)
+        retries = 0
+        feed()
+    }
+
+    func urlSession(_ session: URLSession, task finished: URLSessionTask, didCompleteWithError error: Error?) {
+        guard phase == .loading, finished === task else { return }
+        if error == nil && total > 0 && received == total {
+            finish()
+            return
+        }
+        // Dropped part-way: carry on from where it stopped. Never got going: one
+        // more try, then give up (the player streams the episode instead).
+        retries += 1
+        if retries >= (received > 0 ? 6 : 2) {
+            fail()
+            return
+        }
+        let wait = min(30, pow(2, Double(retries)))
+        queue.asyncAfter(deadline: .now() + wait) { [weak self] in self?.open(resume: true) }
+    }
+
+    private func finish() {
+        try? writer?.close()
+        writer = nil
+        let final = baseURL.appendingPathExtension(ext)
+        try? FileManager.default.removeItem(at: final)
+        do {
+            try FileManager.default.moveItem(at: partURL, to: final)
+        } catch {
+            fail()
+            return
+        }
+        // An open reader keeps working across the rename; a later one opens the kept file.
+        readPath = final
+        phase = .done
+        shutDown(removePart: false)
+        feed()
+        let done = onFinished
+        onFinished = nil
+        DispatchQueue.main.async { done?(final) }
+    }
+
+    private func fail() {
+        guard phase != .failed else { return }
+        phase = .failed
+        shutDown(removePart: true)
+        feed()
+        let done = onFinished
+        onFinished = nil
+        DispatchQueue.main.async { done?(nil) }
+    }
+
+    private func shutDown(removePart: Bool) {
+        task?.cancel()
+        task = nil
+        session?.invalidateAndCancel()
+        session = nil
+        if removePart {
+            try? writer?.close()
+            writer = nil
+            try? reader?.close()
+            reader = nil
+            try? FileManager.default.removeItem(at: partURL)
+        }
+    }
+
+    // MARK: Feeding the player
+
+    func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
+                        shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
+        pending.append(loadingRequest)
+        feed()
+        return true
+    }
+
+    func resourceLoader(_ resourceLoader: AVAssetResourceLoader, didCancel loadingRequest: AVAssetResourceLoadingRequest) {
+        pending.removeAll { $0 === loadingRequest }
+    }
+
+    private func read(at offset: Int64, count: Int) -> Data? {
+        do {
+            if reader == nil { reader = try FileHandle(forReadingFrom: readPath) }
+            try reader?.seek(toOffset: UInt64(offset))
+            return try reader?.read(upToCount: count)
+        } catch {
+            return nil
+        }
+    }
+
+    // Give every waiting request as much as has arrived; finish the ones that
+    // now have everything they asked for.
+    private func feed() {
+        let waiting = pending
+        pending = []
+        let still = waiting.filter { !answer($0) }
+        pending = still + pending // + anything that arrived meanwhile
+    }
+
+    // True when the request is finished with (answered in full, failed or cancelled).
+    private func answer(_ req: AVAssetResourceLoadingRequest) -> Bool {
+        let unavailable = NSError(domain: NSURLErrorDomain, code: NSURLErrorResourceUnavailable)
+        if req.isCancelled || req.isFinished { return true }
+        if phase == .failed {
+            req.finishLoading(with: unavailable)
+            return true
+        }
+        guard total > 0 else { return false } // the host hasn't answered yet
+        if let info = req.contentInformationRequest {
+            info.contentType = uti
+            info.contentLength = total
+            info.isByteRangeAccessSupported = true
+        }
+        guard let wanted = req.dataRequest else {
+            req.finishLoading()
+            return true
+        }
+        let end = wanted.requestsAllDataToEndOfResource
+            ? total
+            : min(total, wanted.requestedOffset + Int64(wanted.requestedLength))
+        var offset = wanted.currentOffset
+        let available = min(end, received)
+        while offset < available {
+            let count = Int(min(available - offset, 512 * 1024))
+            guard let chunk = read(at: offset, count: count), !chunk.isEmpty else {
+                req.finishLoading(with: unavailable)
+                return true
+            }
+            wanted.respond(with: chunk)
+            offset += Int64(chunk.count)
+        }
+        if offset >= end {
+            req.finishLoading()
+            return true
+        }
+        return false
     }
 }

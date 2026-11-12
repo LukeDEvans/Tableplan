@@ -26,6 +26,7 @@
     "qa:news-for-you": "node scripts/qa-news-for-you.mjs",
     "qa:page-groups": "node scripts/qa-page-groups.mjs",
     "qa:views": "node scripts/qa-views.mjs",
+    "qa:view-deletes": "node scripts/qa-view-deletes.mjs",
     "qa:calendar-month": "node scripts/qa-calendar-month.mjs",
     "qa:meal-context": "node scripts/qa-meal-context.mjs",
     "qa:watch-search": "node scripts/qa-watch-search.mjs",

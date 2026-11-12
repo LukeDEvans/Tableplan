@@ -45,6 +45,76 @@ export function mergeTombstones(a, b) {
   return result;
 }
 
+// ── Per-view delete lists ────────────────────────────────────────────────────
+// A section with a row per view (Listen, Watch, Tasks, Calendar…) holds the SAME
+// key in each row, so one list of deleted ids per key removed an item from every
+// view that held that id: "remove from the household list" also removed it from
+// Personal (ISSUES.md, 2026-10-27). A delete made in such a section is therefore
+// recorded twice: under the plain key — which builds from before this change
+// read, and which keeps every older delete working — and under `key@owner`,
+// where the owner names the row it was made in (the person, the household or the
+// business). A build that knows the owners applies a plain entry everywhere
+// EXCEPT where it is accounted for by another owner's entry.
+export const TOMBSTONE_OWNER_SEP = "@";
+
+export function ownedTombstoneKey(key, owner) {
+  return `${key}${TOMBSTONE_OWNER_SEP}${owner}`;
+}
+
+/** The deleted ids that apply to `key` in the row `owner` owns.
+ *  owner null/"" = a key with one row for everyone, or a row that can't be named
+ *  yet (not signed in): then only deletes no owner accounts for apply — holding a
+ *  delete back heals at the next merge, applying another view's does not. */
+export function tombstoneIdsFor(tombstones, key, owner = null) {
+  const plain = Array.isArray(tombstones?.[key]) ? tombstones[key] : [];
+  const prefix = key + TOMBSTONE_OWNER_SEP;
+  let own = null;
+  let others = null;
+  for (const k of Object.keys(tombstones || {})) {
+    if (!k.startsWith(prefix) || !Array.isArray(tombstones[k])) continue;
+    if (owner && k === prefix + owner) own = tombstones[k].map(String);
+    else (others || (others = [])).push(...tombstones[k].map(String));
+  }
+  if (!own && !others) return plain;
+  const mine = new Set(own || []);
+  const elsewhere = new Set((others || []).filter((id) => !mine.has(id)));
+  return [...new Set([...mine, ...plain.map(String).filter((id) => !elsewhere.has(id))])];
+}
+
+/** A plain map (key → ids) of the deletes that apply now: every key resolved for
+ *  the row `ownerOf(key)` names. With no owned entries it is the map itself. */
+export function effectiveTombstones(tombstones, ownerOf = () => null) {
+  const src = tombstones && typeof tombstones === "object" ? tombstones : {};
+  const keys = Object.keys(src);
+  if (!keys.some((k) => k.includes(TOMBSTONE_OWNER_SEP))) return src;
+  const out = {};
+  for (const k of keys) {
+    const at = k.indexOf(TOMBSTONE_OWNER_SEP);
+    const base = at === -1 ? k : k.slice(0, at);
+    if (!(base in out)) out[base] = tombstoneIdsFor(src, base, ownerOf(base) || null);
+  }
+  return out;
+}
+
+/** Record a delete (in place): under the plain key and, with an owner, under the
+ *  owner's key too. Each list keeps its newest `max` ids. */
+export function addTombstone(tombstones, key, id, owner = null, max = Infinity) {
+  const idStr = String(id);
+  for (const k of owner ? [key, ownedTombstoneKey(key, owner)] : [key]) {
+    if (!Array.isArray(tombstones[k])) tombstones[k] = [];
+    if (!tombstones[k].includes(idStr)) tombstones[k].push(idStr);
+    if (tombstones[k].length > max) tombstones[k] = tombstones[k].slice(-max);
+  }
+}
+
+/** Take a delete back (in place), e.g. when the item is restored. */
+export function removeTombstone(tombstones, key, id, owner = null) {
+  const idStr = String(id);
+  for (const k of owner ? [key, ownedTombstoneKey(key, owner)] : [key]) {
+    if (Array.isArray(tombstones?.[k])) tombstones[k] = tombstones[k].filter((t) => t !== idStr);
+  }
+}
+
 /** Resolve a tombstone Set for a given key from a tombstones map (or null).
  *  Matches mergeStates() exactly: ids are stored as strings and unionById
  *  compares String(x.id) against the set. */

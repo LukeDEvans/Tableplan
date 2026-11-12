@@ -66,6 +66,13 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
 - **Newsletter briefings live only in Listen (2026-10-16).** The Morning / The world
   in brief (saved articles `news-*`) reach the queue like any saved article; News no
   longer shows them anywhere. Keep them in the queue.
+- **Podcasts › Shows and Books look like the Watch page** (Luke, 2026-11-11): covers in
+  Watch's grid (`.watch-grid`, four a row on a phone); tapping a cover opens a panel under
+  its row (`.watch-detail-row`, pointer placed by the shared `placeGridPanelPointer`) and
+  the grid stays put — a show's panel lists its 5 most recent episodes with "All episodes"
+  opening the full list (bundle settings live there); a book's panel has author, format,
+  library availability and the library / Libby / Audible links. Don't bring back opening a
+  show as its own page on tap. QA: `node scripts/qa-listen-grid.mjs`.
 - **Books stays in Listen** for now (mostly audiobooks); how to organize non-audio
   books is undecided — don't move Kindle/Libby out.
 - **Saved articles still join the queue for read-aloud**; tapping one opens the
@@ -120,6 +127,25 @@ through the engine.
   don't turn them into newest-wins.
 - TTS cache identity is content-addressed — changing what feeds the hash invalidates
   every cached clip (cost + egress). Flag before changing it.
+- Podcasts play from a download on the iPhone (Luke, 2026-11-11, "download then play"):
+  `EpisodeDownload` + "Episode downloads" in `LiveTtsPlugin.swift`. A downloaded file
+  plays first (Caches/LivePodcasts; removed when the episode finishes, after 3 weeks
+  unplayed, or over 2 GB). A new episode started from the beginning plays from its
+  download as it arrives, so what is heard and what is kept are one fetch. An episode
+  picked up part-way with no file streams as before while the download runs for next
+  time. The next queued episode is fetched ahead on Wi-Fi only. Anything that goes wrong
+  falls back to the stream at the same spot. Songs, radio and plain-http audio are
+  untouched. No web-code change: the plugin decides. Why: hosts put ads in per request,
+  so a stream that reconnects can continue in a different file (the jump back).
+- An episode stuck short of its end (iPhone): the native player's stall watch
+  (`checkAudioStall` in `LiveTtsPlugin.swift`) treats a stall in the last stretch, with
+  the network up, as finished, and reconnects a stall earlier in the episode (twice at
+  most). Offline is never "finished". Play after a stall reopens the episode at the same
+  spot (Luke, 2026-11-11).
+- A tap on the episode the iPhone is already playing never starts it again (Luke,
+  2026-11-11): it shows the episode, and resumes it if paused (`episodeTapAction` in
+  `media-queue-order.js`, `keepNativeEpisodePlaying` in `app.js`). A start reopens at the
+  last saved spot, up to 15 s back.
 - Background audio, lock-screen controls and native TTS only behave on the phone;
   headless Chromium can't prove them.
 
