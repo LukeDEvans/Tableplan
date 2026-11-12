@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { planFinanceMove, stripMovedOut, moveBalanceHistory, normalizeMovedOut, storeAccountIdsFor, FINANCE_MOVED_OUT_KEY, MIXED_KEY_MAPS, ACCOUNT_ID_LISTS } from "../finance-move.js";
+import { planFinanceMove, stripMovedOut, moveBalanceHistory, normalizeMovedOut, storeAccountIdsFor, FINANCE_MOVED_OUT_KEY, MIXED_KEY_MAPS, ACCOUNT_ID_LISTS, mergeMovedOut } from "../finance-move.js";
 import { FINANCE_TXN_ID_MAPS } from "../finance-transactions.js";
 
 // A household finance section with two bank accounts and one manual account.
@@ -307,4 +307,17 @@ describe("the trigger's lists match the code's", () => {
   it("maps keyed by a transaction id", () => expect(list("txn_keys")).toEqual([...FINANCE_TXN_ID_MAPS].sort()));
   it("maps with id:<txn> / <kind>:<txn> keys", () => expect(list("mixed_keys")).toEqual([...MIXED_KEY_MAPS].sort()));
   it("account id lists", () => expect(list("account_lists")).toEqual([...ACCOUNT_ID_LISTS].sort()));
+});
+
+describe("mergeMovedOut — two copies of a finance section meet", () => {
+  const one = { epoch: 1, accounts: ["a"], linked: ["B"], txns: ["t"] };
+  it("the record from the later move wins whole, and the other side is the stale one", () => {
+    expect(mergeMovedOut(undefined, one)).toEqual({ movedOut: one, stale: "newer" });
+    expect(mergeMovedOut(one, { epoch: 0 })).toEqual({ movedOut: one, stale: "older" });
+    expect(mergeMovedOut({ epoch: 2, accounts: [] }, one)).toEqual({ movedOut: { epoch: 2, accounts: [], linked: [], txns: [] }, stale: "older" });
+  });
+  it("copies that have seen the same move are both current", () => {
+    expect(mergeMovedOut(one, one).stale).toBe(null);
+    expect(mergeMovedOut(null, null)).toEqual({ movedOut: { epoch: 0, accounts: [], linked: [], txns: [] }, stale: null });
+  });
 });

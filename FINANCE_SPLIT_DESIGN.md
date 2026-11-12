@@ -1,6 +1,6 @@
 # Finance: personal accounts — design & plan
 
-Status: **APPROVED (Luke, 2026-10-20; recommendations accepted, §3). Step 1 built (§6); its migration applied to prod 2026-10-20. Step 2 built (§7). Steps 1–2 deployed 2026-10-20.** **Step 3, server half built 2026-11-12 (§8): not merged, its migration not applied, nothing moved. The app half (§8.5) is next.** Follows VIEWS_DESIGN.md decision 5 and Luke's choice of "Option 2" (2026-10-20): personal accounts are **truly private**, not just hidden, using **one SimpleFIN connection** that the server splits.
+Status: **APPROVED (Luke, 2026-10-20; recommendations accepted, §3). Step 1 built (§6); its migration applied to prod 2026-10-20. Step 2 built (§7). Steps 1–2 deployed 2026-10-20.** **Step 3 built 2026-11-12 (§8), server and app: not merged, its migration not applied, a real move switched off, nothing moved. Left: merging a relinked personal account (§8.5).** Follows VIEWS_DESIGN.md decision 5 and Luke's choice of "Option 2" (2026-10-20): personal accounts are **truly private**, not just hidden, using **one SimpleFIN connection** that the server splits.
 
 Goal: Luke marks some accounts **Personal**. Their balances, transactions, labels and history then live only in Luke's own data. His wife's app never receives them, not even in the background. Household accounts work exactly as today.
 
@@ -175,14 +175,26 @@ Replaces the trigger function; every existing rule is kept. Adds:
 
 Admin only, into the admin's own personal finance. A dry run unless `confirm: true`; a confirmed move is refused unless `FINANCE_MOVE_ENABLED=1` (set it when the guard migration is applied; without the guard the database would put the labels back). Order, so that stopping anywhere loses nothing and a re-run finishes: (1) backup of both sections, both histories and both bank caches to `finmovebackup_<groupId>` (kept 30 days); (2) the assignment, so bank pulls already sort the new way; (3) stored transactions (`group_id`); (4) balance history and bank cache; (5) the receiving section, then the one the accounts leave, both with the move header; (6) a fresh nightly-backup baseline for both scopes; (7) read back and count anything that moved and is still where it left (`verified.clean`). Tests: `test/finance-move.test.js` (27, the plan), `test/finance-move-server.test.js` (20, against a fake Supabase: refusals, dry run, the move, the order of writes, each way of stopping part-way then re-running, the move back, the gated action).
 
-### 8.5 Still to build (the app half), in order
+### 8.5 The app half (same branch, 2026-11-12)
 
-1. **The app knows `financeMovedOut`:** add it to the finance section's keys with a "higher epoch wins" merge, run `stripMovedOut` on every merged finance copy, and drop local month totals when a higher epoch arrives so they are rebuilt. `STATE_SCHEMA_VERSION` 8 goes here (ask first; both phones need the build before the move).
-2. **Finance › Accounts:** choose accounts → "Review the move" (the dry-run report) → confirm → result, and the same for moving back. Manual accounts go through the same server call.
-3. **`remapAccount` for a personal account** (a relinked personal account's new id still lands in the household's paths until merged; ISSUES.md).
-4. **The check as Marijane under RLS** after a real move, and `guardBootEmptyFinance` on `u-` finance rows.
-5. **Clean-up after 30 days** (design step 4).
+- **The app knows `financeMovedOut`.** It is a finance-section key; `mergeStates` takes the record from the later move whole (`mergeMovedOut`), drops the month totals of the side that hadn't seen that move, and runs `stripMovedOut` on the merged copy, so a device can't show or re-send what moved. Only the server's move changes the record (the trigger enforces it).
+- **`STATE_SCHEMA_VERSION` 8.** From the first save by a build with this change, an older build can no longer save finance changes (the trigger's existing rule). Both phones and the web app need the build before it is used day to day; that is why the branch is held.
+- **Finance › Accounts › "Personal accounts"** (the household's admin only; in Personal it reads "Move back to Household"): tick accounts → **Review the move** (the server's dry run, nothing changes) → the report (per account: transactions, labels, notes, receipts, return links; history days; budget categories copied; merchants moved and copied; anything that can't move cleanly) → **Move N accounts** → the app reloads its finance row from the server (never merging its own older copy), re-reads the bank cache and the stored transactions, and re-checks whether this person has personal finance. A refusal from the server is shown in place.
+- **Checks:** `npm run qa:finance-move` (22, the screen at 390px with the server answered by canned responses), `test/finance-move.test.js` (`mergeMovedOut`), full suite, boot check, `qa:views` 118/118.
+- **Read, not built:** the boot-empty guard (`guardBootEmptyFinance`) and the trigger both act on whichever finance row is in play, `u-` rows included.
+
+**Still to build**
+1. **Merging a relinked personal account** (`remapAccount` still refuses one): assign the new bank id to the owner, move its rows and cache entry out of the household's paths, then merge in the personal scope. It can only arise after a real move followed by a SimpleFIN relink. ISSUES.md.
+2. **Clean-up after 30 days** (design step 4).
 
 ### 8.6 Before a real move
 
-Apply the guard migration (Luke's OK; `create or replace function` only), set `FINANCE_MOVE_ENABLED=1` in Netlify, deploy, both phones on the build with §8.5 items 1–2, then run the dry run in the app and read it before confirming.
+In this order:
+
+1. Merge the branch; TestFlight build on **both** phones; Netlify deploy (the web app and the server action). From here older builds can't save finance.
+2. Apply the guard migration (Luke's OK for that migration; `create or replace function` only), then record it in `supabase_migrations.schema_migrations`.
+3. Set `FINANCE_MOVE_ENABLED=1` in Netlify and redeploy.
+4. In Household › Finance › Accounts, tick the accounts and read **Review the move**. Confirm only if the report looks right.
+5. Afterwards: the result line should say the accounts moved; run the read-only check as Marijane (RLS: none of the moved accounts' ids, transactions or balances readable), and look at Household and Personal Finance on both phones.
+
+To undo: Personal › Finance › Accounts › "Move back to Household". The pre-move copies are in `finmovebackup_<groupId>` for 30 days.

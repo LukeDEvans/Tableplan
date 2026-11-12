@@ -56,6 +56,18 @@ export function normalizeMovedOut(raw) {
   };
 }
 
+// Two copies of a finance section meet (this device's and the server's): the
+// record from the later move wins whole. Only the server's move ever changes it.
+// `stale` names the side whose copy predates that move ("newer" | "older" | null):
+// its month totals still count what moved and must not be kept.
+export function mergeMovedOut(newer, older) {
+  const a = normalizeMovedOut(newer);
+  const b = normalizeMovedOut(older);
+  if (b.epoch > a.epoch) return { movedOut: b, stale: "newer" };
+  if (a.epoch > b.epoch) return { movedOut: a, stale: "older" };
+  return { movedOut: a, stale: null };
+}
+
 // The store's account id for a finance account entry: the bank's id for a
 // linked account, "manual:<slug>" for a manual one.
 export function storeAccountIdsFor(account) {

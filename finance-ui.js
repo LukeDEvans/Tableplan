@@ -238,7 +238,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -688,6 +688,99 @@ function financeRemapNames() {
   for (const a of state.financeAccounts || []) if (a?.linkedId && a.name) names[a.linkedId] = a.name;
   return names;
 }
+// ── Moving accounts between Household and Personal (FINANCE_SPLIT_DESIGN.md §8) ──
+// Pick accounts → "Review the move" (the server's dry run: nothing changes) →
+// confirm → the server moves them and this device reloads its finance. Shown to
+// the household's admin only; in Household it moves accounts to Personal, in
+// Personal back to Household.
+const financeMove = { picked: new Set(), busy: "", report: null, error: "", result: null };
+function financeMoveDirection() { return financeScopeNow() === "personal" ? "toHousehold" : "toPersonal"; }
+function financeMoveReset() { financeMove.picked.clear(); financeMove.busy = ""; financeMove.report = null; financeMove.error = ""; financeMove.result = null; }
+function financeMoveBlock() {
+  if (!canMoveFinanceAccounts?.()) return "";
+  const toPersonal = financeMoveDirection() === "toPersonal";
+  const accounts = (state.financeAccounts || []).filter((a) => a && a.id);
+  if (!accounts.length && !financeMove.result) return "";
+  const n = financeMove.picked.size;
+  const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+  const head = `
+      <div class="fin-subhead">${toPersonal ? "Personal accounts" : "Move back to Household"}</div>`;
+  if (financeMove.result) {
+    const v = financeMove.result.verified || {};
+    return `${head}
+      <p class="fin-hint" data-fin-move-result>${v.clean === false
+        ? "Moved, but the check found something left behind. Nothing is lost; tell Claude before moving anything else."
+        : (financeMove.result.direction === "toHousehold" ? "Moved back to Household." : "Moved. Those accounts now show only in your Personal view.")}</p>`;
+  }
+  if (financeMove.report) {
+    const r = financeMove.report;
+    const lines = (r.accounts || []).map((a) => `<li><strong>${escapeHtml(a.name || "Account")}</strong> · ${[
+      a.transactions != null ? plural(a.transactions, "transaction") : "",
+      a.labels ? plural(a.labels, "label") : "", a.notes ? plural(a.notes, "note") : "",
+      a.receipts ? plural(a.receipts, "receipt") : "", a.links ? plural(a.links, "return link") : "",
+    ].filter(Boolean).map(escapeHtml).join(" · ")}</li>`).join("");
+    const cats = (r.copiedCategories || []).map((c) => c.name).filter(Boolean);
+    const extras = [
+      r.historyDays ? `${plural(r.historyDays, "day")} of balance history ${r.historyDays === 1 ? "moves" : "move"} too.` : "",
+      cats.length ? `Budget categories copied ${toPersonal ? "to Personal" : "to Household"} with blank amounts: ${cats.join(", ")}.` : "",
+      r.merchants?.movedWithAccounts ? `${plural(r.merchants.movedWithAccounts, "merchant")} seen only on ${(r.accounts || []).length === 1 ? "this account" : "these accounts"}: ${r.merchants.movedWithAccounts === 1 ? "its rule and name move" : "their rules and names move"} too.` : "",
+      r.merchants?.copied ? `${plural(r.merchants.copied, "merchant")} also used elsewhere: ${r.merchants.copied === 1 ? "its rule is" : "their rules are"} copied.` : "",
+      "Month totals are rebuilt in both views.",
+    ].filter(Boolean);
+    return `${head}
+      <div class="fin-remap-row" data-fin-move-report>
+        <p class="fin-hint"><strong>Review the move.</strong> Nothing has changed yet.</p>
+        <ul class="fin-hint fin-move-list">${lines}</ul>
+        ${extras.map((t) => `<p class="fin-hint">${escapeHtml(t)}</p>`).join("")}
+        ${(r.problems || []).map((p) => `<p class="fin-hint fin-move-problem">${escapeHtml(p.message || "")}</p>`).join("")}
+        ${financeMove.error ? `<p class="fin-hint fin-move-problem">${escapeHtml(financeMove.error)}</p>` : ""}
+        <div class="fin-item-row fin-item-row--tools">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="move-cancel" ${financeMove.busy ? "disabled" : ""}>Cancel</button>
+          <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="move-confirm" ${financeMove.busy ? "disabled" : ""}>${financeMove.busy === "move" ? "Moving…" : `Move ${plural((r.accounts || []).length, "account")}`}</button>
+        </div>
+      </div>`;
+  }
+  return `${head}
+      <p class="fin-hint">${toPersonal
+        ? "Accounts you mark here become yours alone. Their balances, transactions, labels and history leave Household and show only in your Personal view; nobody else's app receives them."
+        : "Accounts you pick here go back to Household, with their transactions, labels and history, for everyone in the household."}</p>
+      <div class="fin-remap-row" data-fin-move-pick>
+        ${accounts.map((a) => `
+        <label class="fin-hint fin-store-toggle"><input type="checkbox" class="live-toggle" data-fin-edit="move-pick" data-id="${escapeHtml(String(a.id))}" ${financeMove.picked.has(String(a.id)) ? "checked" : ""} ${financeMove.busy ? "disabled" : ""} /> ${escapeHtml(a.name || "Account")}${a.linkedId ? "" : " (manual)"}</label>`).join("")}
+        ${financeMove.error ? `<p class="fin-hint fin-move-problem">${escapeHtml(financeMove.error)}</p>` : ""}
+        <div class="fin-item-row fin-item-row--tools">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="move-review" ${!n || financeMove.busy ? "disabled" : ""}>${financeMove.busy === "review" ? "Checking…" : "Review the move"}</button>
+        </div>
+      </div>`;
+}
+async function financeMoveCall(confirm) {
+  const picked = [...financeMove.picked].filter((id) => (state.financeAccounts || []).some((a) => String(a.id) === id));
+  if (!picked.length || financeMove.busy) return;
+  financeMove.busy = confirm ? "move" : "review";
+  financeMove.error = "";
+  renderFinancePage();
+  try {
+    // Anything typed but not yet saved must reach the server before it plans from the row.
+    if (confirm) await Promise.resolve(persist());
+    const data = await callNetlifyFunction("simplefin", { action: "moveAccounts", direction: financeMoveDirection(), accountIds: picked, confirm });
+    if (!data || data.error) throw new Error(data?.error || "unknown error");
+    if (!confirm) { financeMove.report = data.report || { accounts: [] }; return; }
+    financeMove.result = { ...data, direction: financeMoveDirection() };
+    financeMove.report = null;
+    financeMove.picked.clear();
+    financeLive = null; financeLiveAll = null; // the bank cache was re-sorted on the server
+    await reloadFinanceAfterMove?.();
+    await syncFinanceTxnStore?.();
+    refreshFinanceLive?.(false);
+  } catch (e) {
+    financeMove.error = `Couldn't ${confirm ? "move" : "check"}: ${e?.message || e}`;
+  } finally {
+    financeMove.busy = "";
+    renderFinancePage();
+    refreshFinanceSettingsIfOpen();
+  }
+}
+
 function financeRemapBlock() {
   const live = financeLive?.accounts || [];
   if (!financeStoreActive() || !live.length) return "";
@@ -2870,6 +2963,7 @@ function renderFinanceAccountsPanel() {
       </div>
       <p class="fin-hint">${financeStoreStatusText()}</p>
       ${financeRemapBlock()}
+      ${financeMoveBlock()}
       ${financeCsvBatches().map((b) => `
         <div class="fin-item-row fin-item-row--tools">
           <span class="fin-hint">CSV · ${escapeHtml(String(b.account).replace(/^csv:/, ""))} · ${b.count} txns · ${escapeHtml(String(b.from || "").slice(0, 10))} – ${escapeHtml(String(b.to || "").slice(0, 10))}</span>
@@ -4485,6 +4579,9 @@ function onFinanceGridClick(e) {
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "remap-account") { remapFinanceAccount(btn.dataset.old); return; }
+  if (action === "move-review") { financeMoveCall(false); return; }
+  if (action === "move-confirm") { financeMoveCall(true); return; }
+  if (action === "move-cancel") { financeMove.report = null; financeMove.error = ""; renderFinancePage(); return; }
   if (action === "toggle-notifs") { openFinanceTxnReview(); return; }
   if (action === "review-txns") { openFinanceTxnReview(); return; }
   if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
@@ -4998,6 +5095,11 @@ function onFinanceGridChange(e) {
     return;
   } else if (kind === "remap-target") {
     financeRemapChoice[el.dataset.old] = el.value;
+    renderFinancePage();
+    return;
+  } else if (kind === "move-pick") {
+    if (el.checked) financeMove.picked.add(String(el.dataset.id)); else financeMove.picked.delete(String(el.dataset.id));
+    financeMove.result = null;
     renderFinancePage();
     return;
   } else if (kind === "txn-source") {

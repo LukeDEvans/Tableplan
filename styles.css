@@ -22979,6 +22979,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 /* SimpleFIN reconnect merge rows (Accounts › Bank link). */
 .fin-remap-row { display: grid; gap: 4px; margin: 6px 0 12px; }
 .fin-remap-row .fin-hint { margin: 0; }
+.fin-move-list { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.fin-move-problem { color: var(--tomato); }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
 .fin-rec-link-row { padding-bottom: 6px; }
 .fin-recap-row { min-height: 24px; }

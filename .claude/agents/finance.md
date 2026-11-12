@@ -158,5 +158,8 @@ you notice but don't fix to `ISSUES.md`.
   or per-account finance key to it AND to the trigger in
   `migrations/2026-11-11-finance-move-guard.sql`, or a move leaves it behind); the server is
   `netlify/functions/_finance-move.js` behind `simplefin` action `moveAccounts` (dry run unless
-  `confirm`, real moves only with `FINANCE_MOVE_ENABLED=1`). Luke, 2026-11-11: the budget
+  `confirm`, real moves only with `FINANCE_MOVE_ENABLED=1`); the screen is Finance › Accounts ›
+  "Personal accounts" (`financeMoveBlock` in `finance-ui.js`, admin only; QA `npm run
+  qa:finance-move`). The app carries `financeMovedOut` and strips what it lists on every merge;
+  only the server's move changes it. Luke, 2026-11-11: the budget
   categories the moved transactions use are copied to Personal with amounts blank.
