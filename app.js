@@ -93,7 +93,7 @@ import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
 import { deriveMediaTierCount, publicationTierFor, collapsePublicationTiers, ALL_PUBLICATIONS_KEY } from './media-tier.js';
-import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId } from './media-queue-order.js';
+import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId, episodeTapAction } from './media-queue-order.js';
 import { keptEpisodeIds, pruneOldEpisodes, mergeFetchedEpisodes } from './podcast-retention.js';
 import { normalizeQueueAdded, queueAddedFindRef, withQueueEntry, withoutQueueEntries, episodeRef, articleRef, libraryAlbumRef, catalogAlbumRef, trackRef, slimCatalogItem, libraryAlbumTracks } from './media-queue-added.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
@@ -33508,6 +33508,7 @@ registerMediaProvider({
   play: (item, { autoplay = true, advance = false } = {}) => {
     // All queue in the native app → the plugin plays it (see
     // nativeQueueHandlesPodcasts); falls back to the web player if it can't.
+    if (autoplay && keepNativeEpisodePlaying(item.id, advance)) return;
     if (autoplay && mediaAllQueueId === item.id && nativeQueueHandlesPodcasts()) {
       startNativePodcast(item.id).then((ok) => { if (!ok) openPodcastEpisode(item.id, { autoplay, advance }); });
       return;
@@ -34835,6 +34836,7 @@ function startPodcastPlayback(episode, show, { autoplay = true, advance = false,
   // iPhone app: play on the native player (see nativeQueueHandlesPodcasts). A
   // paused load (autoplay:false) stays on the web element until play is tapped,
   // which hands it over (togglePodcastPlayPause).
+  if (autoplay && !forceWeb && episode && keepNativeEpisodePlaying(episode.id, advance)) return;
   if (autoplay && !forceWeb && nativeQueueHandlesPodcasts() && episode && episode.audioUrl) {
     startNativePodcastEpisode(episode, show).then((ok) => {
       if (!ok) startPodcastPlayback(episode, show, { autoplay, advance, forceWeb: true });
@@ -40678,6 +40680,20 @@ async function startNativePodcastEpisode(episode, show) {
     showPodcastEpisodePanel(episodeId);
     startPodcastPlayback(episode, show, { autoplay: true, forceWeb: true }); // fall back to the web player
   }
+  return true;
+}
+
+// A tap on the episode the native player already holds must not start it again:
+// a start reopens it at the last saved spot (saved at most every 15 s), so it
+// jumped back (ISSUES.md, 2026-11-11). Show its panel, and carry on if it was
+// paused. Returns true when the tap was handled here (media-queue-order.js
+// episodeTapAction decides).
+function keepNativeEpisodePlaying(episodeId, advance = false) {
+  const s = nativePodcastSession();
+  const action = episodeTapAction({ tappedId: episodeId, sessionId: s && s.currentId, paused: !!(s && s.paused), advance });
+  if (action === "start") return false;
+  showPodcastEpisodePanel(episodeId);
+  if (action === "resume") toggleListenPlayPause();
   return true;
 }
 

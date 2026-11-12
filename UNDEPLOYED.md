@@ -10,6 +10,17 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Listen: Podcasts' Shows and Books match the Watch page** · #226 · **TestFlight build**
+  (client-only; the laptop needs a Netlify deploy). Four covers a row on a phone; tapping a show
+  opens a panel under its row with its 5 most recent episodes (All episodes opens the full list,
+  Back returns with the panel open); tapping a book opens its panel with library / Libby / Audible
+  links. Post-TestFlight: Listen › Podcasts › Shows — four per row, tap a show, play an episode
+  from the panel; Books — tap a book, check the links; no sideways scroll.
+- **Listen (iPhone): tapping the episode that's playing no longer jumps it back** · #228 ·
+  **TestFlight build** (bundled web code; nothing changes on the laptop, no Netlify deploy). A tap
+  on the row of the episode the phone is already playing just shows it; if it was paused it carries
+  on from the same spot. Post-TestFlight: while an episode plays, tap its row in the show's list,
+  in Recent and in the queue (no jump back); pause it, tap its row (it resumes where it was).
 - **Mail: no more "Quota exceeded" on fast folder switching** · #221 · **Both a TestFlight build
   and a Netlify deploy** (client + Netlify function; either can land first — each side ignores the
   other's new fields, so nothing breaks in between). Client (TestFlight / laptop deploy): read-ahead
