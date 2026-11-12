@@ -131,3 +131,20 @@ export function receiptStatus(receipt, fit = null) {
   return fit ? "matched" : "unmatched";
 }
 export const RECEIPT_STATUS_LABEL = { reading: "Reading…", "needs-look": "Needs a look", itemized: "Itemized", matched: "Matched", unmatched: "Unmatched" };
+
+// The split a matched receipt can fill in on its own: every line has a category,
+// the categories add up to the charge (±2¢), and the transaction hasn't been
+// categorized by hand. → [{ label, amount }] (positive amounts), or null when any
+// of that isn't true. One category → null too: that's a plain label, which the
+// merchant rules already handle, not an itemization.
+export function receiptAutoSplit(receipt, txn) {
+  if (!receipt || !txn || txn.labelSource === "manual") return null;
+  const charge = -num(txn.amount);
+  const portions = Array.isArray(receipt.portions) ? receipt.portions : [];
+  const items = Array.isArray(receipt.items) ? receipt.items : [];
+  if (!(charge > 0) || portions.length < 2 || !items.length) return null;
+  if (items.some((i) => !i?.category) || portions.some((p) => !p?.label || !(num(p.amount) > 0))) return null;
+  const sum = portions.reduce((s, p) => s + num(p.amount), 0);
+  if (Math.abs(sum - charge) > CENTS) return null;
+  return portions.map((p) => ({ label: String(p.label), amount: Math.round(num(p.amount) * 100) / 100 }));
+}

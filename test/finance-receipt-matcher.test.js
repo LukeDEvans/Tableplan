@@ -79,3 +79,20 @@ describe("receiptStatus", () => {
     expect(receiptStatus({ total: 5, items: [{ category: "cat:a:b" }] }, { confidence: "linked" })).toBe("itemized");
   });
 });
+
+import { receiptAutoSplit } from "../receipt-matcher.js";
+describe("receiptAutoSplit", () => {
+  const r = (portions, items = [{ category: "cat:a:x" }, { category: "cat:a:y" }]) => ({ portions, items });
+  const t = (amount, labelSource = "") => ({ id: "t", amount, labelSource });
+  it("fills the split when every line has a category and it adds up to the charge", () => {
+    expect(receiptAutoSplit(r([{ label: "cat:a:x", amount: 10 }, { label: "cat:a:y", amount: 5.5 }]), t(-15.5))).toEqual([{ label: "cat:a:x", amount: 10 }, { label: "cat:a:y", amount: 5.5 }]);
+  });
+  it("never over a hand-made category, an uncategorized line, a gap, or a single category", () => {
+    const ok = [{ label: "cat:a:x", amount: 10 }, { label: "cat:a:y", amount: 5.5 }];
+    expect(receiptAutoSplit(r(ok), t(-15.5, "manual"))).toBeNull();
+    expect(receiptAutoSplit(r(ok, [{ category: "cat:a:x" }, { category: "" }]), t(-15.5))).toBeNull();
+    expect(receiptAutoSplit(r([...ok, { label: "", amount: 2 }]), t(-17.5))).toBeNull();
+    expect(receiptAutoSplit(r(ok), t(-18.6))).toBeNull(); // a tip on top: doesn't add up
+    expect(receiptAutoSplit(r([{ label: "cat:a:x", amount: 15.5 }]), t(-15.5))).toBeNull();
+  });
+});

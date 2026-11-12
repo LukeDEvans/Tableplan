@@ -8,7 +8,7 @@ import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
 import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 import { linkOutAttrs } from './link-out.js';
-import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL } from './receipt-matcher.js';
+import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
 import { banksForAccounts, billerForBill, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
@@ -1043,15 +1043,33 @@ function financeReceiptInfo(receiptId) {
 // A certain match (same amount, right dates, same store, no twin charge) links
 // itself, so the receipt stays with its transaction after either scrolls out of
 // the window. Anything less waits for a tap. Bounded: only unlinked receipts.
+//
+// A linked receipt whose lines all have categories that add up to the charge
+// also itemizes its transaction (receiptAutoSplit). Marked { auto, receiptId } so
+// it can be told apart from a split made by hand; never over a hand-made label.
 function autoLinkFinanceReceipts() {
-  let linked = 0;
-  for (const [receiptId, fit] of financeReceiptFits().byReceipt) {
-    if (fit.confidence !== "sure") continue;
-    linkReceiptToFinanceTxn(receiptId, fit.txn.id);
-    linked += 1;
+  let linked = 0, itemized = 0;
+  const { byReceipt, list } = financeReceiptFits();
+  const byId = new Map(list.map((r) => [r.id, r]));
+  for (const [receiptId, fit] of byReceipt) {
+    if (fit.confidence !== "sure" && fit.confidence !== "linked") continue;
+    if (fit.confidence === "sure") { linkReceiptToFinanceTxn(receiptId, fit.txn.id); linked += 1; }
+    const existing = state.financeTxnLabels?.[fit.txn.id];
+    if (existing) continue; // labelled or split already (by hand or before)
+    const split = receiptAutoSplit(byId.get(receiptId), fit.txn);
+    if (!split) continue;
+    if (!state.financeTxnLabels || typeof state.financeTxnLabels !== "object") state.financeTxnLabels = {};
+    state.financeTxnLabels[fit.txn.id] = { split, auto: true, receiptId };
+    itemized += 1;
   }
-  if (linked) financeReceiptFitCache = null;
-  return linked;
+  if (itemized) {
+    invalidateFinanceLabeled();
+    updateFinanceMonthActuals();
+    setPageNotifCount("finance", financeBellCount());
+    persist();
+  }
+  if (linked || itemized) financeReceiptFitCache = null;
+  return linked + itemized;
 }
 
 let financeLinkStatusChecking = false;
@@ -1314,7 +1332,8 @@ function financeLabeledTxns() {
       // magnitudes; portions land in their categories individually.
       if (typeof ex === "object" && Array.isArray(ex.split)) { t.label = "split"; t.split = ex.split; }
       else t.label = ex;
-      t.labelSource = "manual";
+      // A split filled in from a matched receipt shows as automatic until edited.
+      t.labelSource = typeof ex === "object" && ex.auto ? "auto" : "manual";
       continue;
     }
     // CSV-supplied category (import_label): below your own labels, above rules.
