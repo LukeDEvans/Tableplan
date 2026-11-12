@@ -2034,6 +2034,8 @@ const _finance = createFinanceModule({
   importFinanceInboxReceipts: (...a) => importFinanceInboxReceipts(...a),
   linkReceiptToFinanceTxn: (...a) => linkReceiptToFinanceTxn(...a),
   openReceiptDetail: (...a) => openReceiptDetail(...a),
+  // A receipt scanned in Finance's split editor is filed in Document like any scan.
+  queueReceiptFile: (files, opts) => queueReceiptForDocuments(files, opts),
 });
 const {
   financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions,

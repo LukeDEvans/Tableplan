@@ -239,7 +239,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail, queueReceiptFile } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -2622,11 +2622,24 @@ async function scanReceiptIntoSplit(file) {
       }
       const grouped = [...byLabel.entries()].map(([label, amount]) => ({ label, amount: Math.round(amount * 100) / 100 }));
       financeSplitDraft.portions = grouped.length ? grouped : data.receipt.portions.map((p) => ({ label: p.label || "", amount: p.amount }));
-      // Keep the receipt image: best-effort upload + attach to this txn. Never
-      // let a storage hiccup (missing bucket, offline, not signed in) undo the
-      // split the user just got — the scan result stands on its own.
+      // Keep the receipt like any other scan (FINANCE_AUDIT D3): a record in the one
+      // receipts list, linked to this transaction, and the photo filed in Document ›
+      // Receipts pointing at it. Best-effort: the split above stands on its own.
       const txnId = financeSplitDraft.txnId;
-      uploadReceiptImage(txnId, file).catch((e) => console.warn("Receipt image not kept:", e?.message || e));
+      try {
+        const scanId = createId("split-scan");
+        const r = data.receipt;
+        importFinanceInboxReceipts([{ id: scanId, source: "scan", merchant: r.merchant || "", date: r.date || "", total: Number(r.total) || 0, items: Array.isArray(r.items) ? r.items : [] }]);
+        const receiptId = `receipt-scan-${scanId}`;
+        if ((receiptsForFinance() || []).some((x) => x.id === receiptId)) {
+          linkReceiptToFinanceTxn(receiptId, txnId);
+          queueReceiptFile?.([file], { receiptId });
+        } else if (!queueReceiptFile) {
+          uploadReceiptImage(txnId, file).catch((e) => console.warn("Receipt image not kept:", e?.message || e));
+        } else {
+          queueReceiptFile([file], {});
+        }
+      } catch (e) { console.warn("Receipt not kept:", e?.message || e); }
     } else {
       alert(data?.error ? `Scan failed: ${data.error}` : "Could not read a receipt from that photo — try a straighter, brighter shot.");
     }
