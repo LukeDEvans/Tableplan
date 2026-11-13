@@ -451,6 +451,8 @@ export function baseGroceryItemKey(item) {
 
 // ══════════════════════════════════════════════════════════════════════════
 export function createGroceriesModule(deps) {
+  const canMarkPersonal = deps.canMarkPersonal || (() => false);
+  const showPersonalReceipts = deps.showPersonalReceipts || (() => true);
   const {
     state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, isLocalDevHost, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp, getHomeLocation, getFreshAccessToken, recognizeReceiptText, isStateReady, handOff,
   } = deps;
@@ -1317,6 +1319,14 @@ function openReceiptEditView(receiptId) {
   elements.editReceiptTax.value = receipt.tax || "";
   elements.editReceiptFees.value = receipt.fees || "";
   elements.editReceiptTotal.value = receipt.total || "";
+  const tipEl = document.getElementById("editReceiptTip");
+  const last4El = document.getElementById("editReceiptLast4");
+  const personalRow = document.getElementById("editReceiptPersonalRow");
+  const personalEl = document.getElementById("editReceiptPersonal");
+  if (tipEl) tipEl.value = receipt.tip || "";
+  if (last4El) last4El.value = receipt.paymentLast4 || "";
+  if (personalRow) personalRow.hidden = !canMarkPersonal() && receipt.view !== "personal";
+  if (personalEl) personalEl.checked = receipt.view === "personal";
   elements.editReceiptLineList.innerHTML = "";
   (receipt.lineItems || []).forEach((line) => addEditReceiptLine(line));
   elements.shopReceiptsListView.hidden = true;
@@ -1428,6 +1438,11 @@ function editedReceiptFromForm() {
     tax: elements.editReceiptTax.value,
     fees: elements.editReceiptFees.value,
     total: elements.editReceiptTotal.value,
+    tip: document.getElementById("editReceiptTip")?.value ?? original.tip,
+    paymentLast4: (document.getElementById("editReceiptLast4")?.value ?? original.paymentLast4 ?? "").replace(/\D/g, ""),
+    view: document.getElementById("editReceiptPersonalRow")?.hidden === false
+      ? (document.getElementById("editReceiptPersonal")?.checked ? "personal" : "")
+      : original.view,
     lineItems
   }, createId);
 }
@@ -5572,6 +5587,7 @@ function renderShopReceipts() {
   const el = elements.shopReceiptsList;
   if (!el) return;
   const receipts = (state.receipts || [])
+    .filter((r) => r.view !== "personal" || showPersonalReceipts())
     .slice()
     .sort((a, b) => (b.purchaseDate || "").localeCompare(a.purchaseDate || ""));
   const queued = receiptQueueCardsHtml();

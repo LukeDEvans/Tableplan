@@ -2030,7 +2030,7 @@ const _finance = createFinanceModule({
   writeSupabaseJson: (...a) => writeSupabaseJson(...a),
   // The one receipts list (state.receipts) is Shop-owned; Finance reads and
   // links through this interface (RECEIPTS.md). Thunks: groceries is created below.
-  receiptsForFinance: (...a) => receiptsForFinance(...a),
+  receiptsForFinance: (...a) => receiptsForFinance(...a).filter((r) => r.view !== "personal" || currentViewKey() === "personal"),
   importFinanceInboxReceipts: (...a) => importFinanceInboxReceipts(...a),
   linkReceiptToFinanceTxn: (...a) => linkReceiptToFinanceTxn(...a),
   openReceiptDetail: (...a) => openReceiptDetail(...a),
@@ -2057,6 +2057,10 @@ const {
 // record (Decision #2b) — the live list is state.persistentManualGroceries.
 const _groceries = createGroceriesModule({
   state, elements, persist, meals, prepDays,
+  // Personal receipts (FINANCE_AUDIT §8): only people with a Personal view can mark
+  // one, and the Household view never lists them.
+  canMarkPersonal: () => currentViewList().includes("personal"),
+  showPersonalReceipts: () => currentViewKey() === "personal",
   handOff: (...a) => handOff(...a),
   getHomeLocation: () => homeLocation(),
   getActiveAppArea: () => activeAppArea,
@@ -5377,7 +5381,49 @@ function syncOwnMealPlanShare() {
   };
 }
 
+// Receipts live in their own table (receipts-sync.js, FINANCE_AUDIT §10). Read at
+// start-up and on returning to the app; this device's changes are sent a few
+// seconds after a save. Household receipts also stay in the grocery row until
+// every device has this build (then they come out of it).
+let receiptsSync = null;
+let receiptsSyncTimer = null;
+async function receiptsSyncer() {
+  if (receiptsSync) return receiptsSync;
+  const [{ createReceiptsSync }, { createRestTransport }] = await Promise.all([import("./receipts-sync.js"), import("./messaging/server.js")]);
+  receiptsSync ||= createReceiptsSync({
+    transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+    store: { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) },
+    getReceipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
+    setReceipts: (list, { removed = [] } = {}) => {
+      recordDeletions("receipts", removed);
+      state.receipts = normalizeReceipts(list);
+      persist();
+      renderAfterReceiptsSync();
+    },
+    scopes: () => ({ groupId: userGroup?.id || "", userId: authSession?.user?.id || "" }),
+    isRemoved: (id) => deletedIdsFor("receipts").includes(String(id)),
+    normalize: (r) => normalizeReceipts([r])[0] || r,
+  });
+  return receiptsSync;
+}
+function syncReceiptsTable({ pull = true } = {}) {
+  if (localDevMode || !sharedStorageReady || !userGroup?.id || !authSession?.user?.id) return;
+  receiptsSyncer().then((s) => s.sync({ pull })).catch((e) => console.warn("[receipts] sync:", e?.message || e));
+}
+function scheduleReceiptsPush() {
+  clearTimeout(receiptsSyncTimer);
+  receiptsSyncTimer = setTimeout(() => syncReceiptsTable({ pull: false }), 4000);
+}
+function renderAfterReceiptsSync() {
+  try {
+    const area = getActiveAppArea();
+    if (area === "finance") _finance.renderFinancePage();
+    else if (area === "documents") { /* Document re-reads receipt info on its next draw */ }
+  } catch { /* best-effort */ }
+}
+
 function persist() {
+  if (sharedStorageReady) scheduleReceiptsPush();
   state.stateUpdatedAt = new Date().toISOString();
   stampChangedSettings();
   syncOwnMealPlanShare();
@@ -7899,6 +7945,7 @@ async function runHydrateStateFromSharedStorage() {
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
+      syncReceiptsTable();
       markDisplayPrefsKnown(); // theme copy + iPhone icon follow the loaded prefs from here
       hideHydrationOverlay(); // data is in — never leave the "Syncing…" cover up
       backfillHistoryLog();
@@ -7996,7 +8043,7 @@ function wireNewerBuildCheck() {
   if (isNativeApp() || !/^https?:$/.test(window.location.protocol)) return;
   setTimeout(checkForNewerBuild, 15000);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") checkForNewerBuild();
+    if (document.visibilityState === "visible") { checkForNewerBuild(); syncReceiptsTable(); }
   });
 }
 
@@ -8357,6 +8404,9 @@ function extractSectionData(keys, source = state) {
   // full text stays in memory during a session and is re-fetched via
   // ensureEpisodeDescription() when a user actually opens the notes.
   if (Array.isArray(obj.podcasts)) obj.podcasts = storedPodcasts(obj.podcasts, source);
+  // A Personal purchase's receipt lives only in the receipts table under the
+  // person's own scope; it never rides the shared grocery row.
+  if (Array.isArray(obj.receipts) && obj.receipts.some((r) => r?.view === "personal")) obj.receipts = obj.receipts.filter((r) => r?.view !== "personal");
   // Article bodies whose bytes are safely in the content-store backstop no longer
   // ride the synced media section (the Disk-IO win — the section was rewritten
   // with full article text on every media interaction). The reader re-reads them

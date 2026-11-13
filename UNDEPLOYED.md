@@ -26,6 +26,13 @@ Each entry: what shipped · PR · post-deploy steps.
   (`receipt-matcher.js`) and links a certain match itself. New optional receipt fields: tip,
   paymentLast4, scannedBy, view (the reader doesn't fill tip or card digits yet).
 
+- **Receipts table** · `fin_receipts` **applied 2026-11-12** (Luke's OK; 24 receipts copied from the
+  grocery row, which is untouched). The app (`receipts-sync.js`) reads it at start-up and on return to
+  the app, and sends changes a few seconds after a save; household receipts also stay in the grocery
+  row until every device has the build. Personal receipts (editor switch, Personal view only) live
+  only in the table under `u-<uid>` and are left out of the grocery row. Cleanup after the deploy and
+  both phones updated: take `receipts` out of the grocery row.
+
 - **Finance: moving accounts between Household and Personal (step 3)** · #232 · **needs a Netlify
   deploy to do anything** (the server action; the app's screen stays hidden until the server
   answers that it can move accounts). The database guard is already applied (2026-11-12).
