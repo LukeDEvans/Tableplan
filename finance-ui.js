@@ -3269,6 +3269,18 @@ function financeTaxTag(t) {
   const label = t?.label === "split" ? (t.split?.[0]?.label || "") : (t?.label || "");
   return taxTagFor(t, { picked: state.financeTxnTax || {}, categoryName: label.startsWith("cat:") ? financeTxnLabelName(label) : "" });
 }
+// Paydays in [startKey, endKey] for the Calendar: each person's active pay
+// scenario with a weekly/biweekly cadence and a known payday. Net of deductions.
+function financePaydays(startKey, endKey) {
+  const out = [];
+  for (const p of state.financePeople || []) {
+    const sc = (p.scenarios || []).find((x) => x.id === p.activeScenarioId) || (p.scenarios || [])[0];
+    if (!sc || !(sc.amount > 0) || sc.payFrequency === "monthly") continue;
+    const net = Math.round((sc.amount - scenarioDeductionPerPeriod(sc)) * 100) / 100;
+    for (const date of scenarioPaydaysInRange(sc, startKey, endKey)) out.push({ date, name: p.name || "Payday", amount: net, personId: p.id });
+  }
+  return out;
+}
 function financeTrips() {
   return (Array.isArray(state.trips) ? state.trips : []).filter((t) => t && t.id && !t.deletedAt && !t.archived);
 }
@@ -5680,5 +5692,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financePaydays, financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

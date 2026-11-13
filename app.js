@@ -28158,6 +28158,14 @@ function buildPlanAppDataIndex() {
       }
     }
   }
+  // Paydays from Finance's pay schedules, beside the bills (same "Bills" overlay).
+  try {
+    const from = new Date(); from.setMonth(from.getMonth() - 2, 1);
+    const to = new Date(); to.setMonth(to.getMonth() + 15, 0);
+    for (const p of (_finance.financePaydays(dateKeyFromDate(from), dateKeyFromDate(to)) || [])) {
+      push(p.date, { id: `finpay-${p.personId}-${p.date}`, title: `Payday · ${p.name} ${formatFinMoney(p.amount)}`, date: p.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.finance, source: "finance", calendarName: "Bills", readOnly: true });
+    }
+  } catch { /* Finance not loaded */ }
   return byDate;
 }
 
