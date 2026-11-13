@@ -2205,6 +2205,8 @@ const _recipes = createRecipesModule({
   state, elements, persist, render, trashItemTemplate,
   // What a recipe costs, from past receipt prices (Shop's price history).
   recipeCost: (recipe, scale) => { try { return _groceries.estimateRecipeCost(recipe, scale); } catch { return null; } },
+  // Grocery spending vs budget this month (Finance), for budget-friendly picks.
+  groceryPace: () => { try { return isPageEnabled("finance") ? _finance.financeGroceryPace() : null; } catch { return null; } },
   showMailToast: (...a) => showMailToast(...a),
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
@@ -2308,6 +2310,7 @@ const {
 // infra + calendar readers + eat shell stay in app.js and are injected. Dual calendar list
 // preserved (Decision #1 not applied). Legacy week.manualGroceries untouched (Decision #2b).
 const _mealplan = createMealplanModule({
+  groceryPace: () => { try { return isPageEnabled("finance") ? _finance.financeGroceryPace() : null; } catch { return null; } },
   getHomeLocation: () => homeLocation(),
   state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys,
   getActiveAppArea: () => activeAppArea,

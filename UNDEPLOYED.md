@@ -10,6 +10,13 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Receipts fill Inventory · budget-aware meal planning** · branch `claude/finance-true-numbers` ·
+  client only, seen with a TestFlight build or a deploy: a scanned grocery receipt adds its food lines
+  to Inventory (Pantry / Fridge / Freezer, by item), with undo; on by default, switch in Inventory ›
+  rooms ("Add items from receipts"); a receipt's editor has "Add items to Inventory". When grocery
+  spending is ahead of budget this month, the Meal Plan says so and picking a recipe for a meal shows
+  the cheapest recipes per serving first (from past receipt prices). No post-deploy steps.
+
 - **Finance: true numbers (audit step 1)** · branch `claude/finance-true-numbers` · the nightly bank
   job is **already live** (Supabase Edge Function `finance-nightly` + pg_cron, 11:40 UTC; no deploy
   needed). The page changes need a TestFlight build or a deploy to be seen: an Uncategorized row on

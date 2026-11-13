@@ -140,6 +140,22 @@ export function financeGlanceFrom({ spent, budget, uncategorized = 0, now = new 
   if (spent > expected * 1.1) return { tone: "ahead", text: `Spending ahead of pace · ${money(left)} left${tail}` };
   return { tone: "ok", text: `On track · ${money(left)} left this month${tail}` };
 }
+// Grocery spending against its budget so far this month. groups: budget groups;
+// cats: this month's saved totals { "group:cat": amount }. Grocery categories are
+// the ones named like "Groceries". → { spent, budget, left, ahead } or null.
+export function groceryPaceFrom({ groups, cats, now = new Date() }) {
+  let budget = 0, spent = 0;
+  for (const g of groups || []) for (const c of g.categories || []) {
+    if (!/grocer/i.test(c.name || "")) continue;
+    budget += (c.items || []).reduce((s, it) => s + (Number(it.amount) || 0), 0);
+    spent += Math.abs(Number(cats?.[`${g.id}:${c.id}`]) || 0);
+  }
+  if (!(budget > 0)) return null;
+  const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const expected = budget * (now.getDate() / dim);
+  return { spent: Math.round(spent * 100) / 100, budget, left: Math.round((budget - spent) * 100) / 100, ahead: spent > budget || spent > expected * 1.1 };
+}
+
 export const FINANCE_NUDGE_ID_BASE = 2000000000;
 export function financeNudgeInstance(count, now = Date.now()) {
   const n = Math.max(0, Math.floor(Number(count) || 0));
@@ -3296,6 +3312,9 @@ function financePaydays(startKey, endKey) {
   }
   return out;
 }
+function financeGroceryPace() {
+  return groceryPaceFrom({ groups: state.financeBudgetGroups, cats: state.financeMonthActuals?.[financeCurrentMonthKey()]?.cats || {} });
+}
 function financeMonthGlance() {
   const cur = state.financeMonthActuals?.[financeCurrentMonthKey()];
   const spent = Object.values(cur?.cats || {}).reduce((s, v) => s + Math.abs(Number(v) || 0), 0);
@@ -5712,5 +5731,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financeMonthGlance, financePaydays, financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeGroceryPace, financeMonthGlance, financePaydays, financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

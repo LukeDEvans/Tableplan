@@ -389,6 +389,7 @@ export function normalizeNutritionEstimate(estimate) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createRecipesModule(deps) {
   const recipeCost = deps.recipeCost || (() => null);
+  const groceryPace = deps.groceryPace || (() => null);
   const {
     state, elements, persist, render, trashItemTemplate, showMailToast, getActiveAppArea, getAuthSession, getSupabaseClient, setRowStorageReady, getAmountOptions, getQuantityOptions, getPrepOptions, getPendingMealRecipeSelection, getPendingAutoRuleRecipeSelection, clearPendingMealRecipeSelection, clearPendingAutoRuleRecipeSelection, activateEatShell, allowScreenOff, applyScanImageAction, canUseCloudStorage, canUseLocalBackend, chooseRecipeForPendingAutoRule, chooseRecipeForPendingMeal, closeFloatingMenus, dailyDozenCategoryName, dailyDozenRecipeSuggestions, dateInputToIso, dateInputValue, deleteSupabaseRow, displayMealName, escapeHtml, fileToDataUrl, formatServingsLabel, imageElementFromFile, keepScreenOn, mealEntryValue, mirrorStateToLocalStorage, normalizeIngredientOptions, openDailyDozenPage, plannedServingsForEntry, prepareScanImage, recipeForSlot, recordDeletion, removeRecipeFromMealSlots, renderPlanner, renderScanImagePreviews, retainScanImageEdits, rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders, trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing, updateMealPlannedServingsFromContext, formatGroceryAmount, groceryAmountToNumber, grocerySuggestionItems, renderGroceries,
   } = deps;
@@ -1323,7 +1324,26 @@ function renderFolders() {
   const visibleRecipes = activeRecipes()
     .filter((recipe) => recipeMatchesSearch(recipe, query))
     .sort((a, b) => a.name.localeCompare(b.name));
-  elements.recipeList.innerHTML = recipeTileGridTemplate(visibleRecipes);
+  // Budget-aware picking: choosing a recipe for a meal while grocery spending is
+  // running ahead of budget puts the cheapest recipes (per serving, from past
+  // receipt prices) first.
+  let budgetStrip = "";
+  const pace = getPendingMealRecipeSelection() && !query ? groceryPace() : null;
+  if (pace?.ahead) {
+    const cheap = visibleRecipes
+      .map((r) => { const c = recipeCost(r, 1); const serv = Number(r.servings || 1) || 1; return c && c.priced / c.count >= 0.5 ? { r, per: c.total / serv } : null; })
+      .filter(Boolean).sort((a, b) => a.per - b.per).slice(0, 6);
+    if (cheap.length) {
+      budgetStrip = `
+        <section class="recipe-budget-strip">
+          <h3>Easy on the grocery budget</h3>
+          <p class="hint">Groceries are at $${Math.round(pace.spent)} of $${Math.round(pace.budget)} this month${pace.left < 0 ? " — over budget" : ", ahead of pace"}. Cheapest per serving:</p>
+          <div class="folder-recipes recipe-tile-grid">${cheap.map(({ r, per }) => recipeCardTemplate(r).replace("</button>", `<span class="recipe-cost-badge">≈ $${per.toFixed(2)}/serving</span></button>`)).join("")}</div>
+          <h3>All recipes</h3>
+        </section>`;
+    }
+  }
+  elements.recipeList.innerHTML = budgetStrip + recipeTileGridTemplate(visibleRecipes);
   bindRecipeCards(elements.recipeList);
   renderRecipeFolderOptions();
   renderRecentlyDeletedLink();

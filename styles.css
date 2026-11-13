@@ -22489,6 +22489,10 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .grocery-price-strip-total { font-weight: 800; font-size: 0.95rem; }
 .grocery-price-strip-meta { color: var(--muted); }
 .recipe-cost-pill { font-variant-numeric: tabular-nums; }
+.recipe-budget-strip h3 { margin: 6px 0 4px; font-size: 0.95rem; }
+.recipe-budget-strip .hint { margin: 0 0 8px; color: var(--muted); font-size: 0.82rem; }
+.recipe-cost-badge { display: block; margin-top: 4px; font-size: 0.74rem; font-weight: 700; color: #17603a; }
+.meal-budget-note { margin: 4px 0 8px; padding: 7px 12px; border-radius: 12px; background: color-mix(in srgb, #eda100 16%, transparent); font-size: 0.84rem; font-weight: 600; }
 .home-page-glance { display: block; margin-top: 2px; font-size: 0.74rem; font-weight: 600; opacity: 0.8; }
 .home-page-glance[data-tone="ahead"], .home-page-glance[data-tone="over"] { color: #b3261e; opacity: 1; }
 .travel-expense-row.is-candidate { opacity: 0.85; }
