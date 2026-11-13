@@ -1399,6 +1399,7 @@ function addEditReceiptLine(line = {}) {
     </button>
     <input type="hidden" data-receipt-confidence value="${escapeHtml(String(line.confidenceScore ?? 0.9))}" />
     ${receiptBudgetSelectHtml(line.budgetCategory || "")}
+    ${canMarkPersonal() || line.owedBy ? `<label class="receipt-line-mine" title="A personal item the household paid for: you pay the household back"><input type="checkbox" data-receipt-mine ${line.owedBy ? "checked" : ""} data-owed-by="${escapeHtml(line.owedBy || "")}" /> Mine · pay back</label>` : ""}
   `;
   row.querySelector("[data-remove-receipt-line]").addEventListener("click", () => row.remove());
   elements.editReceiptLineList.append(row);
@@ -1425,7 +1426,12 @@ function editedReceiptFromForm() {
       discountAmount: Math.max(0, Number(row.querySelector("[data-receipt-discount]").value) || 0),
       confidenceScore: Number(row.querySelector("[data-receipt-confidence]").value) || 0.9,
       userCorrected: true,
-      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || ""
+      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || "",
+      owedBy: (() => {
+        const box = row.querySelector("[data-receipt-mine]");
+        if (!box) return "";
+        return box.checked ? (box.dataset.owedBy || getAuthSession()?.user?.id || "") : "";
+      })()
     };
   });
   return LiveReceiptDomain.normalizeReceipt({
@@ -2153,7 +2159,12 @@ function reviewedReceiptFromForm() {
       discountAmount: Math.max(0, Number(row.querySelector("[data-receipt-discount]").value) || 0),
       confidenceScore: Number(row.querySelector("[data-receipt-confidence]").value) || 0.7,
       userCorrected: normalizedName !== row.dataset.originalName || category !== row.dataset.originalCategory,
-      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || ""
+      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || "",
+      owedBy: (() => {
+        const box = row.querySelector("[data-receipt-mine]");
+        if (!box) return "";
+        return box.checked ? (box.dataset.owedBy || getAuthSession()?.user?.id || "") : "";
+      })()
     };
   });
   return LiveReceiptDomain.normalizeReceipt({

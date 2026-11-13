@@ -9,6 +9,7 @@ import { createIdbStorage, createMemoryStorage } from './content-store/storage.j
 import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 import { linkOutAttrs } from './link-out.js';
 import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
+import { financeOwedBalances } from './finance-settle.js';
 import { banksForAccounts, billerForBill, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
@@ -263,7 +264,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail, queueReceiptFile, onFinanceCountChanged } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail, queueReceiptFile, onFinanceCountChanged, memberName, currentViewKey } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -4259,7 +4260,23 @@ function renderFinancePage() {
         </span>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="close-month">${closeChecks.every((c) => c.ok) ? "Close" : "Close anyway"}</button>
       </div>`;
-  const truthCard = (monthLine || closeBlock || (showActuals && (uncatThis.count || staleSaved || skippedMerchants))) ? `
+  // Personal items the household paid for, by person (finance-settle.js). The
+  // Household view lists everyone who owes; the Personal view only you.
+  const meId = getAuthSession()?.user?.id || "";
+  const inPersonalView = currentViewKey?.() === "personal";
+  const owedRows = [...financeOwedBalances(financeReceiptList(), state.financeSettlements || []).entries()]
+    .filter(([by, p]) => p.balance > 0 && (!inPersonalView || by === meId));
+  const owedBlock = owedRows.map(([by, p]) => {
+    const who = memberName ? memberName(by) : "";
+    const label = who === "You" || by === meId ? "You owe the household" : `${escapeHtml(who || "A household member")} owes the household`;
+    return `
+      <div class="fin-truth-row">
+        <span class="fin-truth-name">${label}<span class="fin-of"> · ${p.items.length} personal item${p.items.length === 1 ? "" : "s"} on household receipts</span></span>
+        <span class="fin-truth-amt">${formatFinMoney(p.balance)}</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-owed" data-by="${escapeHtml(by)}" data-amount="${p.balance}">Paid back</button>
+      </div>`;
+  }).join("");
+  const truthCard = (monthLine || closeBlock || owedBlock || (showActuals && (uncatThis.count || staleSaved || skippedMerchants))) ? `
     <div class="fin-card fin-truth-card" data-fin-card="truth">
       ${monthLine}
       ${uncatThis.count ? `
@@ -4278,6 +4295,7 @@ function renderFinancePage() {
         <span class="fin-truth-name">${skippedMerchants} merchant${skippedMerchants === 1 ? " is" : "s are"} skipped from review<span class="fin-of"> · their charges never come up to categorize</span></span>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="unskip-all-merchants">Bring back</button>
       </div>` : ""}
+      ${owedBlock}
       ${closeBlock}
     </div>` : "";
   const budgetView = `
@@ -4905,6 +4923,17 @@ function onFinanceGridClick(e) {
     if (month === financeCurrentMonthKey() || financeMonthClosed(month) || !financeStoreActive() || !financeTxnsCoverMonth(txns, month, financeCurrentMonthKey())) return;
     if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
     state.financeMonthActuals[month] = financeMonthEntry(txns, month, financeTxnPortions);
+    persist();
+    renderFinancePage();
+    return;
+  }
+  if (action === "settle-owed") {
+    // Records that the person paid the household back what they owed right now.
+    const by = btn.dataset.by || "";
+    const amount = Math.round((Number(btn.dataset.amount) || 0) * 100) / 100;
+    if (!by || !(amount > 0)) return;
+    if (!Array.isArray(state.financeSettlements)) state.financeSettlements = [];
+    state.financeSettlements.push({ id: createId("settle"), by, amount, at: new Date().toISOString() });
     persist();
     renderFinancePage();
     return;

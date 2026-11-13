@@ -130,7 +130,10 @@ return {
       confidenceScore: line?.confidenceScore === undefined || line?.confidenceScore === null || line?.confidenceScore === "" ? 0.7 : Math.min(1, Math.max(0, number(line.confidenceScore, 0.7))),
       userCorrected: Boolean(line?.userCorrected),
       // Finance budget category key ("cat:<groupId>:<categoryId>") or "".
-      budgetCategory: text(line?.budgetCategory)
+      budgetCategory: text(line?.budgetCategory),
+      // A personal item on a household-paid receipt: the user id of the person who
+      // pays the household back for it (finance-settle.js), or "".
+      owedBy: text(line?.owedBy)
     };
   }
 
@@ -332,7 +335,7 @@ return {
       view: receipt.view || "",
       needsReview: Boolean(receipt.extraction && receipt.extraction.status && receipt.extraction.status !== "ok"),
       hasImage: (receipt.imageRefs || []).length > 0,
-      items: (receipt.lineItems || []).map((line) => ({ name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
+      items: (receipt.lineItems || []).map((line) => ({ ...(line.owedBy ? { owedBy: line.owedBy } : {}), name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
       portions: receiptFinancePortions(receipt)
     };
   }

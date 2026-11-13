@@ -22479,6 +22479,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-truth-amt.is-over { color: #b3261e; }
 .fin-close-checks { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 4px; font-size: 0.8rem; font-weight: 500; color: var(--muted); }
 .fin-close-check.is-ok { color: #17603a; }
+.receipt-line-mine { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.receipt-personal-toggle { display: flex; align-items: center; gap: 8px; }
+.receipt-personal-toggle .hint { color: var(--muted); font-size: 0.8rem; }
 /* Where it went: one whole split by budget group. Validated categorical slots
    (dataviz palette, light vs #fffdf8, dark vs #20221f); 0 = neutral. */
 .fin-card { --fin-s1: #2a78d6; --fin-s2: #eb6834; --fin-s3: #1baf7a; --fin-s4: #eda100; --fin-s5: #e87ba4; --fin-s6: #008300; --fin-s7: #6250d6; --fin-s8: #e34948; --fin-s0: color-mix(in srgb, var(--ink) 28%, transparent); }
