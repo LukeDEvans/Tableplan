@@ -120,7 +120,7 @@ exports.handler = async (event) => {
     }
     return cors(json(200, {
       ok: true,
-      receipts: receipts.map((r) => ({ merchant: r.merchant, date: r.date, total: r.total, items: r.items.length }))
+      receipts: receipts.map((r) => ({ id: r.id, merchant: r.merchant, date: r.date, total: r.total, items: r.items.length }))
     }));
   } catch (e) {
     console.error("[share-receipt]", action, e?.name || "error");

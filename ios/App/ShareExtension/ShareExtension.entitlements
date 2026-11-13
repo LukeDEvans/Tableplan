@@ -7,5 +7,10 @@
 	<array>
 		<string>6RTNUZR7K5.com.mrlukedevans.live.shared</string>
 	</array>
+	<!-- Order screenshots the extension keeps for the app to file in Document (SharedReceiptInbox). -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.mrlukedevans.live</string>
+	</array>
 </dict>
 </plist>

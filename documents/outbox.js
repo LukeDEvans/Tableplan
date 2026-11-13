@@ -56,11 +56,13 @@ export function createReceiptOutbox(store, { now = () => Date.now() } = {}) {
   return {
     // pages: [{ bytes: Uint8Array, type: "image/jpeg" | … }]; scope: the household
     // it's for (filed only there); camera: pages from the document camera.
-    async queue(pages, { scope, camera = false, receiptId = "" } = {}) {
+    // at: when the receipt was captured (a shared screenshot kept by the share
+    // extension is filed later); defaults to now.
+    async queue(pages, { scope, camera = false, receiptId = "", at: capturedAt = null } = {}) {
       if (!scope) return null;
-      const kept = (pages || []).filter((p) => p?.bytes instanceof Uint8Array && p.bytes.length && /^image\//.test(pageType(p.type))).slice(0, MAX_PAGES);
+      const kept = (pages || []).filter((p) => p?.bytes instanceof Uint8Array && p.bytes.length && /^(image\/|application\/pdf$)/.test(pageType(p.type))).slice(0, MAX_PAGES);
       if (!kept.length || kept.reduce((n, p) => n + p.bytes.length, 0) > OUTBOX_ENTRY_MAX_BYTES) return null;
-      const at = now();
+      const at = Number.isFinite(capturedAt) && capturedAt > 0 && capturedAt <= now() ? Math.round(capturedAt) : now();
       const key = `r:${String(at).padStart(15, "0")}:${Math.random().toString(36).slice(2, 10)}`;
       await store.set(key, { at, scope, camera: Boolean(camera), receiptId: String(receiptId || ""), attempts: 0, pages: kept.map((p) => ({ bytes: p.bytes, type: pageType(p.type) })) });
       await prune();
@@ -253,4 +255,25 @@ export async function movePersonalReceiptFiles({ library, from, to, personalIds,
     }
     return out;
   });
+}
+
+// Shared order screenshots / PDFs (the share extension keeps them in the App Group;
+// Luke, 2026-11-12): which receipt an entry belongs to. entry: { at, receipts: [{ id?,
+// merchant, date, total }] } as share-receipt answered. → { receiptId } to file now
+// ("" = file without a receipt), or null to wait for the receipt to reach this phone
+// (Finance imports it from the inbox) — at most a day, then it's filed anyway.
+export const SHARED_RECEIPT_WAIT_MS = 24 * 3600 * 1000;
+export function sharedReceiptTarget(entry, receipts = [], nowMs = Date.now()) {
+  const first = Array.isArray(entry?.receipts) ? entry.receipts[0] : null;
+  if (!first) return { receiptId: "" };
+  const list = Array.isArray(receipts) ? receipts : [];
+  let found = null;
+  if (first.id) found = list.find((r) => r?.id === `receipt-share-${first.id}`) || null;
+  if (!found) {
+    const total = Number(first.total);
+    found = list.find((r) => r?.source === "share" && Number.isFinite(total) && Math.abs(Number(r.total) - total) < 0.01
+      && (!first.date || r.purchaseDate === first.date)) || null;
+  }
+  if (found) return { receiptId: found.id };
+  return nowMs - (Number(entry.at) || 0) > SHARED_RECEIPT_WAIT_MS ? { receiptId: "" } : null;
 }

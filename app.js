@@ -5422,7 +5422,7 @@ async function receiptsSyncer() {
 }
 function syncReceiptsTable({ pull = true } = {}) {
   if (localDevMode || !sharedStorageReady || !userGroup?.id || !authSession?.user?.id) return;
-  receiptsSyncer().then((s) => s.sync({ pull })).then(() => movePersonalReceiptFilesSoon()).catch((e) => console.warn("[receipts] sync:", e?.message || e));
+  receiptsSyncer().then((s) => s.sync({ pull })).then(() => { fileSharedReceipts(); movePersonalReceiptFilesSoon(); }).catch((e) => console.warn("[receipts] sync:", e?.message || e));
 }
 function scheduleReceiptsPush() {
   clearTimeout(receiptsSyncTimer);
@@ -18267,14 +18267,46 @@ function receiptOutbox() {
   })().catch((e) => { receiptOutboxPromise = null; throw e; });
   return receiptOutboxPromise.then((o) => o.outbox);
 }
-async function queueReceiptForDocuments(files, { camera = false, receiptId = "" } = {}) {
-  if (localDevMode || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return;
+// → true once the pages are waiting in the outbox.
+async function queueReceiptForDocuments(files, { camera = false, receiptId = "", at = null } = {}) {
+  if (localDevMode || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return false;
   const scope = userGroup.id; // filed only into the household it was scanned in
   try {
     const pages = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
-    await (await receiptOutbox()).queue(pages, { scope, camera, receiptId });
-  } catch { return; /* best-effort: the receipt itself is unaffected */ }
+    if (!(await (await receiptOutbox()).queue(pages, { scope, camera, receiptId, at }))) return false;
+  } catch { return false; /* best-effort: the receipt itself is unaffected */ }
   fileWaitingReceipts(scope).catch(() => {}); // now; whatever fails waits for the next try
+  return true;
+}
+
+// Order screenshots / PDFs shared to Live from other apps: the share extension
+// keeps them in the App Group (SharedReceiptInbox); here they join the outbox and
+// are filed into Document › Receipts with their receipt (a Personal one then moves
+// to Personal like any other). Runs after the receipts sync; one run at a time.
+let sharedReceiptFiling = null;
+function fileSharedReceipts() {
+  const plugin = nativeShareToken();
+  if (localDevMode || typeof plugin?.sharedReceipts !== "function" || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return null;
+  sharedReceiptFiling ||= (async () => {
+    const { entries = [] } = (await plugin.sharedReceipts()) || {};
+    if (!entries.length) return;
+    const { sharedReceiptTarget } = await import("./documents/outbox.js");
+    for (const entry of entries) {
+      const target = sharedReceiptTarget(entry, state.receipts || [], Date.now());
+      if (!target) continue; // its receipt hasn't reached this phone yet
+      const files = (entry.files || []).map((f) => {
+        const bin = atob(String(f.data || ""));
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new Blob([bytes], { type: f.mime });
+      }).filter((b) => b.size);
+      const camera = files.length > 1 && files.every((b) => b.type === "image/jpeg"); // one PDF per order
+      if (!files.length || await queueReceiptForDocuments(files, { camera, receiptId: target.receiptId, at: Number(entry.at) || null })) {
+        await plugin.removeSharedReceipt({ id: entry.id });
+      }
+    }
+  })().catch((e) => console.warn("[receipts] shared files:", e?.message || e)).finally(() => { sharedReceiptFiling = null; });
+  return sharedReceiptFiling;
 }
 
 // Files this device's waiting receipts into the household's everyday Receipts folder.

@@ -10,4 +10,11 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Nothing waiting. (Last emptied by the 2026-11-12 deploy.)_
+- **Shared order screenshots kept in Document** · branch `claude/share-screenshots-documents` ·
+  **TestFlight build** (Swift + web code; App Group `group.com.mrlukedevans.live` registered by Luke
+  2026-11-12 and enabled on both App IDs). After a share succeeds, the extension keeps the screenshots
+  (or the order-summary PDF) in the App Group; the app files them into Document › Receipts with their
+  receipt next time it opens (several screenshots become one PDF; a Personal receipt's file then moves to
+  Personal). Matches its receipt by total and date until the deploy; `share-receipt` now also returns
+  the receipt id (used after the next Netlify deploy, not required). Post-TestFlight: share an Amazon
+  order screenshot to Live, open Live, open Document › Receipts.

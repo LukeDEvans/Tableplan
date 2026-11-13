@@ -46,7 +46,9 @@ final class ShareViewController: UIViewController {
         }
         var images: [Data] = []
         var text: String? = nil
+        var pdfData: Data? = nil
         if let pdf = await loadPDF() {
+            pdfData = pdf.dataRepresentation()
             let pdfText = Self.text(of: pdf)
             if pdfText.count >= Self.minPdfText {
                 text = pdfText
@@ -62,13 +64,21 @@ final class ShareViewController: UIViewController {
         }
         do {
             let result = try await upload(images: images, text: text, token: token)
+            // Kept for Document › Receipts: the app files these when it next opens.
+            if result.ok {
+                let files: [(mime: String, data: Data)] = pdfData.map { [(mime: "application/pdf", data: $0)] } ?? images.map { (mime: "image/jpeg", data: $0) }
+                SharedReceiptInbox.add(files: files, meta: ["receipts": result.receipts])
+            }
             finish(title: result.title, detail: result.detail, autoClose: result.ok)
         } catch {
             finish(title: "Couldn't send", detail: "Check your connection and share again.", autoClose: false)
         }
     }
 
-    private struct Outcome { let ok: Bool; let title: String; let detail: String }
+    private struct Outcome {
+        let ok: Bool; let title: String; let detail: String
+        var receipts: [[String: Any]] = []
+    }
 
     private func upload(images: [Data], text: String?, token: String) async throws -> Outcome {
         var request = URLRequest(url: Self.endpoint, timeoutInterval: 90)
@@ -98,10 +108,10 @@ final class ShareViewController: UIViewController {
             return Outcome(ok: false, title: "No order found", detail: "Try a screenshot or summary that shows the order total.")
         }
         if receipts.count == 1, let r = receipts.first {
-            return Outcome(ok: true, title: "Added to Finance", detail: Self.describe(r))
+            return Outcome(ok: true, title: "Added to Finance", detail: Self.describe(r), receipts: receipts)
         }
         let lines = receipts.prefix(4).map(Self.describe).joined(separator: "\n")
-        return Outcome(ok: true, title: "Added \(receipts.count) orders", detail: lines)
+        return Outcome(ok: true, title: "Added \(receipts.count) orders", detail: lines, receipts: receipts)
     }
 
     private static func describe(_ r: [String: Any]) -> String {

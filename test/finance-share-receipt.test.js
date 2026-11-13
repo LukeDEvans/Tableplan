@@ -60,7 +60,7 @@ describe("share-receipt share", () => {
   it("extracts the order into the household inbox as a share receipt", async () => {
     const res = await call(shareToken(), { images: [IMG, IMG] });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body).receipts).toEqual([{ merchant: "Amazon", date: "2026-10-10", total: 31.47, items: 2 }]);
+    expect(JSON.parse(res.body).receipts).toEqual([{ id: expect.stringMatching(/^shr_/), merchant: "Amazon", date: "2026-10-10", total: 31.47, items: 2 }]);
     expect(inbox).toHaveLength(1);
     const [r] = inbox;
     expect(r.id).toMatch(/^shr_/);
@@ -94,7 +94,7 @@ describe("share-receipt share", () => {
     ].join("\n");
     const res = await call(shareToken(), { text: summary, kind: "summary" });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body).receipts).toEqual([{ merchant: "Amazon", date: "2026-10-10", total: 31.47, items: 2 }]);
+    expect(JSON.parse(res.body).receipts).toEqual([{ id: expect.stringMatching(/^shr_/), merchant: "Amazon", date: "2026-10-10", total: 31.47, items: 2 }]);
     expect(inbox).toHaveLength(1);
     expect(inbox[0].source).toBe("share");
     const ai = JSON.parse(calls.find((c) => c.url.includes("anthropic")).opts.body);

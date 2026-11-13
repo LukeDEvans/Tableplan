@@ -207,7 +207,7 @@ describe("the app's side (app.js)", () => {
     const fn = app.slice(app.indexOf("function scanReceiptFromHeader("), app.indexOf("let receiptOutboxPromise"));
     expect(fn).toMatch(/const receiptId = openReceiptScanWithFiles\(images, scanOptions\);\s+queueReceiptForDocuments\(images, \{ camera, receiptId \}\)/);
     expect(app).toMatch(/scanReceiptFromHeader\(scannedPagesToFiles\(result\?\.pages\), \{[^}]*camera: true \}\)/);
-    expect(app).toMatch(/\.queue\(pages, \{ scope, camera, receiptId \}\)/);
+    expect(app).toMatch(/\.queue\(pages, \{ scope, camera, receiptId, at \}\)/);
   });
   it("sign-out deletes the outbox", () => {
     expect(app).toContain(`deleteMessagingStore("${OUTBOX_DB}")`);
