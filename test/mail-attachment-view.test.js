@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   attachmentViewKind, attachmentBlobType, chooseAttachmentRoute, gmailThreadUrl,
-  base64UrlToBytes, fetchAttachmentBytes, ATTACHMENT_MAX_BYTES, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_ENDPOINT
+  base64UrlToBytes, fetchAttachmentBytes, ATTACHMENT_MAX_BYTES, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_ENDPOINT,
+  attachmentText, sniffDelimiter, parseDelimited
 } from "../mail-attachment-view.js";
+import { inviteWhen, inviteRepeats, invitePrefill } from "../mail-attachment-viewers.js";
+import { parsePlanIcs } from "../calendar/ics.mjs";
 import handler, { decodeGmailData, dispositionName, ATTACHMENT_STREAM_MAX } from "../netlify/functions/gmail-attachment.mjs";
 
 describe("attachmentViewKind — what the web viewer may render", () => {
@@ -11,7 +14,32 @@ describe("attachmentViewKind — what the web viewer may render", () => {
     expect(attachmentViewKind("image/jpeg", "a.jpg")).toBe("image");
     expect(attachmentViewKind("image/PNG", "a.png")).toBe("image");
     expect(attachmentViewKind("text/plain; charset=utf-8", "a.txt")).toBe("text");
-    expect(attachmentViewKind("text/csv", "a.csv")).toBe("text");
+  });
+  it("shows a CSV as a table, an invite as events, a contact card as contacts", () => {
+    expect(attachmentViewKind("text/csv", "a.csv")).toBe("csv");
+    expect(attachmentViewKind("text/tab-separated-values", "a.tsv")).toBe("csv");
+    expect(attachmentViewKind("text/calendar; method=REQUEST", "invite.ics")).toBe("invite");
+    expect(attachmentViewKind("application/ics", "invite.ics")).toBe("invite");
+    expect(attachmentViewKind("text/vcard", "Sam.vcf")).toBe("contact");
+    expect(attachmentViewKind("text/x-vcard", "Sam.vcf")).toBe("contact");
+  });
+  it("goes by the name when the label is text/plain or generic", () => {
+    expect(attachmentViewKind("text/plain", "invite.ics")).toBe("invite");
+    expect(attachmentViewKind("text/plain", "people.vcf")).toBe("contact");
+    expect(attachmentViewKind("text/plain", "export.csv")).toBe("csv");
+    expect(attachmentViewKind("application/octet-stream", "invite.ICS")).toBe("invite");
+    // a text label never becomes a picture, a PDF or a player
+    expect(attachmentViewKind("text/plain", "a.pdf")).toBe("text");
+    expect(attachmentViewKind("text/plain", "a.mp4")).toBe("text");
+  });
+  it("plays common audio and video", () => {
+    expect(attachmentViewKind("audio/mpeg", "memo.mp3")).toBe("audio");
+    expect(attachmentViewKind("audio/x-m4a", "memo.m4a")).toBe("audio");
+    expect(attachmentViewKind("video/mp4", "clip.mp4")).toBe("video");
+    expect(attachmentViewKind("video/quicktime", "clip.mov")).toBe("video");
+    expect(attachmentViewKind("application/octet-stream", "clip.webm")).toBe("video");
+    expect(attachmentViewKind("audio/midi", "song.mid")).toBe("none");
+    expect(attachmentViewKind("video/x-ms-wmv", "old.wmv")).toBe("none");
   });
   it("uses the extension when the declared type is generic", () => {
     expect(attachmentViewKind("application/octet-stream", "Schedule.PDF")).toBe("pdf");
@@ -35,7 +63,15 @@ describe("attachmentBlobType — never the sender's raw type", () => {
     expect(attachmentBlobType("pdf", "application/octet-stream", "a.pdf")).toBe("application/pdf");
     expect(attachmentBlobType("image", "image/jpg", "a.jpg")).toBe("image/jpeg");
     expect(attachmentBlobType("image", "", "a.gif")).toBe("image/gif");
-    expect(attachmentBlobType("text", "text/csv", "a.csv")).toBe("text/plain;charset=utf-8");
+    expect(attachmentBlobType("csv", "text/csv", "a.csv")).toBe("text/plain;charset=utf-8");
+    expect(attachmentBlobType("invite", "text/calendar", "a.ics")).toBe("text/plain;charset=utf-8");
+    expect(attachmentBlobType("contact", "text/vcard", "a.vcf")).toBe("text/plain;charset=utf-8");
+    expect(attachmentBlobType("audio", "audio/x-m4a", "a.m4a")).toBe("audio/mp4");
+    expect(attachmentBlobType("audio", "application/octet-stream", "a.wav")).toBe("audio/wav");
+    expect(attachmentBlobType("video", "video/quicktime", "a.mov")).toBe("video/quicktime");
+    // a media blob is never given a type of the other family, or the sender's own
+    expect(attachmentBlobType("video", "text/html", "a.mp3")).toBe("video/mp4");
+    expect(attachmentBlobType("audio", "text/html", "a.html")).toBe("audio/mpeg");
     expect(attachmentBlobType("none", "text/html", "a.html")).toBe("application/octet-stream");
   });
 });
@@ -153,5 +189,58 @@ describe("gmail-attachment function", () => {
     expect(good.headers.get("access-control-allow-origin")).toBe("capacitor://localhost");
     const bad = await handler(req({ messageId: "m", attachmentId: "a" }, "good", "https://evil.example"), {}, { env, helpers: h });
     expect(bad.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});
+
+describe("attachmentText", () => {
+  it("reads UTF-8 and drops the byte-order mark", () => {
+    expect(attachmentText(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xc3, 0xa9]))).toBe("aé");
+  });
+  it("reads UTF-16 when the file starts with that mark", () => {
+    expect(attachmentText(new Uint8Array([0xff, 0xfe, 0x61, 0x00, 0x62, 0x00]))).toBe("ab");
+  });
+});
+
+describe("parseDelimited — CSV rows", () => {
+  it("reads quoted fields, doubled quotes and line breaks inside quotes", () => {
+    const { rows, cols, more } = parseDelimited('Name,Note\r\n"Evans, Luke","said ""hi""\nthen left"\nSam,\n');
+    expect(rows).toEqual([["Name", "Note"], ["Evans, Luke", 'said "hi"\nthen left'], ["Sam", ""]]);
+    expect(cols).toBe(2);
+    expect(more).toBe(false);
+  });
+  it("skips blank lines and keeps a last line with no line break", () => {
+    expect(parseDelimited("a,b\n\n1,2").rows).toEqual([["a", "b"], ["1", "2"]]);
+  });
+  it("stops at the row and column caps and says so", () => {
+    const text = Array.from({ length: 10 }, (_, i) => `${i},x,y`).join("\n");
+    const r = parseDelimited(text, { maxRows: 3, maxCols: 2 });
+    expect(r.rows).toEqual([["0", "x"], ["1", "x"], ["2", "x"]]);
+    expect(r.more).toBe(true);
+  });
+  it("finds the delimiter", () => {
+    expect(sniffDelimiter("a;b;c\n1;2;3")).toBe(";");
+    expect(sniffDelimiter("a\tb\n1\t2")).toBe("\t");
+    expect(sniffDelimiter('"x;y",b,c')).toBe(",");
+    expect(sniffDelimiter("a,b", "data.tsv")).toBe("\t");
+    expect(parseDelimited("a;b\n1;2", { delimiter: ";" }).rows).toEqual([["a", "b"], ["1", "2"]]);
+  });
+});
+
+describe("invite helpers", () => {
+  const ICS = ["BEGIN:VCALENDAR", "BEGIN:VEVENT", "UID:1", "SUMMARY:Dentist", "DTSTART;TZID=America/Chicago:20261120T140000",
+    "DTEND;TZID=America/Chicago:20261120T150000", "LOCATION:12 Main St", "DESCRIPTION:Bring the form", "RRULE:FREQ=WEEKLY;INTERVAL=2", "END:VEVENT",
+    "BEGIN:VEVENT", "UID:2", "SUMMARY:Trip", "DTSTART;VALUE=DATE:20261224", "DTEND;VALUE=DATE:20261227", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+  const [timed, allDay] = parsePlanIcs(ICS, { timeZone: "America/Chicago" });
+  it("says when a timed event is", () => {
+    expect(inviteWhen(timed, "en-US")).toBe("Fri, Nov 20, 2026 · 2:00 PM – 3:00 PM");
+    expect(inviteRepeats(timed)).toBe("Repeats every 2 weeks");
+  });
+  it("says when an all-day run of days is (the invite's end day is exclusive)", () => {
+    expect(inviteWhen(allDay, "en-US")).toBe("Thu, Dec 24, 2026 – Sat, Dec 26, 2026 · All day");
+    expect(inviteRepeats(allDay)).toBe("");
+  });
+  it("hands the event editor the title, time, place and notes", () => {
+    expect(invitePrefill(timed)).toMatchObject({ title: "Dentist", date: "2026-11-20", allDay: false, startTime: "14:00", endTime: "15:00", location: "12 Main St", notes: "Bring the form" });
+    expect(invitePrefill(allDay)).toMatchObject({ title: "Trip", date: "2026-12-24", allDay: true, startTime: "", endTime: "" });
   });
 });

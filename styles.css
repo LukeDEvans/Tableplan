@@ -16435,6 +16435,34 @@ body.mail-menu-open .mail-thread-panel iframe { pointer-events: none; }
   flex: 1; margin: 0; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere;
   font: 0.85rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.mail-att-viewer-audio { margin: auto; width: min(560px, calc(100% - 32px)); }
+.mail-att-viewer-video { margin: auto; max-width: 100%; max-height: 100%; background: var(--surface-strong); }
+/* Invite and contact cards */
+.mail-att-cards {
+  margin: 0 auto; padding: 16px; width: 100%; max-width: 640px; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 12px; align-self: flex-start;
+}
+.mail-att-card {
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.mail-att-card-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mail-att-card-photo { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.mail-att-card-title { margin: 0; font-size: 1.05rem; overflow-wrap: anywhere; }
+.mail-att-field { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; font-size: 0.9rem; }
+.mail-att-field-label { color: var(--muted); }
+.mail-att-field-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-att-card-action, .mail-att-cards-action { align-self: flex-end; min-height: 38px; }
+.mail-att-note { margin: 0; padding: 4px 2px; color: var(--muted); font-size: 0.85rem; }
+/* CSV table */
+.mail-att-table-wrap { flex: 1; min-width: 0; overflow: auto; }
+.mail-att-table { border-collapse: collapse; font-size: 0.85rem; }
+.mail-att-table th, .mail-att-table td {
+  padding: 6px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top;
+  white-space: pre-wrap; overflow-wrap: anywhere; min-width: 72px; max-width: 320px;
+}
+.mail-att-table th { position: sticky; top: 0; background: var(--surface); font-weight: 700; z-index: 1; }
+.mail-att-table-wrap .mail-att-note { padding: 10px 12px; }
 .mail-att-viewer-empty { margin: auto; padding: 24px 16px; text-align: center; }
 .mail-att-viewer-empty p { margin: 0 0 14px; }
 .mail-att-viewer-download[hidden] { display: none; }
