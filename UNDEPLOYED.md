@@ -10,4 +10,14 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Nothing waiting. (Last emptied by the 2026-11-12 deploy.)_
+## Mail: more attachments open in the app (PR #234, 2026-11-13)
+
+- **What:** on the web, a CSV opens as a table, a calendar invite as its events with
+  **Add to Calendar** (the event editor opens filled in), a contact card with **Add to
+  Contacts**, and audio / video in a player. The viewer moved to
+  `mail-attachment-viewers.js`. No function, migration or state key.
+- **After deploying, check on the laptop:** open a real email with a `.csv`, an `.ics`
+  and a `.vcf` attachment; each opens in the app; Add to Calendar fills the editor with
+  the right day and time; Add to Contacts adds the person. A Word file still offers
+  Download until the word-processor PRs (#223, #235) land.
+- **iPhone:** unchanged (Quick Look); no TestFlight build needed for this.
