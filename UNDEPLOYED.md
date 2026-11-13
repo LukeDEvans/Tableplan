@@ -26,6 +26,13 @@ Each entry: what shipped · PR · post-deploy steps.
   (`receipt-matcher.js`) and links a certain match itself. New optional receipt fields: tip,
   paymentLast4, scannedBy, view (the reader doesn't fill tip or card digits yet).
 
+- **Finance planning (no deploy needed to try)** · Insights: Next 30 days forecast, subscriptions
+  review (yearly cost, price changes, duplicates, Cancel… links), Returns & warranties, Tax time with
+  export; goals can follow an account's balance; transaction details: Tax and Trip pickers; Explore
+  trip › Budget: "From your bank"; Shop: price strip (estimated total, cheapest stores, weekly grocery
+  budget); recipe cost per batch and per serving; paydays on the Calendar; landing page: "On track ·
+  $X left this month" under Finance; phone reminder 3 days before a return window closes.
+
 - **Finance extras (no deploy needed to try)** · close a month (checklist, then its totals are kept);
   group share bar in "Where it went"; 6-month sparklines per category; weekly "to categorize"
   notification scheduled on the phone (Sunday 18:00, off in Alerts); receipt editor: tip, card

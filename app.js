@@ -2038,7 +2038,7 @@ const _finance = createFinanceModule({
   queueReceiptFile: (files, opts) => queueReceiptForDocuments(files, opts),
   memberName: (userId) => (userId === authSession?.user?.id ? "You" : groupMembers.find((gm) => gm.user_id === userId)?.display_name || "A household member"),
   currentViewKey: () => currentViewKey(),
-  onFinanceCountChanged: () => scheduleReminderSync(),
+  onFinanceCountChanged: () => { scheduleReminderSync(); updateHomeFinanceGlance(); },
 });
 const {
   financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions,
@@ -9038,6 +9038,7 @@ function render() {
   paintHomeLogo();
   document.title = getAppName();
   updatePageVisibility();
+  if (activeAppArea === "home") updateHomeFinanceGlance();
   musicShows.updateBadge(); // the Listen bell (synced shows arrive through here)
   const week = weekState();
   const weekTools = elements.weekLabel.closest(".week-tools");
