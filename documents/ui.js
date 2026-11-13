@@ -48,6 +48,9 @@ export const STARTING_FOLDERS = Object.freeze({
 export const MOVED_OUT_FOLDERS = Object.freeze(["Home", "Vehicles"]);
 export const USAGE_WARN_BYTES = 7 * 1024 ** 3; // decision 5: warn at 7 GB of the 10 GB free
 
+const SAFE_DOC_MIME = "application/vnd.live.doc";
+const DOC_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 13h6M9 17h4"/></svg>';
+
 export async function mountDocuments(root, deps) {
   root.innerHTML = `<div class="msg-pane"><p class="msg-muted">Loading Documents…</p></div>`;
   await loadSodium();
@@ -163,6 +166,8 @@ export async function mountDocuments(root, deps) {
   // document, and the page's markup (it would otherwise sit in the hidden page).
   // Anything still drawing for the old session stops (gen).
   function lock() {
+    // An open document saves (encrypted) and closes before the keys go.
+    if (safeDoc?.close) { const d = safeDoc; safeDoc = null; track(() => d.close()).catch(() => {}); }
     if (!lockPlugin) return;
     epoch++;
     gen++;
@@ -507,6 +512,7 @@ export async function mountDocuments(root, deps) {
           <button class="icon-btn mail-sidebar-toggle" type="button" data-act="toggle-sidebar" title="Folders" aria-label="Show folders" aria-controls="docsSidebar">${ICON.menu}</button>
           <input type="search" class="discover-search-input" data-search placeholder="Search ${esc(ui.title)}…" aria-label="Search documents" autocomplete="off" value="${esc(ui.query)}" />
           ${scanner ? `<button class="icon-btn" type="button" data-act="scan" title="Scan a document" aria-label="Scan a document">${ICON.scan}</button>` : ""}
+          <button class="icon-btn" type="button" data-act="new-safe-doc" title="New document" aria-label="New document">${DOC_ICON}</button>
           <button class="icon-btn" type="button" data-act="add" title="${scanner ? "Add a file" : "Add a document"}" aria-label="${scanner ? "Add a file" : "Add a document"}">${ICON.add}</button>
           <button class="icon-btn" type="button" data-act="settings" title="Documents settings" aria-label="Documents settings">${ICON.gear}</button>
           <input type="file" data-file-input multiple hidden accept="${esc(MIME_TYPES.join(","))},.heic,.heif" />
@@ -840,7 +846,50 @@ export async function mountDocuments(root, deps) {
     draw();
   }
 
+  // ---- documents in the Safe (the word processor, WORD_PROCESSOR_DESIGN.md §12) -----------
+  let safeDoc = null;
+  async function openSafeDoc(f, { startEditing = false } = {}) {
+    if (safeDoc) return;
+    const scope = ui.scope;
+    safeDoc = "opening";
+    try {
+      const fileKey = await library.docKey(scope, f.id);
+      const { createSafeDocStore } = await import("./editor/store-safe.js");
+      const { openEditorFor } = await import("./editor/host.js");
+      const store = createSafeDocStore({ storage, transport, library, scope, fileId: f.id, fileKey });
+      const me = { id: userId, name: deps.myDisplayName?.() || "Me" };
+      const people = (deps.household?.()?.members || []).map((m) => ({ id: m.user_id, name: m.display_name || "Someone" }));
+      safeDoc = await openEditorFor({
+        store, file: { id: f.id, name: f.name, scope }, me, people, startEditing,
+        deps: { liveOpen: deps.liveDocChannel || null, toast: deps.toast, isNative: deps.isNative, rename: () => {} },
+        onClose: () => { safeDoc = null; if (visible && ui.scope === scope) refresh(gen, scope).then(() => draw()).catch(() => {}); },
+      });
+      if (!safeDoc?.close) safeDoc = null;
+    } catch (e) {
+      safeDoc = null;
+      ui.error = e?.message || "That document couldn't be opened.";
+      draw();
+    }
+  }
+  async function newSafeDoc() {
+    const scope = ui.scope;
+    const folderId = ui.folders.some((x) => x.id === ui.folder) ? ui.folder : null;
+    let id = null;
+    try {
+      await track(async () => {
+        const { docToContent, Y } = await import("./editor/doc-model.js");
+        id = await library.addFile(scope, { content: docToContent(new Y.Doc()), text: " ", folderId, meta: { name: "Untitled document", mime: SAFE_DOC_MIME, pages: 1 } });
+        await refresh(gen, scope);
+      });
+    } catch (e) { ui.error = e?.message || "The document couldn't be made."; draw(); return; }
+    draw();
+    const f = id && ui.files.find((x) => x.id === id);
+    if (f) openSafeDoc(f, { startEditing: true });
+  }
+
   async function openFile(id) {
+    const fd = ui.files.find((x) => x.id === id);
+    if (fd?.mime === SAFE_DOC_MIME && !fd.deletedAt) { openSafeDoc(fd); return; }
     closeViewer();
     ui.viewer = { id };
     draw();
@@ -1071,6 +1120,7 @@ export async function mountDocuments(root, deps) {
       const sb = root.querySelector("#docsSidebar");
       if (window.innerWidth <= 680) sb?.classList.toggle("is-expanded"); else sb?.classList.toggle("is-collapsed");
     } else if (act === "add") root.querySelector("[data-file-input]")?.click();
+    else if (act === "new-safe-doc") newSafeDoc();
     else if (act === "scan") scanDocument();
     else if (act === "settings") settings();
     else if (act === "close-panel") { ui.panel = null; ui.error = ""; draw(); }

@@ -29,12 +29,20 @@ const QUICKLOOK_PLAIN_MAX = 20_000_000; // AttachmentPreviewPlugin's cap without
 const THUMB_PARALLEL = 3;
 const SEARCH_DELAY_MS = 300;
 
+const DOC_MIME = "application/vnd.live.doc";
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const LOCK_ICON = '<svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
 
 export async function mountDocumentPage(root, deps) {
   const userId = deps.userId;
   const storage = createDocumentsStorage({ presign: edgePresigner({ functionsUrl: deps.functionsUrl(), getToken: deps.getToken }), tier: "everyday" });
-  const library = createEverydayLibrary({ transport: createRestTransport({ baseUrl: deps.baseUrl, headers: deps.headers }), storage });
+  const transport = createRestTransport({ baseUrl: deps.baseUrl, headers: deps.headers });
+  const library = createEverydayLibrary({ transport, storage });
+  // The word processor (WORD_PROCESSOR_DESIGN.md): loaded the first time a document is made or opened.
+  const host = () => import("./editor/host.js");
+  const myName = () => deps.myDisplayName?.() || household()?.members.find((m) => m.user_id === userId)?.display_name || "Me";
+  const people = () => (household()?.members || []).map((m) => ({ id: m.user_id, name: m.display_name || "Someone" }));
+  let openDoc = null; // the editor while a document is open
   const household = () => deps.household?.() || null;
   const nameOf = (uid) => (uid === userId ? "You" : household()?.members.find((m) => m.user_id === uid)?.display_name || "Someone");
   const scanner = deps.nativeDocumentScanner?.() || null;
@@ -232,7 +240,7 @@ export async function mountDocumentPage(root, deps) {
     const folder = ui.folder === "all" ? ui.folders.find((x) => x.id === f.folderId)?.name : "";
     const who = ui.kind === "household" && f.addedBy && f.addedBy !== userId ? ` · added by ${esc(nameOf(f.addedBy))}` : "";
     return `<li><button type="button" class="docs-file" data-open="${esc(f.id)}">
-      <span class="docs-thumb" data-thumb="${esc(f.id)}" aria-hidden="true">${esc(glyphFor(f.mime))}</span>
+      <span class="docs-thumb${f.kind === "doc" ? " is-doc" : ""}" data-thumb="${esc(f.id)}" aria-hidden="true">${f.kind === "doc" ? "Aa" : esc(glyphFor(f.mime))}</span>
       <span class="docs-file-text"><span class="docs-file-name">${esc(f.name)}</span>
       <span class="docs-file-meta">${esc(meta)}${folder ? ` · ${esc(folder)}` : ""}${who}</span></span>${receiptChip(receipt)}</button></li>`;
   }
@@ -252,7 +260,7 @@ export async function mountDocumentPage(root, deps) {
           <button class="icon-btn mail-sidebar-toggle" type="button" data-act="toggle-sidebar" title="Folders" aria-label="Show folders" aria-controls="docsSidebar">${ICON.menu}</button>
           <input type="search" class="discover-search-input" data-search placeholder="Search ${esc(ui.title)}…" aria-label="Search documents" autocomplete="off" value="${esc(ui.query)}" />
           ${scanner ? `<button class="icon-btn" type="button" data-act="scan" title="Scan a document" aria-label="Scan a document">${ICON.scan}</button>` : ""}
-          <button class="icon-btn" type="button" data-act="add" title="${scanner ? "Add a file" : "Add a document"}" aria-label="${scanner ? "Add a file" : "Add a document"}">${ICON.add}</button>
+          <button class="icon-btn" type="button" data-act="add" title="New document or file" aria-label="New document or file" aria-haspopup="menu">${ICON.add}</button>
           <input type="file" data-file-input multiple hidden accept="${esc(MIME_TYPES.join(","))},.heic,.heif" />
         </div>
         ${ui.banners.map((b) => `<p class="msg-banner${b.warn ? " msg-banner-warn" : ""}">${b.html}</p>`).join("")}
@@ -291,6 +299,7 @@ export async function mountDocumentPage(root, deps) {
         <h3 class="msg-title">${esc(f.name)}</h3>
         ${v.ready && quickLook && v.bytes?.length <= QUICKLOOK_PLAIN_MAX ? `<button type="button" class="secondary-btn" data-act="quicklook">Open</button>` : ""}
         ${v.ready && !inTrash ? `<button type="button" class="secondary-btn" data-act="share">Share</button>` : ""}
+        ${v.ready && !inTrash && f.mime === DOCX_MIME ? `<button type="button" class="primary-btn" data-act="docx-to-doc">Edit as a document</button>` : ""}
       </div>
       <div class="docs-viewer-body">${body}</div>
       ${receiptPanel}
@@ -434,6 +443,8 @@ export async function mountDocumentPage(root, deps) {
   }
 
   async function openFile(id) {
+    const f = ui.files.find((x) => x.id === id);
+    if (f?.kind === "doc" && !f.deletedAt) { openDocument(f); return; }
     closeViewer();
     ui.viewer = { id };
     draw();
@@ -559,7 +570,12 @@ export async function mountDocumentPage(root, deps) {
     else if (act === "toggle-sidebar") {
       const sb = view.querySelector("#docsSidebar");
       if (window.innerWidth <= 680) sb?.classList.toggle("is-expanded"); else sb?.classList.toggle("is-collapsed");
-    } else if (act === "add") view.querySelector("[data-file-input]")?.click();
+    } else if (act === "add") toggleAddMenu(t.closest("[data-act]"));
+    else if (act === "add-upload") { closeAddMenu(); view.querySelector("[data-file-input]")?.click(); }
+    else if (act === "new-doc") { closeAddMenu(); newDocument(); }
+    else if (act === "add-word") { closeAddMenu(); pickWordFiles(); }
+    else if (act === "add-google") { closeAddMenu(); googleImport(); }
+    else if (act === "docx-to-doc") wordFileToDocument();
     else if (act === "scan") scanDocument();
     else if (act === "close-viewer") { closeViewer(); ui.error = ""; draw(); }
     else if (act === "share") share();
@@ -624,6 +640,194 @@ export async function mountDocumentPage(root, deps) {
     addFiles(e.dataTransfer.files);
   });
 
+  // ---- the word processor ------------------------------------------------------------------
+
+  let addMenu = null;
+  function closeAddMenu() { addMenu?.remove(); addMenu = null; }
+  function toggleAddMenu(anchor) {
+    if (addMenu) { closeAddMenu(); return; }
+    addMenu = document.createElement("div");
+    addMenu.className = "docs-add-menu";
+    addMenu.setAttribute("role", "menu");
+    addMenu.innerHTML = `<button type="button" role="menuitem" data-act="new-doc">New document</button>
+      <button type="button" role="menuitem" data-act="add-upload">Upload a file</button>
+      <button type="button" role="menuitem" data-act="add-word">Open a Word file as a document</button>
+      <button type="button" role="menuitem" data-act="add-google">Bring over Google Docs</button>`;
+    const r = anchor.getBoundingClientRect();
+    addMenu.style.top = `${r.bottom + 6}px`;
+    addMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    root.appendChild(addMenu);
+    setTimeout(() => document.addEventListener("click", function off(ev) { if (!addMenu?.contains(ev.target) && !anchor.contains(ev.target)) { closeAddMenu(); document.removeEventListener("click", off, true); } }, true), 0);
+  }
+
+  const docStore = async (scope, fileId) => (await host()).storeFor({ storage, transport, scope, fileId });
+
+  async function openDocument(f, { startEditing = false } = {}) {
+    if (openDoc) return;
+    const scope = ui.scope;
+    openDoc = "opening";
+    try {
+      const h = await host();
+      const store = await docStore(scope, f.id);
+      openDoc = await h.openEditorFor({
+        store, file: { id: f.id, name: f.name, scope }, me: { id: userId, name: myName() }, people: people(), startEditing,
+        deps: {
+          liveOpen: deps.liveDocChannel || null, chipSource: deps.docChipSource || null, openChip: deps.openDocChip || null,
+          toast: deps.toast, isNative: deps.isNative, nativePdf: deps.nativePdfExport?.() ? (o) => deps.nativePdfExport().render(o).then((r) => r.pdf) : null,
+          share: (blob, name, mime) => shareBlob(blob, name, mime),
+          rename: (n) => { const x = ui.files.find((y) => y.id === f.id); if (x) x.name = n; },
+        },
+        onClose: () => { openDoc = null; if (visible && ui.scope === scope) refresh(gen, scope).then(() => draw()).catch(() => {}); },
+      });
+      if (!openDoc?.close) openDoc = null;
+    } catch (e) {
+      openDoc = null;
+      ui.error = e?.message || "That document couldn't be opened.";
+      draw();
+    }
+  }
+
+  async function shareBlob(blob, name, mime) {
+    const { saveFile } = await import("../save-file.js");
+    const file = new File([blob], name, { type: mime });
+    if (navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: name }); } catch (e) { if (e?.name !== "AbortError") throw e; }
+    } else await saveFile(blob, name);
+  }
+
+  async function newDocument(converted = null, name = "Untitled document") {
+    const scope = ui.scope;
+    const folderId = currentFolder();
+    let id;
+    await run(converted ? "Making the document…" : "Making a new document…", async (sc, my) => {
+      const h = await host();
+      id = await h.createDocFile({ library, storage, transport, scope: sc, folderId, name, converted, me: { id: userId, name: myName() } });
+      await refresh(my, sc);
+    });
+    const f = id && ui.scope === scope && ui.files.find((x) => x.id === id);
+    if (f) openDocument(f, { startEditing: !converted });
+    return id;
+  }
+
+  function pickWordFiles() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > MAX_FILE_BYTES) { ui.error = "That file is larger than 60 MB."; draw(); return; }
+      await importWordBytes(new Uint8Array(await file.arrayBuffer()), displayName(file.name));
+    };
+    input.click();
+  }
+
+  async function importWordBytes(bytes, name) {
+    let conv;
+    try { conv = await (await host()).convertDocx(bytes); } catch (e) { ui.error = e?.message || "That Word file couldn't be read."; draw(); return; }
+    await newDocument(conv, name);
+    if (conv.warnings?.length) deps.toast?.(`Opened. Not everything carried over: ${conv.warnings.slice(0, 3).join(", ")}.`);
+  }
+
+  async function wordFileToDocument() {
+    const v = ui.viewer;
+    const f = ui.files.find((x) => x.id === v?.id);
+    if (!f || !v.bytes) return;
+    closeViewer();
+    await importWordBytes(v.bytes, f.name);
+  }
+
+  // Google Docs: browse Drive (documents and folders), pick, bring over. A picked
+  // folder becomes a Document folder of the same name with its documents in it.
+  async function googleImport() {
+    const h = await host();
+    const api = h.googleDocsApi({ getToken: deps.getToken });
+    const box = document.createElement("div");
+    box.className = "wp-dialog docs-gdocs";
+    box.innerHTML = `<div class="wp-dialog-box docs-gdocs-box" role="dialog" aria-modal="true" aria-label="Bring over Google Docs">
+      <h3>Bring over Google Docs</h3><div data-g-body><p class="msg-muted">Looking in your Google Drive…</p></div>
+      <div class="wp-dialog-actions"><button type="button" class="secondary-btn" data-g="cancel">Close</button><button type="button" class="primary-btn" data-g="go" disabled>Bring over</button></div></div>`;
+    root.appendChild(box);
+    const body = box.querySelector("[data-g-body]");
+    const go = box.querySelector("[data-g=go]");
+    const picked = new Map(); // id → { name, kind }
+    const path = [{ id: null, name: "My Drive" }];
+    let busy = false;
+    const close = () => box.remove();
+    async function list() {
+      body.innerHTML = `<p class="msg-muted">Looking in your Google Drive…</p>`;
+      let items = [];
+      try {
+        let token = null;
+        do { const r = await api.list(path[path.length - 1].id, token); items = items.concat(r.items); token = r.nextPageToken; } while (token && items.length < 1000);
+      } catch (e) {
+        if (e.code === "CONSENT") {
+          body.innerHTML = `<p>To bring your documents over, Live needs to read your Google Drive and Docs (read-only). Nothing is changed or deleted in Google.</p>
+            <button type="button" class="primary-btn" data-g="consent">Connect Google Docs</button>`;
+        } else body.innerHTML = `<p class="msg-error">${esc(e.message)}</p>`;
+        return;
+      }
+      body.innerHTML = `<div class="docs-gdocs-path">${path.map((p, i) => `<button type="button" class="link-btn" data-g-path="${i}">${esc(p.name)}</button>`).join(" › ")}</div>
+        <ul class="docs-gdocs-list">${items.map((it) => `<li><label><input type="checkbox" data-g-pick="${esc(it.id)}" data-kind="${it.kind}" data-name="${esc(it.name)}"${picked.has(it.id) ? " checked" : ""}> ${it.kind === "folder" ? "📁" : "📄"} ${esc(it.name)}</label>${it.kind === "folder" ? ` <button type="button" class="link-btn" data-g-open="${esc(it.id)}" data-name="${esc(it.name)}">Open ›</button>` : ""}</li>`).join("") || `<li class="msg-muted">Nothing here.</li>`}</ul>
+        <p class="msg-muted">Documents come into ${esc(ui.title)}${currentFolder() ? `, in “${esc(ui.folders.find((x) => x.id === currentFolder())?.name || "")}”` : ""}. Nothing is changed in Google.</p>`;
+    }
+    box.addEventListener("click", async (e) => {
+      const g = e.target.closest("[data-g]")?.dataset.g;
+      if (g === "cancel" && !busy) close();
+      else if (g === "consent") {
+        try {
+          const r = await fetch(`/.netlify/functions/gcal-auth?docs=1${deps.isNative ? "&client=ios" : ""}`, { headers: { authorization: `Bearer ${await deps.getToken()}` } });
+          const d = await r.json();
+          if (d.url) { if (deps.openAuthUrl) { await deps.openAuthUrl(d.url); list(); } else window.location.href = d.url; }
+          else throw new Error(d.error || "Couldn't start the Google connection.");
+        } catch (err) { body.innerHTML = `<p class="msg-error">${esc(err.message)}</p>`; }
+      } else if (g === "go" && picked.size && !busy) {
+        busy = true;
+        go.disabled = true;
+        const jobs = [];
+        const folderIdHere = currentFolder();
+        for (const [id, it] of picked) {
+          if (it.kind === "doc") jobs.push({ id, name: it.name, folderId: folderIdHere });
+          else {
+            let docs = [];
+            try { let tok = null; do { const r = await api.list(id, tok); docs = docs.concat(r.items.filter((x) => x.kind === "doc")); tok = r.nextPageToken; } while (tok && docs.length < 500); } catch { /* reported below */ }
+            let fid = null;
+            try { fid = await library.folderNamed(ui.scope, it.name); } catch { fid = folderIdHere; }
+            for (const d of docs) jobs.push({ id: d.id, name: d.name, folderId: fid });
+          }
+        }
+        const failed = [];
+        let n = 0;
+        const scope = ui.scope;
+        for (const j of jobs) {
+          n++;
+          body.innerHTML = `<p>Bringing over ${n} of ${jobs.length}: ${esc(j.name)}…</p>`;
+          try {
+            const conv = await api.convert(j.id);
+            await h.createDocFile({ library, storage, transport, scope, folderId: j.folderId, name: j.name, converted: conv, me: { id: userId, name: myName() } });
+          } catch (err) { failed.push(`${j.name} (${err.message})`); }
+        }
+        busy = false;
+        body.innerHTML = `<p>Brought over ${jobs.length - failed.length} of ${jobs.length}.</p>${failed.length ? `<p class="msg-error">Didn't come over: ${esc(failed.join("; "))}</p>` : ""}`;
+        box.querySelector("[data-g=cancel]").textContent = "Done";
+        picked.clear();
+        try { await refresh(gen, scope); draw(); } catch { /* next open */ }
+      }
+      const pathBtn = e.target.closest("[data-g-path]");
+      if (pathBtn) { path.length = Number(pathBtn.dataset.gPath) + 1; list(); }
+      const openBtn = e.target.closest("[data-g-open]");
+      if (openBtn) { path.push({ id: openBtn.dataset.gOpen, name: openBtn.dataset.name }); list(); }
+    });
+    box.addEventListener("change", (e) => {
+      const cb = e.target.closest("[data-g-pick]");
+      if (!cb) return;
+      if (cb.checked) picked.set(cb.dataset.gPick, { name: cb.dataset.name, kind: cb.dataset.kind }); else picked.delete(cb.dataset.gPick);
+      go.disabled = !picked.size;
+      go.textContent = picked.size ? `Bring over (${picked.size})` : "Bring over";
+    });
+    list();
+  }
+
   return {
     async show(scope, { kind = "household", title = "Document" } = {}) {
       visible = true;
@@ -645,6 +849,8 @@ export async function mountDocumentPage(root, deps) {
     openSafe: () => openSafe(),
     hide() {
       visible = false;
+      closeAddMenu();
+      if (openDoc?.close) openDoc.close();
       closeViewer();
       gen++;
       if (inSafe) leaveSafe({ redraw: false });

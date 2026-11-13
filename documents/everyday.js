@@ -158,15 +158,31 @@ export function createEverydayLibrary({ transport, storage, now = () => Date.now
   // After 30 days in Recently deleted: blobs first, then the row (the database and
   // the storage function both check the 30 days).
   async function purge(scope, id, r = null) {
-    r = r && r.id === id ? r : await row(scope, id);
+    r = r && r.id === id && r.kind ? r : await row(scope, id);
     if (!r || !r.deleted_at || Date.parse(r.deleted_at) > now() - RECENTLY_DELETED_DAYS * 24 * 3600 * 1000) return false;
-    await storage.remove(scope, r.id, r.parts || ["content", "thumb"]);
+    // A Live document also has version snapshots and images (WORD_PROCESSOR_DESIGN.md §3, §6).
+    // If they can't be listed now, leave the file for the next purge (the rows that name
+    // the versions go with the file, so purging without them would orphan the blobs).
+    const extra = r.kind === "doc" ? await docParts(scope, r.id) : [];
+    await storage.remove(scope, r.id, [...(r.parts || ["content", "thumb"]), ...extra]);
     return Boolean(await transport.rpc("doc_ppurge_file", { p_id: uuid(id) }));
+  }
+
+  // A document's version slots (doc_pversions) and the images its content names.
+  async function docParts(scope, fileId) {
+    const slots = (await transport.select("doc_pversions", `file_id=eq.${uuid(fileId)}&select=slot`)).map((x) => `v${x.slot}`);
+    let images = [];
+    try {
+      const { decodeContent } = await import("./editor/doc-model.js");
+      const text = new TextDecoder("latin1").decode(decodeContent(await storage.get(scope, fileId, "content")));
+      images = [...new Set(text.match(/liveimg:[0-9a-f]{32}/g) || [])].map((x) => `i${x.slice(8)}`);
+    } catch { /* no content: nothing more to find */ }
+    return [...slots, ...images];
   }
 
   async function purgeExpired(scope) {
     const cutoff = new Date(now() - RECENTLY_DELETED_DAYS * 24 * 3600 * 1000).toISOString();
-    const old = await transport.select("doc_pfiles", `scope=eq.${enc(scopeId(scope))}&deleted_at=lt.${enc(cutoff)}&select=id,parts,deleted_at&limit=50`);
+    const old = await transport.select("doc_pfiles", `scope=eq.${enc(scopeId(scope))}&deleted_at=lt.${enc(cutoff)}&select=id,kind,parts,deleted_at&limit=50`);
     let n = 0;
     for (const r of old) { try { if (await purge(scope, r.id, r)) n++; } catch { /* next time */ } }
     return n;

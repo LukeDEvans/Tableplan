@@ -201,9 +201,19 @@ as security-critical. Everything below about vaults, keys and the lock is the Sa
   `file | doc | sheet | slides`; their content is the `content` part.
 - Tests: `test/documents-everyday*.test.js`; `qa:documents-ui` covers the page too.
 
+## The word processor (WORD_PROCESSOR_DESIGN.md; Luke, 2026-11-08)
+
+Everyday files with `kind = 'doc'` are Live documents, edited in `documents/editor/` (Tiptap 3 open-source core + Yjs; Tiptap's paid platform is NOT used). Decisions: pages by default with a Pageless toggle (the phone opens reflowed, Print layout in ⋯ is per device); live co-editing; comments and suggestions; version history; Word/PDF in and out; one-time Google Docs import; full editing on the iPhone (most-used buttons on the right); curated ~30 fonts; the Safe from the start (not built yet — see ISSUES.md); offline; export only for outside sharing; smart chips tied to Live items; no templates / AI / voice in v1.
+- Content = the file's `content` part: "LDOC" + deflate(Yjs update) (`doc-model.js`). Saving merges what's stored first (`mergeAndSave`), so offline edits and races converge; never write a document without merging.
+- Images are parts `i<32 hex>`, version snapshots `v<slot>` parts with a `doc_pversions` row (slots h00–h23 / d01–d31 / w00–w52 / n<hex>, overwritten in place — storage stays bounded). `doc-storage` and `documents/storage.js` both accept these parts (EDITOR_PART_RE); keep them in step.
+- Live co-editing: Supabase Realtime private broadcast channel `livedoc:<scope>:<file id>` (realtime.messages policies use doc_can_access), joined only while a document is open and only sending while someone else is in (`live.js`). app.js `openLiveDocChannel`.
+- Google Docs import: `netlify/functions/gdocs.js` (reads only, the caller's own Google connection with read-only Drive + Docs scopes, asked via `gcal-auth?docs=1` — a calendar-agent file, changed for this) → `gdocs-import.js` on the device.
+- Suggesting mode is `suggest.js` (`suggestTransaction`, pure, tested); comments live in the Y.Doc (`doc-model.js` threads) with a `comment` mark on the text.
+- QA: `npm run qa:docs-editor` (51 checks; stand-in store + BroadcastChannel for Realtime).
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `documents/*.js`, `documents/crypto/*.js`
+- files: `documents/*.js`, `documents/crypto/*.js`, `documents/editor/*.js`, `netlify/functions/gdocs.js`
 - state: none — documents never go in tableplan_states; they live in the doc_ tables, R2 and on each device

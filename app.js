@@ -64,7 +64,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, nativePdfExport, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
@@ -9305,11 +9305,72 @@ function documentsDeps() {
     toast: (text) => showMailToast(text),
     openMessages: () => { localStorage.setItem(MESSAGE_TAB_KEY, "messages"); showMailApp(); },
     fileReceipts: (scope) => fileWaitingReceipts(scope),
+    // The word processor (WORD_PROCESSOR_DESIGN.md): live co-editing channel, @ chips, PDF.
+    liveDocChannel: (topic, handlers) => openLiveDocChannel(topic, handlers),
+    docChipSource: (q) => docChipSource(q),
+    openDocChip: (kind, id) => openDocChip(kind, id),
+    nativePdfExport,
+    myDisplayName: () => groupMembers.find((m) => m.user_id === authSession?.user?.id)?.display_name || String(authSession?.user?.email || "Me").split("@")[0],
+    // Google consent for bringing Google Docs over: Apple's sign-in sheet in the app (as Calendar), else this tab.
+    openAuthUrl: async (url) => {
+      if (isNativeApp() && nativeWebAuth()) { await nativeWebAuth().start({ url, callbackScheme: APP_CALLBACK_SCHEME }).catch(() => null); return; }
+      window.location.href = url;
+    },
     movePersonalReceipts: () => movePersonalReceiptFilesSoon(),
     // A receipt file shows what was read from it and whether it's matched to a charge.
     receiptInfo: (receiptId) => _finance.financeReceiptInfo(receiptId),
     openReceipt: (receiptId) => openReceiptDetail(receiptId),
   };
+}
+
+// A Supabase Realtime private broadcast channel for one open document (§4). Joined
+// only while the document is open; presence tells each device who else is in.
+// Access is checked by realtime.messages policies (doc_can_access on the topic's scope).
+function openLiveDocChannel(topic, handlers) {
+  if (!supabaseClient?.channel || !authSession?.access_token) return null;
+  try { supabaseClient.realtime?.setAuth?.(authSession.access_token); } catch { /* the client keeps its own */ }
+  const ch = supabaseClient.channel(topic, { config: { private: true, broadcast: { self: false, ack: false }, presence: { key: Math.random().toString(36).slice(2, 10) } } });
+  ch.on("broadcast", { event: "m" }, ({ payload }) => handlers.message(payload));
+  ch.on("presence", { event: "sync" }, () => {
+    const st = ch.presenceState();
+    handlers.presence(Object.values(st).flat());
+  });
+  let meta = null;
+  ch.subscribe((status) => {
+    handlers.status?.(status);
+    if (status === "SUBSCRIBED" && meta) ch.track(meta).catch(() => {});
+  });
+  return {
+    send: (msg) => { ch.send({ type: "broadcast", event: "m", payload: msg }).catch?.(() => {}); },
+    track: (m) => { meta = m; if (ch.state === "joined") ch.track(m).catch(() => {}); },
+    close: () => { try { supabaseClient.removeChannel(ch); } catch { /* gone */ } },
+  };
+}
+
+// @ in a document: Live items matching what's typed (people and dates come from the editor).
+function docChipSource(q) {
+  const needle = String(q || "").trim().toLowerCase();
+  const hit = (s) => !needle || String(s || "").toLowerCase().includes(needle);
+  const out = [];
+  try { for (const r of activeRecipes()) if (hit(r.title || r.name)) { out.push({ kind: "recipe", refId: String(r.id), label: r.title || r.name || "Recipe", sub: "Recipe" }); if (out.length > 30) break; } } catch { /* recipes not loaded */ }
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const evs = (state.planEvents || []).filter((e) => e?.title && hit(e.title)).sort((a, b) => (Math.abs(Date.parse(a.date || today) - Date.now()) - Math.abs(Date.parse(b.date || today) - Date.now())));
+    for (const e of evs.slice(0, 8)) out.push({ kind: "event", refId: `${e.id}|${e.date || ""}`, label: e.title, sub: e.date ? new Date(`${e.date}T12:00:00`).toLocaleDateString([], { month: "short", day: "numeric" }) : "Event" });
+  } catch { /* no calendar */ }
+  try { for (const t of (state.trips || []).filter((x) => hit(x.name || x.destination)).slice(0, 6)) out.push({ kind: "trip", refId: String(t.id), label: t.name || t.destination || "Trip", sub: "Trip" }); } catch { /* no trips */ }
+  try { for (const c of (state.contacts || []).filter((x) => hit(`${x.firstName || ""} ${x.lastName || ""} ${x.name || ""}`)).slice(0, 6)) out.push({ kind: "contact", refId: String(c.id), label: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.name || "Contact", sub: "Contact" }); } catch { /* no contacts */ }
+  const order = { recipe: 2, event: 1, trip: 3, contact: 0 };
+  return out.sort((a, b) => (needle ? 0 : order[a.kind] - order[b.kind])).slice(0, 16);
+}
+
+function openDocChip(kind, id) {
+  const ref = String(id || "");
+  if (kind === "recipe") { showEatApp(); setTimeout(() => { try { openRecipeView(ref); } catch { /* gone */ } }, 50); return; }
+  if (kind === "event") { const [eid, date] = ref.split("|"); showPlanApp(); setTimeout(() => { try { openPlanEventDetail(eid, date || undefined); } catch { /* gone */ } }, 50); return; }
+  if (kind === "trip") { openExploreTrip(ref); return; }
+  if (kind === "contact" || kind === "person") { showContactsApp(); return; }
+  if (kind === "date") { showPlanApp(); }
 }
 
 async function showDocumentsApp(event) {
@@ -9771,6 +9832,8 @@ async function purgeLocalMessaging(headersSnapshot = null) {
           await deleteMessagingStore("live-documents-outbox");
           // The browser's passkey-locked store, and the passkey's (non-secret) id and salt.
           await deleteMessagingStore("live-documents-pk");
+          // The word processor's device copies of documents (documents/editor/cache.js).
+          try { await (await import("./documents/editor/cache.js")).deleteDocCaches(); } catch { /* none */ }
           try { for (const k of Object.keys(localStorage)) if (k.startsWith("liveDocumentsPasskey:")) localStorage.removeItem(k); } catch { /* storage blocked */ }
         } catch { /* nothing stored */ }
         try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }

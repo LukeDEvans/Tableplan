@@ -281,6 +281,23 @@ export function nativeAttachmentPreview() {
   return _attachmentPreview;
 }
 
+// The word processor's PDF (PdfExport plugin, WORD_PROCESSOR_DESIGN.md §9):
+// render({ widthPt, heightPt }) → { pdf: base64, pages } from the page's print
+// layout. null in a browser or an app build from before the plugin → print dialog.
+let _pdfExport;
+export function nativePdfExport() {
+  if (_pdfExport !== undefined) return _pdfExport;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _pdfExport = null;
+      return _pdfExport;
+    }
+    const p = registerPlugin("PdfExport");
+    _pdfExport = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("PdfExport")) ? p : null;
+  } catch { _pdfExport = null; }
+  return _pdfExport;
+}
+
 // The iPhone app runs at capacitor://localhost, so app.js's canUseLocalBackend()
 // (a hostname check) is TRUE there and URL helpers pick their local-dev-server
 // paths (/api/<name>, served by server.js on a laptop). The live site only routes
