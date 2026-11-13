@@ -388,6 +388,7 @@ export function normalizeNutritionEstimate(estimate) {
 
 // ══════════════════════════════════════════════════════════════════════════
 export function createRecipesModule(deps) {
+  const recipeCost = deps.recipeCost || (() => null);
   const {
     state, elements, persist, render, trashItemTemplate, showMailToast, getActiveAppArea, getAuthSession, getSupabaseClient, setRowStorageReady, getAmountOptions, getQuantityOptions, getPrepOptions, getPendingMealRecipeSelection, getPendingAutoRuleRecipeSelection, clearPendingMealRecipeSelection, clearPendingAutoRuleRecipeSelection, activateEatShell, allowScreenOff, applyScanImageAction, canUseCloudStorage, canUseLocalBackend, chooseRecipeForPendingAutoRule, chooseRecipeForPendingMeal, closeFloatingMenus, dailyDozenCategoryName, dailyDozenRecipeSuggestions, dateInputToIso, dateInputValue, deleteSupabaseRow, displayMealName, escapeHtml, fileToDataUrl, formatServingsLabel, imageElementFromFile, keepScreenOn, mealEntryValue, mirrorStateToLocalStorage, normalizeIngredientOptions, openDailyDozenPage, plannedServingsForEntry, prepareScanImage, recipeForSlot, recordDeletion, removeRecipeFromMealSlots, renderPlanner, renderScanImagePreviews, retainScanImageEdits, rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders, trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing, updateMealPlannedServingsFromContext, formatGroceryAmount, groceryAmountToNumber, grocerySuggestionItems, renderGroceries,
   } = deps;
@@ -2107,6 +2108,14 @@ function recipeViewTemplate(recipe, requestedIngredientScale = 1) {
     <div class="recipe-view-meta">
       ${recipeTimePillsTemplate(recipe, "Flexible")}
       ${tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}
+      ${(() => {
+        // Cost from past receipt prices; only shown when most ingredients have one.
+        if (recipe.virtualGroceryRecipe) return "";
+        const cost = recipeCost(recipe, ingredientScale);
+        if (!cost || cost.priced / cost.count < 0.5) return "";
+        const servings = baseServings * ingredientScale;
+        return `<span class="pill recipe-cost-pill" title="${cost.priced} of ${cost.count} ingredients priced from past receipts">≈ $${cost.total.toFixed(2)}${servings > 1 ? ` · $${(cost.total / servings).toFixed(2)}/serving` : ""}</span>`;
+      })()}
     </div>
     ${recipeDietWarningTemplate(ingredients)}
     <section class="recipe-view-section">

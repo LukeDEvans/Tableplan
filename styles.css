@@ -22485,6 +22485,10 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .travel-bank-candidates { margin-top: 8px; }
 .fin-ret-row { width: 100%; border: 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .fin-sub-amt.is-soon { color: #b3261e; }
+.grocery-price-strip { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0 0 10px; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--ink) 5%, transparent); font-size: 0.84rem; }
+.grocery-price-strip-total { font-weight: 800; font-size: 0.95rem; }
+.grocery-price-strip-meta { color: var(--muted); }
+.recipe-cost-pill { font-variant-numeric: tabular-nums; }
 .travel-expense-row.is-candidate { opacity: 0.85; }
 .fin-sub-item { padding: 8px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
 .fin-sub-top { display: flex; gap: 10px; align-items: baseline; }

@@ -3033,6 +3033,7 @@ function renderGroceries() {
   const otherEntry = storeSections.find((s) => s.storeId === "");
   const storeEntries = storeSections.filter((s) => s.storeId !== "");
   const planSections = `
+    ${groceryListPriceStrip(activeNeeds)}
     ${nextStopSection}
     ${otherEntry ? storeSection({ ...otherEntry, name: "Other" }) : ""}
     ${storeEntries.map(storeSection).join("")}
@@ -3177,6 +3178,87 @@ function groceryFallbackRoutingTemplate(rows, priceAssignments = {}) {
       Drag an item to another store once to remember that choice.
     </div>
   `;
+}
+
+// What the list should cost, from past receipt prices (and manual estimates):
+// the cheapest known price per item, and which store is cheapest for how many
+// items. Read-only — it never moves an item between stores (that's the separate
+// price-routing setting).
+function groceryListPriceSummary(rows) {
+  const observations = currentGroceryPriceObservations();
+  if (!observations.length || !rows.length) return null;
+  const byKey = new Map();
+  observations.forEach((o) => {
+    const key = canonicalGroceryItemKey(o.itemKey);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(o);
+  });
+  const names = new Map(groceryStores().map((st) => [st.id, st.name]));
+  let total = 0, priced = 0;
+  const wins = new Map(); // storeId → items it's cheapest for
+  rows.forEach((row) => {
+    const best = new Map(); // storeId → lowest cost there
+    (byKey.get(row.key) || []).forEach((o) => {
+      if (!o.storeId || !names.has(o.storeId)) return;
+      const cost = estimatedObservationCost(row, o);
+      if (!(cost > 0)) return;
+      if (!best.has(o.storeId) || cost < best.get(o.storeId)) best.set(o.storeId, cost);
+    });
+    if (!best.size) return;
+    const [storeId, cost] = [...best.entries()].sort((a, b) => a[1] - b[1])[0];
+    total += cost; priced += 1;
+    wins.set(storeId, (wins.get(storeId) || 0) + 1);
+  });
+  if (!priced) return null;
+  return {
+    total, priced, count: rows.length,
+    stores: [...wins.entries()].sort((a, b) => b[1] - a[1]).map(([id, n]) => ({ id, name: names.get(id), items: n })),
+  };
+}
+// A recipe's cost from past prices: each ingredient's share of its cheapest known
+// package (1 cup of a 5-cup bag = a fifth of its price); a whole package when the
+// units can't be compared. → { total, priced, count } or null with no prices.
+function estimateRecipeCost(recipe, scale = 1) {
+  const observations = currentGroceryPriceObservations();
+  const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  if (!observations.length || !ingredients.length) return null;
+  const byKey = new Map();
+  observations.forEach((o) => {
+    const key = canonicalGroceryItemKey(o.itemKey);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(o);
+  });
+  let total = 0, priced = 0;
+  ingredients.forEach((ing) => {
+    const row = ingredientToGroceryRow(ing, recipe);
+    const obs = byKey.get(row.key);
+    if (!obs?.length) return;
+    const want = groceryQuantityForPrice(row);
+    let best = Infinity;
+    obs.forEach((o) => {
+      const pkg = convertComparablePriceQuantity(o.packageQuantity, normalizeComparablePriceUnit(String(o.packageUnit || "")));
+      const cost = want && pkg && want.unit === pkg.unit && pkg.quantity > 0 ? (want.quantity * scale / pkg.quantity) * o.price : o.price;
+      if (cost > 0 && cost < best) best = cost;
+    });
+    if (Number.isFinite(best)) { total += best; priced += 1; }
+  });
+  return priced ? { total, priced, count: ingredients.length } : null;
+}
+
+function groceryListPriceStrip(rows) {
+  const sum = groceryListPriceSummary(rows);
+  if (!sum) return "";
+  // The household's grocery budget (Finance categories named "Groceries"), as a
+  // weekly figure beside this week's list.
+  const groceryMonthly = (state.financeBudgetGroups || []).flatMap((g) => g.categories || [])
+    .filter((c) => /grocer/i.test(c.name || ""))
+    .reduce((t, c) => t + (c.items || []).reduce((u, it) => u + (Number(it.amount) || 0), 0), 0);
+  const weekly = groceryMonthly > 0 ? groceryMonthly * 12 / 52 : 0;
+  return `
+    <div class="grocery-price-strip" role="note">
+      <span class="grocery-price-strip-total">≈ ${formatCurrency(sum.total)}</span>
+      <span class="grocery-price-strip-meta">for ${sum.priced} of ${sum.count} item${sum.count === 1 ? "" : "s"} at their cheapest known price${sum.stores.length ? ` · cheapest at ${sum.stores.slice(0, 3).map((st) => `${escapeHtml(st.name)} (${st.items})`).join(", ")}` : ""}${weekly ? ` · grocery budget ≈ ${formatCurrency(weekly)}/week` : ""}</span>
+    </div>`;
 }
 
 function groceryPricePlanTemplate(plan) {
@@ -5711,6 +5793,7 @@ function renderShopReceipts() {
   function setPendingReceiptDraft(v) { pendingReceiptDraft = v; }
 
   return {
+    estimateRecipeCost, groceryListPriceSummary, buildActiveNeedRows,
     startReceiptScanQueue,
     refreshReceiptScanResults,
     handleReceiptScanResults,
