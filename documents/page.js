@@ -110,8 +110,9 @@ export async function mountDocumentPage(root, deps) {
     draw();
     library.purgeExpired(scope).catch(() => {});
     if (ui.kind === "household") await fileWaitingReceipts(my, scope);
+    if (ui.kind === "personal") deps.movePersonalReceipts?.(); // reloads this page if anything moved
     if (my !== gen) return;
-    if (ui.kind === "household") await nameReceiptFiles(my, scope).catch(() => {});
+    await nameReceiptFiles(my, scope).catch(() => {});
     if (my !== gen) return;
     await checkBanners(my, scope);
     if (my === gen) draw();
@@ -120,7 +121,8 @@ export async function mountDocumentPage(root, deps) {
   async function refresh(my = gen, scope = ui.scope) {
     let [folders, files] = await Promise.all([library.folders(scope), library.files(scope, { includeDeleted: true })]);
     if (my !== gen || scope !== ui.scope) return;
-    const wantReceipts = ui.kind === "household";
+    // Household's Receipts, and Personal's for receipts marked Personal (Luke, 2026-11-12).
+    const wantReceipts = ui.kind === "household" || ui.kind === "personal";
     if (!folders.length || (wantReceipts && !folders.some((f) => f.kind === "receipts"))) {
       folders = await library.ensureStartingFolders(scope, { receipts: wantReceipts, names: folders.length ? [] : EVERYDAY_STARTING_FOLDERS[ui.kind] || [] });
       if (my !== gen || scope !== ui.scope) return;
@@ -637,6 +639,8 @@ export async function mountDocumentPage(root, deps) {
       draw();
       await load();
     },
+    // Re-reads the open library (a receipt's file moved to Personal).
+    reload() { if (visible && !inSafe && ui.scope && ui.view === "library") load(); },
     // Opens the Safe directly (#documents/safe).
     openSafe: () => openSafe(),
     hide() {

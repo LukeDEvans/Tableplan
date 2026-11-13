@@ -219,3 +219,38 @@ export async function fileReceipts({
     return out;
   });
 }
+
+// Personal receipts folder (Luke, 2026-11-12): a receipt marked Personal has its file
+// moved from the household's Receipts into the owner's Personal › Receipts. Copy first
+// (the copy's source.movedFrom names the household file, so a second run doesn't copy
+// twice), then the household file is removed (library.dropMovedReceipt; the database
+// checks it's the caller's own Personal receipt). One file failing doesn't stop the rest.
+// personalIds: ids of this person's Personal receipts. Returns { moved, failed }.
+export async function movePersonalReceiptFiles({ library, from, to, personalIds, lock = (fn) => fn() }) {
+  const ids = new Set([...(personalIds || [])].map(String));
+  if (!ids.size || !from || !to || from === to) return { moved: 0, failed: 0 };
+  return lock(async () => {
+    const out = { moved: 0, failed: 0 };
+    const waiting = (await library.files(from)).filter((f) => f.source?.receiptId && ids.has(String(f.source.receiptId)));
+    if (!waiting.length) return out;
+    const folders = await library.ensureStartingFolders(to, { receipts: true, names: [] });
+    const folderId = folders.find((f) => f.kind === "receipts")?.id || null;
+    const copied = new Set((await library.files(to, { includeDeleted: true })).map((f) => f.source?.movedFrom).filter(Boolean));
+    for (const f of waiting) {
+      try {
+        if (!copied.has(f.id)) {
+          const { bytes, name, mime } = await library.open(from, f.id);
+          let thumb = null;
+          if ((f.parts || []).includes("thumb")) { try { thumb = await library.thumbnail(from, f.id); } catch { thumb = null; } }
+          await library.addFile(to, {
+            content: bytes, thumb, folderId, source: { receiptId: String(f.source.receiptId), movedFrom: f.id },
+            meta: { name, mime, pages: f.pages, documentDate: f.documentDate, tags: f.tags },
+          });
+        }
+        if (await library.dropMovedReceipt(from, f.id, f.parts)) out.moved++;
+        else out.failed++;
+      } catch { out.failed++; }
+    }
+    return out;
+  });
+}

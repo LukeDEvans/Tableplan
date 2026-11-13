@@ -388,13 +388,9 @@ const STATE_SECTIONS = {
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
 // 7 (2026-09-30): financeTxnSourceSetAt added (financeTxnSource is latest-choice-wins).
-// NEXT: 8, with the deploy that switches account moves on (FINANCE_SPLIT_DESIGN.md
-//   §8.6) — for financeMovedOut (what a move between Household and Personal took out
-//   of a finance row). Held at 7 on purpose (Luke, 2026-11-12: no deploy until the
-//   app-wide work is done): a bump now would stop the not-yet-deployed web app
-//   saving finance. Safe meanwhile: no move can run before that deploy, and the
-//   database trigger alone keeps financeMovedOut and strips what it lists.
-const STATE_SCHEMA_VERSION = 7;
+// 8 (2026-11-12 deploy): financeMovedOut (account moves, FINANCE_SPLIT_DESIGN.md §8.6),
+//   financeClosedMonths, financeSettlements, financeTxnTax, financeTxnTrip.
+const STATE_SCHEMA_VERSION = 8;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -5426,7 +5422,7 @@ async function receiptsSyncer() {
 }
 function syncReceiptsTable({ pull = true } = {}) {
   if (localDevMode || !sharedStorageReady || !userGroup?.id || !authSession?.user?.id) return;
-  receiptsSyncer().then((s) => s.sync({ pull })).catch((e) => console.warn("[receipts] sync:", e?.message || e));
+  receiptsSyncer().then((s) => s.sync({ pull })).then(() => movePersonalReceiptFilesSoon()).catch((e) => console.warn("[receipts] sync:", e?.message || e));
 }
 function scheduleReceiptsPush() {
   clearTimeout(receiptsSyncTimer);
@@ -9308,6 +9304,7 @@ function documentsDeps() {
     toast: (text) => showMailToast(text),
     openMessages: () => { localStorage.setItem(MESSAGE_TAB_KEY, "messages"); showMailApp(); },
     fileReceipts: (scope) => fileWaitingReceipts(scope),
+    movePersonalReceipts: () => movePersonalReceiptFilesSoon(),
     // A receipt file shows what was read from it and whether it's matched to a charge.
     receiptInfo: (receiptId) => _finance.financeReceiptInfo(receiptId),
     openReceipt: (receiptId) => openReceiptDetail(receiptId),
@@ -18308,6 +18305,35 @@ function fileWaitingReceipts(scope) {
     });
   })().finally(() => { receiptFiling = null; });
   return receiptFiling;
+}
+
+// Personal receipts folder (Luke, 2026-11-12): a receipt marked Personal has its
+// Document file moved from Household › Receipts to the owner's Personal › Receipts.
+// Runs after the receipts table sync (the database checks the receipt is this
+// person's Personal one there), only for Personal receipts not yet handled this session.
+const personalReceiptFilesHandled = new Set();
+let personalReceiptMove = null;
+function movePersonalReceiptFilesSoon() {
+  const uid = authSession?.user?.id;
+  if (localDevMode || !uid || !userGroup?.id || !isPageEnabled("documents")) return null;
+  const ids = (Array.isArray(state.receipts) ? state.receipts : [])
+    .filter((r) => r?.view === "personal" && !personalReceiptFilesHandled.has(r.id)).map((r) => r.id);
+  if (!ids.length) return null;
+  personalReceiptMove ||= (async () => {
+    const [{ movePersonalReceiptFiles, OUTBOX_LOCK }, { createEverydayLibrary }, { createDocumentsStorage, edgePresigner }, { createRestTransport }, { withLock }] = await Promise.all([
+      import("./documents/outbox.js"), import("./documents/everyday.js"), import("./documents/storage.js"),
+      import("./messaging/server.js"), import("./messaging/keystore.js"),
+    ]);
+    const library = createEverydayLibrary({
+      transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+      storage: createDocumentsStorage({ presign: edgePresigner({ functionsUrl: `${supabaseBaseUrl()}/functions/v1`, getToken: async () => authSession?.access_token || "" }), tier: "everyday" }),
+    });
+    const out = await movePersonalReceiptFiles({ library, from: userGroup.id, to: `u-${uid}`, personalIds: ids, lock: (fn) => withLock(OUTBOX_LOCK, fn) });
+    if (!out.failed) ids.forEach((id) => personalReceiptFilesHandled.add(id));
+    if (out.moved && activeAppArea === "documents") documentsUi?.reload?.();
+    return out;
+  })().catch((e) => { console.warn("[receipts] personal files:", e?.message || e); return null; }).finally(() => { personalReceiptMove = null; });
+  return personalReceiptMove;
 }
 
 // The iPhone's text recognition → printed rows per page (receipt-reconcile.js).

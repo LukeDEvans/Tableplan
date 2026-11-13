@@ -5,6 +5,86 @@ shipped yet is listed in [UNDEPLOYED.md](UNDEPLOYED.md).) When deploying, move e
 UNDEPLOYED.md entry's "After deploying" steps here under a heading for that deploy.
 Tick items off as they're done; delete a deploy's section once it's all ticked.
 
+## 2026-11-12 deploy (Finance audit: true numbers, receipts as records, planning, kitchen; account moves; Personal receipts; sign-in code and Face ID; News hint text)
+Web deploy from `main` (branch `claude/finance-true-numbers`, after #232). TestFlight build from `main` the same night for both phones.
+
+- **Document: Personal › Receipts** · this deploy · TestFlight build and Netlify deploy (client) +
+  database function `doc_pdrop_moved_receipt` (**applied 2026-11-12**, Luke's OK). Personal's Document
+  gets a Receipts folder; a receipt marked Personal has its file moved there from Household › Receipts
+  (copied, then the household file removed at once — not through Recently deleted). Runs after the
+  receipts sync and when Personal › Document opens. Post-deploy: mark a scanned receipt Personal,
+  wait a few seconds, open Document in Personal (it's in Receipts) and in Household (gone).
+- **Schema version 8 + account moves switched on** · `STATE_SCHEMA_VERSION` 8 and
+  `FINANCE_MOVE_ENABLED=1` set in Netlify (2026-11-12). **Both phones must run the TestFlight build
+  from this deploy**: a phone on an older build can't change Finance until it updates (the database
+  keeps its finance edits out, nothing is lost).
+- **Receipts fill Inventory · budget-aware meal planning** · branch `claude/finance-true-numbers` ·
+  client only, seen with a TestFlight build or a deploy: a scanned grocery receipt adds its food lines
+  to Inventory (Pantry / Fridge / Freezer, by item), with undo; on by default, switch in Inventory ›
+  rooms ("Add items from receipts"); a receipt's editor has "Add items to Inventory". When grocery
+  spending is ahead of budget this month, the Meal Plan says so and picking a recipe for a meal shows
+  the cheapest recipes per serving first (from past receipt prices). No post-deploy steps.
+
+- **Finance: true numbers (audit step 1)** · branch `claude/finance-true-numbers` · the nightly bank
+  job is **already live** (Supabase Edge Function `finance-nightly` + pg_cron, 11:40 UTC; no deploy
+  needed). The page changes need a TestFlight build or a deploy to be seen: an Uncategorized row on
+  Budget and in "Where it went"; "Update" for a past month's saved totals when stored history
+  disagrees; "Bring back" for skipped merchants; a "Bank data is N days old" banner; "on pace"
+  counts a bill once; the allowance card is named Allowances. After the deploy, `daily-briefing`
+  stops pulling the bank (until then it still tries at 13:00 UTC and gives up, as before).
+
+- **Receipts as records, part 1 (audit step 2)** · branch `claude/finance-true-numbers` · client only,
+  seen with a TestFlight build or a deploy: a scan's Document file points at its receipt
+  (`doc_pfiles.source.receiptId`); Document's receipt rows show store, date, total, items and a
+  Matched / Unmatched chip, the viewer lists the lines, and a file named "Receipt · <date>" is
+  renamed once the store is read; Finance matches receipts by store, dates, tip and card digits
+  (`receipt-matcher.js`) and links a certain match itself. New optional receipt fields: tip,
+  paymentLast4, scannedBy, view (the reader doesn't fill tip or card digits yet).
+
+- **Finance planning (no deploy needed to try)** · Insights: Next 30 days forecast, subscriptions
+  review (yearly cost, price changes, duplicates, Cancel… links), Returns & warranties, Tax time with
+  export; goals can follow an account's balance; transaction details: Tax and Trip pickers; Explore
+  trip › Budget: "From your bank"; Shop: price strip (estimated total, cheapest stores, weekly grocery
+  budget); recipe cost per batch and per serving; paydays on the Calendar; phone reminder 3 days before a return window closes.
+
+- **Finance extras (no deploy needed to try)** · close a month (checklist, then its totals are kept);
+  group share bar in "Where it went"; 6-month sparklines per category; weekly "to categorize"
+  notification scheduled on the phone (Sunday 18:00, off in Alerts); receipt editor: tip, card
+  last 4, Personal purchase, and "Mine · pay back" per line with a "You owe the household" row
+  and Paid back on Budget (financeSettlements). The reader asks for tip and card digits (live
+  with the deploy).
+
+- **Receipts table** · `fin_receipts` **applied 2026-11-12** (Luke's OK; 24 receipts copied from the
+  grocery row, which is untouched). The app (`receipts-sync.js`) reads it at start-up and on return to
+  the app, and sends changes a few seconds after a save; household receipts also stay in the grocery
+  row until every device has the build. Personal receipts (editor switch, Personal view only) live
+  only in the table under `u-<uid>` and are left out of the grocery row. Cleanup after the deploy and
+  both phones updated: take `receipts` out of the grocery row.
+
+- **Finance: moving accounts between Household and Personal (step 3)** · #232 · **needs a Netlify
+  deploy to do anything** (the server action; the app's screen stays hidden until the server
+  answers that it can move accounts). The database guard is already applied (2026-11-12).
+  **In the deploy commit:** set `STATE_SCHEMA_VERSION` to 8 (held at 7 until then, see the note
+  at the constant), and set `FINANCE_MOVE_ENABLED=1` in Netlify first; make a TestFlight build
+  from the same commit for both phones. Post-deploy: Household › Finance › Accounts shows
+  "Personal accounts" for Luke only; tick an account, **Review the move**, read the report, and
+  confirm only if it looks right (FINANCE_SPLIT_DESIGN.md §8.6 has the checks to run after).
+- **News: newspaper sign-in hints no longer suggest Apple** · #231 · **TestFlight build**
+  (text only; the laptop needs a Netlify deploy). Sync Settings, the reader and the sign-in sheet
+  say to use email and password, not Apple or Google. Post-TestFlight: none.
+- **Sign-in: authenticator code and Face ID to open the iPhone app** · #222 · **TestFlight build**
+  for the phone (web code only, no Swift change); **the laptop needs a Netlify deploy**. Settings ›
+  Sign-in → Authenticator code: set up once (Add to Passwords on iPhone/Mac, or scan the QR); after
+  that a new sign-in on any device stops at "One more step" until the 6-digit code is entered. Face
+  ID to open the iPhone app is per phone and **on by default** (asks on open and after 5 minutes
+  away; falls back to the phone's passcode; a phone with no passcode isn't locked; switch in
+  Settings › Sign-in). A failed Google/Apple sign-in on the website now says why. Luke OK'd the
+  merge 2026-11-11. Not yet run against real Supabase or on a phone. Still open (ISSUES.md): the
+  code is enforced by the app, not the database (migration held for Luke); Google/Apple providers
+  need a look in Supabase. No migration, no env vars. Post-TestFlight: open the app (Face ID
+  asks); leave 5+ minutes and come back; Settings › Sign-in → set up the code, sign out, sign in
+  (the code step appears; a wrong code shows a message). Marijane's phone will ask for Face ID too.
+
 ## 2026-11-11 deploy (Mail quota fix; Watch panel and per-tick merge; Document page and the Safe on the laptop; Listen grid; themes and per-view logos; per-view delete lists; podcast playback on the iPhone)
 Web deploy from `main` (#203–#229). TestFlight builds from `main` the same day carry the iPhone-only entries (the last one started after #229 merged). No migration and no new env vars in this deploy: the Documents tables, `doc-storage` and the view-logos migration were already live.
 
