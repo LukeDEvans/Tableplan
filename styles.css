@@ -22183,7 +22183,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-tbar.is-current .fin-tbar-col > i { background: var(--accent); }
 .fin-tbar-label { flex: 0 0 auto; font-size: 0.66rem; font-weight: 700; color: var(--muted); }
 .fin-tbar.is-current .fin-tbar-label { color: var(--ink); }
-.fin-mover-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
+.fin-mover-row { display: flex; align-items: center; gap: 10px; padding: 5px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
 .fin-mover-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fin-mover-cur { font-weight: 750; font-variant-numeric: tabular-nums; }
 .fin-mover-delta { flex: 0 0 auto; font-size: 0.76rem; font-weight: 800; }
@@ -22496,7 +22496,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-share-dot { width: 8px; height: 8px; border-radius: 999px; }
 .fin-card .s0 { background: var(--fin-s0); } .fin-card .s1 { background: var(--fin-s1); } .fin-card .s2 { background: var(--fin-s2); } .fin-card .s3 { background: var(--fin-s3); } .fin-card .s4 { background: var(--fin-s4); }
 .fin-card .s5 { background: var(--fin-s5); } .fin-card .s6 { background: var(--fin-s6); } .fin-card .s7 { background: var(--fin-s7); } .fin-card .s8 { background: var(--fin-s8); }
-.fin-spark { flex: none; width: 64px; height: 20px; margin: 0 8px; }
+.fin-spark { flex: none; width: 64px; height: 20px; margin: 0 10px 0 auto; }
+.fin-mover-row .fin-mover-cur { min-width: 5.6em; text-align: right; }
+.fin-mover-row .fin-mover-delta { min-width: 4.4em; text-align: right; }
 .fin-spark path { fill: none; stroke: var(--fin-s1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .fin-spark circle { fill: var(--fin-s1); }
 .fin-month-line + .fin-budget-bar { margin: 0 2px 8px; }
