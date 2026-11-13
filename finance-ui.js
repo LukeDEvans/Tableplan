@@ -10,6 +10,7 @@ import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 import { linkOutAttrs } from './link-out.js';
 import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
 import { financeOwedBalances } from './finance-settle.js';
+import { subscriptionReview, cashForecast, everydaySpendPerDay, goalProgress } from './finance-plan.js';
 import { banksForAccounts, billerForBill, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
@@ -179,6 +180,8 @@ export function normalizeFinanceGoals(raw) {
     target: Number(g.target) || 0,
     current: Number(g.current) || 0,
     targetDate: typeof g.targetDate === "string" ? g.targetDate : "",
+    // A goal can follow an account's balance instead of a typed amount.
+    accountId: typeof g.accountId === "string" ? g.accountId : "",
   }));
 }
 
@@ -1708,6 +1711,7 @@ function updateFinanceRecurring() {
     const amt = Math.round(Math.abs(latest.amount) * 100) / 100;
     if (entry) {
       if (entry.lastSeen !== seenDate || entry.lastAmount !== amt) {
+        if (entry.lastAmount && entry.lastAmount !== amt) entry.prevAmount = entry.lastAmount;
         entry.lastSeen = seenDate;
         entry.lastAmount = amt;
         entry.expectedDay = new Date(latest.posted || 0).getDate() || entry.expectedDay;
@@ -4475,19 +4479,82 @@ function renderFinancePage() {
       <div class="fin-cf-legend"><span class="fin-cf-key in">Money in</span><span class="fin-cf-key out">Money out</span></div>
       ${cfUncat > 0 ? `<p class="fin-hint">Money out counts categorized spending. Not counted over these months: ${formatFinMoney(cfUncat)} uncategorized.</p>` : ""}
     </div>` : "";
-  const subs = (state.financeRecurring || []).filter((r) => r.active !== false).sort((a, b) => (b.lastAmount || 0) - (a.lastAmount || 0));
-  const subsTotal = subs.reduce((s, r) => s + (r.lastAmount || 0), 0);
-  const subsCard = subs.length ? `
+  // Subscriptions: every recurring charge with its yearly cost, a price change,
+  // a possible duplicate, and where to cancel (finance-plan.js).
+  const subsReview = subscriptionReview(state.financeRecurring);
+  const subsById = new Map(subsReview.rows.map((r) => [r.id, r]));
+  const subsCard = subsReview.rows.length ? `
     <div class="fin-card fin-insights-card">
       <div class="fin-subhead fin-accounts-title">Subscriptions &amp; recurring</div>
-      <div class="fin-subs-total"><span>${subs.length} recurring charge${subs.length === 1 ? "" : "s"}</span><span>${formatFinMoney(subsTotal)}<span class="fin-of">/mo</span></span></div>
-      ${subs.map((r) => `
-        <div class="fin-sub-row">
-          <span class="fin-sub-name">${escapeHtml(r.name)}</span>
-          <span class="fin-sub-day">day ${Math.min(28, Math.max(1, r.expectedDay || 1))}</span>
-          <span class="fin-sub-amt">${formatFinMoney(r.lastAmount || 0)}</span>
+      <div class="fin-subs-total"><span>${subsReview.rows.length} recurring charge${subsReview.rows.length === 1 ? "" : "s"}</span><span>${formatFinMoney(subsReview.monthly)}<span class="fin-of">/mo · ${formatFinMoney(subsReview.yearly)}/yr</span></span></div>
+      ${subsReview.rows.map((r) => `
+        <div class="fin-sub-item">
+          <div class="fin-sub-top"><span class="fin-sub-name">${escapeHtml(r.name)}</span><span class="fin-sub-amt">${formatFinMoney(r.monthly)}</span></div>
+          <div class="fin-sub-meta">
+            <span>day ${r.day} · ${formatFinMoney(r.yearly)}/yr</span>
+            ${r.priceFrom != null ? `<span class="fin-sub-flag is-up">was ${formatFinMoney(r.priceFrom)}</span>` : ""}
+            ${r.dupOf ? `<span class="fin-sub-flag">same as ${escapeHtml(subsById.get(r.dupOf)?.name || "another")}?</span>` : ""}
+            <span class="fin-sub-actions">
+              ${r.link ? `<button type="button" class="out-link-chip out-link-chip--small" ${linkOutAttrs({ webUrl: r.link, label: `Manage ${r.name}` }, escapeHtml)}>Cancel…</button>` : ""}
+              <button type="button" class="fin-sub-not" data-fin-action="recurring-not" data-id="${escapeHtml(r.id)}" title="Not a recurring charge" aria-label="Not a recurring charge: ${escapeHtml(r.name)}">Not recurring</button>
+            </span>
+          </div>
         </div>`).join("")}
     </div>` : "";
+
+  // 30 days ahead for the spending accounts: paychecks in, known bills and
+  // everyday spending out (finance-plan.js). Spending accounts = cash accounts
+  // that aren't the emergency fund.
+  const forecastCard = (() => {
+    if (!haveLive || !isCurrentMonth) return "";
+    const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
+    const emergency = new Set(financeCardAccountIds("emergency"));
+    const spendIds = financeCardAccountIds("cash").filter((id) => !emergency.has(id));
+    const startBalance = financeSumByAccountIds(spendIds, liveById);
+    if (startBalance == null) return "";
+    const today = new Date();
+    const endKey = dateKeyFromDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 31));
+    const paydays = [];
+    for (const p of state.financePeople || []) {
+      const sc = (p.scenarios || []).find((x) => x.id === p.activeScenarioId) || (p.scenarios || [])[0];
+      if (!sc || !(sc.amount > 0) || sc.payFrequency === "monthly") continue;
+      const net = sc.amount - scenarioDeductionPerPeriod(sc);
+      for (const d of scenarioPaydaysInRange(sc, dateKeyFromDate(today), endKey)) paydays.push({ date: d, amount: net });
+    }
+    const monthNow = localMonthKey(today);
+    const bills = (state.financeRecurring || []).filter((r) => r.active !== false && r.lastAmount > 0)
+      .map((r) => ({ name: r.name, day: Math.min(28, Math.max(1, r.expectedDay || 1)), amount: r.lastAmount, paidThisMonth: (r.lastSeen || "").slice(0, 7) === monthNow }));
+    const recurringKeysAll = new Set((state.financeRecurring || []).filter((r) => r.active !== false).map((r) => r.merchantKey));
+    const dailySpend = everydaySpendPerDay(allTxns.map((t) => ({ posted: t.posted, amount: t.amount, merchantKey: financeMerchantKey(t.description || ""), isTransfer: t.label === "mgmt" || t.label === "income" })), { now: today, recurringKeys: recurringKeysAll });
+    const f = cashForecast({ startBalance, today, days: 30, paydays, bills, dailySpend });
+    if (!f.points.length) return "";
+    const vals = [startBalance, ...f.points.map((p) => p.balance)];
+    // Scale to the range the balance moves in; show zero only when it's crossed.
+    const vMin = Math.min(...vals), vMax = Math.max(...vals);
+    const span = Math.max(vMax - vMin, Math.abs(vMax) * 0.1, 50);
+    const lo = vMin < 0 ? Math.min(vMin, 0) - span * 0.1 : vMin - span * 0.15, hi = vMax + span * 0.15;
+    const W = 300, H = 90, P = 6;
+    const x = (i) => P + (i * (W - 2 * P)) / (vals.length - 1);
+    const y = (v) => H - P - ((v - lo) / (hi - lo || 1)) * (H - 2 * P);
+    const path = vals.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+    const LOW = 500;
+    const warn = f.low.balance < LOW;
+    const lowDate = new Date(f.low.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const hits = f.points.map((p, i) => `<rect x="${(x(i + 1) - (W - 2 * P) / vals.length / 2).toFixed(1)}" y="0" width="${((W - 2 * P) / vals.length).toFixed(1)}" height="${H}" fill="transparent"><title>${escapeHtml(`${new Date(p.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}: ${formatFinMoney(p.balance)}${p.events.length ? " · " + p.events.join(", ") : ""}`)}</title></rect>`).join("");
+    return `
+    <div class="fin-card fin-insights-card fin-forecast-card">
+      <div class="fin-subhead fin-accounts-title">Next 30 days</div>
+      <div class="fin-subs-total"><span>Spending accounts now ${formatFinMoney(startBalance)}</span><span>${formatFinMoney(f.end)}<span class="fin-of"> in 30 days</span></span></div>
+      <svg class="fin-forecast" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(`Projected balance: lowest ${formatFinMoney(f.low.balance)} on ${lowDate}, ${formatFinMoney(f.end)} in 30 days`)}">
+        ${lo < 0 ? `<line class="fin-forecast-zero" x1="0" x2="${W}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>` : ""}
+        <path d="${path}"/>
+        <circle class="${warn ? "is-low" : ""}" cx="${x(vals.indexOf(f.low.balance)).toFixed(1)}" cy="${y(f.low.balance).toFixed(1)}" r="3.5"/>
+        ${hits}
+      </svg>
+      <p class="fin-hint${warn ? " fin-forecast-warn" : ""}">${warn ? "⚠ " : ""}Lowest point ${formatFinMoney(f.low.balance)} on ${escapeHtml(lowDate)}${warn ? ` — under ${formatFinMoney(LOW)}` : ""}. Counts ${paydays.length} paycheck${paydays.length === 1 ? "" : "s"}, ${bills.length} recurring bill${bills.length === 1 ? "" : "s"} and about ${formatFinMoney(dailySpend)}/day of everyday spending.</p>
+    </div>`;
+  })();
+
   // Reports: where the viewed month's spend went (category breakdown) + CSV export.
   const catSpend = [...catActuals.entries()]
     .map(([k, v]) => ({ key: k, name: financeTxnLabelName(`cat:${k}`), amount: Math.abs(Number(v) || 0) }))
@@ -4579,7 +4646,7 @@ function renderFinancePage() {
           ${receiptSourceChip(r)}
         </div>`).join("")}` : ""}
     </div>` : "";
-  const insightsView = `${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
+  const insightsView = `${forecastCard}${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
 
   // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
   // bar + on-track note derived on the fly.
@@ -4590,29 +4657,46 @@ function renderFinancePage() {
     const now = new Date();
     return (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth());
   };
+  const goalLiveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
+  const goalAccounts = (state.financeAccounts || []).filter((a) => ["cash", "retirement", "investment"].includes(financeAccountKind(a)) || a.kind === "cash");
   const goalRow = (g) => {
     const editing = financeExpanded.has(`goal:${g.id}`);
-    const pct = g.target > 0 ? Math.min(100, Math.round((g.current / g.target) * 100)) : 0;
-    const reached = g.target > 0 && g.current >= g.target;
+    // Tied to an account: its balance is the progress, and the balance history
+    // gives a pace and a finish month (finance-plan.js goalProgress).
+    const acct = g.accountId ? (state.financeAccounts || []).find((a) => a.id === g.accountId) : null;
+    const bal = acct ? financeAccountBalance(acct, goalLiveById) : null;
+    const gp = goalProgress(g, { balanceNow: bal, history: financeHistory || {} });
+    const cur = gp.current;
+    const pct = g.target > 0 ? Math.min(100, Math.round((cur / g.target) * 100)) : 0;
+    const reached = g.target > 0 && cur >= g.target;
+    const monthLabel = (ym) => new Date(ym + "-15T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" });
     let note = "";
     if (reached) note = "Reached 🎉";
+    else if (gp.etaDate) note = `At ${formatFinMoney(gp.perMonth)}/mo, reached around ${monthLabel(gp.etaDate)}${gp.needPerMonth ? ` · ${formatFinMoney(gp.needPerMonth)}/mo needed for the target date` : ""}`;
     else if (g.targetDate) {
       const m = goalMonthsUntil(g.targetDate);
-      if (m != null) note = m <= 0 ? "Target date passed" : `${formatFinMoney((g.target - g.current) / m)}/mo to reach by ${new Date(g.targetDate + "T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
-    } else if (g.target > 0) note = `${formatFinMoney(g.target - g.current)} to go`;
+      if (m != null) note = m <= 0 ? "Target date passed" : `${formatFinMoney((g.target - cur) / m)}/mo to reach by ${new Date(g.targetDate + "T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
+    } else if (g.target > 0) note = `${formatFinMoney(g.target - cur)} to go${gp.linked && gp.perMonth != null && gp.perMonth <= 0 ? " · balance hasn't grown lately" : ""}`;
+    if (gp.linked) note = `${escapeHtml(acct.name || "Account")} · ${note}`;
     return `
       <div class="fin-goal">
         <button class="fin-goal-row" type="button" data-fin-action="toggle-expand" data-id="goal:${escapeHtml(g.id)}" aria-expanded="${editing}">
-          <div class="fin-goal-head-row"><span class="fin-goal-name">${escapeHtml(g.name || "Untitled goal")}</span><span class="fin-goal-nums">${formatFinMoney(g.current)} <span class="fin-of">/ ${formatFinMoney(g.target)}</span></span></div>
+          <div class="fin-goal-head-row"><span class="fin-goal-name">${escapeHtml(g.name || "Untitled goal")}</span><span class="fin-goal-nums">${formatFinMoney(cur)} <span class="fin-of">/ ${formatFinMoney(g.target)}</span></span></div>
           <div class="fin-gauge"><i class="${reached ? "is-done" : ""}" style="width:${pct}%"></i></div>
-          ${note ? `<div class="fin-goal-note${reached ? " is-done" : ""}">${escapeHtml(note)}</div>` : ""}
+          ${note ? `<div class="fin-goal-note${reached ? " is-done" : ""}">${gp.linked ? note : escapeHtml(note)}</div>` : ""}
         </button>
         ${editing ? `
         <div class="fin-goal-editor">
           <div class="fin-item-row"><input class="fin-item-name" type="text" value="${escapeHtml(g.name)}" placeholder="Goal name (e.g. Vacation fund)" data-fin-edit="goal-name" data-id="${escapeHtml(g.id)}" aria-label="Goal name" /></div>
           <div class="fin-item-row">
-            <input class="fin-item-amount" type="text" inputmode="decimal" value="${g.current || ""}" placeholder="Saved" data-fin-edit="goal-current" data-id="${escapeHtml(g.id)}" aria-label="Amount saved" />
+            ${g.accountId ? "" : `<input class="fin-item-amount" type="text" inputmode="decimal" value="${g.current || ""}" placeholder="Saved" data-fin-edit="goal-current" data-id="${escapeHtml(g.id)}" aria-label="Amount saved" />`}
             <input class="fin-item-amount" type="text" inputmode="decimal" value="${g.target || ""}" placeholder="Target" data-fin-edit="goal-target" data-id="${escapeHtml(g.id)}" aria-label="Target amount" />
+          </div>
+          <div class="fin-item-row">
+            <select class="fin-item-name" data-fin-edit="goal-account" data-id="${escapeHtml(g.id)}" aria-label="Track an account's balance">
+              <option value="">Typed amount (no account)</option>
+              ${goalAccounts.map((a) => `<option value="${escapeHtml(a.id)}" ${a.id === g.accountId ? "selected" : ""}>Balance of ${escapeHtml(a.name || "account")}</option>`).join("")}
+            </select>
           </div>
           <div class="fin-item-row fin-item-row--tools">
             <input type="date" class="fin-item-name fin-goal-date" value="${escapeHtml(g.targetDate || "")}" data-fin-edit="goal-date" data-id="${escapeHtml(g.id)}" aria-label="Target date (optional)" />
@@ -5261,13 +5345,14 @@ function onFinanceGridChange(e) {
     renderFinancePage();
     return;
   }
-  if (kind === "goal-name" || kind === "goal-target" || kind === "goal-current" || kind === "goal-date") {
+  if (kind === "goal-name" || kind === "goal-target" || kind === "goal-current" || kind === "goal-date" || kind === "goal-account") {
     const g = (state.financeGoals || []).find((x) => x.id === el.dataset.id);
     if (!g) return;
     if (kind === "goal-name") g.name = el.value.slice(0, 60);
     else if (kind === "goal-target") g.target = parseFinAmount(el.value) || 0;
     else if (kind === "goal-current") g.current = parseFinAmount(el.value) || 0;
     else if (kind === "goal-date") g.targetDate = el.value || "";
+    else if (kind === "goal-account") g.accountId = el.value || "";
     persist();
     renderFinancePage();
     return;
