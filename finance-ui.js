@@ -1750,7 +1750,8 @@ function financeSpendTrends(viewMonth) {
     const avg = priorVals.length ? priorVals.reduce((s, v) => s + v, 0) / priorVals.length : 0;
     if (cur < 5 && avg < 5) continue;
     const delta = cur - avg;
-    movers.push({ key: k, name: financeTxnLabelName(`cat:${k}`), cur, avg, delta, pct: avg > 0 ? Math.round((delta / avg) * 100) : null });
+    const spark = months.map((m) => (ma[m]?.cats && ma[m].cats[k] != null ? Math.abs(Number(ma[m].cats[k]) || 0) : null));
+    movers.push({ key: k, name: financeTxnLabelName(`cat:${k}`), cur, avg, delta, pct: avg > 0 ? Math.round((delta / avg) * 100) : null, spark, months });
   }
   movers.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   return { series, movers: movers.slice(0, 5), hasData: series.some((s) => s.spend != null) };
@@ -2563,6 +2564,7 @@ function updateFinanceMonthActuals() {
   if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
   let changed = false;
   for (const month of monthsToWrite) {
+    if (financeMonthClosed(month) && state.financeMonthActuals[month]) continue;
     const entry = financeMonthEntry(txns, month, financeTxnPortions);
     if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) continue;
     state.financeMonthActuals[month] = entry;
@@ -3202,9 +3204,32 @@ function applyBudgetSearch() {
   });
 }
 
+// A 6-month line for one category: 2px stroke, no axes, the latest month dotted.
+// Months with no saved totals are gaps. The row's own text carries the numbers.
+function financeSparkline(values, months, name) {
+  const pts = (values || []).map((v, i) => (v == null ? null : { i, v }));
+  const real = pts.filter(Boolean);
+  if (real.length < 2) return `<span class="fin-spark" aria-hidden="true"></span>`;
+  const W = 64, H = 20, pad = 3;
+  const max = Math.max(...real.map((p) => p.v), 1);
+  const x = (i) => pad + (i * (W - pad * 2)) / Math.max(1, values.length - 1);
+  const y = (v) => H - pad - (v / max) * (H - pad * 2);
+  let d = "", pen = false;
+  for (const p of pts) { if (!p) { pen = false; continue; } d += `${pen ? "L" : "M"}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`; pen = true; }
+  const last = real[real.length - 1];
+  const label = (months || []).map((m, i) => (values[i] == null ? null : `${new Date(m + "-15T12:00:00").toLocaleDateString(undefined, { month: "short" })} ${formatFinMoney(values[i])}`)).filter(Boolean).join(", ");
+  return `<svg class="fin-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${escapeHtml(`${name}: ${label}`)}"><title>${escapeHtml(label)}</title><path d="${d}"/><circle cx="${x(last.i).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="2.5"/></svg>`;
+}
+
 // Compact "when was this last synced" label. Bank data refreshes ~once a day,
 // so exact minutes matter less than "today / yesterday / a date" — that's the
 // low-cost freshness cue in place of a refresh button that would fetch nothing new.
+// A closed month keeps its saved totals: nothing recomputes them until it's reopened.
+function financeMonthClosed(month) {
+  const c = state.financeClosedMonths;
+  return Boolean(c && typeof c === "object" && c[month] && c[month] !== false);
+}
+
 // The bank pull itself is old (the daily job or the bridge failed): say so once,
 // at the top, instead of leaving it to a line of small print under the list.
 const FINANCE_STALE_PULL_MS = 36 * 3600 * 1000;
@@ -3288,7 +3313,8 @@ function renderFinancePage() {
   // month and adds up differently (something was categorized later), offer to
   // update the saved totals. Never automatic: saved history only changes by hand.
   let staleSaved = null;
-  if (!isCurrentMonth && storedThis && haveLive && financeStoreActive() && financeTxnsCoverMonth(allTxns, monthKey, financeCurrentMonthKey())) {
+  const closedThis = financeMonthClosed(monthKey);
+  if (!isCurrentMonth && !closedThis && storedThis && haveLive && financeStoreActive() && financeTxnsCoverMonth(allTxns, monthKey, financeCurrentMonthKey())) {
     const fresh = financeMonthEntry(allTxns, monthKey, financeTxnPortions);
     if (!financeMonthEntriesMatch(storedThis, fresh)) staleSaved = { saved: financeMonthEntryTotals(storedThis), now: financeMonthEntryTotals(fresh) };
   }
@@ -4181,7 +4207,27 @@ function renderFinancePage() {
         <span class="fin-truth-amt${leftThis < 0 ? " is-over" : ""}">${leftThis < 0 ? `${formatFinMoney(-leftThis)} over` : `${formatFinMoney(leftThis)} left`}</span>
       </div>
       ${budgetBar(spentThis, expenses)}` : "";
-  const truthCard = (monthLine || (showActuals && (uncatThis.count || staleSaved || skippedMerchants))) ? `
+  // Closing a finished month: a short checklist, then its totals are kept as they are.
+  const pastMonth = monthKey < financeCurrentMonthKey();
+  const monthReceipts = pastMonth ? financeReceiptList().filter((r) => (r.date || "").slice(0, 7) === monthKey && Number(r.total) > 0) : [];
+  const unmatchedReceipts = monthReceipts.filter((r) => !financeReceiptFits().byReceipt.has(r.id)).length;
+  const closeChecks = [
+    { ok: !uncatThis.count, text: uncatThis.count ? `${uncatThis.count} uncategorized` : "Everything categorized" },
+    { ok: !unmatchedReceipts, text: unmatchedReceipts ? `${unmatchedReceipts} receipt${unmatchedReceipts === 1 ? "" : "s"} not matched to a charge` : "Receipts matched" },
+    { ok: !staleSaved, text: staleSaved ? "Saved totals out of date" : "Saved totals up to date" },
+  ];
+  const closeBlock = !pastMonth || !showActuals ? "" : closedThis ? `
+      <div class="fin-truth-row">
+        <span class="fin-truth-name">${escapeHtml(truthMonthName)} is closed<span class="fin-of"> · its totals are kept as they are</span></span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="reopen-month">Reopen</button>
+      </div>` : `
+      <div class="fin-truth-row fin-close-row">
+        <span class="fin-truth-name">Close ${escapeHtml(truthMonthName)}
+          <span class="fin-close-checks">${closeChecks.map((c) => `<span class="fin-close-check${c.ok ? " is-ok" : ""}"><span aria-hidden="true">${c.ok ? "✓" : "•"}</span> ${escapeHtml(c.text)}</span>`).join("")}</span>
+        </span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="close-month">${closeChecks.every((c) => c.ok) ? "Close" : "Close anyway"}</button>
+      </div>`;
+  const truthCard = (monthLine || closeBlock || (showActuals && (uncatThis.count || staleSaved || skippedMerchants))) ? `
     <div class="fin-card fin-truth-card" data-fin-card="truth">
       ${monthLine}
       ${uncatThis.count ? `
@@ -4200,6 +4246,7 @@ function renderFinancePage() {
         <span class="fin-truth-name">${skippedMerchants} merchant${skippedMerchants === 1 ? " is" : "s are"} skipped from review<span class="fin-of"> · their charges never come up to categorize</span></span>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="unskip-all-merchants">Bring back</button>
       </div>` : ""}
+      ${closeBlock}
     </div>` : "";
   const budgetView = `
     ${truthCard}
@@ -4343,6 +4390,7 @@ function renderFinancePage() {
         ${trends.movers.map((m) => `
           <div class="fin-mover-row">
             <span class="fin-mover-name">${escapeHtml(m.name)}</span>
+            ${financeSparkline(m.spark, m.months, m.name)}
             <span class="fin-mover-cur">${formatFinMoney(m.cur)}</span>
             ${m.pct != null
               ? `<span class="fin-mover-delta ${m.delta > 0 ? "is-over" : "is-under"}" title="3-month average ${formatFinMoney(m.avg)}">${m.delta > 0 ? "▲" : "▼"} ${Math.abs(m.pct)}%</span>`
@@ -4406,6 +4454,23 @@ function renderFinancePage() {
     return rows;
   })();
   const reportMax = Math.max(1, ...reportRows.map((r) => r.amount));
+  // One whole split into parts: Needs / Wants / Savings / Uncategorized. Colored by
+  // budget group in the groups' own order (so a group keeps its color whatever its
+  // rank); Uncategorized is neutral. The rows below are its legend and table view.
+  const shareParts = (() => {
+    const parts = (state.financeBudgetGroups || []).map((g, i) => ({
+      key: g.id, name: g.label || "Group", slot: i < 8 ? i + 1 : 0,
+      amount: g.categories.reduce((s, c) => s + Math.abs(Number(catActuals.get(`${g.id}:${c.id}`)) || 0), 0),
+    }));
+    if (uncatThis.spend > 0) parts.push({ key: "__uncat", name: "Uncategorized", slot: 0, amount: uncatThis.spend });
+    const total = parts.reduce((s, p) => s + p.amount, 0);
+    return total > 0 ? parts.filter((p) => p.amount > 0).map((p) => ({ ...p, share: p.amount / total })) : [];
+  })();
+  const shareBar = shareParts.length > 1 ? `
+      <div class="fin-share" role="img" aria-label="${escapeHtml(shareParts.map((p) => `${p.name} ${formatFinMoney(p.amount)}, ${Math.round(p.share * 100)}%`).join("; "))}">
+        <div class="fin-share-bar">${shareParts.map((p) => `<i class="fin-share-seg s${p.slot}" style="flex-grow:${p.share.toFixed(4)}" title="${escapeHtml(`${p.name} · ${formatFinMoney(p.amount)} · ${Math.round(p.share * 100)}%`)}"></i>`).join("")}</div>
+        <div class="fin-share-legend">${shareParts.map((p) => `<span class="fin-share-key"><i class="fin-share-dot s${p.slot}"></i>${escapeHtml(p.name)} <b>${Math.round(p.share * 100)}%</b></span>`).join("")}</div>
+      </div>` : "";
   const reportsCard = financeLinkStatus?.connected ? `
     <div class="fin-card fin-insights-card">
       <div class="fin-report-head">
@@ -4416,6 +4481,7 @@ function renderFinancePage() {
         </div>
       </div>
       ${financeCsvImportPanelHtml()}
+      ${shareBar}
       ${reportRows.length ? reportRows.map((c) => `
         <div class="fin-report-row">
           <div class="fin-report-top"><span class="fin-report-name">${escapeHtml(c.name)}</span><span class="fin-report-amt">${formatFinMoney(c.amount)} <span class="fin-of">· ${catTotal > 0 ? Math.round((c.amount / catTotal) * 100) : 0}%</span></span></div>
@@ -4804,9 +4870,18 @@ function onFinanceGridClick(e) {
     // Same conditions as the offer: stored history must cover the whole month.
     const month = financeViewMonth;
     const txns = financeLabeledTxns();
-    if (month === financeCurrentMonthKey() || !financeStoreActive() || !financeTxnsCoverMonth(txns, month, financeCurrentMonthKey())) return;
+    if (month === financeCurrentMonthKey() || financeMonthClosed(month) || !financeStoreActive() || !financeTxnsCoverMonth(txns, month, financeCurrentMonthKey())) return;
     if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
     state.financeMonthActuals[month] = financeMonthEntry(txns, month, financeTxnPortions);
+    persist();
+    renderFinancePage();
+    return;
+  }
+  if (action === "close-month" || action === "reopen-month") {
+    const month = financeViewMonth;
+    if (!(month < financeCurrentMonthKey())) return;
+    if (!state.financeClosedMonths || typeof state.financeClosedMonths !== "object") state.financeClosedMonths = {};
+    state.financeClosedMonths[month] = action === "close-month" ? { at: new Date().toISOString() } : false;
     persist();
     renderFinancePage();
     return;

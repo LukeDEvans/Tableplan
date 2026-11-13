@@ -22477,6 +22477,25 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-truth-amt { font-weight: 800; white-space: nowrap; }
 .fin-truth-go { color: var(--muted); font-size: 1.1rem; }
 .fin-truth-amt.is-over { color: #b3261e; }
+.fin-close-checks { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 4px; font-size: 0.8rem; font-weight: 500; color: var(--muted); }
+.fin-close-check.is-ok { color: #17603a; }
+/* Where it went: one whole split by budget group. Validated categorical slots
+   (dataviz palette, light vs #fffdf8, dark vs #20221f); 0 = neutral. */
+.fin-card { --fin-s1: #2a78d6; --fin-s2: #eb6834; --fin-s3: #1baf7a; --fin-s4: #eda100; --fin-s5: #e87ba4; --fin-s6: #008300; --fin-s7: #6250d6; --fin-s8: #e34948; --fin-s0: color-mix(in srgb, var(--ink) 28%, transparent); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .fin-card { --fin-s1: #3987e5; --fin-s2: #d95926; --fin-s3: #199e70; --fin-s4: #c98500; --fin-s5: #d55181; --fin-s6: #008300; --fin-s7: #9085e9; --fin-s8: #e66767; } }
+:root[data-theme="dark"] .fin-card { --fin-s1: #3987e5; --fin-s2: #d95926; --fin-s3: #199e70; --fin-s4: #c98500; --fin-s5: #d55181; --fin-s6: #008300; --fin-s7: #9085e9; --fin-s8: #e66767; }
+.fin-share { margin: 4px 0 12px; }
+.fin-share-bar { display: flex; gap: 2px; height: 8px; }
+.fin-share-seg { display: block; min-width: 3px; border-radius: 999px; }
+.fin-share-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 0.8rem; color: var(--muted); }
+.fin-share-key { display: inline-flex; align-items: center; gap: 6px; }
+.fin-share-key b { color: var(--ink); font-weight: 700; }
+.fin-share-dot { width: 8px; height: 8px; border-radius: 999px; }
+.fin-card .s0 { background: var(--fin-s0); } .fin-card .s1 { background: var(--fin-s1); } .fin-card .s2 { background: var(--fin-s2); } .fin-card .s3 { background: var(--fin-s3); } .fin-card .s4 { background: var(--fin-s4); }
+.fin-card .s5 { background: var(--fin-s5); } .fin-card .s6 { background: var(--fin-s6); } .fin-card .s7 { background: var(--fin-s7); } .fin-card .s8 { background: var(--fin-s8); }
+.fin-spark { flex: none; width: 64px; height: 20px; margin: 0 8px; }
+.fin-spark path { fill: none; stroke: var(--fin-s1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.fin-spark circle { fill: var(--fin-s1); }
 .fin-month-line + .fin-budget-bar { margin: 0 2px 8px; }
 .fin-month-line + .fin-budget-bar + .fin-truth-row { border-top: none; }
 /* Laptop: Insights' cards flow into two columns instead of one long stack. */
