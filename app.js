@@ -38,7 +38,7 @@ import { normalizeSportsPrefs, dateKeyOf, shiftDateKey } from './sports-model.js
 import { dynamicTheme, rankedGamedayTeams, nextGamedayCheckMs, teamTheme, nextHoliday } from './theme-dynamic.js';
 import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanViewName, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
-import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
+import { createFinanceModule, financeNudgeInstance, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
 import { normalizeContacts, normalizeContactGroups, createContactsModule, buildContactsVcf } from './contacts.js';
 import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
@@ -369,7 +369,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt", "financeMovedOut"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt", "financeMovedOut", "financeClosedMonths", "financeSettlements", "financeTxnTax", "financeTxnTrip"],
   config:    ["mailAiSettings", "mailMoveMemory", "themeMode", "collapsedSections", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -388,13 +388,9 @@ const STATE_SECTIONS = {
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
 // 7 (2026-09-30): financeTxnSourceSetAt added (financeTxnSource is latest-choice-wins).
-// NEXT: 8, with the deploy that switches account moves on (FINANCE_SPLIT_DESIGN.md
-//   §8.6) — for financeMovedOut (what a move between Household and Personal took out
-//   of a finance row). Held at 7 on purpose (Luke, 2026-11-12: no deploy until the
-//   app-wide work is done): a bump now would stop the not-yet-deployed web app
-//   saving finance. Safe meanwhile: no move can run before that deploy, and the
-//   database trigger alone keeps financeMovedOut and strips what it lists.
-const STATE_SCHEMA_VERSION = 7;
+// 8 (2026-11-12 deploy): financeMovedOut (account moves, FINANCE_SPLIT_DESIGN.md §8.6),
+//   financeClosedMonths, financeSettlements, financeTxnTax, financeTxnTrip.
+const STATE_SCHEMA_VERSION = 8;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -2030,10 +2026,15 @@ const _finance = createFinanceModule({
   writeSupabaseJson: (...a) => writeSupabaseJson(...a),
   // The one receipts list (state.receipts) is Shop-owned; Finance reads and
   // links through this interface (RECEIPTS.md). Thunks: groceries is created below.
-  receiptsForFinance: (...a) => receiptsForFinance(...a),
+  receiptsForFinance: (...a) => receiptsForFinance(...a).filter((r) => r.view !== "personal" || currentViewKey() === "personal"),
   importFinanceInboxReceipts: (...a) => importFinanceInboxReceipts(...a),
   linkReceiptToFinanceTxn: (...a) => linkReceiptToFinanceTxn(...a),
   openReceiptDetail: (...a) => openReceiptDetail(...a),
+  // A receipt scanned in Finance's split editor is filed in Document like any scan.
+  queueReceiptFile: (files, opts) => queueReceiptForDocuments(files, opts),
+  memberName: (userId) => (userId === authSession?.user?.id ? "You" : groupMembers.find((gm) => gm.user_id === userId)?.display_name || "A household member"),
+  currentViewKey: () => currentViewKey(),
+  onFinanceCountChanged: () => { scheduleReminderSync(); },
 });
 const {
   financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions,
@@ -2054,6 +2055,10 @@ const {
 // record (Decision #2b) — the live list is state.persistentManualGroceries.
 const _groceries = createGroceriesModule({
   state, elements, persist, meals, prepDays,
+  // Personal receipts (FINANCE_AUDIT §8): only people with a Personal view can mark
+  // one, and the Household view never lists them.
+  canMarkPersonal: () => currentViewList().includes("personal"),
+  showPersonalReceipts: () => currentViewKey() === "personal",
   handOff: (...a) => handOff(...a),
   getHomeLocation: () => homeLocation(),
   getActiveAppArea: () => activeAppArea,
@@ -2194,6 +2199,10 @@ const {
 // recipe-view close handler via the exposed onRecipeViewDialogClose.
 const _recipes = createRecipesModule({
   state, elements, persist, render, trashItemTemplate,
+  // What a recipe costs, from past receipt prices (Shop's price history).
+  recipeCost: (recipe, scale) => { try { return _groceries.estimateRecipeCost(recipe, scale); } catch { return null; } },
+  // Grocery spending vs budget this month (Finance), for budget-friendly picks.
+  groceryPace: () => { try { return isPageEnabled("finance") ? _finance.financeGroceryPace() : null; } catch { return null; } },
   showMailToast: (...a) => showMailToast(...a),
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
@@ -2297,6 +2306,7 @@ const {
 // infra + calendar readers + eat shell stay in app.js and are injected. Dual calendar list
 // preserved (Decision #1 not applied). Legacy week.manualGroceries untouched (Decision #2b).
 const _mealplan = createMealplanModule({
+  groceryPace: () => { try { return isPageEnabled("finance") ? _finance.financeGroceryPace() : null; } catch { return null; } },
   getHomeLocation: () => homeLocation(),
   state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys,
   getActiveAppArea: () => activeAppArea,
@@ -3236,6 +3246,17 @@ function bindEvents() {
   elements.addEditReceiptLineBtn.addEventListener("click", () => addEditReceiptLine());
   elements.deleteReceiptBtn.addEventListener("click", deleteReceipt);
   elements.receiptEditForm.addEventListener("submit", saveReceiptEdit);
+  // Inventory › rooms: whether scanned grocery receipts fill Inventory (receipt-pantry.js).
+  const fromReceipts = document.getElementById("inventoryFromReceiptsToggle");
+  if (fromReceipts) {
+    const syncToggle = () => { fromReceipts.checked = state.groceryPricingSettings?.pantryFromReceipts !== false; };
+    syncToggle();
+    document.getElementById("inventoryRoomsDialog")?.addEventListener("focusin", syncToggle);
+    fromReceipts.addEventListener("change", () => {
+      state.groceryPricingSettings = normalizeGroceryPricingSettings({ ...(state.groceryPricingSettings || {}), pantryFromReceipts: fromReceipts.checked });
+      persist();
+    });
+  }
   elements.inventoryBoxDialog.addEventListener("click", closeDialogOnBackdropClick);
   document.querySelector("#closeInventoryBoxDialogBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
   document.querySelector("#cancelInventoryBoxBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
@@ -5374,7 +5395,49 @@ function syncOwnMealPlanShare() {
   };
 }
 
+// Receipts live in their own table (receipts-sync.js, FINANCE_AUDIT §10). Read at
+// start-up and on returning to the app; this device's changes are sent a few
+// seconds after a save. Household receipts also stay in the grocery row until
+// every device has this build (then they come out of it).
+let receiptsSync = null;
+let receiptsSyncTimer = null;
+async function receiptsSyncer() {
+  if (receiptsSync) return receiptsSync;
+  const [{ createReceiptsSync }, { createRestTransport }] = await Promise.all([import("./receipts-sync.js"), import("./messaging/server.js")]);
+  receiptsSync ||= createReceiptsSync({
+    transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+    store: { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) },
+    getReceipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
+    setReceipts: (list, { removed = [] } = {}) => {
+      recordDeletions("receipts", removed);
+      state.receipts = normalizeReceipts(list);
+      persist();
+      renderAfterReceiptsSync();
+    },
+    scopes: () => ({ groupId: userGroup?.id || "", userId: authSession?.user?.id || "" }),
+    isRemoved: (id) => deletedIdsFor("receipts").includes(String(id)),
+    normalize: (r) => normalizeReceipts([r])[0] || r,
+  });
+  return receiptsSync;
+}
+function syncReceiptsTable({ pull = true } = {}) {
+  if (localDevMode || !sharedStorageReady || !userGroup?.id || !authSession?.user?.id) return;
+  receiptsSyncer().then((s) => s.sync({ pull })).then(() => movePersonalReceiptFilesSoon()).catch((e) => console.warn("[receipts] sync:", e?.message || e));
+}
+function scheduleReceiptsPush() {
+  clearTimeout(receiptsSyncTimer);
+  receiptsSyncTimer = setTimeout(() => syncReceiptsTable({ pull: false }), 4000);
+}
+function renderAfterReceiptsSync() {
+  try {
+    const area = getActiveAppArea();
+    if (area === "finance") _finance.renderFinancePage();
+    else if (area === "documents") { /* Document re-reads receipt info on its next draw */ }
+  } catch { /* best-effort */ }
+}
+
 function persist() {
+  if (sharedStorageReady) scheduleReceiptsPush();
   state.stateUpdatedAt = new Date().toISOString();
   stampChangedSettings();
   syncOwnMealPlanShare();
@@ -5634,7 +5697,7 @@ function defaultState() {
     groceryItemLocations: {},
     groceryStoreItemSections: {},
     groceryPriceObservations: [],
-    groceryPricingSettings: { enabled: false, extraStoreCost: 5 },
+    groceryPricingSettings: { enabled: false, extraStoreCost: 5, pantryFromReceipts: true },
     receipts: [],
     receiptItemMappings: {},
     priceHistory: [],
@@ -5703,6 +5766,10 @@ function defaultState() {
     // unlabeled charges drop out of the "to label" notifications.
     financeLabelSkips: {},
     financeLabelSnoozes: {},
+    financeClosedMonths: {},
+    financeSettlements: [],
+    financeTxnTax: {},
+    financeTxnTrip: {},
     // Notifications swipe-deck: transactions swiped LEFT are removed from the
     // deck (id -> true) but keep a red "needs confirming" dot on the txn list;
     // the dot clears only when the id is explicitly confirmed (financeTxnConfirmed).
@@ -5913,6 +5980,14 @@ function normalizeState(parsed) {
     financeDismissedAlerts: (parsed?.financeDismissedAlerts && typeof parsed.financeDismissedAlerts === "object") ? parsed.financeDismissedAlerts : {},
     financeLabelSkips: (parsed?.financeLabelSkips && typeof parsed.financeLabelSkips === "object") ? parsed.financeLabelSkips : {},
     financeLabelSnoozes: (parsed?.financeLabelSnoozes && typeof parsed.financeLabelSnoozes === "object") ? parsed.financeLabelSnoozes : {},
+    // Months closed in Finance: { "YYYY-MM": { at } } or false once reopened (a
+    // union-merged map, so reopening writes false rather than deleting).
+    financeClosedMonths: (parsed?.financeClosedMonths && typeof parsed.financeClosedMonths === "object") ? parsed.financeClosedMonths : {},
+    // "Paid the household back" records: { id, by, amount, at } (finance-settle.js).
+    financeSettlements: Array.isArray(parsed?.financeSettlements) ? parsed.financeSettlements.filter((s) => s && s.id) : [],
+    // Tax-time tags ({ txnId: kind | "none" }) and trip tags ({ txnId: tripId | "" }); finance-tags.js.
+    financeTxnTax: (parsed?.financeTxnTax && typeof parsed.financeTxnTax === "object") ? parsed.financeTxnTax : {},
+    financeTxnTrip: (parsed?.financeTxnTrip && typeof parsed.financeTxnTrip === "object") ? parsed.financeTxnTrip : {},
     financeNotifDismissed: (parsed?.financeNotifDismissed && typeof parsed.financeNotifDismissed === "object") ? parsed.financeNotifDismissed : {},
     financeTxnConfirmed: (parsed?.financeTxnConfirmed && typeof parsed.financeTxnConfirmed === "object") ? parsed.financeTxnConfirmed : {},
     financeTxnReceipts: normalizeFinanceTxnReceipts(parsed?.financeTxnReceipts),
@@ -7351,6 +7426,7 @@ function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
     "inventoryBoxes", "inventoryItems",
     "groceryStores", "groceryPriceObservations", "priceHistory",
     "receipts",
+    "financeSettlements",
     // Fitness
     "workouts",
     // Health & food
@@ -7476,7 +7552,7 @@ function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
     // labels, splits, renames, sign-flips, return links, or month history.
     "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
-    "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes",
+    "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeClosedMonths", "financeTxnTax", "financeTxnTrip",
     "financeNotifDismissed", "financeTxnConfirmed", "financeTxnReceipts",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
@@ -7892,6 +7968,7 @@ async function runHydrateStateFromSharedStorage() {
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
+      syncReceiptsTable();
       markDisplayPrefsKnown(); // theme copy + iPhone icon follow the loaded prefs from here
       hideHydrationOverlay(); // data is in — never leave the "Syncing…" cover up
       backfillHistoryLog();
@@ -7989,7 +8066,7 @@ function wireNewerBuildCheck() {
   if (isNativeApp() || !/^https?:$/.test(window.location.protocol)) return;
   setTimeout(checkForNewerBuild, 15000);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") checkForNewerBuild();
+    if (document.visibilityState === "visible") { checkForNewerBuild(); syncReceiptsTable(); }
   });
 }
 
@@ -8350,6 +8427,9 @@ function extractSectionData(keys, source = state) {
   // full text stays in memory during a session and is re-fetched via
   // ensureEpisodeDescription() when a user actually opens the notes.
   if (Array.isArray(obj.podcasts)) obj.podcasts = storedPodcasts(obj.podcasts, source);
+  // A Personal purchase's receipt lives only in the receipts table under the
+  // person's own scope; it never rides the shared grocery row.
+  if (Array.isArray(obj.receipts) && obj.receipts.some((r) => r?.view === "personal")) obj.receipts = obj.receipts.filter((r) => r?.view !== "personal");
   // Article bodies whose bytes are safely in the content-store backstop no longer
   // ride the synced media section (the Disk-IO win — the section was rewritten
   // with full article text on every media interaction). The reader re-reads them
@@ -9224,6 +9304,10 @@ function documentsDeps() {
     toast: (text) => showMailToast(text),
     openMessages: () => { localStorage.setItem(MESSAGE_TAB_KEY, "messages"); showMailApp(); },
     fileReceipts: (scope) => fileWaitingReceipts(scope),
+    movePersonalReceipts: () => movePersonalReceiptFilesSoon(),
+    // A receipt file shows what was read from it and whether it's matched to a charge.
+    receiptInfo: (receiptId) => _finance.financeReceiptInfo(receiptId),
+    openReceipt: (receiptId) => openReceiptDetail(receiptId),
   };
 }
 
@@ -18162,8 +18246,8 @@ function scanReceiptFromHeader(files, options = {}) {
   const images = files.filter((f) => /^image\//.test(f.type || ""));
   if (!images.length) return;
   const { camera = false, ...scanOptions } = options;
-  openReceiptScanWithFiles(images, scanOptions);
-  queueReceiptForDocuments(images, { camera });
+  const receiptId = openReceiptScanWithFiles(images, scanOptions);
+  queueReceiptForDocuments(images, { camera, receiptId });
 }
 
 // Every scanned receipt is also kept in Household's Document › Receipts, an everyday
@@ -18183,12 +18267,12 @@ function receiptOutbox() {
   })().catch((e) => { receiptOutboxPromise = null; throw e; });
   return receiptOutboxPromise.then((o) => o.outbox);
 }
-async function queueReceiptForDocuments(files, { camera = false } = {}) {
+async function queueReceiptForDocuments(files, { camera = false, receiptId = "" } = {}) {
   if (localDevMode || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return;
   const scope = userGroup.id; // filed only into the household it was scanned in
   try {
     const pages = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
-    await (await receiptOutbox()).queue(pages, { scope, camera });
+    await (await receiptOutbox()).queue(pages, { scope, camera, receiptId });
   } catch { return; /* best-effort: the receipt itself is unaffected */ }
   fileWaitingReceipts(scope).catch(() => {}); // now; whatever fails waits for the next try
 }
@@ -18221,6 +18305,35 @@ function fileWaitingReceipts(scope) {
     });
   })().finally(() => { receiptFiling = null; });
   return receiptFiling;
+}
+
+// Personal receipts folder (Luke, 2026-11-12): a receipt marked Personal has its
+// Document file moved from Household › Receipts to the owner's Personal › Receipts.
+// Runs after the receipts table sync (the database checks the receipt is this
+// person's Personal one there), only for Personal receipts not yet handled this session.
+const personalReceiptFilesHandled = new Set();
+let personalReceiptMove = null;
+function movePersonalReceiptFilesSoon() {
+  const uid = authSession?.user?.id;
+  if (localDevMode || !uid || !userGroup?.id || !isPageEnabled("documents")) return null;
+  const ids = (Array.isArray(state.receipts) ? state.receipts : [])
+    .filter((r) => r?.view === "personal" && !personalReceiptFilesHandled.has(r.id)).map((r) => r.id);
+  if (!ids.length) return null;
+  personalReceiptMove ||= (async () => {
+    const [{ movePersonalReceiptFiles, OUTBOX_LOCK }, { createEverydayLibrary }, { createDocumentsStorage, edgePresigner }, { createRestTransport }, { withLock }] = await Promise.all([
+      import("./documents/outbox.js"), import("./documents/everyday.js"), import("./documents/storage.js"),
+      import("./messaging/server.js"), import("./messaging/keystore.js"),
+    ]);
+    const library = createEverydayLibrary({
+      transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+      storage: createDocumentsStorage({ presign: edgePresigner({ functionsUrl: `${supabaseBaseUrl()}/functions/v1`, getToken: async () => authSession?.access_token || "" }), tier: "everyday" }),
+    });
+    const out = await movePersonalReceiptFiles({ library, from: userGroup.id, to: `u-${uid}`, personalIds: ids, lock: (fn) => withLock(OUTBOX_LOCK, fn) });
+    if (!out.failed) ids.forEach((id) => personalReceiptFilesHandled.add(id));
+    if (out.moved && activeAppArea === "documents") documentsUi?.reload?.();
+    return out;
+  })().catch((e) => { console.warn("[receipts] personal files:", e?.message || e); return null; }).finally(() => { personalReceiptMove = null; });
+  return personalReceiptMove;
 }
 
 // The iPhone's text recognition → printed rows per page (receipt-reconcile.js).
@@ -27597,11 +27710,29 @@ function scheduleReminderSync(delay = 2000) {
   reminderSyncTimer = window.setTimeout(syncNativeReminders, delay);
 }
 
+// The weekly Finance nudge rides the same schedule (iOS keeps one set of pending
+// notifications, and the reminder sync cancels anything it didn't ask for). The
+// count is remembered on this device so a cold start doesn't drop the nudge.
+const FINANCE_NUDGE_COUNT_KEY = "live-finance-nudge-count";
+function financeNudgeForReminders() {
+  try {
+    if (!isPageEnabled("finance") || !_finance.financeAlertPref("weeklyNudge")) return [];
+    let count = _finance.financeToCategorizeCount();
+    if (count == null) count = Number(localStorage.getItem(FINANCE_NUDGE_COUNT_KEY)) || 0;
+    else localStorage.setItem(FINANCE_NUDGE_COUNT_KEY, String(count));
+    const nudge = financeNudgeInstance(count);
+    // Return windows closing soon (receipt-returns.js), at most 20 pending.
+    let returns = [];
+    try { returns = _finance.financeReturnReminders().sort((a, b) => a.fireAt - b.fireAt).slice(0, 20); } catch { returns = []; }
+    return [...(nudge ? [nudge] : []), ...returns];
+  } catch { return []; }
+}
+
 function syncNativeReminders() {
   const native = reminderNative();
   if (!native) return Promise.resolve(null);
   try {
-    return native.sync(currentReminderInstances());
+    return native.sync([...currentReminderInstances(), ...financeNudgeForReminders()]);
   } catch (error) {
     console.warn("Reminder scheduling failed.", error);
     return Promise.resolve(null);
@@ -27628,6 +27759,7 @@ async function ensureReminderPermission() {
 
 // A tapped reminder opens its event (or at least its day) in the calendar.
 function openReminderTarget({ kind, eventId, date } = {}) {
+  if (kind === "finance") { showFinanceApp(); return; }
   if (!date) return;
   planViewDate = new Date(`${date}T00:00:00`);
   showPlanApp();
@@ -28066,6 +28198,14 @@ function buildPlanAppDataIndex() {
       }
     }
   }
+  // Paydays from Finance's pay schedules, beside the bills (same "Bills" overlay).
+  try {
+    const from = new Date(); from.setMonth(from.getMonth() - 2, 1);
+    const to = new Date(); to.setMonth(to.getMonth() + 15, 0);
+    for (const p of (_finance.financePaydays(dateKeyFromDate(from), dateKeyFromDate(to)) || [])) {
+      push(p.date, { id: `finpay-${p.personId}-${p.date}`, title: `Payday · ${p.name} ${formatFinMoney(p.amount)}`, date: p.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.finance, source: "finance", calendarName: "Bills", readOnly: true });
+    }
+  } catch { /* Finance not loaded */ }
   return byDate;
 }
 
@@ -46364,7 +46504,12 @@ function renderTravelBudget(trip, el = null) {
   if (!trip.budget) trip.budget = { total: 0, categories: Object.fromEntries(TRAVEL_BUDGET_CATS.map(c => [c, { budgeted: 0, spent: 0 }])) };
   const budget = trip.budget;
   const totalBudgeted = Object.values(budget.categories).reduce((s, c) => s + (c.budgeted || 0), 0) || budget.total || 0;
-  const totalSpent = (trip.expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
+  // Bank charges tagged to this trip in Finance count too (finance-tags.js), and
+  // charges dated during the trip are offered to add with one tap.
+  let bank = { charges: [], candidates: [] };
+  try { if (isPageEnabled("finance")) bank = _finance.financeTripSpend(trip.id) || bank; } catch { /* Finance not loaded */ }
+  const bankSpent = bank.charges.reduce((s, c) => s + (c.amount || 0), 0);
+  const totalSpent = (trip.expenses || []).reduce((s, e) => s + (e.amount || 0), 0) + bankSpent;
   const pct = totalBudgeted ? Math.min(100, Math.round(totalSpent / totalBudgeted * 100)) : 0;
   const overBudget = totalSpent > totalBudgeted && totalBudgeted > 0;
 
@@ -46406,7 +46551,31 @@ function renderTravelBudget(trip, el = null) {
         <button class="travel-add-day-btn" type="button" id="travelAddExpenseBtn" style="font-size:0.78rem">+ Add expense</button>
       </div>
       <div id="travelExpensesList">${expenseRows}</div>
-    </div>`;
+    </div>
+    ${bank.charges.length || bank.candidates.length ? `
+    <div class="travel-expenses-section">
+      <div class="travel-expenses-header"><span class="travel-expenses-title">From your bank</span><span class="travel-expense-amount">$${bankSpent.toFixed(2)}</span></div>
+      ${bank.charges.map((c) => `
+      <div class="travel-expense-row">
+        <span class="travel-expense-date">${escapeHtml(c.date)}</span>
+        <span class="travel-expense-desc">${escapeHtml(c.name)}</span>
+        <span class="travel-expense-amount">$${c.amount.toFixed(2)}</span>
+        <button class="travel-expense-remove" type="button" data-bank-untag="${escapeHtml(c.id)}" aria-label="Not part of this trip">✕</button>
+      </div>`).join("")}
+      ${bank.candidates.length ? `
+      <div class="travel-bank-candidates">
+        <div class="fin-hint">Charged during the trip — add the ones that belong to it:</div>
+        ${bank.candidates.slice(0, 30).map((c) => `
+        <div class="travel-expense-row is-candidate">
+          <span class="travel-expense-date">${escapeHtml(c.date)}</span>
+          <span class="travel-expense-desc">${escapeHtml(c.name)}</span>
+          <span class="travel-expense-amount">$${c.amount.toFixed(2)}</span>
+          <button class="secondary-btn compact-btn" type="button" data-bank-tag="${escapeHtml(c.id)}">Add</button>
+        </div>`).join("")}
+      </div>` : ""}
+    </div>` : ""}`;
+  el.querySelectorAll("[data-bank-tag]").forEach((b) => b.addEventListener("click", () => { _finance.financeTagTrip(b.dataset.bankTag, trip.id); renderTravelBudget(trip, el); }));
+  el.querySelectorAll("[data-bank-untag]").forEach((b) => b.addEventListener("click", () => { _finance.financeTagTrip(b.dataset.bankUntag, ""); renderTravelBudget(trip, el); }));
 
   el.querySelectorAll("[data-budget-cat]").forEach(inp => {
     inp.addEventListener("change", e => {
