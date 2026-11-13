@@ -73,7 +73,8 @@ import { createNativeReminderScheduler } from './calendar/reminders-native.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, nativeExtractBlockReason, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
-import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_TEXT_PREVIEW_MAX, attachmentViewKind, attachmentBlobType, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
+import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
+import { showMailAttachmentViewer } from './mail-attachment-viewers.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { normalizeMovedOut, mergeMovedOut, stripMovedOut } from './finance-move.js';
@@ -12840,83 +12841,24 @@ async function openMailAttachment(chip) {
     const got = await loadMailAttachmentBytes({ messageId: attMessage, attachmentId: attId, filename, size: attSize });
     if (got.tooLarge) { window.open(gmailUrl, "_blank"); return; }
     if (!got.bytes) { offerMailAttachmentInGmail(got.error, gmailUrl); return; }
-    showMailAttachmentViewer({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
+    showMailAttachment({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
   } finally {
     chip.disabled = false;
     chip.classList.remove("is-loading");
   }
 }
 
-// The web viewer: a full-window dialog over the Mail page. PDFs, bitmap images
-// and plain text show inline; other files get Download (and Open in Gmail).
-// SECURITY: see mail-attachment-view.js — only inert types are ever rendered,
-// and the blob never carries the sender's declared type.
-function showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }) {
-  document.getElementById("mailAttachmentViewer")?.remove();
-  const kind = attachmentViewKind(mimeType, filename);
-  const blob = new Blob([bytes], { type: attachmentBlobType(kind, mimeType, filename) });
-  const url = kind === "pdf" || kind === "image" ? URL.createObjectURL(blob) : "";
-
-  const dlg = document.createElement("dialog");
-  dlg.id = "mailAttachmentViewer";
-  dlg.className = "mail-att-viewer";
-  dlg.setAttribute("aria-label", filename);
-  dlg.innerHTML = `
-    <div class="mail-att-viewer-bar">
-      <button class="icon-btn mail-att-viewer-close" type="button" aria-label="Close">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
-      <span class="mail-att-viewer-name"></span>
-      <button class="secondary-btn mail-att-viewer-download" type="button">Download</button>
-    </div>
-    <div class="mail-att-viewer-body"></div>`;
-  dlg.querySelector(".mail-att-viewer-name").textContent = filename;
-  const body = dlg.querySelector(".mail-att-viewer-body");
-  const downloadMailAttachment = () => {
-    saveFile(new Blob([bytes], { type: "application/octet-stream" }), filename).catch((e) => console.warn("attachment save failed", e));
-  };
-
-  if (kind === "pdf") {
-    const frame = document.createElement("iframe");
-    frame.className = "mail-att-viewer-pdf";
-    frame.title = filename;
-    frame.src = url;
-    body.appendChild(frame);
-  } else if (kind === "image") {
-    const img = document.createElement("img");
-    img.className = "mail-att-viewer-img";
-    img.alt = filename;
-    img.src = url;
-    body.appendChild(img);
-  } else if (kind === "text") {
-    const pre = document.createElement("pre");
-    pre.className = "mail-att-viewer-text";
-    let text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    if (text.length > ATTACHMENT_TEXT_PREVIEW_MAX) text = text.slice(0, ATTACHMENT_TEXT_PREVIEW_MAX) + "\n\n… (preview cut short — download for the whole file)";
-    pre.textContent = text;
-    body.appendChild(pre);
-  } else {
-    const empty = document.createElement("div");
-    empty.className = "mail-att-viewer-empty";
-    empty.innerHTML = `<p>This kind of file can't be previewed here.</p>
-      <div class="mail-att-viewer-actions">
-        <button class="primary-btn" type="button" data-att-download>Download</button>
-        <a class="secondary-btn" target="_blank" rel="noopener noreferrer">Open in Gmail</a>
-      </div>`;
-    empty.querySelector("a").href = gmailUrl;
-    empty.querySelector("[data-att-download]").addEventListener("click", () => downloadMailAttachment());
-    dlg.querySelector(".mail-att-viewer-download").hidden = true;
-    body.appendChild(empty);
-  }
-
-  dlg.querySelector(".mail-att-viewer-download").addEventListener("click", downloadMailAttachment);
-  dlg.querySelector(".mail-att-viewer-close").addEventListener("click", () => dlg.close());
-  dlg.addEventListener("close", () => {
-    if (url) URL.revokeObjectURL(url);
-    dlg.remove();
+// The web viewer lives in mail-attachment-viewers.js; this is what it may reach
+// outside Mail: saving the file, the event editor and the contacts import.
+function showMailAttachment({ bytes, filename, mimeType, gmailUrl }) {
+  let timeZone = "";
+  try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { /* no Intl zone */ }
+  return showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }, {
+    saveFile,
+    timeZone,
+    addInviteEvent: (prefill) => openPlanEventDialog(prefill.date, null, prefill),
+    addContacts: (vcfText) => importContactsVcf(vcfText)
   });
-  document.body.appendChild(dlg);
-  dlg.showModal();
 }
 
 // Renders each message body the way Gmail does: HTML mail goes into a
@@ -29023,6 +28965,9 @@ function openPlanEventDialog(date, eventId, prefill) {
       if (prefill.allDay === false) { elements.planEventAllDay.checked = false; elements.planTimeFields.hidden = false; }
       if (prefill.startTime) setPlanTimeField("planEventStart", prefill.startTime);
       if (prefill.endTime) setPlanTimeField("planEventEnd", prefill.endTime);
+      // An emailed invite (Mail's attachment viewer) also brings notes and a place.
+      if (prefill.notes) elements.planEventNotes.value = prefill.notes;
+      if (prefill.location) elements.planEventLocation.value = prefill.location;
     }
   }
   // Recurrence controls (edit a recurring event = edit the whole series). A

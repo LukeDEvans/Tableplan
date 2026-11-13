@@ -21,7 +21,7 @@ changes to Mail only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `mail-frame.js`, `mail-attachment-view.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/gmail-attachment.mjs`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
+- files: `mail-frame.js`, `mail-attachment-view.js`, `mail-attachment-viewers.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/gmail-attachment.mjs`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
 - state: `mail*`
 
 ## Your scope (edit these)
@@ -73,12 +73,21 @@ changes to Mail only.
 - **Attachments open inside the app** (Luke, 2026-10-15): every attachment, not just
   PDFs. iPhone → the `AttachmentPreview` plugin (`ios/App/App/AttachmentPreviewPlugin.swift`,
   Quick Look + Share), which downloads straight from `gmail-attachment.mjs`; web → the
-  `#mailAttachmentViewer` dialog (PDF / bitmap images / plain text inline, Download for
-  the rest). `gmail-attachment.mjs` streams raw bytes (Netlify's streamed limit is
+  `#mailAttachmentViewer` dialog, drawn by `mail-attachment-viewers.js` (PDF / bitmap
+  images / plain text inline; since 2026-11-13 a CSV as a table, a calendar invite as
+  its events with **Add to Calendar** — the event editor opens filled in, nothing is
+  saved until Luke saves it — a contact card with **Add to Contacts** through
+  `importContactsVcf`, audio / video in a player; Download for the rest). Luke wants
+  every attachment to open inside the app (2026-11-13): Word, spreadsheets and slides
+  are to open in the Document page's own editors once those are on `main`; HTML / .eml
+  and zip are not built yet. The viewer reaches other pages only through what app.js
+  injects (`showMailAttachment`). `gmail-attachment.mjs` streams raw bytes (Netlify's streamed limit is
   20MB, vs ~6MB buffered, which with base64 meant 3.5MB); over ~19.5MB → Gmail. The
   old base64 `attachment` action stays as the fallback (and serves `cid:` images).
   **Security:** the sender controls the declared type — never render HTML/SVG in the
-  page, never create a blob with the sender's type (`mail-attachment-view.js`).
+  page, never create a blob with the sender's type (`mail-attachment-view.js`), and put
+  every value from a file in through `textContent` (CSV cells, invite and contact
+  fields). A contact's photo shows only when it is an inline bitmap; never a URL.
 
 ## Domain landmines (do NOT change without flagging)
 - **The sweep is bounded and idempotent** (ARCHITECTURE §8): claims a run atomically,
