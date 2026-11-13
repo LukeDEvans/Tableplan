@@ -369,7 +369,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt", "financeMovedOut", "financeClosedMonths", "financeSettlements"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt", "financeMovedOut", "financeClosedMonths", "financeSettlements", "financeTxnTax", "financeTxnTrip"],
   config:    ["mailAiSettings", "mailMoveMemory", "themeMode", "collapsedSections", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -5756,6 +5756,8 @@ function defaultState() {
     financeLabelSnoozes: {},
     financeClosedMonths: {},
     financeSettlements: [],
+    financeTxnTax: {},
+    financeTxnTrip: {},
     // Notifications swipe-deck: transactions swiped LEFT are removed from the
     // deck (id -> true) but keep a red "needs confirming" dot on the txn list;
     // the dot clears only when the id is explicitly confirmed (financeTxnConfirmed).
@@ -5971,6 +5973,9 @@ function normalizeState(parsed) {
     financeClosedMonths: (parsed?.financeClosedMonths && typeof parsed.financeClosedMonths === "object") ? parsed.financeClosedMonths : {},
     // "Paid the household back" records: { id, by, amount, at } (finance-settle.js).
     financeSettlements: Array.isArray(parsed?.financeSettlements) ? parsed.financeSettlements.filter((s) => s && s.id) : [],
+    // Tax-time tags ({ txnId: kind | "none" }) and trip tags ({ txnId: tripId | "" }); finance-tags.js.
+    financeTxnTax: (parsed?.financeTxnTax && typeof parsed.financeTxnTax === "object") ? parsed.financeTxnTax : {},
+    financeTxnTrip: (parsed?.financeTxnTrip && typeof parsed.financeTxnTrip === "object") ? parsed.financeTxnTrip : {},
     financeNotifDismissed: (parsed?.financeNotifDismissed && typeof parsed.financeNotifDismissed === "object") ? parsed.financeNotifDismissed : {},
     financeTxnConfirmed: (parsed?.financeTxnConfirmed && typeof parsed.financeTxnConfirmed === "object") ? parsed.financeTxnConfirmed : {},
     financeTxnReceipts: normalizeFinanceTxnReceipts(parsed?.financeTxnReceipts),
@@ -7535,7 +7540,7 @@ function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
     // labels, splits, renames, sign-flips, return links, or month history.
     "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
-    "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeClosedMonths",
+    "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeClosedMonths", "financeTxnTax", "financeTxnTrip",
     "financeNotifDismissed", "financeTxnConfirmed", "financeTxnReceipts",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
@@ -46446,7 +46451,12 @@ function renderTravelBudget(trip, el = null) {
   if (!trip.budget) trip.budget = { total: 0, categories: Object.fromEntries(TRAVEL_BUDGET_CATS.map(c => [c, { budgeted: 0, spent: 0 }])) };
   const budget = trip.budget;
   const totalBudgeted = Object.values(budget.categories).reduce((s, c) => s + (c.budgeted || 0), 0) || budget.total || 0;
-  const totalSpent = (trip.expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
+  // Bank charges tagged to this trip in Finance count too (finance-tags.js), and
+  // charges dated during the trip are offered to add with one tap.
+  let bank = { charges: [], candidates: [] };
+  try { if (isPageEnabled("finance")) bank = _finance.financeTripSpend(trip.id) || bank; } catch { /* Finance not loaded */ }
+  const bankSpent = bank.charges.reduce((s, c) => s + (c.amount || 0), 0);
+  const totalSpent = (trip.expenses || []).reduce((s, e) => s + (e.amount || 0), 0) + bankSpent;
   const pct = totalBudgeted ? Math.min(100, Math.round(totalSpent / totalBudgeted * 100)) : 0;
   const overBudget = totalSpent > totalBudgeted && totalBudgeted > 0;
 
@@ -46488,7 +46498,31 @@ function renderTravelBudget(trip, el = null) {
         <button class="travel-add-day-btn" type="button" id="travelAddExpenseBtn" style="font-size:0.78rem">+ Add expense</button>
       </div>
       <div id="travelExpensesList">${expenseRows}</div>
-    </div>`;
+    </div>
+    ${bank.charges.length || bank.candidates.length ? `
+    <div class="travel-expenses-section">
+      <div class="travel-expenses-header"><span class="travel-expenses-title">From your bank</span><span class="travel-expense-amount">$${bankSpent.toFixed(2)}</span></div>
+      ${bank.charges.map((c) => `
+      <div class="travel-expense-row">
+        <span class="travel-expense-date">${escapeHtml(c.date)}</span>
+        <span class="travel-expense-desc">${escapeHtml(c.name)}</span>
+        <span class="travel-expense-amount">$${c.amount.toFixed(2)}</span>
+        <button class="travel-expense-remove" type="button" data-bank-untag="${escapeHtml(c.id)}" aria-label="Not part of this trip">✕</button>
+      </div>`).join("")}
+      ${bank.candidates.length ? `
+      <div class="travel-bank-candidates">
+        <div class="fin-hint">Charged during the trip — add the ones that belong to it:</div>
+        ${bank.candidates.slice(0, 30).map((c) => `
+        <div class="travel-expense-row is-candidate">
+          <span class="travel-expense-date">${escapeHtml(c.date)}</span>
+          <span class="travel-expense-desc">${escapeHtml(c.name)}</span>
+          <span class="travel-expense-amount">$${c.amount.toFixed(2)}</span>
+          <button class="secondary-btn compact-btn" type="button" data-bank-tag="${escapeHtml(c.id)}">Add</button>
+        </div>`).join("")}
+      </div>` : ""}
+    </div>` : ""}`;
+  el.querySelectorAll("[data-bank-tag]").forEach((b) => b.addEventListener("click", () => { _finance.financeTagTrip(b.dataset.bankTag, trip.id); renderTravelBudget(trip, el); }));
+  el.querySelectorAll("[data-bank-untag]").forEach((b) => b.addEventListener("click", () => { _finance.financeTagTrip(b.dataset.bankUntag, ""); renderTravelBudget(trip, el); }));
 
   el.querySelectorAll("[data-budget-cat]").forEach(inp => {
     inp.addEventListener("change", e => {

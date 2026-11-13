@@ -22479,6 +22479,11 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-truth-amt.is-over { color: #b3261e; }
 .fin-close-checks { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 4px; font-size: 0.8rem; font-weight: 500; color: var(--muted); }
 .fin-close-check.is-ok { color: #17603a; }
+.fin-txn-tags { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; }
+.fin-tag-field { display: flex; flex-direction: column; gap: 4px; min-width: 140px; flex: 1; }
+.fin-tax-row { padding: 6px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.88rem; }
+.travel-bank-candidates { margin-top: 8px; }
+.travel-expense-row.is-candidate { opacity: 0.85; }
 .fin-sub-item { padding: 8px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
 .fin-sub-top { display: flex; gap: 10px; align-items: baseline; }
 .fin-sub-top .fin-sub-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

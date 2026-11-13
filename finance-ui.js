@@ -11,6 +11,7 @@ import { linkOutAttrs } from './link-out.js';
 import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
 import { financeOwedBalances } from './finance-settle.js';
 import { subscriptionReview, cashForecast, everydaySpendPerDay, goalProgress } from './finance-plan.js';
+import { TAX_KINDS, taxLabel, taxTagFor, taxYearSummary, taxYearCsv, tripCandidates, tripCharges } from './finance-tags.js';
 import { banksForAccounts, billerForBill, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
@@ -3261,6 +3262,40 @@ function financeToCategorizeCount() {
   return financeDeckWindow(financeLabeledTxns()).filter((t) => !t.label && (Number(t.amount) || 0) < 0 && !t.pending).length;
 }
 
+// Tax-time and trip tags (finance-tags.js). Tax: picked by hand, else from the
+// category's name. Trip: only by hand (charges dated during a trip are offered).
+function financeTaxTag(t) {
+  const label = t?.label === "split" ? (t.split?.[0]?.label || "") : (t?.label || "");
+  return taxTagFor(t, { picked: state.financeTxnTax || {}, categoryName: label.startsWith("cat:") ? financeTxnLabelName(label) : "" });
+}
+function financeTrips() {
+  return (Array.isArray(state.trips) ? state.trips : []).filter((t) => t && t.id && !t.deletedAt && !t.archived);
+}
+// For the trip's Budget tab (app.js): its tagged charges and the untagged ones
+// dated during it. → { charges: [...], candidates: [...] } as { id, date, name, amount }.
+function financeTripSpend(tripId) {
+  const trip = financeTrips().find((t) => t.id === tripId);
+  const txns = financeLabeledTxns();
+  const tagged = state.financeTxnTrip || {};
+  const view = (t) => ({ id: t.id, date: (t.posted || "").slice(0, 10), name: t.displayName || t.description || "", amount: -(Number(t.amount) || 0) });
+  return {
+    charges: tripCharges(txns, tripId, tagged).map(view),
+    candidates: trip ? tripCandidates(txns, trip, tagged).map(view) : [],
+  };
+}
+function financeTagTrip(txnId, tripId) {
+  if (!state.financeTxnTrip || typeof state.financeTxnTrip !== "object") state.financeTxnTrip = {};
+  // Union-merged by key across devices, so "untagged" is "", not a deletion.
+  state.financeTxnTrip[txnId] = tripId || "";
+  persist();
+}
+function exportFinanceTaxYear(year) {
+  const txns = financeLabeledTxns().map((t) => ({ ...t, name: t.displayName || t.description || "", receipt: (() => { const r = financeReceiptForTxn(t); return r ? `${r.merchant || "Receipt"} · ${r.date || ""}` : ""; })() }));
+  const summary = taxYearSummary(txns, { year, picked: state.financeTxnTax || {}, categoryNameOf: (t) => { const l = t.label === "split" ? (t.split?.[0]?.label || "") : (t.label || ""); return l.startsWith("cat:") ? financeTxnLabelName(l) : ""; } });
+  saveFile(new Blob([taxYearCsv(summary)], { type: "text/csv" }), `tax-${year}.csv`, { title: `Tax ${year}` })
+    .catch(() => showMailToast?.("Couldn't export on this device."));
+}
+
 // A closed month keeps its saved totals: nothing recomputes them until it's reopened.
 function financeMonthClosed(month) {
   const c = state.financeClosedMonths;
@@ -4046,6 +4081,30 @@ function renderFinancePage() {
         ${(t.amount || 0) < 0 ? `<button class="fin-txn-act" type="button" data-fin-action="detail-scan-receipt" data-id="${escapeHtml(t.id)}">${scanReceiptSvg}<span>Scan receipt</span></button>` : ""}
       </div>`}
 
+      ${(t.amount || 0) < 0 ? (() => {
+        const tax = financeTaxTag(t);
+        const trips = financeTrips();
+        const tripId = (state.financeTxnTrip || {})[t.id] || "";
+        const at = Date.parse(t.posted || "");
+        const during = !tripId && trips.find((tr) => tr.startDate && tr.endDate && at >= Date.parse(tr.startDate + "T00:00:00") - 86400000 && at <= Date.parse(tr.endDate + "T23:59:59") + 2 * 86400000);
+        return `
+      <div class="fin-txn-card-section fin-txn-tags">
+        <label class="fin-tag-field"><span class="fin-hint">Tax</span>
+          <select class="fin-item-name" data-fin-edit="txn-tax" data-id="${escapeHtml(t.id)}" aria-label="Tax category">
+            <option value="none" ${!tax.kind ? "selected" : ""}>None</option>
+            ${TAX_KINDS.map((k) => `<option value="${k.key}" ${tax.kind === k.key ? "selected" : ""}>${escapeHtml(k.label)}${tax.kind === k.key && tax.source === "rule" ? " (from category)" : ""}</option>`).join("")}
+          </select>
+        </label>
+        ${trips.length ? `
+        <label class="fin-tag-field"><span class="fin-hint">Trip</span>
+          <select class="fin-item-name" data-fin-edit="txn-trip" data-id="${escapeHtml(t.id)}" aria-label="Trip">
+            <option value="">No trip</option>
+            ${trips.map((tr) => `<option value="${escapeHtml(tr.id)}" ${tr.id === tripId ? "selected" : ""}>${escapeHtml(tr.name || "Trip")}</option>`).join("")}
+          </select>
+        </label>
+        ${during ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-tag-trip" data-id="${escapeHtml(t.id)}" data-trip="${escapeHtml(during.id)}">During ${escapeHtml(during.name || "a trip")} — add it</button>` : ""}` : ""}
+      </div>`;
+      })() : ""}
       ${returnLinkHtml(t)}
       ${rc?.id ? `
       <div class="fin-return-box fin-receipt-email">
@@ -4646,7 +4705,21 @@ function renderFinancePage() {
           ${receiptSourceChip(r)}
         </div>`).join("")}` : ""}
     </div>` : "";
-  const insightsView = `${forecastCard}${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
+  // Tax time: this year's tagged totals and the export (finance-tags.js).
+  const taxYear = Number(monthKey.slice(0, 4));
+  const taxSummary = taxYearSummary(allTxns.map((t) => ({ ...t, name: t.displayName || t.description || "" })), {
+    year: taxYear, picked: state.financeTxnTax || {},
+    categoryNameOf: (t) => { const l = t.label === "split" ? (t.split?.[0]?.label || "") : (t.label || ""); return l.startsWith("cat:") ? financeTxnLabelName(l) : ""; },
+  });
+  const taxKinds = Object.entries(taxSummary.totals);
+  const taxCard = `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Tax time · ${taxYear}</div>
+      ${taxKinds.length ? taxKinds.map(([k, v]) => `<div class="fin-sub-top fin-tax-row"><span class="fin-sub-name">${escapeHtml(taxLabel(k))}</span><span class="fin-sub-amt">${formatFinMoney(v)}</span></div>`).join("")
+        : `<p class="fin-hint">Nothing tagged yet. Tag a transaction as a donation, medical, childcare, a 529 contribution or a business expense from its details; categories with those names are tagged for you.</p>`}
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="export-tax-year" data-year="${taxYear}">Export ${taxYear} for taxes</button>
+    </div>`;
+  const insightsView = `${forecastCard}${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}${taxCard}`;
 
   // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
   // bar + on-track note derived on the fly.
@@ -5011,6 +5084,8 @@ function onFinanceGridClick(e) {
     renderFinancePage();
     return;
   }
+  if (action === "txn-tag-trip") { financeTagTrip(btn.dataset.id, btn.dataset.trip || ""); renderFinancePage(); return; }
+  if (action === "export-tax-year") { exportFinanceTaxYear(Number(btn.dataset.year) || new Date().getFullYear()); return; }
   if (action === "settle-owed") {
     // Records that the person paid the household back what they owed right now.
     const by = btn.dataset.by || "";
@@ -5345,6 +5420,14 @@ function onFinanceGridChange(e) {
     renderFinancePage();
     return;
   }
+  if (kind === "txn-tax") {
+    if (!state.financeTxnTax || typeof state.financeTxnTax !== "object") state.financeTxnTax = {};
+    state.financeTxnTax[el.dataset.id] = el.value || "none";
+    persist();
+    renderFinancePage();
+    return;
+  }
+  if (kind === "txn-trip") { financeTagTrip(el.dataset.id, el.value); renderFinancePage(); return; }
   if (kind === "goal-name" || kind === "goal-target" || kind === "goal-current" || kind === "goal-date" || kind === "goal-account") {
     const g = (state.financeGoals || []).find((x) => x.id === el.dataset.id);
     if (!g) return;
@@ -5587,5 +5670,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financeReceiptInfo, financeToCategorizeCount, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }
