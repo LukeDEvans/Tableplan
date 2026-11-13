@@ -113,7 +113,31 @@ export const FINANCE_ACCOUNT_KINDS = ["cash", "retirement", "investment", "debt"
 // section — these are preferences, not ledger data.
 export const FINANCE_ALERTS = [
   { key: "priceChange", label: "Subscription price change", desc: "Flag when a recurring charge's amount changes vs its budget line." },
+  { key: "weeklyNudge", label: "Weekly reminder to categorize", desc: "Sunday evening on this iPhone, when transactions are waiting. Uses the same notification permission as calendar reminders." },
 ];
+
+// The weekly "N to categorize" notification, scheduled on the phone itself next to
+// calendar reminders (app.js syncNativeReminders). → { id, fireAt, title, body, kind }
+// or null. `count`: uncategorized transactions; `now`: ms. Fires the next Sunday at
+// 18:00 local, never within the next 10 minutes. The id changes with the count and
+// the week, so a changed count replaces the old notification instead of keeping it.
+export const FINANCE_NUDGE_ID_BASE = 2000000000;
+export function financeNudgeInstance(count, now = Date.now()) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (!n) return null;
+  const at = new Date(now);
+  at.setHours(18, 0, 0, 0);
+  at.setDate(at.getDate() + ((7 - at.getDay()) % 7));
+  if (at.getTime() < now + 10 * 60 * 1000) at.setDate(at.getDate() + 7);
+  const week = Math.floor(at.getTime() / (7 * 86400000)) % 100;
+  return {
+    id: FINANCE_NUDGE_ID_BASE + week * 1000 + Math.min(n, 999),
+    fireAt: at.getTime(),
+    title: "Finance",
+    body: `${n} transaction${n === 1 ? "" : "s"} to categorize`,
+    kind: "finance",
+  };
+}
 export function normalizeFinanceAccounts(raw, createId) {
   return (Array.isArray(raw) ? raw : []).map((a) => ({
     id: a?.id || createId("fin-account"),
@@ -239,7 +263,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail, queueReceiptFile } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail, queueReceiptFile, onFinanceCountChanged } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -1134,6 +1158,7 @@ async function refreshFinanceLive(force = false) {
   updateFinanceMonthActuals();
   updateFinanceRecurring();
   autoLinkFinanceReceipts();
+  try { onFinanceCountChanged?.(); } catch { /* the nudge is best-effort */ }
   setPageNotifCount("finance", financeBellCount());
   if (financeHistory === null) loadFinanceHistory();
   if (!financeReceiptsImported) loadFinanceReceipts().catch(() => {});
@@ -3224,6 +3249,13 @@ function financeSparkline(values, months, name) {
 // Compact "when was this last synced" label. Bank data refreshes ~once a day,
 // so exact minutes matter less than "today / yesterday / a date" — that's the
 // low-cost freshness cue in place of a refresh button that would fetch nothing new.
+// Uncategorized money out in the review window, for the weekly nudge. null until the
+// bank data is on screen (so a cold start doesn't cancel the nudge with a zero).
+function financeToCategorizeCount() {
+  if (!financeLive?.accounts?.length) return null;
+  return financeDeckWindow(financeLabeledTxns()).filter((t) => !t.label && (Number(t.amount) || 0) < 0 && !t.pending).length;
+}
+
 // A closed month keeps its saved totals: nothing recomputes them until it's reopened.
 function financeMonthClosed(month) {
   const c = state.financeClosedMonths;
@@ -5441,5 +5473,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financeReceiptInfo, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeReceiptInfo, financeToCategorizeCount, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

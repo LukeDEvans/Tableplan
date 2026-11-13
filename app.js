@@ -38,7 +38,7 @@ import { normalizeSportsPrefs, dateKeyOf, shiftDateKey } from './sports-model.js
 import { dynamicTheme, rankedGamedayTeams, nextGamedayCheckMs, teamTheme, nextHoliday } from './theme-dynamic.js';
 import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanViewName, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
-import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
+import { createFinanceModule, financeNudgeInstance, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
 import { normalizeContacts, normalizeContactGroups, createContactsModule, buildContactsVcf } from './contacts.js';
 import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
@@ -2036,6 +2036,7 @@ const _finance = createFinanceModule({
   openReceiptDetail: (...a) => openReceiptDetail(...a),
   // A receipt scanned in Finance's split editor is filed in Document like any scan.
   queueReceiptFile: (files, opts) => queueReceiptForDocuments(files, opts),
+  onFinanceCountChanged: () => scheduleReminderSync(),
 });
 const {
   financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions,
@@ -27606,11 +27607,26 @@ function scheduleReminderSync(delay = 2000) {
   reminderSyncTimer = window.setTimeout(syncNativeReminders, delay);
 }
 
+// The weekly Finance nudge rides the same schedule (iOS keeps one set of pending
+// notifications, and the reminder sync cancels anything it didn't ask for). The
+// count is remembered on this device so a cold start doesn't drop the nudge.
+const FINANCE_NUDGE_COUNT_KEY = "live-finance-nudge-count";
+function financeNudgeForReminders() {
+  try {
+    if (!isPageEnabled("finance") || !_finance.financeAlertPref("weeklyNudge")) return [];
+    let count = _finance.financeToCategorizeCount();
+    if (count == null) count = Number(localStorage.getItem(FINANCE_NUDGE_COUNT_KEY)) || 0;
+    else localStorage.setItem(FINANCE_NUDGE_COUNT_KEY, String(count));
+    const nudge = financeNudgeInstance(count);
+    return nudge ? [nudge] : [];
+  } catch { return []; }
+}
+
 function syncNativeReminders() {
   const native = reminderNative();
   if (!native) return Promise.resolve(null);
   try {
-    return native.sync(currentReminderInstances());
+    return native.sync([...currentReminderInstances(), ...financeNudgeForReminders()]);
   } catch (error) {
     console.warn("Reminder scheduling failed.", error);
     return Promise.resolve(null);
@@ -27637,6 +27653,7 @@ async function ensureReminderPermission() {
 
 // A tapped reminder opens its event (or at least its day) in the calendar.
 function openReminderTarget({ kind, eventId, date } = {}) {
+  if (kind === "finance") { showFinanceApp(); return; }
   if (!date) return;
   planViewDate = new Date(`${date}T00:00:00`);
   showPlanApp();
