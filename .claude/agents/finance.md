@@ -21,7 +21,7 @@ all your work is there. Make focused changes to the Finance domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`
+- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
 - state: `finance*`
 
 ## Your scope (edit these)

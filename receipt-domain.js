@@ -88,6 +88,8 @@ return {
       // Last day to return it, and when its warranty ends ("YYYY-MM-DD" or "").
       returnBy: /^\d{4}-\d{2}-\d{2}$/.test(text(receipt?.returnBy)) ? text(receipt.returnBy) : "",
       warrantyUntil: /^\d{4}-\d{2}-\d{2}$/.test(text(receipt?.warrantyUntil)) ? text(receipt.warrantyUntil) : "",
+      // When its items were added to Inventory (receipt-pantry.js), so it's done once.
+      pantryAddedAt: text(receipt?.pantryAddedAt),
       imageUrl: text(receipt?.imageUrl),
       fileRef: text(receipt?.fileRef),
       imageRefs: normalizeImageRefs(receipt?.imageRefs),

@@ -3247,6 +3247,17 @@ function bindEvents() {
   elements.addEditReceiptLineBtn.addEventListener("click", () => addEditReceiptLine());
   elements.deleteReceiptBtn.addEventListener("click", deleteReceipt);
   elements.receiptEditForm.addEventListener("submit", saveReceiptEdit);
+  // Inventory › rooms: whether scanned grocery receipts fill Inventory (receipt-pantry.js).
+  const fromReceipts = document.getElementById("inventoryFromReceiptsToggle");
+  if (fromReceipts) {
+    const syncToggle = () => { fromReceipts.checked = state.groceryPricingSettings?.pantryFromReceipts !== false; };
+    syncToggle();
+    document.getElementById("inventoryRoomsDialog")?.addEventListener("focusin", syncToggle);
+    fromReceipts.addEventListener("change", () => {
+      state.groceryPricingSettings = normalizeGroceryPricingSettings({ ...(state.groceryPricingSettings || {}), pantryFromReceipts: fromReceipts.checked });
+      persist();
+    });
+  }
   elements.inventoryBoxDialog.addEventListener("click", closeDialogOnBackdropClick);
   document.querySelector("#closeInventoryBoxDialogBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
   document.querySelector("#cancelInventoryBoxBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
@@ -5687,7 +5698,7 @@ function defaultState() {
     groceryItemLocations: {},
     groceryStoreItemSections: {},
     groceryPriceObservations: [],
-    groceryPricingSettings: { enabled: false, extraStoreCost: 5 },
+    groceryPricingSettings: { enabled: false, extraStoreCost: 5, pantryFromReceipts: true },
     receipts: [],
     receiptItemMappings: {},
     priceHistory: [],

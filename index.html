@@ -1383,6 +1383,7 @@
           </div>
           <p class="watch-theater-settings-hint">These rooms are always available. Toggle any you don't need.</p>
           <div id="inventoryRoomsSettingsList"></div>
+          <label class="receipt-personal-toggle"><input type="checkbox" id="inventoryFromReceiptsToggle" /> Add groceries from scanned receipts <span class="hint">to the Pantry, Refrigerator and Freezer</span></label>
           <div class="dialog-actions">
             <button class="primary-btn" type="button" id="doneInventoryRoomsBtn">Done</button>
           </div>
@@ -2723,6 +2724,7 @@
               <label>Card (last 4) <input id="editReceiptLast4" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" /></label>
               <label>Return by <input id="editReceiptReturnBy" type="date" /> <button class="secondary-btn compact-btn" id="editReceiptReturnSuggest" type="button" hidden></button></label>
               <label>Warranty until <input id="editReceiptWarranty" type="date" /></label>
+              <button class="secondary-btn compact-btn" id="editReceiptPantryBtn" type="button" hidden>Add items to Inventory</button>
               <label class="receipt-personal-toggle" id="editReceiptPersonalRow" hidden><input id="editReceiptPersonal" type="checkbox" /> Personal purchase <span class="hint">only in your Personal view</span></label>
             </div>
             <div class="receipt-line-heading">

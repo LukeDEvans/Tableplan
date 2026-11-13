@@ -9,6 +9,7 @@
 // Groceries). manualGroceries storage is unchanged (Decision #2b) — the live list is
 // state.persistentManualGroceries (grocery section), which this module reads via `state`.
 import { storeReturnDays, addDays } from "./receipt-returns.js";
+import { isGroceryReceipt, receiptIntoPantry, undoPantry, PANTRY_ROOMS } from "./receipt-pantry.js";
 import * as LiveGroceryCatalog from './grocery-catalog.js';
 import * as LiveGrocerySources from './grocery-sources.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
@@ -363,6 +364,8 @@ export function normalizeGroceryPriceObservations(observations, stores = []) {
 export function normalizeGroceryPricingSettings(settings) {
   return {
     enabled: Boolean(settings?.enabled),
+    // Scanned grocery receipts add their items to Inventory (receipt-pantry.js). On by default.
+    pantryFromReceipts: settings?.pantryFromReceipts !== false,
     extraStoreCost: clampNumber(settings?.extraStoreCost, 0, 100, 5)
   };
 }
@@ -1328,6 +1331,11 @@ function openReceiptEditView(receiptId) {
   if (last4El) last4El.value = receipt.paymentLast4 || "";
   if (personalRow) personalRow.hidden = !canMarkPersonal() && receipt.view !== "personal";
   if (personalEl) personalEl.checked = receipt.view === "personal";
+  const pantryBtn = document.getElementById("editReceiptPantryBtn");
+  if (pantryBtn) {
+    pantryBtn.hidden = Boolean(receipt.pantryAddedAt) || receipt.view === "personal" || !(receipt.lineItems || []).length;
+    pantryBtn.onclick = () => { if (addReceiptsToPantry([receipt.id], { force: true })) pantryBtn.hidden = true; };
+  }
   const returnEl = document.getElementById("editReceiptReturnBy");
   const warrantyEl = document.getElementById("editReceiptWarranty");
   const suggestEl = document.getElementById("editReceiptReturnSuggest");
@@ -1510,6 +1518,8 @@ function saveReceiptEdit(event) {
   maybeWriteCloudSnapshot({ force: true }).catch(() => {});
   renderShopReceipts();
   closeReceiptEditView();
+  // A receipt that needed a look goes into Inventory once it's been saved.
+  addReceiptsToPantry([receipt.id]);
 }
 
 function deleteReceipt() {
@@ -1864,8 +1874,49 @@ function importScannedReceipts(imports, attach = []) {
   if (added.length) {
     renderGroceries();
     showMailToast(ReceiptQueue.resultsToast(added));
+    // Groceries that read cleanly go into Inventory (after the results toast, so
+    // its Undo is the one left on screen).
+    if (ready.length) setTimeout(() => addReceiptsToPantry(ready.map((r) => r.id)), 2500);
   }
   return added;
+}
+
+// A grocery receipt's items into Inventory, once per receipt (receipt-pantry.js).
+// `force`: the editor's "Add to pantry" (any receipt, any date). Otherwise only
+// grocery runs from the last two weeks, with the setting on. Returns the count.
+function addReceiptsToPantry(receiptIds, { force = false } = {}) {
+  if (!force && !groceryPricingSettings().pantryFromReceipts) return 0;
+  const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  const vis = state.inventoryRoomVisibility || {};
+  const rooms = new Set(Object.values(PANTRY_ROOMS).filter((id) => vis[id] !== false));
+  const before = state.inventoryItems || [];
+  let items = before;
+  const changed = [];
+  const done = [];
+  let added = 0, updated = 0;
+  for (const id of receiptIds || []) {
+    const r = (state.receipts || []).find((x) => x.id === id);
+    if (!r || r.pantryAddedAt || r.view === "personal") continue;
+    if (!force && (!isGroceryReceipt(r) || (r.purchaseDate || "") < cutoff)) continue;
+    const out = receiptIntoPantry(r, items, { createId, roomsAvailable: rooms });
+    if (!out.added && !out.updated) continue;
+    items = out.items;
+    changed.push(...out.changed.filter((c) => !changed.some((x) => x.id === c.id)));
+    added += out.added; updated += out.updated;
+    done.push(id);
+  }
+  if (!done.length) return 0;
+  const at = new Date().toISOString();
+  state.inventoryItems = items;
+  state.receipts = normalizeReceipts((state.receipts || []).map((r) => (done.includes(r.id) ? { ...r, pantryAddedAt: at } : r)));
+  persist();
+  const total = added + updated;
+  showMailToast(`${total} item${total === 1 ? "" : "s"} added to Inventory`, () => {
+    state.inventoryItems = undoPantry(state.inventoryItems, changed);
+    state.receipts = normalizeReceipts((state.receipts || []).map((r) => (done.includes(r.id) ? { ...r, pantryAddedAt: "" } : r)));
+    persist();
+  });
+  return total;
 }
 
 // Re-send whatever was cut off or couldn't go (offline), then look for results.
