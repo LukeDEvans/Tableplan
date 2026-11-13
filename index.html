@@ -69,6 +69,14 @@
         <button class="secondary-btn" id="lockDevSignInBtn" type="button" hidden>Continue in local dev mode</button>
       </div>
     </div>
+    <!-- iPhone app: Face ID to open (auth-second-step.js) -->
+    <div id="faceIdLock" hidden>
+      <div class="lock-card">
+        <img class="lock-logo" src="./lock-logo.png" alt="Live" width="280" height="280" />
+        <p id="faceIdLockMessage"></p>
+        <button class="primary-btn" id="faceIdUnlockBtn" type="button">Unlock</button>
+      </div>
+    </div>
     <div id="hydrationOverlay" hidden>
       <div class="hydration-card">
         <div class="hydration-spinner" aria-hidden="true"></div>
@@ -1375,6 +1383,7 @@
           </div>
           <p class="watch-theater-settings-hint">These rooms are always available. Toggle any you don't need.</p>
           <div id="inventoryRoomsSettingsList"></div>
+          <label class="receipt-personal-toggle"><input type="checkbox" id="inventoryFromReceiptsToggle" /> Add groceries from scanned receipts <span class="hint">to the Pantry, Refrigerator and Freezer</span></label>
           <div class="dialog-actions">
             <button class="primary-btn" type="button" id="doneInventoryRoomsBtn">Done</button>
           </div>
@@ -2711,6 +2720,12 @@
               <label>Tax <input id="editReceiptTax" type="number" min="0" step="0.01" /></label>
               <label>Fees <input id="editReceiptFees" type="number" min="0" step="0.01" /></label>
               <label>Total <input id="editReceiptTotal" type="number" min="0" step="0.01" /></label>
+              <label>Tip <input id="editReceiptTip" type="number" min="0" step="0.01" /></label>
+              <label>Card (last 4) <input id="editReceiptLast4" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" /></label>
+              <label>Return by <input id="editReceiptReturnBy" type="date" /> <button class="secondary-btn compact-btn" id="editReceiptReturnSuggest" type="button" hidden></button></label>
+              <label>Warranty until <input id="editReceiptWarranty" type="date" /></label>
+              <button class="secondary-btn compact-btn" id="editReceiptPantryBtn" type="button" hidden>Add items to Inventory</button>
+              <label class="receipt-personal-toggle" id="editReceiptPersonalRow" hidden><input id="editReceiptPersonal" type="checkbox" /> Personal purchase <span class="hint">only in your Personal view</span></label>
             </div>
             <div class="receipt-line-heading">
               <strong>Items</strong>
@@ -2962,6 +2977,31 @@
           <div>
             <button class="secondary-btn" type="button" id="cancelAuthBtn">Cancel</button>
             <button class="primary-btn" id="sendLoginBtn" type="button">Send code</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Second sign-in step: authenticator code (auth-second-step.js) -->
+    <dialog class="recipe-dialog auth-dialog" id="secondStepDialog">
+      <form class="recipe-form" id="secondStepForm">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">One more step</p>
+            <h2>Enter your code</h2>
+          </div>
+        </div>
+        <p class="settings-hint">Open the Passwords app, find Live, and enter the 6-digit code it shows.</p>
+        <label>
+          Code
+          <input id="secondStepCode" type="text" inputmode="numeric" placeholder="123456" autocomplete="one-time-code" data-no-clear />
+        </label>
+        <p class="import-status" id="secondStepMessage"></p>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="secondStepSignOutBtn">Sign out</button>
+            <button class="primary-btn" type="button" id="secondStepVerifyBtn">Verify</button>
           </div>
         </div>
       </form>

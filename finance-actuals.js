@@ -180,3 +180,107 @@ export function financePendingDuplicates(txns, merchantKey) {
   }
   return out;
 }
+
+// ── One month's totals from labelled transactions ───────────────────────────
+// The entry financeMonthActuals keeps per month: { cats, income, incomeBy }.
+// `portionsOf(t)` → [{ label, amount }] (finance-ui.js financeTxnPortions): spend
+// portions are positive, labels are "cat:<group>:<category>", "income" or
+// "income:<source>". Transfers ("mgmt") and unlabelled transactions add nothing.
+// Used by the automatic snapshot and by the "Update saved totals" action, so both
+// always compute a month the same way.
+export function financeMonthEntry(txns, month, portionsOf) {
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const cats = {};
+  const incomeBy = {};
+  let income = 0;
+  for (const t of txns || []) {
+    if ((t?.posted || "").slice(0, 7) !== month || !t.label) continue;
+    for (const p of portionsOf(t) || []) {
+      if (p.label === "income" || p.label.startsWith("income:")) {
+        income += p.amount;
+        incomeBy[p.label] = round2((incomeBy[p.label] || 0) + p.amount);
+      } else if (p.label.startsWith("cat:")) {
+        const k = p.label.slice(4);
+        cats[k] = round2((cats[k] || 0) + p.amount);
+      }
+    }
+  }
+  return { cats, income: round2(income), incomeBy };
+}
+
+// What a saved month adds up to, for showing "saved vs now" before an update.
+export function financeMonthEntryTotals(entry) {
+  const cats = entry && typeof entry.cats === "object" && entry.cats ? entry.cats : {};
+  const values = Object.values(cats).map((v) => Number(v) || 0);
+  return {
+    spend: Math.round(values.reduce((s, v) => s + v, 0) * 100) / 100,
+    categories: values.filter((v) => v !== 0).length,
+    income: Math.round((Number(entry?.income) || 0) * 100) / 100,
+  };
+}
+
+// Same totals? (Key order and zero-value categories don't count as a difference.)
+export function financeMonthEntriesMatch(a, b) {
+  const flat = (e) => {
+    const out = {};
+    for (const [k, v] of Object.entries((e && e.cats) || {})) if (Math.abs(Number(v) || 0) >= 0.005) out[`c:${k}`] = Math.round(Number(v) * 100);
+    for (const [k, v] of Object.entries((e && e.incomeBy) || {})) if (Math.abs(Number(v) || 0) >= 0.005) out[`i:${k}`] = Math.round(Number(v) * 100);
+    out.income = Math.round((Number(e?.income) || 0) * 100);
+    return out;
+  };
+  const x = flat(a), y = flat(b);
+  const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
+  for (const k of keys) if ((x[k] || 0) !== (y[k] || 0)) return false;
+  return true;
+}
+
+// Do these transactions reach back far enough to speak for the whole month?
+// The current month always counts (it is the live edge). A past month counts
+// only when the earliest bank transaction is on or before its first day; manual
+// entries say nothing about coverage (see financeMonthsToSnapshot).
+export function financeTxnsCoverMonth(txns, month, currentMonth) {
+  if (!month) return false;
+  if (month === currentMonth) return true;
+  if (month > currentMonth) return false;
+  const earliest = financeEarliestTxnDate((txns || []).filter((t) => !t?.isManual));
+  return Boolean(earliest && earliest <= `${month}-01`);
+}
+
+// ── Spending that is in no category ─────────────────────────────────────────
+// Money that left an account and has no label at all: not a category, not a
+// transfer, not income. Every spending total is built from categories, so this is
+// exactly what those totals leave out. → Map month → { spend, count }.
+export function financeUncategorizedByMonth(txns) {
+  const out = new Map();
+  for (const t of txns || []) {
+    const month = (t?.posted || "").slice(0, 7);
+    if (!month || t.label || !((Number(t.amount) || 0) < 0)) continue;
+    const e = out.get(month) || { spend: 0, count: 0 };
+    e.spend = Math.round((e.spend - Number(t.amount)) * 100) / 100;
+    e.count += 1;
+    out.set(month, e);
+  }
+  return out;
+}
+
+// ── "At this rate" projection for one category ──────────────────────────────
+// Spending so far ÷ day of month × days in month works for groceries and is
+// wrong for a bill: a mortgage paid on the 7th is not on its way to four
+// mortgages. So a charge is counted ONCE, not extrapolated, when it is a known
+// recurring bill (`isRecurring(charge)`), or when it alone is at least half the
+// category's budget (a rent-sized payment in a category that is mostly that
+// payment). Everything else is paced. `charges`: [{ amount }] with spend
+// positive and refunds negative; extra fields are passed to isRecurring.
+export function financeProjectedSpend(charges, { budget = 0, dayOfMonth, daysInMonth, isRecurring = () => false } = {}) {
+  let fixed = 0, paced = 0;
+  for (const c of charges || []) {
+    const amount = Number(c?.amount) || 0;
+    if (!amount) continue;
+    const lump = amount > 0 && (isRecurring(c) || (budget > 0 && amount >= budget * 0.5));
+    if (lump) fixed += amount; else paced += amount;
+  }
+  const day = Math.max(1, Number(dayOfMonth) || 1);
+  const days = Math.max(day, Number(daysInMonth) || day);
+  const round2 = (n) => Math.round(n * 100) / 100;
+  return { projected: round2(fixed + (paced / day) * days), fixed: round2(fixed), paced: round2(paced) };
+}

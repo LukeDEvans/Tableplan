@@ -15,6 +15,7 @@ const { userGroupQuery } = require("./_group-lookup.js");
 const { ingestFeed, remapAccount, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } = require("./_finance-ingest.js");
 const { loadFinanceCategories } = require("./_finance-categories.js");
 const { personalScopeId, loadAccountViews, splitAccounts, accountsForMember, ownsAny } = require("./_finance-split.js");
+const { moveFinanceAccounts } = require("./_finance-move.js");
 const { receiptPrompt, modelText, receiptFromModel, receiptFingerprint, saveImportedReceipt } = require("./_receipt-extract.js");
 
 exports.handler = async (event) => {
@@ -39,7 +40,9 @@ exports.handler = async (event) => {
   try {
     if (action === "status") {
       const row = await loadSecretRow(serviceKey, groupId);
-      return cors(json(200, { connected: Boolean(row?.state?.accessUrl), connectedAt: row?.state?.connectedAt || null }));
+      // `moves`: this server can move accounts between Household and Personal
+      // (action moveAccounts), so the app shows that screen only once it's deployed.
+      return cors(json(200, { connected: Boolean(row?.state?.accessUrl), connectedAt: row?.state?.connectedAt || null, moves: true }));
     }
 
     if (action === "setup") {
@@ -289,6 +292,21 @@ exports.handler = async (event) => {
       if (!liveAccountIds.length) return cors(json(409, { error: "No bank data yet — refresh first." }));
       const result = await remapAccount({ serviceKey, groupId, oldAccountId: body.oldAccountId, newAccountId: body.newAccountId, liveAccountIds });
       if (result.error) return cors(json(400, { error: result.error }));
+      return cors(json(200, result));
+    }
+
+    if (action === "moveAccounts") {
+      // Move accounts between the household's finance and the caller's own
+      // (FINANCE_SPLIT_DESIGN.md §8). A dry run unless `confirm` is true, and a
+      // real move only once the database guard is applied and the switch is on
+      // (migrations/2026-11-11-finance-move-guard.sql → FINANCE_MOVE_ENABLED=1):
+      // without the guard the database would put the moved labels straight back.
+      const confirm = body.confirm === true;
+      if (confirm && (process.env.FINANCE_MOVE_ENABLED || "").trim() !== "1") {
+        return cors(json(409, { error: "Moving accounts isn't switched on yet." }));
+      }
+      const result = await moveFinanceAccounts({ serviceKey, groupId, userId, direction: body.direction, accountIds: body.accountIds, dryRun: !confirm });
+      if (result.error) return cors(json(result.status || 400, { error: result.error, problems: result.problems || [] }));
       return cors(json(200, result));
     }
 

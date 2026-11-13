@@ -26,6 +26,9 @@
     "qa:news-for-you": "node scripts/qa-news-for-you.mjs",
     "qa:page-groups": "node scripts/qa-page-groups.mjs",
     "qa:views": "node scripts/qa-views.mjs",
+    "qa:view-deletes": "node scripts/qa-view-deletes.mjs",
+    "qa:finance-move": "node scripts/qa-finance-move.mjs",
+    "build:finance-nightly": "node scripts/build-finance-nightly.mjs",
     "qa:calendar-month": "node scripts/qa-calendar-month.mjs",
     "qa:meal-context": "node scripts/qa-meal-context.mjs",
     "qa:watch-search": "node scripts/qa-watch-search.mjs",
@@ -40,6 +43,7 @@
     "qa:documents-ui": "node scripts/qa-documents-ui.mjs",
     "qa:docs-editor": "node scripts/qa-docs-editor.mjs",
     "check:messaging-migration": "node scripts/check-messaging-migration.mjs",
+    "check:finance-move-guard": "node scripts/check-finance-move-guard-migration.mjs migrations/2026-11-11-finance-move-guard.sql",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },

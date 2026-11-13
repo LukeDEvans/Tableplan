@@ -188,11 +188,20 @@ export function createEverydayLibrary({ transport, storage, now = () => Date.now
     return n;
   }
 
+  // A receipt's household file once its copy is in the owner's Personal (personal
+  // receipts folder, Luke 2026-11-12): the database checks the receipt is the caller's
+  // own Personal one and the copy exists, removes the row, then the blobs go.
+  async function dropMovedReceipt(scope, id, parts = ["content", "thumb"]) {
+    const ok = Boolean(await transport.rpc("doc_pdrop_moved_receipt", { p_id: uuid(id) }));
+    if (ok) { try { await storage.remove(scope, uuid(id), parts); } catch { /* row gone; blobs orphaned at worst */ } }
+    return ok;
+  }
+
   const usage = async (scope) => Number(await transport.rpc("doc_usage_all", { p_scope: scopeId(scope) })) || 0;
 
   return {
     folders, addFolder, ensureStartingFolders, folderNamed, renameFolder, deleteFolder,
     files, has, addFile, open, thumbnail, rename, move, setTags, setDocumentDate, trash, restore,
-    search, purge, purgeExpired, usage,
+    search, purge, purgeExpired, usage, dropMovedReceipt,
   };
 }

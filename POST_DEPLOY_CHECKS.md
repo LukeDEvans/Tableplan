@@ -5,6 +5,181 @@ shipped yet is listed in [UNDEPLOYED.md](UNDEPLOYED.md).) When deploying, move e
 UNDEPLOYED.md entry's "After deploying" steps here under a heading for that deploy.
 Tick items off as they're done; delete a deploy's section once it's all ticked.
 
+## 2026-11-12 deploy (Finance audit: true numbers, receipts as records, planning, kitchen; account moves; Personal receipts; sign-in code and Face ID; News hint text)
+Web deploy from `main` (branch `claude/finance-true-numbers`, after #232). TestFlight build from `main` the same night for both phones.
+
+- **Document: Personal › Receipts** · this deploy · TestFlight build and Netlify deploy (client) +
+  database function `doc_pdrop_moved_receipt` (**applied 2026-11-12**, Luke's OK). Personal's Document
+  gets a Receipts folder; a receipt marked Personal has its file moved there from Household › Receipts
+  (copied, then the household file removed at once — not through Recently deleted). Runs after the
+  receipts sync and when Personal › Document opens. Post-deploy: mark a scanned receipt Personal,
+  wait a few seconds, open Document in Personal (it's in Receipts) and in Household (gone).
+- **Schema version 8 + account moves switched on** · `STATE_SCHEMA_VERSION` 8 and
+  `FINANCE_MOVE_ENABLED=1` set in Netlify (2026-11-12). **Both phones must run the TestFlight build
+  from this deploy**: a phone on an older build can't change Finance until it updates (the database
+  keeps its finance edits out, nothing is lost).
+- **Receipts fill Inventory · budget-aware meal planning** · branch `claude/finance-true-numbers` ·
+  client only, seen with a TestFlight build or a deploy: a scanned grocery receipt adds its food lines
+  to Inventory (Pantry / Fridge / Freezer, by item), with undo; on by default, switch in Inventory ›
+  rooms ("Add items from receipts"); a receipt's editor has "Add items to Inventory". When grocery
+  spending is ahead of budget this month, the Meal Plan says so and picking a recipe for a meal shows
+  the cheapest recipes per serving first (from past receipt prices). No post-deploy steps.
+
+- **Finance: true numbers (audit step 1)** · branch `claude/finance-true-numbers` · the nightly bank
+  job is **already live** (Supabase Edge Function `finance-nightly` + pg_cron, 11:40 UTC; no deploy
+  needed). The page changes need a TestFlight build or a deploy to be seen: an Uncategorized row on
+  Budget and in "Where it went"; "Update" for a past month's saved totals when stored history
+  disagrees; "Bring back" for skipped merchants; a "Bank data is N days old" banner; "on pace"
+  counts a bill once; the allowance card is named Allowances. After the deploy, `daily-briefing`
+  stops pulling the bank (until then it still tries at 13:00 UTC and gives up, as before).
+
+- **Receipts as records, part 1 (audit step 2)** · branch `claude/finance-true-numbers` · client only,
+  seen with a TestFlight build or a deploy: a scan's Document file points at its receipt
+  (`doc_pfiles.source.receiptId`); Document's receipt rows show store, date, total, items and a
+  Matched / Unmatched chip, the viewer lists the lines, and a file named "Receipt · <date>" is
+  renamed once the store is read; Finance matches receipts by store, dates, tip and card digits
+  (`receipt-matcher.js`) and links a certain match itself. New optional receipt fields: tip,
+  paymentLast4, scannedBy, view (the reader doesn't fill tip or card digits yet).
+
+- **Finance planning (no deploy needed to try)** · Insights: Next 30 days forecast, subscriptions
+  review (yearly cost, price changes, duplicates, Cancel… links), Returns & warranties, Tax time with
+  export; goals can follow an account's balance; transaction details: Tax and Trip pickers; Explore
+  trip › Budget: "From your bank"; Shop: price strip (estimated total, cheapest stores, weekly grocery
+  budget); recipe cost per batch and per serving; paydays on the Calendar; phone reminder 3 days before a return window closes.
+
+- **Finance extras (no deploy needed to try)** · close a month (checklist, then its totals are kept);
+  group share bar in "Where it went"; 6-month sparklines per category; weekly "to categorize"
+  notification scheduled on the phone (Sunday 18:00, off in Alerts); receipt editor: tip, card
+  last 4, Personal purchase, and "Mine · pay back" per line with a "You owe the household" row
+  and Paid back on Budget (financeSettlements). The reader asks for tip and card digits (live
+  with the deploy).
+
+- **Receipts table** · `fin_receipts` **applied 2026-11-12** (Luke's OK; 24 receipts copied from the
+  grocery row, which is untouched). The app (`receipts-sync.js`) reads it at start-up and on return to
+  the app, and sends changes a few seconds after a save; household receipts also stay in the grocery
+  row until every device has the build. Personal receipts (editor switch, Personal view only) live
+  only in the table under `u-<uid>` and are left out of the grocery row. Cleanup after the deploy and
+  both phones updated: take `receipts` out of the grocery row.
+
+- **Finance: moving accounts between Household and Personal (step 3)** · #232 · **needs a Netlify
+  deploy to do anything** (the server action; the app's screen stays hidden until the server
+  answers that it can move accounts). The database guard is already applied (2026-11-12).
+  **In the deploy commit:** set `STATE_SCHEMA_VERSION` to 8 (held at 7 until then, see the note
+  at the constant), and set `FINANCE_MOVE_ENABLED=1` in Netlify first; make a TestFlight build
+  from the same commit for both phones. Post-deploy: Household › Finance › Accounts shows
+  "Personal accounts" for Luke only; tick an account, **Review the move**, read the report, and
+  confirm only if it looks right (FINANCE_SPLIT_DESIGN.md §8.6 has the checks to run after).
+- **News: newspaper sign-in hints no longer suggest Apple** · #231 · **TestFlight build**
+  (text only; the laptop needs a Netlify deploy). Sync Settings, the reader and the sign-in sheet
+  say to use email and password, not Apple or Google. Post-TestFlight: none.
+- **Sign-in: authenticator code and Face ID to open the iPhone app** · #222 · **TestFlight build**
+  for the phone (web code only, no Swift change); **the laptop needs a Netlify deploy**. Settings ›
+  Sign-in → Authenticator code: set up once (Add to Passwords on iPhone/Mac, or scan the QR); after
+  that a new sign-in on any device stops at "One more step" until the 6-digit code is entered. Face
+  ID to open the iPhone app is per phone and **on by default** (asks on open and after 5 minutes
+  away; falls back to the phone's passcode; a phone with no passcode isn't locked; switch in
+  Settings › Sign-in). A failed Google/Apple sign-in on the website now says why. Luke OK'd the
+  merge 2026-11-11. Not yet run against real Supabase or on a phone. Still open (ISSUES.md): the
+  code is enforced by the app, not the database (migration held for Luke); Google/Apple providers
+  need a look in Supabase. No migration, no env vars. Post-TestFlight: open the app (Face ID
+  asks); leave 5+ minutes and come back; Settings › Sign-in → set up the code, sign out, sign in
+  (the code step appears; a wrong code shows a message). Marijane's phone will ask for Face ID too.
+
+## 2026-11-11 deploy (Mail quota fix; Watch panel and per-tick merge; Document page and the Safe on the laptop; Listen grid; themes and per-view logos; per-view delete lists; podcast playback on the iPhone)
+Web deploy from `main` (#203–#229). TestFlight builds from `main` the same day carry the iPhone-only entries (the last one started after #229 merged). No migration and no new env vars in this deploy: the Documents tables, `doc-storage` and the view-logos migration were already live.
+
+- **Views: removing something from Household no longer removes it from Personal** · #229 ·
+  **TestFlight build and a Netlify deploy** (client-only shared sync code; each device is fixed
+  once it runs the new build — update Marijane's phone too). Deletes are kept per view: a show,
+  title, task or event removed in one view stays in any other view that holds the same one.
+  Older deletes still apply as before. No migration, no env vars. Post-deploy: add the same
+  title to Watch in Personal and in Household; remove it from Household; switch to Personal (it
+  is still there); remove it there too (gone from both, and it stays gone after a refresh).
+- **Listen: Podcasts' Shows and Books match the Watch page** · #226 · **TestFlight build**
+  (client-only; the laptop needs a Netlify deploy). Four covers a row on a phone; tapping a show
+  opens a panel under its row with its 5 most recent episodes (All episodes opens the full list,
+  Back returns with the panel open); tapping a book opens its panel with library / Libby / Audible
+  links. Post-TestFlight: Listen › Podcasts › Shows — four per row, tap a show, play an episode
+  from the panel; Books — tap a book, check the links; no sideways scroll.
+- **Listen (iPhone): tapping the episode that's playing no longer jumps it back** · #228 ·
+  **TestFlight build** (bundled web code; nothing changes on the laptop, no Netlify deploy). A tap
+  on the row of the episode the phone is already playing just shows it; if it was paused it carries
+  on from the same spot. Post-TestFlight: while an episode plays, tap its row in the show's list,
+  in Recent and in the queue (no jump back); pause it, tap its row (it resumes where it was).
+- **Mail: no more "Quota exceeded" on fast folder switching** · #221 · **Both a TestFlight build
+  and a Netlify deploy** (client + Netlify function; either can land first — each side ignores the
+  other's new fields, so nothing breaks in between). Client (TestFlight / laptop deploy): read-ahead
+  stops when you switch folders; folders you return to come from an always-fresh cache. Server
+  (deploy): one safe retry on Gmail rate limits, no parallel fan-out on a refused batch, unloaded
+  rows shown as "Couldn't load — tap to open", and the 2-unit "anything changed?" check that makes
+  the cache work (the cache stays off until this is deployed). No env vars, no migration.
+  Post-deploy: switch Inbox → AI Trash → Inbox quickly several times (no error; returning is
+  instant); archive something, go to another folder and back (it's gone); get a new email while
+  in another folder, go back to Inbox (it's there).
+- **Listen (iPhone): podcasts download to the phone and play from the file** · #227 · **TestFlight
+  build** (native only; no Netlify deploy, nothing changes on the laptop). An episode with a file on
+  the phone plays from it; a new episode started from the beginning plays from its download as it
+  arrives; one picked up part-way with no file streams as before and is downloaded for next time. The
+  next queued episode is fetched ahead on Wi-Fi only. Files go when the episode finishes, after 3
+  weeks unplayed, or over 2 GB. Anything that goes wrong falls back to streaming at the same spot.
+  Post-TestFlight: start a new episode, lock the phone and walk out of Wi-Fi range (it should keep
+  playing with no jump back); pause, come back later, resume (same spot); let one episode run into the
+  next with the phone locked; check an episode you finish is marked played.
+- **Listen (iPhone): a podcast no longer sticks a few seconds before its end** · #225 · **TestFlight
+  build** (native only; no Netlify deploy, nothing changes on the laptop). An episode stuck in its
+  last stretch with the network up counts as finished (marked played, the queue moves on); one stuck
+  earlier reconnects at the same spot; play after a stall reopens the episode there. Post-TestFlight:
+  play the last minute of a few episodes, phone unlocked and locked, and check each ends and the
+  next one starts; the Weekly Show episode that stuck at 1:21:21 should finish within about 15 s.
+- **Listen (iPhone): an interrupted read carries on; skip within an article** · #220 · **TestFlight
+  build** (native + bundled web code; the laptop's web voice is unchanged). After a text or other short
+  interruption the article resumes by itself, and play always works (fresh synthesizer from the last
+  word). Now Playing back/forward, the seek bar and the lock screen's ±skip move within the article by
+  sentences. Post-TestFlight: text yourself mid-article; skip back and forward; drag the bar.
+- **Display: each view's own logo and name; plain theme cards; holiday and game-day themes** ·
+  #219 · **TestFlight build** (client-only; the laptop needs a Netlify deploy). Settings ›
+  Display per view: upload a logo that replaces the sailboat (stored like the profile photo) and
+  rename the view; theme cards lose the color-name lines; new Automatic section — Holidays (the
+  holiday's theme all day) and Game days (a switched-on favorite's colors while it plays, higher
+  rank wins; favorites reorderable). Migration `migrations/2026-11-04-view-logos.sql` (the
+  `avatars` bucket takes PNGs) **applied to prod 2026-11-05**. No new env vars. Post-deploy:
+  upload a logo in Household and rename it; turn on Game days with one team and
+  check its colors during a live game, and that they go away after the final.
+- **The Amplifier (iPhone): keeps going after a song with the phone locked** · #217 · **TestFlight
+  build only** (Swift; nothing for Netlify). A silent mixable keep-alive holds the app awake while a
+  show's song plays, so the next write-up starts when the song ends. Post-TestFlight: play a show
+  through two songs with the phone locked; pause and resume from the lock screen during a song.
+- **Radio (iPhone): web-player fallback and failure reason** · #216 · **TestFlight build**
+  (client + native; the laptop's web player is unchanged apart from a clearer toast). A station
+  the native player can't start is retried in the web view's player before the "unavailable"
+  toast, and the toast says why. Post-deploy: on the laptop, play MPR News and The Current.
+- **Themes: Thanksgiving; Seasonal covers November** · #211 · **TestFlight build** (client-only;
+  the laptop needs a Netlify deploy). Settings › Display › Holiday gains Thanksgiving (brown,
+  pumpkin, gold, olive, cranberry; light and dark). Seasonal now shows Thanksgiving all of
+  November, and its line names what comes next. No migration, no new env vars.
+  Post-deploy: pick Thanksgiving in Light and Dark — Calendar, Meal Plan, Shop, Finance, News
+  read clearly and the dock is brown. Anyone on Seasonal sees Thanksgiving until Dec 1.
+- **Watch: cross episodes off, services from the right, plainer seasons and Next** · #203 ·
+  Posters show only the title (year/seasons stay in the panel); episodes are crossed off by
+  tapping (no check boxes); services start at the right with "Other services" last; the
+  season menu says only "Season N" (no bar, no "All"); NEXT shows "S1 E1" beside it and a
+  plain ✓. Post-deploy: open a show on the phone and cross an episode off and back.
+- **Watch: hide the NEXT box** · #204 · The show panel no longer shows the Next-episode
+  line (code kept behind `WATCH_SHOW_NEXT_BOX`); a season that's loading keeps the
+  episode list's height so the screen doesn't move. Post-deploy: open a show — no NEXT box.
+- **Watch: services as links under the year line; light panel; one season box** · #205 ·
+  Services / Other services are plain links in the theme's link colour, left-aligned with
+  Other services first, right under the year line; the panel is the light surface and the
+  season menu heads one box with its episodes. Post-deploy: open a show in light and dark.
+- **Watch: per-tick merge; episode lists live on the device** · #206 · Each episode tick, tab change and edit carries its own time and merges on its own, so two people's ticks both stick (`watch-merge.js`); season episode lists stay in each device's storage, not the synced row (`watch-episodes.js`). Post-deploy: tick an episode on the phone and a different one of the same show on the laptop before either refreshes — both stay ticked.
+- **Sync: a view switch no longer re-sends every section row** · #207 · Shared state-sync fix (WATCH_AUDIT D2). Post-deploy (and after the TestFlight build): in the Supabase edge logs, one change → one or two `tableplan_states` PATCHes, not ~15.
+- **Watch: seasons panel polish; week-old shows refresh on view** · #208 · Whole season shows (no inner scroll), ~30px one-line rows, the next episode marked, not-yet-aired episodes dated and untappable, load errors with Try again; where-to-watch and season counts refresh when over 7 days old. Post-deploy: open a show — next episode highlighted; a show added months ago gets fresh services.
+- **Watch: Archive actions open with a tap on the phone** · #209 · Tapping an archived show or its ⋯ opens Edit · Back to Watch list · Delete (was right-click only). Post-deploy: on the laptop, Watch › Archive › tap a show → the menu; Back to Watch list returns it.
+- **Watch: a show opens where you are, not at Season 1** · #210 · Your place = the episode crossed off most recently: the panel opens on its season, next = the one after it (earlier unticked ones are skipped), the poster bar shows that season. Never-started talk / reality / news shows open on their latest aired season. **Needs the deploy** for that last part (`tmdb-watch-providers` returns showType / genreIds / lastAiredSeason). Post-deploy: open SNL — Season 51 (or its latest), not Season 1.
+- **Documents: encrypted Household and Personal documents** · #213 · New Documents page in Household (shared, Receipts first) and Personal, end-to-end encrypted (DOCUMENTS_DESIGN.md): Face ID on every open on the iPhone, scanning up to 30 pages, upload/drag-and-drop, viewer and share sheet, Recently deleted, recovery code, lost-phone recovery through the other member's devices, receipt scans filed into Household › Receipts. Already live without a deploy: the `doc_` tables, the `doc-storage` Edge Function and the R2 bucket; on the iPhone it works from the TestFlight build (Luke tested 2026-11-03). **The deploy adds the web/laptop pages.** Pre-deploy: the 360 px pass on Documents (and `npm run qa:documents-ui`). Post-deploy: on the laptop, link the browser in Messages, open Household Documents (it waits until the phone opens it once), drag a PDF in, open it on the phone; check the `doc-storage` logs show 200s and no 403s for your scopes.
+- **Documents: web passkey lock, sign out other sessions, Apple's viewer, kept copies + review fixes** · #215 · **TestFlight build** (the Swift viewer changed). Removing a device, a Messages reset, a restore and the lost-phone re-key sign out every other Live session; only the Sign out button wipes a device's Messages/Documents (a remote or expired sign-out keeps them); a device whose Documents was reset gets the keys again only after Allow on the phone; iPhone **Open** shows the file in Quick Look (40 MB, closed when the app stops being active); recently opened files kept encrypted on the device. **The deploy adds** the browser passkey lock (⚙ › Lock with a passkey). Post-TestFlight: open a document › Open › swipe to the app switcher — it closes and isn't in the snapshot. Post-deploy: on the laptop, turn the passkey lock on with a second tab open (that tab locks), leave and come back (Touch ID asks), turn it off; remove a test device and check the other devices sign in again but keep their Messages.
+- **Document page: everyday documents with the Safe inside** · #218 · **TestFlight build** for the iPhone. Documents is renamed **Document**. Everyday documents (Household: Receipts, Home, Vehicles; Personal: empty) are kept like the rest of Live and open with no Face ID on any signed-in device. The encrypted part is now the **Safe**, a sidebar entry with Face ID on every open (Household Safe: IDs & Records, Insurance, Medical). Receipts scanned in Shop go straight into everyday Receipts. Already live (Luke OK'd 2026-11-04): the `doc_pfolders` / `doc_pfiles` tables and `doc-storage` v6. **The deploy adds** the laptop/web page. Post-TestFlight: open Household on the phone with no Face ID; add a file; open the Safe (Face ID asks) and tap **Move them** to bring Receipts / Home / Vehicles out; scan a receipt in Shop and find it in Receipts; Marijane sees the everyday files at once. Post-deploy: the same on the laptop; check the `doc-storage` logs show 200s for `p/` links.
+
 ## 2026-10-30 deploy (Messaging; Watch panel and YouTube; NYT reader; newspaper sign-in; News titles; The Amplifier music shows; Household Listen/Watch reset; Dutch card picture)
 Web deploy from `main` (#191–#201) plus a TestFlight build started from `main` the same day (it carries the messaging plugins, the NYT reader and the music-show player). Messaging migrations **already applied** (2026-10-30, 2026-10-31). Service worker cache bumped to v54 (hard-refresh once on the laptop). No new env vars.
 

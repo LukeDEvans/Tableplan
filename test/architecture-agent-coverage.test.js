@@ -64,6 +64,7 @@ const SHARED_FILES = {
   "diagnostics.js": "app diagnostics",
   "data-export.js": "whole-app export",
   "auth-account-reset.js": "auth",
+  "auth-second-step.js": "auth (authenticator code + iPhone Face ID lock)",
   "profile.js": "the user's own profile window + photo (account-level, every domain reads it)",
   "device-location.js": "shared location (weather, travel, stores)",
   "save-file.js": "shared file hand-off",

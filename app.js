@@ -38,14 +38,14 @@ import { normalizeSportsPrefs, dateKeyOf, shiftDateKey } from './sports-model.js
 import { dynamicTheme, rankedGamedayTeams, nextGamedayCheckMs, teamTheme, nextHoliday } from './theme-dynamic.js';
 import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanViewName, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
-import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
+import { createFinanceModule, financeNudgeInstance, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
 import { normalizeContacts, normalizeContactGroups, createContactsModule, buildContactsVcf } from './contacts.js';
 import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { SPEED_MIN, SPEED_MAX, snapPlaybackSpeed, stepPlaybackSpeed, formatSpeedLabel, speedStepperHtml } from './playback-speed.js';
-import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
+import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, effectiveTombstones, tombstoneIdsFor, addTombstone, removeTombstone, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
@@ -73,12 +73,15 @@ import { createNativeReminderScheduler } from './calendar/reminders-native.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, nativeExtractBlockReason, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
-import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_TEXT_PREVIEW_MAX, attachmentViewKind, attachmentBlobType, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
+import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
+import { showMailAttachmentViewer } from './mail-attachment-viewers.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
+import { normalizeMovedOut, mergeMovedOut, stripMovedOut } from './finance-move.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { SETTING_STAMP_KEYS, settingsSnapshot, stampSettingChanges, mergeTrackedSettings, localSettingsAhead } from './settings-sync.js';
 import { clearLocalAccountState, accountTransitionKind, signOutWasExplicit } from './auth-account-reset.js';
+import { createSecondStepModule, secondStepNeeded, oauthReturnError, stripOauthReturnError, oauthErrorMessage } from './auth-second-step.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
 import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnostics.js';
 import { describeCapabilities } from './platform-capabilities.js';
@@ -93,7 +96,7 @@ import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
 import { deriveMediaTierCount, publicationTierFor, collapsePublicationTiers, ALL_PUBLICATIONS_KEY } from './media-tier.js';
-import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId } from './media-queue-order.js';
+import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId, episodeTapAction } from './media-queue-order.js';
 import { keptEpisodeIds, pruneOldEpisodes, mergeFetchedEpisodes } from './podcast-retention.js';
 import { normalizeQueueAdded, queueAddedFindRef, withQueueEntry, withoutQueueEntries, episodeRef, articleRef, libraryAlbumRef, catalogAlbumRef, trackRef, slimCatalogItem, libraryAlbumTracks } from './media-queue-added.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
@@ -367,7 +370,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt", "financeMovedOut", "financeClosedMonths", "financeSettlements", "financeTxnTax", "financeTxnTrip"],
   config:    ["mailAiSettings", "mailMoveMemory", "themeMode", "collapsedSections", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -386,7 +389,9 @@ const STATE_SECTIONS = {
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
 // 7 (2026-09-30): financeTxnSourceSetAt added (financeTxnSource is latest-choice-wins).
-const STATE_SCHEMA_VERSION = 7;
+// 8 (2026-11-12 deploy): financeMovedOut (account moves, FINANCE_SPLIT_DESIGN.md §8.6),
+//   financeClosedMonths, financeSettlements, financeTxnTax, financeTxnTrip.
+const STATE_SCHEMA_VERSION = 8;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -615,6 +620,37 @@ async function refreshActiveSectionFromServer(stateId, section, keys, { ifChange
   render();
 }
 
+// After the server moved accounts between Household and Personal
+// (FINANCE_SPLIT_DESIGN.md §8) both finance rows were rewritten. Take this view's
+// row exactly as it now is — never merge: this device's copy still holds what
+// moved — forget the other view's off-screen copy, and re-check whether this
+// person now has personal finance (which decides what Personal's Finance reads).
+async function reloadFinanceAfterMove() {
+  const keys = STATE_SECTIONS.finance;
+  const stateId = supabaseConfig().stateId;
+  const rowId = sectionRowId(stateId, "finance");
+  const res = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
+    { headers: supabaseHeaders(), cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`Couldn't reload finance (${res.status}).`);
+  const row = (await res.json())[0];
+  if (sectionRowId(stateId, "finance") !== rowId) return; // the view changed meanwhile; its own load covers it
+  const draft = { ...state };
+  for (const key of keys) delete draft[key];
+  for (const key of keys) if (row?.state && key in row.state) draft[key] = row.state[key];
+  const written = lastWrittenSections;
+  applyStoredState(draft);
+  if (written) {
+    lastWrittenSections = written;
+    lastWrittenSections.finance = JSON.stringify(extractSectionData(keys)); // equals the server: nothing to send back
+  }
+  if (row) lastSeenSectionStamp[rowId] = row.updated_at;
+  if (shadowSections.finance) { delete shadowSections.finance; persistShadowSections(); }
+  await loadPersonalFinanceFlag();
+  render();
+}
+
 // A fetched section row whose scope is no longer on screen: keep it as that
 // scope's shadow (or drop it if it isn't one of this person's rows).
 function keepRowAsShadow(stateId, section, row) {
@@ -780,6 +816,15 @@ let localDevMode = false;
 // during boot (auto-entered via the live_local_dev flag) before the gate code's
 // line executes — a later `let` would be in its TDZ then. See updateAppLockState.
 let authCheckCompleted = false;
+// Authenticator-code step + iPhone Face ID lock (auth-second-step.js). Created up
+// here so boot can use it; every dep is an import or deferred, so no TDZ.
+const secondStep = createSecondStepModule({
+  getClient: () => supabaseClient,
+  escapeHtml: (...a) => escapeHtml(...a),
+  nativeDocumentsLock,
+  isNativeApp,
+  storage: localStorage,
+});
 // Memoized getPlanEventsForRange results, keyed by range; a small LRU so paging
 // months/weeks and the zoom ladder can reuse recent ranges. Cleared on persist,
 // iCal fetch, and full state replacement so it can never go stale.
@@ -1974,16 +2019,23 @@ const _finance = createFinanceModule({
   // member's own (`u-<id>`) for their personal accounts (FINANCE_SPLIT_DESIGN.md).
   getFinanceStoreGroupId: () => (sectionScope("finance") === "personal" ? (authSession?.user?.id ? `u-${authSession.user.id}` : null) : (userGroup?.id || null)),
   getFinanceScope: () => sectionScope("finance"),
+  canMoveFinanceAccounts: () => Boolean(userGroup?.role === "admin" && authSession?.user?.id && !localDevMode) || Boolean(localDevMode && window.__financeMoveQa),
+  reloadFinanceAfterMove: (...a) => reloadFinanceAfterMove(...a),
   openHouseholdFinance: () => { if (currentViewList().includes("household")) { currentViewKey.chosen = true; applyView("household", { keepPage: true }); } },
   canUseFinanceStore: () => !localDevMode && canUseCloudStorage() && !!authSession?.access_token,
   fetchSupabaseJson: (...a) => fetchSupabaseJson(...a),
   writeSupabaseJson: (...a) => writeSupabaseJson(...a),
   // The one receipts list (state.receipts) is Shop-owned; Finance reads and
   // links through this interface (RECEIPTS.md). Thunks: groceries is created below.
-  receiptsForFinance: (...a) => receiptsForFinance(...a),
+  receiptsForFinance: (...a) => receiptsForFinance(...a).filter((r) => r.view !== "personal" || currentViewKey() === "personal"),
   importFinanceInboxReceipts: (...a) => importFinanceInboxReceipts(...a),
   linkReceiptToFinanceTxn: (...a) => linkReceiptToFinanceTxn(...a),
   openReceiptDetail: (...a) => openReceiptDetail(...a),
+  // A receipt scanned in Finance's split editor is filed in Document like any scan.
+  queueReceiptFile: (files, opts) => queueReceiptForDocuments(files, opts),
+  memberName: (userId) => (userId === authSession?.user?.id ? "You" : groupMembers.find((gm) => gm.user_id === userId)?.display_name || "A household member"),
+  currentViewKey: () => currentViewKey(),
+  onFinanceCountChanged: () => { scheduleReminderSync(); },
 });
 const {
   financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions,
@@ -2004,6 +2056,10 @@ const {
 // record (Decision #2b) — the live list is state.persistentManualGroceries.
 const _groceries = createGroceriesModule({
   state, elements, persist, meals, prepDays,
+  // Personal receipts (FINANCE_AUDIT §8): only people with a Personal view can mark
+  // one, and the Household view never lists them.
+  canMarkPersonal: () => currentViewList().includes("personal"),
+  showPersonalReceipts: () => currentViewKey() === "personal",
   handOff: (...a) => handOff(...a),
   getHomeLocation: () => homeLocation(),
   getActiveAppArea: () => activeAppArea,
@@ -2144,6 +2200,10 @@ const {
 // recipe-view close handler via the exposed onRecipeViewDialogClose.
 const _recipes = createRecipesModule({
   state, elements, persist, render, trashItemTemplate,
+  // What a recipe costs, from past receipt prices (Shop's price history).
+  recipeCost: (recipe, scale) => { try { return _groceries.estimateRecipeCost(recipe, scale); } catch { return null; } },
+  // Grocery spending vs budget this month (Finance), for budget-friendly picks.
+  groceryPace: () => { try { return isPageEnabled("finance") ? _finance.financeGroceryPace() : null; } catch { return null; } },
   showMailToast: (...a) => showMailToast(...a),
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
@@ -2247,6 +2307,7 @@ const {
 // infra + calendar readers + eat shell stay in app.js and are injected. Dual calendar list
 // preserved (Decision #1 not applied). Legacy week.manualGroceries untouched (Decision #2b).
 const _mealplan = createMealplanModule({
+  groceryPace: () => { try { return isPageEnabled("finance") ? _finance.financeGroceryPace() : null; } catch { return null; } },
   getHomeLocation: () => homeLocation(),
   state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys,
   getActiveAppArea: () => activeAppArea,
@@ -2580,7 +2641,11 @@ function bindEvents() {
   }
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
-  document.getElementById("lockSignInBtn")?.addEventListener("click", () => elements.authDialog.showModal());
+  document.getElementById("lockSignInBtn")?.addEventListener("click", (e) => {
+    if (e.currentTarget.dataset.secondStep) secondStep.waitForCode();
+    else elements.authDialog.showModal();
+  });
+  secondStep.bind();
   // Local-dev escape hatch on the gate — only shown on localhost.
   const lockDevBtn = document.getElementById("lockDevSignInBtn");
   if (lockDevBtn && isLocalDevHost()) {
@@ -3182,6 +3247,17 @@ function bindEvents() {
   elements.addEditReceiptLineBtn.addEventListener("click", () => addEditReceiptLine());
   elements.deleteReceiptBtn.addEventListener("click", deleteReceipt);
   elements.receiptEditForm.addEventListener("submit", saveReceiptEdit);
+  // Inventory › rooms: whether scanned grocery receipts fill Inventory (receipt-pantry.js).
+  const fromReceipts = document.getElementById("inventoryFromReceiptsToggle");
+  if (fromReceipts) {
+    const syncToggle = () => { fromReceipts.checked = state.groceryPricingSettings?.pantryFromReceipts !== false; };
+    syncToggle();
+    document.getElementById("inventoryRoomsDialog")?.addEventListener("focusin", syncToggle);
+    fromReceipts.addEventListener("change", () => {
+      state.groceryPricingSettings = normalizeGroceryPricingSettings({ ...(state.groceryPricingSettings || {}), pantryFromReceipts: fromReceipts.checked });
+      persist();
+    });
+  }
   elements.inventoryBoxDialog.addEventListener("click", closeDialogOnBackdropClick);
   document.querySelector("#closeInventoryBoxDialogBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
   document.querySelector("#cancelInventoryBoxBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
@@ -3370,16 +3446,26 @@ async function initializeSupabaseAuth() {
     return;
   }
 
+  // A Google/Apple sign-in that failed comes back with the reason on the URL.
+  // Read it before Supabase sees the URL, then show it on the gate (auth-second-step.js).
+  const oauthFailure = oauthReturnError(window.location.href);
+  if (oauthFailure) history.replaceState(null, "", stripOauthReturnError(window.location.href));
+
   supabaseClient = window.supabase.createClient(supabaseBaseUrl(), supabaseConfig().anonKey);
   const { data, error } = await supabaseClient.auth.getSession();
   if (error) {
     authCheckCompleted = true;
     updateAppLockState(); // reveal the sign-in button rather than sticking on "Checking…"
-    updateAuthUi("Could not check sign-in.");
+    updateAuthUi(oauthFailure ? oauthErrorMessage(oauthFailure) : "Could not check sign-in.");
     return;
   }
 
-  authSession = data.session;
+  let bootSession = data.session;
+  // Signed in, but this account has an authenticator code and this session
+  // hasn't given it yet: hold the boot at "One more step" (the gate stays shut,
+  // nothing loads) until the code is entered or the person signs out.
+  if (secondStepNeeded(bootSession)) bootSession = await secondStep.waitForCode();
+  authSession = bootSession;
   authCheckCompleted = true;
   // Record the booting account BEFORE registering the listener so Supabase's
   // INITIAL_SESSION event reads as a same-account 'refresh' (no-op) — the boot
@@ -3387,6 +3473,8 @@ async function initializeSupabaseAuth() {
   // and a subsequent sign-in is a clean 'first'.
   stateAccountId = authSession?.user?.id || authSession?.user?.email || null;
   updateAppLockState();
+  if (oauthFailure && !authSession?.access_token) updateAuthUi(oauthErrorMessage(oauthFailure));
+  secondStep.startFaceIdLock(() => !!authSession?.access_token);
   if (authSession?.access_token) { warmMailStatus(); warmMailList(); warmPageNotifs(); syncShareTokenForSession(true); refreshNewsTicker(); }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     // Multi-tab account isolation: classify the change against the account whose
@@ -3394,6 +3482,11 @@ async function initializeSupabaseAuth() {
     // auth changes to every tab via localStorage), so a stale tab left on account A
     // reacts here when another tab signs out or signs in as a different account.
     const kind = accountTransitionKind(stateAccountId, session);
+    // A fresh sign-in on an account with an authenticator code: stop at the code
+    // step and keep the app shut. Verifying fires this listener again with the
+    // upgraded session, which then loads as a normal first sign-in. Read from the
+    // session itself — awaiting auth calls in here can deadlock supabase-js.
+    if (kind === "first" && secondStepNeeded(session)) { secondStep.waitForCode(); return; }
     authSession = session;
     updateAppLockState();
     updateAuthUi();
@@ -4066,10 +4159,23 @@ function setupDiagnostics() {
     planScope: () => (localDevMode ? sectionScope("plan") : null),
     scopes: () => (localDevMode ? Object.fromEntries(VIEW_TOGGLE_SECTIONS.map((s) => [s, sectionScope(s)])) : null),
     businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
+    // Seed Listen's podcasts / books for the grid + panel QA. Local dev only.
+    listenSeedForQa: ({ podcasts, books } = {}) => {
+      if (!localDevMode) return null;
+      if (Array.isArray(podcasts)) state.podcasts = podcasts;
+      if (Array.isArray(books)) state.readingItems = books;
+      persist();
+      return true;
+    },
     watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); (items || []).forEach((i) => i?.id && unrecordDeletion("watchItems", i.id)); persist(); if (activeAppArea === "watch") { activeWatchCategory = "all"; expandedWatchItemId = null; renderWatchPlanner(); } return true; },
     // The Watch list and its removals as saved (scripts/qa-watch-panel.mjs). Local dev only.
     watchItemsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.watchItems || [])) : null),
-    watchTombstonesForQa: () => (localDevMode ? [...(state.tombstones?.watchItems || [])] : null),
+    watchTombstonesForQa: () => (localDevMode ? [...deletedIdsFor("watchItems")] : null),
+    // Per-view delete lists (scripts/qa-view-deletes.mjs). Local dev only.
+    setViewForQa: (view) => { if (!localDevMode) return null; applyView(view); return currentViewKey(); },
+    watchDeleteForQa: (id) => { if (!localDevMode) return null; deleteWatchItem(id); return true; },
+    tombstonesForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.tombstones || {})) : null),
+    mergeForQa: (newer, older) => (localDevMode ? JSON.parse(JSON.stringify(mergeStates(newer, older))) : null),
     // Listen bell music shows (scripts/qa-music-shows.mjs): saved articles carrying a
     // musicShow, as the inbox sweep writes them. Local dev only.
     musicShowsSeedForQa: (articles) => { if (!localDevMode) return null; state.savedArticles = [...(state.savedArticles || []).filter((a) => !articles.some((b) => b.id === a.id)), ...articles]; persist(); musicShows.updateBadge(); return true; },
@@ -4148,6 +4254,11 @@ function setupDiagnostics() {
     openPlanEventForQa: (id, dateKey) => { if (!localDevMode) return null; showPlanApp(); openPlanEventDetail(id, dateKey); return true; },
     openTripForQa: (id) => { if (!localDevMode) return null; openExploreTrip(id); return true; },
     openPageForQa: (name) => { if (!localDevMode) return null; ({ finance: showFinanceApp, shop: showShopApp, contacts: showContactsApp, news: showNewsApp, media: showMediaApp })[name]?.(); return activeAppArea; },
+    // The account move screen (scripts/qa-finance-move.mjs). Local dev only.
+    financeMoveSeedForQa: (accounts) => { if (!localDevMode) return null; state.financeAccounts = normalizeFinanceAccounts(accounts, createId); return true; },
+    financeAccountsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.financeAccounts || [])) : null),
+    personalFinanceFlagForQa: () => (localDevMode ? hasPersonalFinance : null),
+    financeRecheckLinkForQa: () => (localDevMode ? checkFinanceLinkStatus() : null),
     financeSeedAccount: () => {
       if (!localDevMode) return null;
       state.financeAccounts = normalizeFinanceAccounts([{ id: "qa-acct", owner: "Joint", name: "QA Savings", kind: "cash", manualBalance: 5000 }], createId);
@@ -5140,7 +5251,7 @@ function saveTripBackup() {
     localStorage.setItem(TRIP_BACKUP_KEY, JSON.stringify({
       trips: state.trips || [],
       travelIdeas: state.travelIdeas || [],
-      tombstones: (state.tombstones?.trips || []),
+      tombstones: deletedIdsFor("trips"),
       savedAt: state.stateUpdatedAt
     }));
   } catch {}
@@ -5285,7 +5396,49 @@ function syncOwnMealPlanShare() {
   };
 }
 
+// Receipts live in their own table (receipts-sync.js, FINANCE_AUDIT §10). Read at
+// start-up and on returning to the app; this device's changes are sent a few
+// seconds after a save. Household receipts also stay in the grocery row until
+// every device has this build (then they come out of it).
+let receiptsSync = null;
+let receiptsSyncTimer = null;
+async function receiptsSyncer() {
+  if (receiptsSync) return receiptsSync;
+  const [{ createReceiptsSync }, { createRestTransport }] = await Promise.all([import("./receipts-sync.js"), import("./messaging/server.js")]);
+  receiptsSync ||= createReceiptsSync({
+    transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+    store: { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) },
+    getReceipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
+    setReceipts: (list, { removed = [] } = {}) => {
+      recordDeletions("receipts", removed);
+      state.receipts = normalizeReceipts(list);
+      persist();
+      renderAfterReceiptsSync();
+    },
+    scopes: () => ({ groupId: userGroup?.id || "", userId: authSession?.user?.id || "" }),
+    isRemoved: (id) => deletedIdsFor("receipts").includes(String(id)),
+    normalize: (r) => normalizeReceipts([r])[0] || r,
+  });
+  return receiptsSync;
+}
+function syncReceiptsTable({ pull = true } = {}) {
+  if (localDevMode || !sharedStorageReady || !userGroup?.id || !authSession?.user?.id) return;
+  receiptsSyncer().then((s) => s.sync({ pull })).then(() => movePersonalReceiptFilesSoon()).catch((e) => console.warn("[receipts] sync:", e?.message || e));
+}
+function scheduleReceiptsPush() {
+  clearTimeout(receiptsSyncTimer);
+  receiptsSyncTimer = setTimeout(() => syncReceiptsTable({ pull: false }), 4000);
+}
+function renderAfterReceiptsSync() {
+  try {
+    const area = getActiveAppArea();
+    if (area === "finance") _finance.renderFinancePage();
+    else if (area === "documents") { /* Document re-reads receipt info on its next draw */ }
+  } catch { /* best-effort */ }
+}
+
 function persist() {
+  if (sharedStorageReady) scheduleReceiptsPush();
   state.stateUpdatedAt = new Date().toISOString();
   stampChangedSettings();
   syncOwnMealPlanShare();
@@ -5545,7 +5698,7 @@ function defaultState() {
     groceryItemLocations: {},
     groceryStoreItemSections: {},
     groceryPriceObservations: [],
-    groceryPricingSettings: { enabled: false, extraStoreCost: 5 },
+    groceryPricingSettings: { enabled: false, extraStoreCost: 5, pantryFromReceipts: true },
     receipts: [],
     receiptItemMappings: {},
     priceHistory: [],
@@ -5584,6 +5737,7 @@ function defaultState() {
     financeGoals: [],
     financeTxnSource: "feed", // "feed" (SimpleFIN 45-day window) | "store" (durable finance_transactions) — FINANCE_TRANSACTIONS_DESIGN.md §5.5
     financeTxnSourceSetAt: "", // when financeTxnSource was last chosen; merge keeps the latest choice
+    financeMovedOut: { epoch: 0, accounts: [], linked: [], txns: [] }, // what a move took out of this finance row (finance-move.js); only the server's move changes it
     financeAccountLabels: [],
     financeAccountSubLabels: {},
     financePersonal: [],
@@ -5613,6 +5767,10 @@ function defaultState() {
     // unlabeled charges drop out of the "to label" notifications.
     financeLabelSkips: {},
     financeLabelSnoozes: {},
+    financeClosedMonths: {},
+    financeSettlements: [],
+    financeTxnTax: {},
+    financeTxnTrip: {},
     // Notifications swipe-deck: transactions swiped LEFT are removed from the
     // deck (id -> true) but keep a red "needs confirming" dot on the txn list;
     // the dot clears only when the id is explicitly confirmed (financeTxnConfirmed).
@@ -5782,6 +5940,7 @@ function normalizeState(parsed) {
     financeGoals: normalizeFinanceGoals(parsed?.financeGoals),
     financeTxnSource: parsed?.financeTxnSource === "store" ? "store" : "feed",
     financeTxnSourceSetAt: typeof parsed?.financeTxnSourceSetAt === "string" && !Number.isNaN(Date.parse(parsed.financeTxnSourceSetAt)) ? parsed.financeTxnSourceSetAt : "",
+    financeMovedOut: normalizeMovedOut(parsed?.financeMovedOut),
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
@@ -5822,6 +5981,14 @@ function normalizeState(parsed) {
     financeDismissedAlerts: (parsed?.financeDismissedAlerts && typeof parsed.financeDismissedAlerts === "object") ? parsed.financeDismissedAlerts : {},
     financeLabelSkips: (parsed?.financeLabelSkips && typeof parsed.financeLabelSkips === "object") ? parsed.financeLabelSkips : {},
     financeLabelSnoozes: (parsed?.financeLabelSnoozes && typeof parsed.financeLabelSnoozes === "object") ? parsed.financeLabelSnoozes : {},
+    // Months closed in Finance: { "YYYY-MM": { at } } or false once reopened (a
+    // union-merged map, so reopening writes false rather than deleting).
+    financeClosedMonths: (parsed?.financeClosedMonths && typeof parsed.financeClosedMonths === "object") ? parsed.financeClosedMonths : {},
+    // "Paid the household back" records: { id, by, amount, at } (finance-settle.js).
+    financeSettlements: Array.isArray(parsed?.financeSettlements) ? parsed.financeSettlements.filter((s) => s && s.id) : [],
+    // Tax-time tags ({ txnId: kind | "none" }) and trip tags ({ txnId: tripId | "" }); finance-tags.js.
+    financeTxnTax: (parsed?.financeTxnTax && typeof parsed.financeTxnTax === "object") ? parsed.financeTxnTax : {},
+    financeTxnTrip: (parsed?.financeTxnTrip && typeof parsed.financeTxnTrip === "object") ? parsed.financeTxnTrip : {},
     financeNotifDismissed: (parsed?.financeNotifDismissed && typeof parsed.financeNotifDismissed === "object") ? parsed.financeNotifDismissed : {},
     financeTxnConfirmed: (parsed?.financeTxnConfirmed && typeof parsed.financeTxnConfirmed === "object") ? parsed.financeTxnConfirmed : {},
     financeTxnReceipts: normalizeFinanceTxnReceipts(parsed?.financeTxnReceipts),
@@ -5920,17 +6087,43 @@ function normalizeTombstones(raw) {
   return result;
 }
 
+// Per-view delete lists (state-sync.js): a key whose section has a row per view
+// records its deletes for the row they were made in, so removing something from
+// the household's list never removes the same id from a person's own.
+// → the owner of the row `key` is in right now: the person ("u-<id>"),
+// "household" or the business space's id; null for a key with one row for
+// everyone, or when the row can't be named yet. `scopeOf` lets a caller merging a row that is NOT
+// on screen (writeInactiveSection) name that row's scope.
+const TOMBSTONE_EXTRA_SECTIONS = { doPlanTasks: "do", financeCategories: "finance", financeLineItems: "finance", financeScenarios: "finance" };
+let stateKeySections = null;
+function tombstoneOwner(key, scopeOf = sectionScope) {
+  if (!stateKeySections) {
+    stateKeySections = {};
+    for (const [section, keys] of Object.entries(STATE_SECTIONS)) for (const k of keys) stateKeySections[k] = section;
+  }
+  const base = String(key || "").split(".")[0]; // "watchSettings.theaters" → watchSettings
+  const section = stateKeySections[base] || TOMBSTONE_EXTRA_SECTIONS[base];
+  if (!section || SECTION_SCOPE[section] !== "toggle") return null;
+  const scope = scopeOf(section);
+  if (scope === "personal") {
+    const uid = authSession?.user?.id;
+    return uid ? `u-${uid}` : (localDevMode ? "u-local" : null);
+  }
+  if (scope === "business") return businessSpace?.id || null;
+  // The delete lists live in the household's own row, so "household" needs no id
+  // (and doesn't depend on the group having loaded yet).
+  return "household";
+}
+
+// The deleted ids that apply to `key` in the view on screen.
+function deletedIdsFor(key) {
+  return tombstoneIdsFor(state.tombstones, key, tombstoneOwner(key));
+}
+
 function recordDeletion(arrayKey, id) {
   if (!id) return;
-  const idStr = String(id);
   if (!state.tombstones) state.tombstones = {};
-  if (!Array.isArray(state.tombstones[arrayKey])) state.tombstones[arrayKey] = [];
-  if (!state.tombstones[arrayKey].includes(idStr)) {
-    state.tombstones[arrayKey].push(idStr);
-    if (state.tombstones[arrayKey].length > MAX_TOMBSTONES_PER_KEY) {
-      state.tombstones[arrayKey] = state.tombstones[arrayKey].slice(-MAX_TOMBSTONES_PER_KEY);
-    }
-  }
+  addTombstone(state.tombstones, arrayKey, id, tombstoneOwner(arrayKey), MAX_TOMBSTONES_PER_KEY);
 }
 
 function recordDeletions(arrayKey, ids) {
@@ -5938,9 +6131,8 @@ function recordDeletions(arrayKey, ids) {
 }
 
 function unrecordDeletion(arrayKey, id) {
-  const idStr = String(id);
-  if (!state.tombstones?.[arrayKey]) return;
-  state.tombstones[arrayKey] = state.tombstones[arrayKey].filter(t => t !== idStr);
+  if (!state.tombstones) return;
+  removeTombstone(state.tombstones, arrayKey, id, tombstoneOwner(arrayKey));
 }
 
 function normalizeBirthdayCalendarSettings(settings) {
@@ -7191,18 +7383,22 @@ function priceObservationAgeDays(observation) {
 // an empty just-booted record can never erase populated cloud data; genuine
 // deletes propagate via tombstones. See that module's header for the WHY.
 
-function mergeStates(newer, older) {
+function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
   const merged = { ...newer };
 
   // Merge tombstones first so unionById can filter against the combined set
   merged.tombstones = mergeTombstones(newer.tombstones, older.tombstones);
+  // The deletes that apply to the rows being merged: each key resolved for the
+  // view its section is in (state-sync.js "Per-view delete lists"). Everything
+  // below filters against `dead`; `merged.tombstones` is the stored record.
+  const dead = effectiveTombstones(merged.tombstones, ownerOf);
 
   // Core merge primitives live in ./state-sync.js (extracted + unit-tested). The
   // unionById wrapper resolves this merge's per-key tombstone set (from the
   // combined tombstones above) and delegates; string/key unions alias directly.
   function unionById(a, b, tombstoneKey = null) {
-    const tombstoned = tombstoneKey && merged.tombstones?.[tombstoneKey]?.length
-      ? new Set(merged.tombstones[tombstoneKey])
+    const tombstoned = tombstoneKey && dead[tombstoneKey]?.length
+      ? new Set(dead[tombstoneKey])
       : null;
     return syncUnionById(a, b, tombstoned);
   }
@@ -7231,6 +7427,7 @@ function mergeStates(newer, older) {
     "inventoryBoxes", "inventoryItems",
     "groceryStores", "groceryPriceObservations", "priceHistory",
     "receipts",
+    "financeSettlements",
     // Fitness
     "workouts",
     // Health & food
@@ -7277,7 +7474,7 @@ function mergeStates(newer, older) {
   // WATCH_AUDIT.md decision 5). Membership is unionById's: either side's ids,
   // minus tombstones.
   merged.watchItems = mergeWatchItems(newer.watchItems, older.watchItems,
-    merged.tombstones?.watchItems?.length ? new Set(merged.tombstones.watchItems) : null);
+    dead.watchItems?.length ? new Set(dead.watchItems) : null);
 
   // Recurring charges are unique per MERCHANT, not per id — unioning by id let
   // each device's independently-created entry survive, piling up hundreds of
@@ -7309,9 +7506,9 @@ function mergeStates(newer, older) {
   // Finance records with nested child arrays: deep-merged so a just-booted
   // client's empty groups/people/personal budgets can never wipe the cloud's
   // categories, line items, or scenarios (see the merge helpers above).
-  merged.financeBudgetGroups = mergeFinanceBudgetGroups(newer.financeBudgetGroups, older.financeBudgetGroups, merged.tombstones);
-  merged.financePeople = mergeFinancePeople(newer.financePeople, older.financePeople, merged.tombstones);
-  merged.financePersonal = mergeFinancePersonal(newer.financePersonal, older.financePersonal, merged.tombstones);
+  merged.financeBudgetGroups = mergeFinanceBudgetGroups(newer.financeBudgetGroups, older.financeBudgetGroups, dead);
+  merged.financePeople = mergeFinancePeople(newer.financePeople, older.financePeople, dead);
+  merged.financePersonal = mergeFinancePersonal(newer.financePersonal, older.financePersonal, dead);
 
   // Publications are keyed by "key", not "id"
   {
@@ -7356,7 +7553,7 @@ function mergeStates(newer, older) {
     // labels, splits, renames, sign-flips, return links, or month history.
     "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
-    "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes",
+    "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeClosedMonths", "financeTxnTax", "financeTxnTrip",
     "financeNotifDismissed", "financeTxnConfirmed", "financeTxnReceipts",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
@@ -7388,7 +7585,7 @@ function mergeStates(newer, older) {
     merged.groceryChecklist = {
       ...oCl,
       ...nCl,
-      config: LiveGrocerySources.mergeChecklistConfig(nCl.config, oCl.config, merged.tombstones?.[LiveGrocerySources.CHECKLIST_CONFIG_TOMBSTONES]),
+      config: LiveGrocerySources.mergeChecklistConfig(nCl.config, oCl.config, dead[LiveGrocerySources.CHECKLIST_CONFIG_TOMBSTONES]),
       provisional: unionByKey(nCl.provisional, oCl.provisional),
       submissions: unionByKey(nCl.submissions, oCl.submissions),
       seeded: Boolean(nCl.seeded || oCl.seeded),
@@ -7435,9 +7632,9 @@ function mergeStates(newer, older) {
   merged.groceryStoreItemSections = mergeGroceryStoreItemSections(newer.groceryStoreItemSections, older.groceryStoreItemSections);
 
   // ── Week/day plan structures: deep day-level merge ────────────────────────
-  merged.doPlans = mergeDoPlans(newer.doPlans, older.doPlans, merged.tombstones);
+  merged.doPlans = mergeDoPlans(newer.doPlans, older.doPlans, dead);
   merged.watchPlans = mergeWatchPlans(newer.watchPlans, older.watchPlans);
-  merged.playPlans = mergePlayPlans(newer.playPlans, older.playPlans, merged.tombstones);
+  merged.playPlans = mergePlayPlans(newer.playPlans, older.playPlans, dead);
 
   // ── Meal plans: deep slot-level merge ────────────────────────────────────
   merged.plans = mergePlanWeeks(newer.plans, older.plans);
@@ -7464,6 +7661,19 @@ function mergeStates(newer, older) {
   // the rules above only where a stamp exists. Also merges the per-section
   // stamp maps ("configSettingStamps", "mediaSettingStamps",
   // "grocerySettingStamps", "recreateSettingStamps", "planSettingStamps") — see settings-sync.js.
+  // Finance: what a move between Household and Personal took out of this row
+  // (FINANCE_SPLIT_DESIGN.md §8). The record from the later move wins; the side
+  // that hadn't seen that move contributes no month totals (they still count
+  // what moved, and the app rebuilds them); and whatever the record lists is
+  // removed from the merged copy, so this device can't show or re-send it.
+  {
+    const { movedOut, stale } = mergeMovedOut(newer.financeMovedOut, older.financeMovedOut);
+    merged.financeMovedOut = movedOut;
+    if (stale) merged.financeMonthActuals = normalizeFinanceMonthActuals((stale === "newer" ? older : newer).financeMonthActuals);
+    const stripped = stripMovedOut(merged);
+    if (stripped !== merged) for (const key of STATE_SECTIONS.finance) if (key in stripped) merged[key] = stripped[key];
+  }
+
   mergeTrackedSettings(merged, newer, older);
 
   // Preserve the actual data timestamp — only persist() (user-initiated changes) should advance it.
@@ -7759,6 +7969,7 @@ async function runHydrateStateFromSharedStorage() {
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
+      syncReceiptsTable();
       markDisplayPrefsKnown(); // theme copy + iPhone icon follow the loaded prefs from here
       hideHydrationOverlay(); // data is in — never leave the "Syncing…" cover up
       backfillHistoryLog();
@@ -7856,7 +8067,7 @@ function wireNewerBuildCheck() {
   if (isNativeApp() || !/^https?:$/.test(window.location.protocol)) return;
   setTimeout(checkForNewerBuild, 15000);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") checkForNewerBuild();
+    if (document.visibilityState === "visible") { checkForNewerBuild(); syncReceiptsTable(); }
   });
 }
 
@@ -8159,7 +8370,7 @@ function applyStoredState(storedState) {
     const tripBackup = loadTripBackup();
     if (tripBackup?.trips?.length) {
       const tombstonedIds = new Set([
-        ...(state.tombstones?.trips || []).map(String),
+        ...deletedIdsFor("trips").map(String),
         ...(tripBackup.tombstones || []).map(String)
       ]);
       const survivingTrips = tripBackup.trips.filter(t => t?.id != null && !tombstonedIds.has(String(t.id)));
@@ -8217,6 +8428,9 @@ function extractSectionData(keys, source = state) {
   // full text stays in memory during a session and is re-fetched via
   // ensureEpisodeDescription() when a user actually opens the notes.
   if (Array.isArray(obj.podcasts)) obj.podcasts = storedPodcasts(obj.podcasts, source);
+  // A Personal purchase's receipt lives only in the receipts table under the
+  // person's own scope; it never rides the shared grocery row.
+  if (Array.isArray(obj.receipts) && obj.receipts.some((r) => r?.view === "personal")) obj.receipts = obj.receipts.filter((r) => r?.view !== "personal");
   // Article bodies whose bytes are safely in the content-store backstop no longer
   // ride the synced media section (the Disk-IO win — the section was rewritten
   // with full article text on every media interaction). The reader re-reads them
@@ -9102,6 +9316,10 @@ function documentsDeps() {
       if (isNativeApp() && nativeWebAuth()) { await nativeWebAuth().start({ url, callbackScheme: APP_CALLBACK_SCHEME }).catch(() => null); return; }
       window.location.href = url;
     },
+    movePersonalReceipts: () => movePersonalReceiptFilesSoon(),
+    // A receipt file shows what was read from it and whether it's matched to a charge.
+    receiptInfo: (receiptId) => _finance.financeReceiptInfo(receiptId),
+    openReceipt: (receiptId) => openReceiptDetail(receiptId),
   };
 }
 
@@ -12686,83 +12904,24 @@ async function openMailAttachment(chip) {
     const got = await loadMailAttachmentBytes({ messageId: attMessage, attachmentId: attId, filename, size: attSize });
     if (got.tooLarge) { window.open(gmailUrl, "_blank"); return; }
     if (!got.bytes) { offerMailAttachmentInGmail(got.error, gmailUrl); return; }
-    showMailAttachmentViewer({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
+    showMailAttachment({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
   } finally {
     chip.disabled = false;
     chip.classList.remove("is-loading");
   }
 }
 
-// The web viewer: a full-window dialog over the Mail page. PDFs, bitmap images
-// and plain text show inline; other files get Download (and Open in Gmail).
-// SECURITY: see mail-attachment-view.js — only inert types are ever rendered,
-// and the blob never carries the sender's declared type.
-function showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }) {
-  document.getElementById("mailAttachmentViewer")?.remove();
-  const kind = attachmentViewKind(mimeType, filename);
-  const blob = new Blob([bytes], { type: attachmentBlobType(kind, mimeType, filename) });
-  const url = kind === "pdf" || kind === "image" ? URL.createObjectURL(blob) : "";
-
-  const dlg = document.createElement("dialog");
-  dlg.id = "mailAttachmentViewer";
-  dlg.className = "mail-att-viewer";
-  dlg.setAttribute("aria-label", filename);
-  dlg.innerHTML = `
-    <div class="mail-att-viewer-bar">
-      <button class="icon-btn mail-att-viewer-close" type="button" aria-label="Close">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
-      <span class="mail-att-viewer-name"></span>
-      <button class="secondary-btn mail-att-viewer-download" type="button">Download</button>
-    </div>
-    <div class="mail-att-viewer-body"></div>`;
-  dlg.querySelector(".mail-att-viewer-name").textContent = filename;
-  const body = dlg.querySelector(".mail-att-viewer-body");
-  const downloadMailAttachment = () => {
-    saveFile(new Blob([bytes], { type: "application/octet-stream" }), filename).catch((e) => console.warn("attachment save failed", e));
-  };
-
-  if (kind === "pdf") {
-    const frame = document.createElement("iframe");
-    frame.className = "mail-att-viewer-pdf";
-    frame.title = filename;
-    frame.src = url;
-    body.appendChild(frame);
-  } else if (kind === "image") {
-    const img = document.createElement("img");
-    img.className = "mail-att-viewer-img";
-    img.alt = filename;
-    img.src = url;
-    body.appendChild(img);
-  } else if (kind === "text") {
-    const pre = document.createElement("pre");
-    pre.className = "mail-att-viewer-text";
-    let text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    if (text.length > ATTACHMENT_TEXT_PREVIEW_MAX) text = text.slice(0, ATTACHMENT_TEXT_PREVIEW_MAX) + "\n\n… (preview cut short — download for the whole file)";
-    pre.textContent = text;
-    body.appendChild(pre);
-  } else {
-    const empty = document.createElement("div");
-    empty.className = "mail-att-viewer-empty";
-    empty.innerHTML = `<p>This kind of file can't be previewed here.</p>
-      <div class="mail-att-viewer-actions">
-        <button class="primary-btn" type="button" data-att-download>Download</button>
-        <a class="secondary-btn" target="_blank" rel="noopener noreferrer">Open in Gmail</a>
-      </div>`;
-    empty.querySelector("a").href = gmailUrl;
-    empty.querySelector("[data-att-download]").addEventListener("click", () => downloadMailAttachment());
-    dlg.querySelector(".mail-att-viewer-download").hidden = true;
-    body.appendChild(empty);
-  }
-
-  dlg.querySelector(".mail-att-viewer-download").addEventListener("click", downloadMailAttachment);
-  dlg.querySelector(".mail-att-viewer-close").addEventListener("click", () => dlg.close());
-  dlg.addEventListener("close", () => {
-    if (url) URL.revokeObjectURL(url);
-    dlg.remove();
+// The web viewer lives in mail-attachment-viewers.js; this is what it may reach
+// outside Mail: saving the file, the event editor and the contacts import.
+function showMailAttachment({ bytes, filename, mimeType, gmailUrl }) {
+  let timeZone = "";
+  try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { /* no Intl zone */ }
+  return showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }, {
+    saveFile,
+    timeZone,
+    addInviteEvent: (prefill) => openPlanEventDialog(prefill.date, null, prefill),
+    addContacts: (vcfText) => importContactsVcf(vcfText)
   });
-  document.body.appendChild(dlg);
-  dlg.showModal();
 }
 
 // Renders each message body the way Gmail does: HTML mail goes into a
@@ -18092,8 +18251,8 @@ function scanReceiptFromHeader(files, options = {}) {
   const images = files.filter((f) => /^image\//.test(f.type || ""));
   if (!images.length) return;
   const { camera = false, ...scanOptions } = options;
-  openReceiptScanWithFiles(images, scanOptions);
-  queueReceiptForDocuments(images, { camera });
+  const receiptId = openReceiptScanWithFiles(images, scanOptions);
+  queueReceiptForDocuments(images, { camera, receiptId });
 }
 
 // Every scanned receipt is also kept in Household's Document › Receipts, an everyday
@@ -18113,12 +18272,12 @@ function receiptOutbox() {
   })().catch((e) => { receiptOutboxPromise = null; throw e; });
   return receiptOutboxPromise.then((o) => o.outbox);
 }
-async function queueReceiptForDocuments(files, { camera = false } = {}) {
+async function queueReceiptForDocuments(files, { camera = false, receiptId = "" } = {}) {
   if (localDevMode || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return;
   const scope = userGroup.id; // filed only into the household it was scanned in
   try {
     const pages = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
-    await (await receiptOutbox()).queue(pages, { scope, camera });
+    await (await receiptOutbox()).queue(pages, { scope, camera, receiptId });
   } catch { return; /* best-effort: the receipt itself is unaffected */ }
   fileWaitingReceipts(scope).catch(() => {}); // now; whatever fails waits for the next try
 }
@@ -18151,6 +18310,35 @@ function fileWaitingReceipts(scope) {
     });
   })().finally(() => { receiptFiling = null; });
   return receiptFiling;
+}
+
+// Personal receipts folder (Luke, 2026-11-12): a receipt marked Personal has its
+// Document file moved from Household › Receipts to the owner's Personal › Receipts.
+// Runs after the receipts table sync (the database checks the receipt is this
+// person's Personal one there), only for Personal receipts not yet handled this session.
+const personalReceiptFilesHandled = new Set();
+let personalReceiptMove = null;
+function movePersonalReceiptFilesSoon() {
+  const uid = authSession?.user?.id;
+  if (localDevMode || !uid || !userGroup?.id || !isPageEnabled("documents")) return null;
+  const ids = (Array.isArray(state.receipts) ? state.receipts : [])
+    .filter((r) => r?.view === "personal" && !personalReceiptFilesHandled.has(r.id)).map((r) => r.id);
+  if (!ids.length) return null;
+  personalReceiptMove ||= (async () => {
+    const [{ movePersonalReceiptFiles, OUTBOX_LOCK }, { createEverydayLibrary }, { createDocumentsStorage, edgePresigner }, { createRestTransport }, { withLock }] = await Promise.all([
+      import("./documents/outbox.js"), import("./documents/everyday.js"), import("./documents/storage.js"),
+      import("./messaging/server.js"), import("./messaging/keystore.js"),
+    ]);
+    const library = createEverydayLibrary({
+      transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+      storage: createDocumentsStorage({ presign: edgePresigner({ functionsUrl: `${supabaseBaseUrl()}/functions/v1`, getToken: async () => authSession?.access_token || "" }), tier: "everyday" }),
+    });
+    const out = await movePersonalReceiptFiles({ library, from: userGroup.id, to: `u-${uid}`, personalIds: ids, lock: (fn) => withLock(OUTBOX_LOCK, fn) });
+    if (!out.failed) ids.forEach((id) => personalReceiptFilesHandled.add(id));
+    if (out.moved && activeAppArea === "documents") documentsUi?.reload?.();
+    return out;
+  })().catch((e) => { console.warn("[receipts] personal files:", e?.message || e); return null; }).finally(() => { personalReceiptMove = null; });
+  return personalReceiptMove;
 }
 
 // The iPhone's text recognition → printed rows per page (receipt-reconcile.js).
@@ -18774,6 +18962,7 @@ function renderContextSettingsDialog(kind) {
     "voice": "Voice",
     "podcasts": "Podcasts",
     "display": "Display",
+    "sign-in": "Sign-in",
     "beta": "Beta",
     "link-test": "Link Test",
     "ai-log": "AI Action Log"
@@ -18792,6 +18981,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="pages">Pages</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
+        <button type="button" data-context-settings-action="sign-in">Sign-in</button>
         <button type="button" data-context-settings-action="export-data">Export My Data</button>
       </div>
       ${isAdmin ? `
@@ -18809,6 +18999,12 @@ function renderContextSettingsDialog(kind) {
       ` : ""}
       ${buildVersionLineHtml()}
     `;
+    return;
+  }
+
+  // Sign-in: authenticator code + Face ID (auth-second-step.js).
+  if (kind === "sign-in") {
+    secondStep.renderSettings(elements.contextSettingsBody);
     return;
   }
 
@@ -19693,6 +19889,7 @@ function handleContextSettingsAction(event) {
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
     "display": () => renderContextSettingsDialog("display"),
     "voice": () => renderContextSettingsDialog("voice"),
+    "sign-in": () => renderContextSettingsDialog("sign-in"),
     "restore-backup": () => openFromSettingsWithBack(elements.restoreDialog, openRestoreDialog),
     "export-data": () => closeAndRun(exportMyData),
     "reload-app": () => reloadForNewerBuild(),
@@ -21627,7 +21824,7 @@ function syncGoogleCalendarLinks({ force = false } = {}) {
     if (!status.connected) { gcalStatus = status; return false; }
     const proposals = proposeGoogleLinks(status.calendars, status.links, normalizeLinkedCalendars(state.calendars));
     if (proposals.length) status = { ...status, links: (await gcalApi.action(token, { action: "link", links: proposals })).links };
-    const tombstoned = new Set((state.tombstones?.calendars || []).map(String));
+    const tombstoned = new Set(deletedIdsFor("calendars").map(String));
     const rec = reconcileGoogleLinks(normalizeLinkedCalendars(state.calendars), status.links, status.calendars, tombstoned, { colorFor: (color, index) => normalizeCalendarColor(color, index) });
     for (const appCalendarId of rec.unlink) {
       try { status = { ...status, links: (await gcalApi.action(token, { action: "unlink", appCalendarId })).links }; } catch { /* retried next sync */ }
@@ -23704,20 +23901,24 @@ function watchItemTemplate(item) {
 // and skips the panel's entry animation; opening a new row just places it. The
 // page scrolls only when a different poster was opened, and only enough to
 // show the panel — never on the re-render after an episode tick.
-let watchPanelLast = null; // { id, x, rowTop } of the panel as last drawn
+const gridPanelLast = {}; // per grid: { id, x, rowTop } of the panel as last drawn
 function placeWatchPanelPointer(root) {
   const detail = root?.querySelector("[data-watch-detail]");
-  if (!detail) { watchPanelLast = null; return; }
-  const id = detail.dataset.watchDetail;
-  const card = root.querySelector(`[data-watch-item="${CSS.escape(id)}"]`);
+  const card = detail ? root.querySelector(`[data-watch-item="${CSS.escape(detail.dataset.watchDetail)}"]`) : null;
+  placeGridPanelPointer(root, "watch", detail, card, detail?.dataset.watchDetail);
+}
+// Shared by every poster grid with an open panel (Watch, and Listen's Podcasts
+// and Books — Luke, 2026-11-11). `key` keeps each grid's last position apart.
+function placeGridPanelPointer(root, key, detail, card, id) {
+  if (!detail) { gridPanelLast[key] = null; return; }
   const poster = card?.querySelector(".watch-poster") || card;
   if (!poster) return;
   const d = detail.getBoundingClientRect();
   const p = poster.getBoundingClientRect();
   const x = Math.round(p.left + p.width / 2 - d.left);
   const rowTop = Math.round(p.top - root.getBoundingClientRect().top);
-  const prev = watchPanelLast;
-  watchPanelLast = { id, x, rowTop };
+  const prev = gridPanelLast[key];
+  gridPanelLast[key] = { id, x, rowTop };
   if (prev && prev.rowTop === rowTop) {
     detail.classList.add("is-steady"); // same row: no entry animation
     if (prev.id !== id && prev.x !== x && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
@@ -27514,11 +27715,29 @@ function scheduleReminderSync(delay = 2000) {
   reminderSyncTimer = window.setTimeout(syncNativeReminders, delay);
 }
 
+// The weekly Finance nudge rides the same schedule (iOS keeps one set of pending
+// notifications, and the reminder sync cancels anything it didn't ask for). The
+// count is remembered on this device so a cold start doesn't drop the nudge.
+const FINANCE_NUDGE_COUNT_KEY = "live-finance-nudge-count";
+function financeNudgeForReminders() {
+  try {
+    if (!isPageEnabled("finance") || !_finance.financeAlertPref("weeklyNudge")) return [];
+    let count = _finance.financeToCategorizeCount();
+    if (count == null) count = Number(localStorage.getItem(FINANCE_NUDGE_COUNT_KEY)) || 0;
+    else localStorage.setItem(FINANCE_NUDGE_COUNT_KEY, String(count));
+    const nudge = financeNudgeInstance(count);
+    // Return windows closing soon (receipt-returns.js), at most 20 pending.
+    let returns = [];
+    try { returns = _finance.financeReturnReminders().sort((a, b) => a.fireAt - b.fireAt).slice(0, 20); } catch { returns = []; }
+    return [...(nudge ? [nudge] : []), ...returns];
+  } catch { return []; }
+}
+
 function syncNativeReminders() {
   const native = reminderNative();
   if (!native) return Promise.resolve(null);
   try {
-    return native.sync(currentReminderInstances());
+    return native.sync([...currentReminderInstances(), ...financeNudgeForReminders()]);
   } catch (error) {
     console.warn("Reminder scheduling failed.", error);
     return Promise.resolve(null);
@@ -27545,6 +27764,7 @@ async function ensureReminderPermission() {
 
 // A tapped reminder opens its event (or at least its day) in the calendar.
 function openReminderTarget({ kind, eventId, date } = {}) {
+  if (kind === "finance") { showFinanceApp(); return; }
   if (!date) return;
   planViewDate = new Date(`${date}T00:00:00`);
   showPlanApp();
@@ -27983,6 +28203,14 @@ function buildPlanAppDataIndex() {
       }
     }
   }
+  // Paydays from Finance's pay schedules, beside the bills (same "Bills" overlay).
+  try {
+    const from = new Date(); from.setMonth(from.getMonth() - 2, 1);
+    const to = new Date(); to.setMonth(to.getMonth() + 15, 0);
+    for (const p of (_finance.financePaydays(dateKeyFromDate(from), dateKeyFromDate(to)) || [])) {
+      push(p.date, { id: `finpay-${p.personId}-${p.date}`, title: `Payday · ${p.name} ${formatFinMoney(p.amount)}`, date: p.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.finance, source: "finance", calendarName: "Bills", readOnly: true });
+    }
+  } catch { /* Finance not loaded */ }
   return byDate;
 }
 
@@ -28800,6 +29028,9 @@ function openPlanEventDialog(date, eventId, prefill) {
       if (prefill.allDay === false) { elements.planEventAllDay.checked = false; elements.planTimeFields.hidden = false; }
       if (prefill.startTime) setPlanTimeField("planEventStart", prefill.startTime);
       if (prefill.endTime) setPlanTimeField("planEventEnd", prefill.endTime);
+      // An emailed invite (Mail's attachment viewer) also brings notes and a place.
+      if (prefill.notes) elements.planEventNotes.value = prefill.notes;
+      if (prefill.location) elements.planEventLocation.value = prefill.location;
     }
   }
   // Recurrence controls (edit a recurring event = edit the whole series). A
@@ -29443,7 +29674,7 @@ async function deletePlanEvent() {
   const afterChange = () => { persist(); if (activeAppArea === "plan") renderPlanPage(); else if (activeAppArea === "eat") renderPlanner(); };
   const restoreWhole = (snapshot) => () => {
     if ((state.planEvents || []).some((e) => e.id === id)) return; // already back
-    if (state.tombstones?.planEvents) state.tombstones.planEvents = state.tombstones.planEvents.filter((x) => x !== String(id));
+    unrecordDeletion("planEvents", id);
     state.planEvents = [...(state.planEvents || []), snapshot];
     afterChange();
   };
@@ -30406,6 +30637,7 @@ function refreshStalePodcastFeeds() {
         else if (activeMediaTab === "podcasts") {
           if (activePodcastTab === "recent") renderRecentEpisodes();
           else if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+          else if (activePodcastTab === "shows" && !activePodcastShowId) renderPodcastShowsGrid(); // an open panel's recent episodes
         }
       }
     }
@@ -31472,6 +31704,7 @@ function isArticlePubTab(tab) {
 // ─── Podcasts ─────────────────────────────────────────────────────────────────
 
 let activePodcastShowId = null;
+let expandedPodcastShowId = null; // the show whose panel is open in the Shows grid — this device's view, never saved
 let activePodcastTab = "shows";
 let activePodcastSavedCategory = "all";
 let podcastSavedCatInputActive = false;
@@ -31799,7 +32032,9 @@ function switchPodcastTab(tabId) {
     refreshStalePodcastFeeds(); // re-renders the list when fresh episodes land
   } else if (tabId === "shows") {
     activePodcastShowId = null;
+    expandedPodcastShowId = null;
     renderPodcastShowsGrid();
+    refreshStalePodcastFeeds(); // the panels list recent episodes; redraws the grid if any landed
   } else if (tabId === "saved") {
     renderPodcastSavedEpisodes();
   } else if (tabId === "search") {
@@ -31970,7 +32205,8 @@ async function writeInactiveSection(section, scope, attempt = 0) {
   const { stateUpdatedAt: remoteTs, ...remoteData } = rows[0].state || {};
   const localFrag = { ...applyRowReset(section, keys, data, remoteData), tombstones: state.tombstones, stateUpdatedAt: now };
   const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
-  const merged = mergeStates(localFrag, remoteFrag);
+  // This row is not the one on screen: its deletes are its own scope's.
+  const merged = mergeStates(localFrag, remoteFrag, { ownerOf: (key) => tombstoneOwner(key, (s) => (s === section ? scope : sectionScope(s))) });
   const mergedFrag = {};
   for (const key of keys) { if (merged[key] !== undefined) mergedFrag[key] = merged[key]; }
   setShadowData(section, scope, mergedFrag);
@@ -32078,41 +32314,96 @@ function removePodcastFromCurrentScope(id) {
   renderPodcastShowsGrid();
 }
 
+// The Shows grid matches the Watch page (Luke, 2026-11-11): cover art four to
+// a row on a phone, and tapping a show opens a panel of its recent episodes
+// under that row — the grid stays put. "All episodes" in the panel opens the
+// show's full list (with its bundle settings), as tapping the show used to.
+const PODCAST_PANEL_EPISODES = 5;
+function podcastShowPanelHtml(show) {
+  const id = escapeHtml(show.id);
+  const all = Array.isArray(show.episodes) ? show.episodes : [];
+  const recent = [...all]
+    .sort((a, b) => (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0))
+    .slice(0, PODCAST_PANEL_EPISODES)
+    .map((e) => ({ ...e, showId: show.id, showTitle: show.title, showArt: show.art }));
+  const hasPlaylists = (state.podcastPlaylists || []).length > 0;
+  return `
+    <div class="watch-detail-row listen-detail-row" data-podcast-show-detail="${id}" role="region" aria-label="${escapeHtml(show.title)}">
+      <span class="watch-detail-pointer" aria-hidden="true"></span>
+      <div class="watch-detail-inner">
+        <div class="watch-detail-top">
+          <div class="watch-detail-head">
+            <span class="watch-detail-title">${escapeHtml(show.title)}</span>
+            <span class="watch-detail-sub">Recent episodes</span>
+          </div>
+          <button class="watch-detail-more" type="button" data-podcast-show-more="${id}" aria-label="More for ${escapeHtml(show.title)}" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+          </button>
+        </div>
+        ${show.lastError ? `<p class="podcast-feed-error" role="status">Not updating since ${escapeHtml(formatArticleDate(show.lastFetched))}: ${escapeHtml(show.lastError)}</p>` : ""}
+        ${recent.length
+          ? `<div class="listen-detail-episodes">${recent.map((e) => podcastEpisodeRowHtml(e, { showShowTitle: false, hasPlaylists })).join("")}</div>`
+          : `<p class="listen-detail-empty">No episodes yet.</p>`}
+        <button class="secondary-btn compact-btn listen-detail-all" type="button" data-podcast-show-all="${id}">All episodes</button>
+      </div>
+    </div>`;
+}
+
 function renderPodcastShowsGrid() {
   const listEl = document.getElementById("podcastEpisodeList");
   if (!listEl) return;
   const podcasts = [...(state.podcasts || [])].sort((a, b) =>
     (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }));
+  if (expandedPodcastShowId && !podcasts.some((p) => p.id === expandedPodcastShowId)) expandedPodcastShowId = null;
   const addCard = `
-    <button class="podcast-show-card podcast-show-card-add" type="button" id="podcastShowAddCard">
-      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      <span>Add show</span>
+    <button class="watch-card listen-card listen-card-add" type="button" id="podcastShowAddCard" aria-label="Add show">
+      <div class="watch-poster watch-poster--square watch-poster--ph">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="watch-card-meta"><span class="watch-card-title">Add show</span></div>
     </button>`;
 
-  if (!podcasts.length) {
-    listEl.innerHTML = `<div class="podcast-shows-grid">${addCard}</div>`;
-    listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
-    return;
-  }
-
-  listEl.innerHTML = `<div class="podcast-shows-grid">
-    ${podcasts.map(p => `
-      <button class="podcast-show-card" type="button" data-show-id="${escapeHtml(p.id)}">
-        ${p.art
-          ? `<img class="podcast-show-card-art" src="${escapeHtml(p.art)}" alt="${escapeHtml(p.title)}" loading="lazy">`
-          : `<div class="podcast-show-card-art podcast-show-card-art--placeholder"><svg viewBox="0 0 24 24" aria-hidden="true" width="32" height="32"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`}
-        <div class="podcast-show-card-title">${escapeHtml(p.title)}</div>
-        <div class="podcast-show-card-meta">${p.episodes?.length || 0} episode${p.episodes?.length === 1 ? "" : "s"}</div>
-      </button>
-    `).join("")}
+  listEl.innerHTML = `<div class="watch-grid listen-grid podcast-shows-grid">
+    ${podcasts.map((p) => {
+      const expanded = expandedPodcastShowId === p.id;
+      return `
+      <article class="watch-card listen-card${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-expanded="${expanded}" data-show-id="${escapeHtml(p.id)}">
+        <div class="watch-poster watch-poster--square${p.art ? "" : " watch-poster--ph"}">
+          ${p.art
+            ? `<img class="watch-poster-img" src="${escapeHtml(p.art)}" alt="" aria-hidden="true" loading="lazy">`
+            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4"/></svg>`}
+        </div>
+        <div class="watch-card-meta"><span class="watch-card-title">${escapeHtml(p.title)}</span></div>
+      </article>${expanded ? podcastShowPanelHtml(p) : ""}`;
+    }).join("")}
     ${addCard}
   </div>`;
 
-  listEl.querySelectorAll("[data-show-id]").forEach(btn => {
-    btn.addEventListener("click", () => openPodcastShow(btn.dataset.showId));
-    btn.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "show", btn.dataset.showId));
+  listEl.querySelectorAll(".listen-card[data-show-id]").forEach((card) => {
+    const toggle = () => {
+      expandedPodcastShowId = expandedPodcastShowId === card.dataset.showId ? null : card.dataset.showId;
+      renderPodcastShowsGrid();
+    };
+    card.addEventListener("click", toggle);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+    card.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "show", card.dataset.showId));
   });
+  listEl.querySelector("[data-podcast-show-more]")?.addEventListener("click", (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    openMediaShareMenu({
+      preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation(),
+      clientX: r.right - 200, clientY: r.bottom + 4,
+    }, "show", e.currentTarget.dataset.podcastShowMore);
+  });
+  listEl.querySelector("[data-podcast-show-all]")?.addEventListener("click", (e) => openPodcastShow(e.currentTarget.dataset.podcastShowAll));
   listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
+  const detail = listEl.querySelector("[data-podcast-show-detail]");
+  if (detail) wirePodcastEpisodeRows(detail);
+  placeGridPanelPointer(listEl, "podcasts", detail,
+    detail ? listEl.querySelector(`.listen-card[data-show-id="${CSS.escape(detail.dataset.podcastShowDetail)}"]`) : null,
+    detail?.dataset.podcastShowDetail);
 }
 
 function openPodcastShow(showId) {
@@ -33500,6 +33791,7 @@ registerMediaProvider({
   play: (item, { autoplay = true, advance = false } = {}) => {
     // All queue in the native app → the plugin plays it (see
     // nativeQueueHandlesPodcasts); falls back to the web player if it can't.
+    if (autoplay && keepNativeEpisodePlaying(item.id, advance)) return;
     if (autoplay && mediaAllQueueId === item.id && nativeQueueHandlesPodcasts()) {
       startNativePodcast(item.id).then((ok) => { if (!ok) openPodcastEpisode(item.id, { autoplay, advance }); });
       return;
@@ -34827,6 +35119,7 @@ function startPodcastPlayback(episode, show, { autoplay = true, advance = false,
   // iPhone app: play on the native player (see nativeQueueHandlesPodcasts). A
   // paused load (autoplay:false) stays on the web element until play is tapped,
   // which hands it over (togglePodcastPlayPause).
+  if (autoplay && !forceWeb && episode && keepNativeEpisodePlaying(episode.id, advance)) return;
   if (autoplay && !forceWeb && nativeQueueHandlesPodcasts() && episode && episode.audioUrl) {
     startNativePodcastEpisode(episode, show).then((ok) => {
       if (!ok) startPodcastPlayback(episode, show, { autoplay, advance, forceWeb: true });
@@ -39307,8 +39600,8 @@ function markPaperSignIn(key, on) {
 // How to sign in to a paper inside the app: Google's sign-in refuses embedded
 // browsers, so its page never verifies (Luke, 2026-10-28). Shown in the reader,
 // Sync Settings and (newer app builds) the sign-in sheet's own header.
-const PAPER_SIGNIN_HINT = "Use your email and password (or Apple). Google sign-in doesn't work in the app.";
-const PAPER_SIGNIN_SHEET_HINT = "Use email and password, not Google"; // one line in the sheet's header
+const PAPER_SIGNIN_HINT = "Use your email and password. Apple and Google sign-in don't work in the app.";
+const PAPER_SIGNIN_SHEET_HINT = "Use email and password, not Apple or Google"; // one line in the sheet's header
 
 // A phone-side read of a subscriber article came back cut off. If the phone
 // thinks it's signed in, its session has probably lapsed: check again (once per
@@ -39412,7 +39705,7 @@ function articlePaperLoginsSettingsHtml() {
           ${settingsInfoButton("paper-signins", "newspaper sign-ins")}
         </div>
         <p class="settings-panel-note">${escapeHtml(PAPER_SIGNIN_HINT)}</p>
-        ${settingsInfoPanel("paper-signins", "Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with Apple or with email and password: Google sign-in doesn't work inside apps.")}${rows}`;
+        ${settingsInfoPanel("paper-signins", "Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with email and password: Apple and Google sign-in don't work inside apps.")}${rows}`;
 }
 
 function bindArticlePaperLoginActions(root, article) {
@@ -40673,6 +40966,20 @@ async function startNativePodcastEpisode(episode, show) {
   return true;
 }
 
+// A tap on the episode the native player already holds must not start it again:
+// a start reopens it at the last saved spot (saved at most every 15 s), so it
+// jumped back (ISSUES.md, 2026-11-11). Show its panel, and carry on if it was
+// paused. Returns true when the tap was handled here (media-queue-order.js
+// episodeTapAction decides).
+function keepNativeEpisodePlaying(episodeId, advance = false) {
+  const s = nativePodcastSession();
+  const action = episodeTapAction({ tappedId: episodeId, sessionId: s && s.currentId, paused: !!(s && s.paused), advance });
+  if (action === "start") return false;
+  showPodcastEpisodePanel(episodeId);
+  if (action === "resume") toggleListenPlayPause();
+  return true;
+}
+
 // The native session when it is playing a podcast episode, else null — lets the
 // Podcasts-tab player panel drive/reflect it like the web player.
 function nativePodcastSession() {
@@ -41332,6 +41639,7 @@ async function callNetlifyFunction(name, body, { timeoutMs } = {}) {
 // Books folder: a horizontal tab bar (Audible / Libby / Kindle / Wishlist)
 // over a single content grid, matching the podcasts / saved-articles layout.
 let activeBookTab = "audible";
+let expandedReadingItemId = null; // the book whose panel is open in the Books grid — this device's view, never saved
 let bookCategoryInputActive = false;
 let draggedReadingItemId = null;
 function handleReadingItemDragStart(event) {
@@ -41380,7 +41688,7 @@ function renderBookTabs() {
 
   bar.querySelectorAll("[data-book-tab]").forEach((btn) => {
     const tabKey = btn.dataset.bookTab;
-    btn.addEventListener("click", () => { activeBookTab = tabKey; bookCategoryInputActive = false; renderBooksView(); });
+    btn.addEventListener("click", () => { activeBookTab = tabKey; bookCategoryInputActive = false; expandedReadingItemId = null; renderBooksView(); });
     // Custom wishlist tabs accept dragged books (drop = add to that wishlist).
     if (!BOOK_FORMAT_TABS.some((t) => t.key === tabKey)) {
       btn.addEventListener("dragover", (e) => {
@@ -41450,6 +41758,7 @@ function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
     : (i) => i.format === format;
 
   const allItems = readingItemsList().filter(filterFn);
+  if (expandedReadingItemId && !allItems.some((i) => i.id === expandedReadingItemId)) expandedReadingItemId = null;
   const active = allItems.filter(i => i.status !== "read");
   const reading = active.filter(i => i.status === "reading");
   const want = active.filter(i => i.status === "want");
@@ -41462,7 +41771,7 @@ function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
         <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         <span>${label}</span>
       </button>
-      <div class="watch-item-list">${items.map(item => readingItemTemplate(item)).join("")}</div>
+      <div class="watch-item-list watch-grid listen-grid">${items.map(item => readingCardTemplate(item)).join("")}</div>
     </div>`;
 
   const emptyHint = categoryId
@@ -41481,6 +41790,10 @@ function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
     </section>`;
 
   bindReadingControls(gridEl);
+  const detail = gridEl.querySelector("[data-reading-detail]");
+  placeGridPanelPointer(gridEl, "books", detail,
+    detail ? gridEl.querySelector(`[data-reading-item="${CSS.escape(detail.dataset.readingDetail)}"]`) : null,
+    detail?.dataset.readingDetail);
 }
 
 function renderReadingPlanner(formatFilter) {
@@ -41686,12 +41999,98 @@ function readingItemTemplate(item) {
   `;
 }
 
+// Books match the Watch page (Luke, 2026-11-11): covers four to a row on a
+// phone; tapping a cover opens the book's panel under that row (author, format,
+// library availability, and the library / Libby / Audible links). The ⋯ in the
+// panel is the same Shelves & options menu the old row had.
+function readingCardTemplate(item) {
+  const expanded = expandedReadingItemId === item.id;
+  const id = escapeHtml(item.id);
+  const card = `
+    <article class="watch-card listen-card reading-item${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-expanded="${expanded}" data-reading-item="${id}">
+      <div class="watch-poster${item.coverUrl ? "" : " watch-poster--ph"}">
+        ${item.coverUrl
+          ? `<img class="watch-poster-img" src="${escapeHtml(item.coverUrl)}" alt="" aria-hidden="true" loading="lazy" />`
+          : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`}
+      </div>
+      <div class="watch-card-meta"><span class="watch-card-title reading-item-title">${escapeHtml(item.title)}</span></div>
+    </article>`;
+  if (!expanded) return card;
+
+  const subParts = [];
+  if (item.authors?.length) subParts.push(item.authors.join(", "));
+  if (item.year) subParts.push(String(item.year));
+  if (item.pageCount) subParts.push(`${item.pageCount} pp`);
+  const formatLabels = { physical: "Physical", ebook: "eBook", audiobook: "Audiobook" };
+  const formatHtml = item.format
+    ? `<span class="reading-format-badge reading-format-${escapeHtml(item.format)}">${escapeHtml(formatLabels[item.format] || item.format)}</span>`
+    : "";
+  const libKey = getLibraryKey();
+  const linkIcon = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>`;
+  const detail = `
+    <div class="watch-detail-row listen-detail-row" data-reading-detail="${id}" role="region" aria-label="${escapeHtml(item.title)}">
+      <span class="watch-detail-pointer" aria-hidden="true"></span>
+      <div class="watch-detail-inner">
+        <div class="watch-detail-top">
+          <div class="watch-detail-head">
+            <span class="watch-detail-title">${escapeHtml(item.title)}</span>
+            ${subParts.length ? `<span class="watch-detail-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
+            ${formatHtml ? `<div class="listen-detail-badges">${formatHtml}</div>` : ""}
+            <div class="reading-item-avail" id="avail-${id}"></div>
+          </div>
+          <button class="watch-detail-more" type="button" data-reading-menu="${id}" title="Shelves & options" aria-label="Shelves and options for ${escapeHtml(item.title)}" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+          </button>
+        </div>
+        <div class="listen-detail-links">
+          <a class="reading-library-btn" href="${escapeHtml(hclCatalogUrl(item.title, item.authors))}" target="_blank" rel="noopener noreferrer" title="Find at ${escapeHtml(libKey.toUpperCase())} library catalog">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            Find at library
+          </a>
+          <a class="reading-library-btn reading-library-btn--libby" href="${escapeHtml(libbySearchUrl(item.title))}" target="_blank" rel="noopener noreferrer" title="Borrow in Libby">${linkIcon} Borrow in Libby</a>
+          <a class="reading-library-btn reading-library-btn--audible" href="${escapeHtml(audibleSearchUrl(item.title, item.authors))}" target="_blank" rel="noopener noreferrer" title="Find on Audible">${linkIcon} Listen on Audible</a>
+        </div>
+      </div>
+    </div>`;
+  return card + detail;
+}
+
 function bindReadingControls(root = document) {
   root.querySelectorAll("[data-reading-menu]").forEach((btn) => {
     btn.addEventListener("click", (e) => { e.stopPropagation(); openReadingItemMenu(e); });
   });
+  // The Books grid: tap a cover → toggle its panel (a real drag to a wishlist
+  // tab suppresses the click, as on Watch). The open panel checks the library.
+  root.querySelectorAll(".listen-card[data-reading-item]").forEach((card) => {
+    const toggle = () => {
+      expandedReadingItemId = expandedReadingItemId === card.dataset.readingItem ? null : card.dataset.readingItem;
+      renderBooksView();
+    };
+    card.addEventListener("click", toggle);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+  });
+  root.querySelectorAll("[data-reading-detail]").forEach((detail) => {
+    const itemId = detail.dataset.readingDetail;
+    const item = readingItemById(itemId);
+    const availEl = detail.querySelector(`#avail-${CSS.escape(itemId)}`);
+    if (!item || !availEl) return;
+    if (hclAvailabilityCache.has(itemId)) {
+      const cached = hclAvailabilityCache.get(itemId);
+      if (cached) renderHclAvailability(availEl, cached);
+      else availEl.textContent = "Checking library…"; // in flight; its reply fills the panel below
+      return;
+    }
+    availEl.textContent = "Checking library…";
+    loadHclAvailability(itemId, item.title, item.authors).then((res) => {
+      const live = document.getElementById(`avail-${itemId}`); // the panel may have redrawn meanwhile
+      if (live) renderHclAvailability(live, res);
+    });
+  });
   root.querySelectorAll("[data-reading-item]").forEach((article) => {
     article.addEventListener("contextmenu", openReadingItemMenu);
+    if (article.classList.contains("listen-card")) return; // availability loads when its panel opens
     article.addEventListener("mouseenter", () => {
       const itemId = article.dataset.readingItem;
       const item = readingItemById(itemId);
@@ -41831,7 +42230,8 @@ function openReadingItemMenu(event) {
   // Works whether triggered by right-click on the row or a click on the row's
   // menu (⋯) button.
   const itemId = event.currentTarget.closest?.("[data-reading-item]")?.dataset.readingItem
-    || event.currentTarget.dataset.readingItem;
+    || event.currentTarget.dataset.readingItem
+    || event.currentTarget.dataset.readingMenu; // the open panel's ⋯ sits outside the cover
   if (!itemId) return;
 
   const item = readingItemById(itemId);
@@ -46112,7 +46512,12 @@ function renderTravelBudget(trip, el = null) {
   if (!trip.budget) trip.budget = { total: 0, categories: Object.fromEntries(TRAVEL_BUDGET_CATS.map(c => [c, { budgeted: 0, spent: 0 }])) };
   const budget = trip.budget;
   const totalBudgeted = Object.values(budget.categories).reduce((s, c) => s + (c.budgeted || 0), 0) || budget.total || 0;
-  const totalSpent = (trip.expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
+  // Bank charges tagged to this trip in Finance count too (finance-tags.js), and
+  // charges dated during the trip are offered to add with one tap.
+  let bank = { charges: [], candidates: [] };
+  try { if (isPageEnabled("finance")) bank = _finance.financeTripSpend(trip.id) || bank; } catch { /* Finance not loaded */ }
+  const bankSpent = bank.charges.reduce((s, c) => s + (c.amount || 0), 0);
+  const totalSpent = (trip.expenses || []).reduce((s, e) => s + (e.amount || 0), 0) + bankSpent;
   const pct = totalBudgeted ? Math.min(100, Math.round(totalSpent / totalBudgeted * 100)) : 0;
   const overBudget = totalSpent > totalBudgeted && totalBudgeted > 0;
 
@@ -46154,7 +46559,31 @@ function renderTravelBudget(trip, el = null) {
         <button class="travel-add-day-btn" type="button" id="travelAddExpenseBtn" style="font-size:0.78rem">+ Add expense</button>
       </div>
       <div id="travelExpensesList">${expenseRows}</div>
-    </div>`;
+    </div>
+    ${bank.charges.length || bank.candidates.length ? `
+    <div class="travel-expenses-section">
+      <div class="travel-expenses-header"><span class="travel-expenses-title">From your bank</span><span class="travel-expense-amount">$${bankSpent.toFixed(2)}</span></div>
+      ${bank.charges.map((c) => `
+      <div class="travel-expense-row">
+        <span class="travel-expense-date">${escapeHtml(c.date)}</span>
+        <span class="travel-expense-desc">${escapeHtml(c.name)}</span>
+        <span class="travel-expense-amount">$${c.amount.toFixed(2)}</span>
+        <button class="travel-expense-remove" type="button" data-bank-untag="${escapeHtml(c.id)}" aria-label="Not part of this trip">✕</button>
+      </div>`).join("")}
+      ${bank.candidates.length ? `
+      <div class="travel-bank-candidates">
+        <div class="fin-hint">Charged during the trip — add the ones that belong to it:</div>
+        ${bank.candidates.slice(0, 30).map((c) => `
+        <div class="travel-expense-row is-candidate">
+          <span class="travel-expense-date">${escapeHtml(c.date)}</span>
+          <span class="travel-expense-desc">${escapeHtml(c.name)}</span>
+          <span class="travel-expense-amount">$${c.amount.toFixed(2)}</span>
+          <button class="secondary-btn compact-btn" type="button" data-bank-tag="${escapeHtml(c.id)}">Add</button>
+        </div>`).join("")}
+      </div>` : ""}
+    </div>` : ""}`;
+  el.querySelectorAll("[data-bank-tag]").forEach((b) => b.addEventListener("click", () => { _finance.financeTagTrip(b.dataset.bankTag, trip.id); renderTravelBudget(trip, el); }));
+  el.querySelectorAll("[data-bank-untag]").forEach((b) => b.addEventListener("click", () => { _finance.financeTagTrip(b.dataset.bankUntag, ""); renderTravelBudget(trip, el); }));
 
   el.querySelectorAll("[data-budget-cat]").forEach(inp => {
     inp.addEventListener("change", e => {
