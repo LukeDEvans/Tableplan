@@ -134,6 +134,7 @@ function receiptScanInstructions(categories = [], { ocrText = "", storeHints = "
     "- coupons, instant savings, member, Circle or Prime offers printed among the items: k \"d\", price NEGATIVE, and \"for\" = the index in lines of the product it applies to, when clear. Never net a coupon into a product's price.",
     "- fees, deposits or bags printed among the items: k \"f\".",
     "Leave out payment, change, card, loyalty-balance and \"you saved\" summary lines.",
+    "Also copy, only when printed: tip = a tip or gratuity amount written or printed on the receipt (0 when there's none or the tip line is blank; it is not part of total unless the receipt adds it in, in which case still give it); card = the last 4 digits of the payment card (\"\" when not printed).",
     "Then copy the summary numbers exactly as printed (0 when not printed): subtotal; discounts = savings printed BELOW the subtotal only (for example RedCard 5%); fees = fees printed below the subtotal only; tax = the tax lines (add them if there are several); total = the amount charged.",
     "Each line: text = the line as printed; name = a clean product name; cat = a short grocery category; price = the amount printed for that line; conf = your confidence from 0 to 1.",
     "Only when they apply, add: qty (when not 1; for weighed items the weight), unit (when not each: lb, oz, kg, or g), k, for.",
@@ -147,6 +148,8 @@ function receiptScanInstructions(categories = [], { ocrText = "", storeHints = "
       fees: 0,
       tax: 0,
       total: 0,
+      tip: 0,
+      card: "",
       lines: [hasBudget ? { ...COMPACT_LINE, b: 1 } : COMPACT_LINE]
     }),
     ...budget,
@@ -176,7 +179,11 @@ function receiptRecheckPrompt(categories = [], { ocrText = "", storeHints = "", 
 function expandScanReceipt(parsed, categories = []) {
   const src = parsed && typeof parsed === "object" ? parsed : {};
   const lines = Array.isArray(src.lines) ? src.lines : (Array.isArray(src.lineItems) ? src.lineItems : []);
-  const { lines: _lines, ...rest } = src;
+  const { lines: _lines, card, ...rest } = src;
+  // The card's last 4 and a tip, when printed (FINANCE_AUDIT D5): they help match
+  // the receipt to its charge. Anything that isn't 4 digits is dropped.
+  const digits = String(card ?? "").replace(/\D/g, "");
+  if (digits.length >= 4 && rest.paymentLast4 === undefined) rest.paymentLast4 = digits.slice(-4);
   const lineItems = lines.map((line) => expandScanLine(line, categories));
   lineItems.forEach((line) => {
     if (!line || line._for === undefined) return;
