@@ -26,6 +26,7 @@
     "qa:news-for-you": "node scripts/qa-news-for-you.mjs",
     "qa:page-groups": "node scripts/qa-page-groups.mjs",
     "qa:views": "node scripts/qa-views.mjs",
+    "qa:listen-queue": "node scripts/qa-listen-queue.mjs",
     "qa:view-deletes": "node scripts/qa-view-deletes.mjs",
     "qa:finance-move": "node scripts/qa-finance-move.mjs",
     "build:finance-nightly": "node scripts/build-finance-nightly.mjs",

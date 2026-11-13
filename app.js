@@ -49,7 +49,8 @@ import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKe
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
-import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes, ROW_RESET_SECTIONS, applyRowReset } from './views.js';
+import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes, ROW_RESET_SECTIONS, applyRowReset, listenHomeScope } from './views.js';
+import { LISTEN_PERSON_KEYS, mergeListenSeed, listenKeysSelect, listenKeysFromRow } from './listen-queue.js';
 import { mergeWatchItems, stampTick, stampTab, touchItem as touchWatchItem } from './watch-merge.js';
 import { watchEpisodes } from './watch-episodes.js';
 import { watchNextFrom, watchOpenSeason, watchSeasonPct } from './watch-place.js';
@@ -360,7 +361,10 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData", "watchRowReset"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "mediaQueueAdded", "mediaQueueRemoved", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps", "mediaRowReset"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastSkipAds", "publicationTiers", "libraryKey", "podcastBundleSeries", "podcastReleasedSeries", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps", "mediaRowReset"],
+  // The person's own Listen queue and positions, the same in every view
+  // (listen-queue.js, LISTEN_QUEUE_DESIGN.md). Never swapped by a view switch.
+  listen:    ["podcastProgress", "mediaProgress", "readingProgress", "mediaQueueAdded", "mediaQueueRemoved", "podcastAutoSkipped", "mediaAllPinnedOrder", "mediaHistory"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -403,6 +407,7 @@ const SECTION_SCOPE = {
   do: "toggle",
   watch: "toggle",
   media: "toggle",
+  listen: "personal",     // one queue and player per person, every view (LISTEN_QUEUE_DESIGN.md)
   plan: "toggle",
   // health holds familyMembers, which the shared Meal Plan depends on — it is
   // not a standalone page, so it stays household.
@@ -3363,6 +3368,7 @@ async function initializeApp() {
   }
   refreshAvailableViews(); // the group role is known now (views.js)
   await alignScopesToView(); // each page's data row follows the view, now that state has loaded
+  seedListenRowOnce(); // one-time: queue state and positions from the old per-view rows (LISTEN_QUEUE_DESIGN.md §5)
   await hydrateRecipeRowsFromSupabase();
   resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
@@ -4167,6 +4173,14 @@ function setupDiagnostics() {
       persist();
       return true;
     },
+    // One Listen queue per person (scripts/qa-listen-queue.mjs, LISTEN_QUEUE_DESIGN.md):
+    // the queue as listed, finish an episode, add one by hand, read the person's
+    // played marks. Local dev only.
+    listenQueueForQa: () => (localDevMode ? getAllListenList({ hoist: false }).map((i) => i.id) : null),
+    listenPlayedForQa: (id) => { if (!localDevMode) return null; setPodcastEpisodePlayed(id, true); return true; },
+    listenAddForQa: (id) => (localDevMode ? addEpisodeToMediaQueue(id) : null),
+    listenProgressForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.podcastProgress || {})) : null),
+    listenScopeForQa: () => (localDevMode ? { media: sectionScope("media"), listen: sectionScope("listen"), home: listenHomeScope(currentViewList()) } : null),
     watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); (items || []).forEach((i) => i?.id && unrecordDeletion("watchItems", i.id)); persist(); if (activeAppArea === "watch") { activeWatchCategory = "all"; expandedWatchItemId = null; renderWatchPlanner(); } return true; },
     // The Watch list and its removals as saved (scripts/qa-watch-panel.mjs). Local dev only.
     watchItemsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.watchItems || [])) : null),
@@ -6103,6 +6117,11 @@ function tombstoneOwner(key, scopeOf = sectionScope) {
   }
   const base = String(key || "").split(".")[0]; // "watchSettings.theaters" → watchSettings
   const section = stateKeySections[base] || TOMBSTONE_EXTRA_SECTIONS[base];
+  // The person's own Listen row (queue entries removed): their own delete list.
+  if (section === "listen") {
+    const uid = authSession?.user?.id;
+    return uid ? `u-${uid}` : (localDevMode ? "u-local" : null);
+  }
   if (!section || SECTION_SCOPE[section] !== "toggle") return null;
   const scope = scopeOf(section);
   if (scope === "personal") {
@@ -32911,7 +32930,7 @@ function bundleSeriesId(showId, seriesName) {
 // Group one show's episodes into detected multi-part series, flagging each as
 // complete / released / held. Returned for both the playlist filter and the
 // show-view "waiting" cards.
-function getBundleSeriesGroups(show) {
+function getBundleSeriesGroups(show, released = state.podcastReleasedSeries || {}) {
   const groups = new Map();
   for (const ep of (show.episodes || [])) {
     const info = parseSeriesPart(ep.title);
@@ -32922,7 +32941,6 @@ function getBundleSeriesGroups(show) {
     if (info.total) g.total = Math.max(g.total || 0, info.total);
     g.eps.push({ id: ep.id, part: info.part, pubDate: ep.pubDate, title: ep.title });
   }
-  const released = state.podcastReleasedSeries || {};
   const now = Date.now();
   const out = [];
   for (const g of groups.values()) {
@@ -32944,12 +32962,12 @@ function getBundleSeriesGroups(show) {
 }
 
 // Episode ids to withhold from the playlist (unfinished series in opted-in shows).
-function getBundleHeldEpisodeIds() {
+function getBundleHeldEpisodeIds(lib = state) {
   const held = new Set();
-  const bundleOn = state.podcastBundleSeries || {};
-  for (const show of (state.podcasts || [])) {
+  const bundleOn = lib.podcastBundleSeries || {};
+  for (const show of (lib.podcasts || [])) {
     if (!bundleOn[show.id]) continue;
-    for (const g of getBundleSeriesGroups(show)) {
+    for (const g of getBundleSeriesGroups(show, lib.podcastReleasedSeries || {})) {
       if (g.held) for (const e of g.eps) held.add(e.id);
     }
   }
@@ -33017,20 +33035,93 @@ function hoistResumeEpisode(list) {
   return list;
 }
 
+// ── Listen: the one-time move (LISTEN_QUEUE_DESIGN.md §5) ────────────────────
+// Before this build, positions, played marks and queue edits lived in each
+// view's `media` row. Once per person per device, read just those keys from
+// both media rows (a few KB, not the whole row) and fold them into the
+// person's own `listen` row with what this device already has: the more
+// recent position wins, a finished mark sticks, queue adds are joined
+// (Personal's first). Repeating it is harmless, so a second device does the
+// same without undoing the first. Nothing is deleted from the old rows.
+const LISTEN_SEED_KEY = "live-listen-seeded-v1";
+async function seedListenRowOnce() {
+  if (localDevMode || !sharedStorageReady || !authSession?.access_token) return;
+  const uid = authSession.user?.id;
+  if (!uid || seedListenRowOnce.running) return;
+  const flag = `${LISTEN_SEED_KEY}:${uid}`;
+  try { if (localStorage.getItem(flag) === "1") return; } catch { return; }
+  seedListenRowOnce.running = true;
+  try {
+    const ids = scopeRowIds(supabaseConfig().stateId);
+    const personalId = rowIdForScope(ids, "media", "personal");
+    const householdId = ids.stateId ? rowIdForScope(ids, "media", "household") : null;
+    const want = [personalId, householdId].filter(Boolean);
+    if (!want.length) return;
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${want.join(",")})&select=${listenKeysSelect()}`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!res.ok) { console.warn("[listen] one-time move: read failed", res.status); return; } // next launch tries again
+    const rows = await res.json();
+    const byId = new Map((Array.isArray(rows) ? rows : []).map((r) => [r.id, listenKeysFromRow(r)]));
+    const current = Object.fromEntries(LISTEN_PERSON_KEYS.map((k) => [k, state[k]]));
+    const seed = mergeListenSeed(current, byId.get(personalId), byId.get(householdId));
+    const removed = new Set(deletedIdsFor("mediaQueueAdded"));
+    seed.mediaQueueAdded = seed.mediaQueueAdded.filter((e) => !removed.has(e.id));
+    for (const k of LISTEN_PERSON_KEYS) state[k] = seed[k];
+    mediaQueueIdCache = null;
+    persist();
+    try { localStorage.setItem(flag, "1"); } catch { /* full: runs again, harmlessly */ }
+    console.info("[listen] one-time move done", { episodes: Object.keys(seed.podcastProgress).length, queued: seed.mediaQueueAdded.length });
+    if (activeAppArea === "media") render();
+  } catch (e) {
+    console.warn("[listen] one-time move failed:", e.message);
+  } finally {
+    seedListenRowOnce.running = false;
+  }
+}
+
+// ── Listen: the queue's library (LISTEN_QUEUE_DESIGN.md) ─────────────────────
+// The queue and player are the person's, the same in every view; positions,
+// played marks and queue edits live in their own `listen` row, always in
+// `state`. The shows that fill the queue automatically are their home
+// library's: Personal for someone who has it (Luke, 2026-11-13: "Personal shows
+// only"), else Household. In another view that library is the off-screen copy
+// (the shadow); a device that hasn't loaded it yet has an empty queue until it
+// does, rather than showing the other view's shows as the queue.
+const EMPTY_LISTEN_LIBRARY = Object.freeze({});
+function listenLibrary() {
+  const home = listenHomeScope(currentViewList());
+  if (sectionScope("media") === home) return state;
+  return shadowData("media", home) || EMPTY_LISTEN_LIBRARY;
+}
+// A saved article by id: the queue's library first, then the view on screen.
+function listenArticleById(id) {
+  const lib = listenLibrary();
+  return (lib.savedArticles || []).find((x) => x.id === id)
+    || (lib === state ? null : (state.savedArticles || []).find((x) => x.id === id))
+    || null;
+}
+function listenArticleIsRead(id) {
+  const lib = listenLibrary();
+  return (lib.readArticleIds || []).includes(id) || (lib !== state && (state.readArticleIds || []).includes(id));
+}
+
 function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
-  const tiers = state.podcastShowTiers || {};
-  const epTiers = state.podcastEpisodeTiers || {};
-  const pubTiers = state.publicationTiers || {};
+  const lib = listenLibrary();
+  const tiers = lib.podcastShowTiers || {};
+  const epTiers = lib.podcastEpisodeTiers || {};
+  const pubTiers = lib.publicationTiers || {};
   const progress = state.podcastProgress || {};
 
-  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === (state.podcastPlaylistWindow ?? "month")) || RECENT_WINDOW_OPTIONS[4];
+  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === (lib.podcastPlaylistWindow ?? "month")) || RECENT_WINDOW_OPTIONS[4];
   const cutoff = Date.now() - windowOpt.ms;
 
   // Kept out by hand: "Remove from list" (also hides it under Recent) and
   // "Remove from queue" (queue only).
   const skipped = new Set([...(state.podcastAutoSkipped || []), ...(state.mediaQueueRemoved || [])]);
-  const held = getBundleHeldEpisodeIds();
-  const episodes = (state.podcasts || []).flatMap(p =>
+  const held = getBundleHeldEpisodeIds(lib);
+  const episodes = (lib.podcasts || []).flatMap(p =>
     (p.episodes || [])
       .filter(e => !progress[e.id]?.played && !skipped.has(e.id) && !held.has(e.id) && e.pubDate && new Date(e.pubDate).getTime() >= cutoff)
       .map(e => ({ ...e, showId: p.id, showTitle: p.title, showArt: p.art }))
@@ -33039,8 +33130,8 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
   let items = [...episodes];
 
   if (forceIncludeArticles) {
-    const readIds = new Set(state.readArticleIds || []);
-    const articleItems = (state.savedArticles || [])
+    const readIds = new Set(lib.readArticleIds || []);
+    const articleItems = (lib.savedArticles || [])
       .filter(a => !readIds.has(a.id) && !isMusicShow(a) && articleHasListenableBody(a)) // shows live under the Listen bell
       .map(articleQueueItem);
     items = [...items, ...articleItems];
@@ -33050,7 +33141,7 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
     if (e.type === "article") return publicationTierFor(pubTiers, e.publication) ?? 4;
     return epTiers[e.id] ?? tiers[e.showId] ?? 4;
   };
-  const newestFirst = (state.podcastPrioritySort ?? "oldest") === "newest";
+  const newestFirst = (lib.podcastPrioritySort ?? "oldest") === "newest";
 
   const sorted = items.sort((a, b) => {
     const ta = effectiveTier(a), tb = effectiveTier(b);
@@ -33111,7 +33202,7 @@ function getAllListenList({ hoist = true } = {}) {
   const items = getAutoPlaylist(true, { hoist }).map((e) => (e.type === "article"
     ? { ...e, providerId: "tts" }
     : { ...e, type: e.type || "podcast", providerId: "podcast" }));
-  (state.readingItems || [])
+  (listenLibrary().readingItems || [])
     .filter((b) => b.status && b.status !== "finished")
     .forEach((b) => items.push({
       id: b.id,
@@ -33196,7 +33287,6 @@ function queueAddedItems() {
   const entries = normalizeQueueAdded(state.mediaQueueAdded);
   if (!entries.length) return [];
   const progress = state.podcastProgress || {};
-  const readIds = new Set(state.readArticleIds || []);
   const out = [];
   for (const e of entries) {
     if (e.kind === "episode") {
@@ -33204,8 +33294,8 @@ function queueAddedItems() {
       const item = playlistItemForEpisodeId(e.itemId);
       if (item) out.push({ ...item, providerId: "podcast", queueAdded: true });
     } else if (e.kind === "article") {
-      const a = (state.savedArticles || []).find((x) => x.id === e.itemId);
-      if (a && !readIds.has(a.id)) out.push({ ...articleQueueItem(a), providerId: "tts", queueAdded: true });
+      const a = listenArticleById(e.itemId);
+      if (a && !listenArticleIsRead(a.id)) out.push({ ...articleQueueItem(a), providerId: "tts", queueAdded: true });
     } else {
       out.push(queuedMusicRow(e));
     }
@@ -33260,10 +33350,12 @@ function removeQueueAddedEntries(match) {
 // list can't grow without bound. Run when something is added.
 function pruneQueueAddedEntries() {
   const progress = state.podcastProgress || {};
-  const articleIds = new Set((state.savedArticles || []).map((a) => a.id));
+  // Only drop what's known to be gone: before the other view's library has
+  // loaded on this device, its episodes can't be looked up yet.
+  if (listenLibrary() === EMPTY_LISTEN_LIBRARY) return;
   removeQueueAddedEntries((e) =>
     (e.kind === "episode" && (progress[e.itemId]?.played || !findPodcastEpisode(e.itemId).episode)) ||
-    (e.kind === "article" && !articleIds.has(e.itemId)));
+    (e.kind === "article" && !listenArticleById(e.itemId)));
 }
 function afterMediaQueueChange(message) {
   refreshRunningQueueOrder();
@@ -34919,6 +35011,15 @@ function findPodcastEpisode(episodeId) {
   for (const show of (state.podcasts || [])) {
     const episode = show.episodes.find(e => e.id === episodeId);
     if (episode) return { episode, show };
+  }
+  // The queue is the same in every view (LISTEN_QUEUE_DESIGN.md), so an episode
+  // in it may come from the other view's shows: look in the off-screen copies.
+  for (const scope of ["personal", "household"]) {
+    if (sectionScope("media") === scope) continue;
+    for (const show of (shadowData("media", scope)?.podcasts || [])) {
+      const episode = (show.episodes || []).find(e => e.id === episodeId);
+      if (episode) return { episode, show };
+    }
   }
   const cached = podcastTabEpisodeMap.get(episodeId);
   if (cached) return { episode: cached, show: null };
