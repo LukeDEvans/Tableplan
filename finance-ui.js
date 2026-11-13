@@ -3236,7 +3236,7 @@ function financeSparkline(values, months, name) {
   const pts = (values || []).map((v, i) => (v == null ? null : { i, v }));
   const real = pts.filter(Boolean);
   if (real.length < 2) return `<span class="fin-spark" aria-hidden="true"></span>`;
-  const W = 64, H = 20, pad = 3;
+  const W = 52, H = 20, pad = 3;
   const max = Math.max(...real.map((p) => p.v), 1);
   const x = (i) => pad + (i * (W - pad * 2)) / Math.max(1, values.length - 1);
   const y = (v) => H - pad - (v / max) * (H - pad * 2);
@@ -4439,7 +4439,7 @@ function renderFinancePage() {
         <div class="fin-subhead" style="margin-top:14px;">Vs your recent average</div>
         ${trends.movers.map((m) => `
           <div class="fin-mover-row">
-            <span class="fin-mover-name">${escapeHtml(m.name)}</span>
+            <span class="fin-mover-name" title="${escapeHtml(m.name)}">${escapeHtml(String(m.name).split(" · ").pop())}</span>
             ${financeSparkline(m.spark, m.months, m.name)}
             <span class="fin-mover-cur">${formatFinMoney(m.cur)}</span>
             ${m.pct != null

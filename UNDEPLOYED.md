@@ -26,6 +26,13 @@ Each entry: what shipped · PR · post-deploy steps.
   (`receipt-matcher.js`) and links a certain match itself. New optional receipt fields: tip,
   paymentLast4, scannedBy, view (the reader doesn't fill tip or card digits yet).
 
+- **Finance extras (no deploy needed to try)** · close a month (checklist, then its totals are kept);
+  group share bar in "Where it went"; 6-month sparklines per category; weekly "to categorize"
+  notification scheduled on the phone (Sunday 18:00, off in Alerts); receipt editor: tip, card
+  last 4, Personal purchase, and "Mine · pay back" per line with a "You owe the household" row
+  and Paid back on Budget (financeSettlements). The reader asks for tip and card digits (live
+  with the deploy).
+
 - **Receipts table** · `fin_receipts` **applied 2026-11-12** (Luke's OK; 24 receipts copied from the
   grocery row, which is untouched). The app (`receipts-sync.js`) reads it at start-up and on return to
   the app, and sends changes a few seconds after a save; household receipts also stay in the grocery
