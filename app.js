@@ -2038,7 +2038,7 @@ const _finance = createFinanceModule({
   queueReceiptFile: (files, opts) => queueReceiptForDocuments(files, opts),
   memberName: (userId) => (userId === authSession?.user?.id ? "You" : groupMembers.find((gm) => gm.user_id === userId)?.display_name || "A household member"),
   currentViewKey: () => currentViewKey(),
-  onFinanceCountChanged: () => { scheduleReminderSync(); updateHomeFinanceGlance(); },
+  onFinanceCountChanged: () => { scheduleReminderSync(); },
 });
 const {
   financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions,
@@ -9052,7 +9052,6 @@ function render() {
   paintHomeLogo();
   document.title = getAppName();
   updatePageVisibility();
-  if (activeAppArea === "home") updateHomeFinanceGlance();
   musicShows.updateBadge(); // the Listen bell (synced shows arrive through here)
   const week = weekState();
   const weekTools = elements.weekLabel.closest(".week-tools");
@@ -9525,20 +9524,6 @@ function showHomeApp(event) {
   setPageHash("");
   closePageTitleMenu();
   closeAppMenu();
-  updateHomeFinanceGlance();
-}
-
-// "On track · $X left this month" under Finance on the landing page.
-function updateHomeFinanceGlance() {
-  const btn = elements.homeFinanceBtn;
-  if (!btn) return;
-  let glance = null;
-  try { if (isPageEnabled("finance") && sectionScope("finance") !== "personal") glance = _finance.financeMonthGlance(); } catch { glance = null; }
-  let line = btn.querySelector(".home-page-glance");
-  if (!glance) { line?.remove(); return; }
-  if (!line) { line = document.createElement("small"); line.className = "home-page-glance"; btn.append(line); }
-  line.textContent = glance.text;
-  line.dataset.tone = glance.tone;
 }
 
 // keepView: coming back from the reader (MEDIA_SPLIT_DESIGN.md) — show Media
