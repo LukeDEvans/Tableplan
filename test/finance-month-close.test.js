@@ -52,3 +52,14 @@ describe("weekly nudge", () => {
     expect(app).toMatch(/if \(kind === "finance"\) \{ showFinanceApp\(\); return; \}/);
   });
 });
+
+import { financeGlanceFrom } from "../finance-ui.js";
+describe("month at a glance", () => {
+  const mid = new Date(2026, 10, 15); // halfway through November
+  it("on track, ahead of pace, over", () => {
+    expect(financeGlanceFrom({ spent: 2000, budget: 5000, now: mid })).toEqual({ tone: "ok", text: "On track · $3,000 left this month" });
+    expect(financeGlanceFrom({ spent: 3200, budget: 5000, now: mid, uncategorized: 4 })).toEqual({ tone: "ahead", text: "Spending ahead of pace · $1,800 left · 4 to categorize" });
+    expect(financeGlanceFrom({ spent: 5400, budget: 5000, now: mid }).tone).toBe("over");
+    expect(financeGlanceFrom({ spent: 10, budget: 0, now: mid })).toBeNull();
+  });
+});

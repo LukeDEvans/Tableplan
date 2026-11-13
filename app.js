@@ -9510,6 +9510,20 @@ function showHomeApp(event) {
   setPageHash("");
   closePageTitleMenu();
   closeAppMenu();
+  updateHomeFinanceGlance();
+}
+
+// "On track · $X left this month" under Finance on the landing page.
+function updateHomeFinanceGlance() {
+  const btn = elements.homeFinanceBtn;
+  if (!btn) return;
+  let glance = null;
+  try { if (isPageEnabled("finance") && sectionScope("finance") !== "personal") glance = _finance.financeMonthGlance(); } catch { glance = null; }
+  let line = btn.querySelector(".home-page-glance");
+  if (!glance) { line?.remove(); return; }
+  if (!line) { line = document.createElement("small"); line.className = "home-page-glance"; btn.append(line); }
+  line.textContent = glance.text;
+  line.dataset.tone = glance.tone;
 }
 
 // keepView: coming back from the reader (MEDIA_SPLIT_DESIGN.md) — show Media

@@ -22489,6 +22489,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .grocery-price-strip-total { font-weight: 800; font-size: 0.95rem; }
 .grocery-price-strip-meta { color: var(--muted); }
 .recipe-cost-pill { font-variant-numeric: tabular-nums; }
+.home-page-glance { display: block; margin-top: 2px; font-size: 0.74rem; font-weight: 600; opacity: 0.8; }
+.home-page-glance[data-tone="ahead"], .home-page-glance[data-tone="over"] { color: #b3261e; opacity: 1; }
 .travel-expense-row.is-candidate { opacity: 0.85; }
 .fin-sub-item { padding: 8px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
 .fin-sub-top { display: flex; gap: 10px; align-items: baseline; }

@@ -125,6 +125,21 @@ export const FINANCE_ALERTS = [
 // or null. `count`: uncategorized transactions; `now`: ms. Fires the next Sunday at
 // 18:00 local, never within the next 10 minutes. The id changes with the count and
 // the week, so a changed count replaces the old notification instead of keeping it.
+// The month at a glance, for someone who doesn't want to open Finance: spent vs
+// budget, measured against how far through the month it is. Reads the saved
+// current-month totals, which sync, so it works before Finance has loaded on this
+// device. → { tone: "ok" | "ahead" | "over", text } or null without a budget.
+export function financeGlanceFrom({ spent, budget, uncategorized = 0, now = new Date() }) {
+  if (!(budget > 0)) return null;
+  const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const expected = budget * (now.getDate() / dim);
+  const left = budget - spent;
+  const money = (n) => `$${Math.round(Math.abs(n)).toLocaleString()}`;
+  const tail = uncategorized > 0 ? ` · ${uncategorized} to categorize` : "";
+  if (left < 0) return { tone: "over", text: `${money(left)} over budget this month${tail}` };
+  if (spent > expected * 1.1) return { tone: "ahead", text: `Spending ahead of pace · ${money(left)} left${tail}` };
+  return { tone: "ok", text: `On track · ${money(left)} left this month${tail}` };
+}
 export const FINANCE_NUDGE_ID_BASE = 2000000000;
 export function financeNudgeInstance(count, now = Date.now()) {
   const n = Math.max(0, Math.floor(Number(count) || 0));
@@ -3281,6 +3296,11 @@ function financePaydays(startKey, endKey) {
   }
   return out;
 }
+function financeMonthGlance() {
+  const cur = state.financeMonthActuals?.[financeCurrentMonthKey()];
+  const spent = Object.values(cur?.cats || {}).reduce((s, v) => s + Math.abs(Number(v) || 0), 0);
+  return financeGlanceFrom({ spent, budget: financeExpensesTotal(), uncategorized: financeToCategorizeCount() || 0 });
+}
 function financeTrips() {
   return (Array.isArray(state.trips) ? state.trips : []).filter((t) => t && t.id && !t.deletedAt && !t.archived);
 }
@@ -5692,5 +5712,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financePaydays, financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeMonthGlance, financePaydays, financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }
