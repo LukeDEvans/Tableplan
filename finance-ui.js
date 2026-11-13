@@ -12,6 +12,7 @@ import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } 
 import { financeOwedBalances } from './finance-settle.js';
 import { subscriptionReview, cashForecast, everydaySpendPerDay, goalProgress } from './finance-plan.js';
 import { TAX_KINDS, taxLabel, taxTagFor, taxYearSummary, taxYearCsv, tripCandidates, tripCharges } from './finance-tags.js';
+import { upcomingReturns, returnReminderInstances } from './receipt-returns.js';
 import { banksForAccounts, billerForBill, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
@@ -4712,6 +4713,15 @@ function renderFinancePage() {
     categoryNameOf: (t) => { const l = t.label === "split" ? (t.split?.[0]?.label || "") : (t.label || ""); return l.startsWith("cat:") ? financeTxnLabelName(l) : ""; },
   });
   const taxKinds = Object.entries(taxSummary.totals);
+  // Returns closing soon and warranties still in force (receipt-returns.js).
+  const ret = upcomingReturns(financeReceiptList());
+  const shortDate = (k) => new Date(k + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: k.slice(0, 4) === String(new Date().getFullYear()) ? undefined : "numeric" });
+  const returnsCard = ret.returns.length || ret.warranties.length ? `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Returns &amp; warranties</div>
+      ${ret.returns.map((r) => `<button class="fin-sub-top fin-tax-row fin-ret-row" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(r.id)}"><span class="fin-sub-name">${escapeHtml(r.store)} · return by ${escapeHtml(shortDate(r.date))}</span><span class="fin-sub-amt${r.daysLeft <= 3 ? " is-soon" : ""}">${r.daysLeft === 0 ? "today" : `${r.daysLeft} day${r.daysLeft === 1 ? "" : "s"}`}</span></button>`).join("")}
+      ${ret.warranties.slice(0, 8).map((r) => `<button class="fin-sub-top fin-tax-row fin-ret-row" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(r.id)}"><span class="fin-sub-name">${escapeHtml(r.store)} · warranty</span><span class="fin-sub-amt fin-of">until ${escapeHtml(shortDate(r.date))}</span></button>`).join("")}
+    </div>` : "";
   const taxCard = `
     <div class="fin-card fin-insights-card">
       <div class="fin-subhead fin-accounts-title">Tax time · ${taxYear}</div>
@@ -4719,7 +4729,7 @@ function renderFinancePage() {
         : `<p class="fin-hint">Nothing tagged yet. Tag a transaction as a donation, medical, childcare, a 529 contribution or a business expense from its details; categories with those names are tagged for you.</p>`}
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="export-tax-year" data-year="${taxYear}">Export ${taxYear} for taxes</button>
     </div>`;
-  const insightsView = `${forecastCard}${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}${taxCard}`;
+  const insightsView = `${forecastCard}${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}${returnsCard}${taxCard}`;
 
   // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
   // bar + on-track note derived on the fly.
@@ -5670,5 +5680,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

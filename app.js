@@ -27679,7 +27679,10 @@ function financeNudgeForReminders() {
     if (count == null) count = Number(localStorage.getItem(FINANCE_NUDGE_COUNT_KEY)) || 0;
     else localStorage.setItem(FINANCE_NUDGE_COUNT_KEY, String(count));
     const nudge = financeNudgeInstance(count);
-    return nudge ? [nudge] : [];
+    // Return windows closing soon (receipt-returns.js), at most 20 pending.
+    let returns = [];
+    try { returns = _finance.financeReturnReminders().sort((a, b) => a.fireAt - b.fireAt).slice(0, 20); } catch { returns = []; }
+    return [...(nudge ? [nudge] : []), ...returns];
   } catch { return []; }
 }
 

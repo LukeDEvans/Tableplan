@@ -22483,6 +22483,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-tag-field { display: flex; flex-direction: column; gap: 4px; min-width: 140px; flex: 1; }
 .fin-tax-row { padding: 6px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.88rem; }
 .travel-bank-candidates { margin-top: 8px; }
+.fin-ret-row { width: 100%; border: 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.fin-sub-amt.is-soon { color: #b3261e; }
 .travel-expense-row.is-candidate { opacity: 0.85; }
 .fin-sub-item { padding: 8px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
 .fin-sub-top { display: flex; gap: 10px; align-items: baseline; }

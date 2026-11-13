@@ -8,6 +8,7 @@
 // and the legacy week.manualGroceries fold-in normalizer (normalizePersistentManual-
 // Groceries). manualGroceries storage is unchanged (Decision #2b) — the live list is
 // state.persistentManualGroceries (grocery section), which this module reads via `state`.
+import { storeReturnDays, addDays } from "./receipt-returns.js";
 import * as LiveGroceryCatalog from './grocery-catalog.js';
 import * as LiveGrocerySources from './grocery-sources.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
@@ -1327,6 +1328,19 @@ function openReceiptEditView(receiptId) {
   if (last4El) last4El.value = receipt.paymentLast4 || "";
   if (personalRow) personalRow.hidden = !canMarkPersonal() && receipt.view !== "personal";
   if (personalEl) personalEl.checked = receipt.view === "personal";
+  const returnEl = document.getElementById("editReceiptReturnBy");
+  const warrantyEl = document.getElementById("editReceiptWarranty");
+  const suggestEl = document.getElementById("editReceiptReturnSuggest");
+  if (returnEl) returnEl.value = receipt.returnBy || "";
+  if (warrantyEl) warrantyEl.value = receipt.warrantyUntil || "";
+  if (suggestEl) {
+    // The store's usual return window, as a one-tap fill (receipt-returns.js).
+    const days = storeReturnDays(receipt.storeName);
+    suggestEl.hidden = !days || !receipt.purchaseDate || Boolean(receipt.returnBy);
+    suggestEl.textContent = days ? `${days} days` : "";
+    suggestEl.title = days ? `${receipt.storeName}'s usual return window — check the receipt for this item` : "";
+    suggestEl.onclick = () => { if (returnEl) returnEl.value = addDays(receipt.purchaseDate, days); suggestEl.hidden = true; };
+  }
   elements.editReceiptLineList.innerHTML = "";
   (receipt.lineItems || []).forEach((line) => addEditReceiptLine(line));
   elements.shopReceiptsListView.hidden = true;
@@ -1446,6 +1460,8 @@ function editedReceiptFromForm() {
     total: elements.editReceiptTotal.value,
     tip: document.getElementById("editReceiptTip")?.value ?? original.tip,
     paymentLast4: (document.getElementById("editReceiptLast4")?.value ?? original.paymentLast4 ?? "").replace(/\D/g, ""),
+    returnBy: document.getElementById("editReceiptReturnBy")?.value ?? original.returnBy,
+    warrantyUntil: document.getElementById("editReceiptWarranty")?.value ?? original.warrantyUntil,
     view: document.getElementById("editReceiptPersonalRow")?.hidden === false
       ? (document.getElementById("editReceiptPersonal")?.checked ? "personal" : "")
       : original.view,

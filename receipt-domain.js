@@ -85,6 +85,9 @@ return {
       paymentLast4: /^\d{4}$/.test(text(receipt?.paymentLast4)) ? text(receipt.paymentLast4) : "",
       scannedBy: text(receipt?.scannedBy),
       view: text(receipt?.view) === "personal" ? "personal" : "",
+      // Last day to return it, and when its warranty ends ("YYYY-MM-DD" or "").
+      returnBy: /^\d{4}-\d{2}-\d{2}$/.test(text(receipt?.returnBy)) ? text(receipt.returnBy) : "",
+      warrantyUntil: /^\d{4}-\d{2}-\d{2}$/.test(text(receipt?.warrantyUntil)) ? text(receipt.warrantyUntil) : "",
       imageUrl: text(receipt?.imageUrl),
       fileRef: text(receipt?.fileRef),
       imageRefs: normalizeImageRefs(receipt?.imageRefs),
@@ -333,6 +336,8 @@ return {
       tip: number(receipt.tip),
       last4: receipt.paymentLast4 || "",
       view: receipt.view || "",
+      returnBy: receipt.returnBy || "",
+      warrantyUntil: receipt.warrantyUntil || "",
       needsReview: Boolean(receipt.extraction && receipt.extraction.status && receipt.extraction.status !== "ok"),
       hasImage: (receipt.imageRefs || []).length > 0,
       items: (receipt.lineItems || []).map((line) => ({ ...(line.owedBy ? { owedBy: line.owedBy } : {}), name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
