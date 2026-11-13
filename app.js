@@ -12920,8 +12920,39 @@ function showMailAttachment({ bytes, filename, mimeType, gmailUrl }) {
     saveFile,
     timeZone,
     addInviteEvent: (prefill) => openPlanEventDialog(prefill.date, null, prefill),
-    addContacts: (vcfText) => importContactsVcf(vcfText)
+    addContacts: (vcfText) => importContactsVcf(vcfText),
+    openWordDocument: openMailWordAttachment
   });
+}
+
+// A Word attachment opens in the Document page's word processor, view only and from
+// memory: nothing is stored or sent. "Save to Document" (signed in, Document enabled)
+// makes it a document in this view's Document page and opens it there.
+async function openMailWordAttachment({ bytes, filename }) {
+  const name = String(filename || "Document").replace(/\.docx$/i, "") || "Document";
+  const { openDocxPreview } = await import("./documents/editor/host.js");
+  const canKeep = !localDevMode && !!authSession?.user?.id && isPageEnabled("documents") && !!elements.documentsMainPage;
+  let preview = null;
+  let keeping = false;
+  preview = await openDocxPreview({
+    bytes, name,
+    me: { id: authSession?.user?.id || "preview", name: "" },
+    deps: { toast: (m) => showMailToast(m), isNative: isNativeApp() },
+    note: "From email · view only",
+    onKeep: canKeep ? async (converted) => {
+      if (keeping) return;
+      keeping = true;
+      try {
+        await preview?.close();
+        await showDocumentsApp();
+        if (!documentsUi?.addConverted) throw new Error("Document isn't ready.");
+        await documentsUi.addConverted(converted, name);
+      } catch (e) {
+        showMailToast(e?.message || "Couldn't save it to Document.");
+      }
+    } : null
+  });
+  if (preview.warnings.length) showMailToast(`Opened. Not everything carried over: ${preview.warnings.slice(0, 3).join(", ")}.`);
 }
 
 // Renders each message body the way Gmail does: HTML mail goes into a

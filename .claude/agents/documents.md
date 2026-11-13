@@ -211,6 +211,13 @@ Everyday files with `kind = 'doc'` are Live documents, edited in `documents/edit
 - Suggesting mode is `suggest.js` (`suggestTransaction`, pure, tested); comments live in the Y.Doc (`doc-model.js` threads) with a `comment` mark on the text.
 - QA: `npm run qa:docs-editor` (51 checks; stand-in store + BroadcastChannel for Realtime).
 
+- **Preview mode** (Luke, 2026-11-13, for Mail's Word attachments): `openDocEditor({ preview })`
+  shows a document that isn't a file of ours: view only whatever the mode, no device
+  copy, name locked, no menus or toolbar, and an optional header button (`preview.onKeep`).
+  `host.js` `openDocxPreview` runs it on `store-memory.js` (nothing behind it). The page's
+  `addConverted(converted, name)` is how Mail's "Save to Document" makes it a real document.
+  Keep preview mode unable to write: anything new that saves must check `preview` first.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

@@ -53,8 +53,15 @@ describe("attachmentViewKind — what the web viewer may render", () => {
     expect(attachmentViewKind("application/octet-stream", "page.html")).toBe("none");
     expect(attachmentViewKind("application/octet-stream", "logo.svg")).toBe("none");
   });
-  it("leaves Office files to Download on the web", () => {
-    expect(attachmentViewKind("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "a.docx")).toBe("none");
+  it("hands a Word .docx to the word processor; other Office files stay Download", () => {
+    expect(attachmentViewKind("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "a.docx")).toBe("doc");
+    expect(attachmentViewKind("application/octet-stream", "Letter.DOCX")).toBe("doc");
+    expect(attachmentViewKind("application/msword", "old.doc")).toBe("none");
+    expect(attachmentViewKind("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "a.xlsx")).toBe("none");
+    expect(attachmentViewKind("application/vnd.openxmlformats-officedocument.presentationml.presentation", "a.pptx")).toBe("none");
+    // a file that says it is HTML is never opened as a document, whatever its name
+    expect(attachmentViewKind("text/html", "a.docx")).toBe("none");
+    expect(attachmentBlobType("doc", "text/html", "a.docx")).toBe("application/octet-stream");
   });
 });
 
