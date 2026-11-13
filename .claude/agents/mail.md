@@ -78,9 +78,14 @@ changes to Mail only.
   its events with **Add to Calendar** — the event editor opens filled in, nothing is
   saved until Luke saves it — a contact card with **Add to Contacts** through
   `importContactsVcf`, audio / video in a player; Download for the rest). Luke wants
-  every attachment to open inside the app (2026-11-13): Word, spreadsheets and slides
-  are to open in the Document page's own editors once those are on `main`; HTML / .eml
-  and zip are not built yet. The viewer reaches other pages only through what app.js
+  every attachment to open inside the app (2026-11-13), using the Document page's own
+  editors for Office files. **Word (.docx)** opens in the word processor's preview mode
+  (`documents/editor/host.js` `openDocxPreview`: view only, from memory, nothing
+  stored; **Save to Document** makes it a document in the view's Document page through
+  `documentsUi.addConverted`); a file that can't be read falls back to Download with
+  the reason. Spreadsheets and slides follow when their editors can read .xlsx / .pptx;
+  HTML / .eml and zip are not built yet. The iPhone still opens every attachment in
+  Quick Look. The viewer reaches other pages only through what app.js
   injects (`showMailAttachment`). `gmail-attachment.mjs` streams raw bytes (Netlify's streamed limit is
   20MB, vs ~6MB buffered, which with base64 meant 3.5MB); over ~19.5MB → Gmail. The
   old base64 `attachment` action stays as the fallback (and serves `cid:` images).

@@ -11,6 +11,7 @@
 //   • over-cap files go to Gmail; the viewer fits a 360px phone; closing cleans up
 import { chromium } from "playwright";
 import { existsSync } from "node:fs";
+import { zipSync, strToU8 } from "fflate";
 const URL = process.argv[2] || "http://localhost:4174/";
 async function launch() {
   const args = { headless: true, args: ["--no-proxy-server", "--proxy-bypass-list=*"] };
@@ -29,12 +30,21 @@ const PDF = Buffer.from(`%PDF-1.4
 trailer<</Root 1 0 R>>
 %%EOF`);
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+// A small real Word file: a heading, a paragraph with bold text, and text that
+// looks like markup (it must come out as text).
+const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+const REAL_DOCX = Buffer.from(zipSync({
+  "[Content_Types].xml": strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'),
+  "_rels/.rels": strToU8('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'),
+  "word/document.xml": strToU8(`<?xml version="1.0"?><w:document ${W}><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Lease summary</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Rent is due on the </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>first</w:t></w:r><w:r><w:t xml:space="preserve"> of the month. &lt;img src=x onerror=window.__pwned=1&gt;</w:t></w:r></w:p></w:body></w:document>`)
+}));
 const FILES = {
   pdf: { filename: "schedule.pdf", mimeType: "application/pdf", bytes: PDF },
   png: { filename: "photo.png", mimeType: "image/png", bytes: PNG },
   txt: { filename: "notes.txt", mimeType: "text/plain", bytes: Buffer.from("Line one\nLine two <b>not bold</b>") },
   docx: { filename: "Contract.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: Buffer.from("PK\x03\x04fake") },
   html: { filename: "invoice.html", mimeType: "text/html", bytes: Buffer.from("<script>window.parent.__pwned=1</script><h1>hi</h1>") },
+  word: { filename: "Lease summary.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: REAL_DOCX },
   csv: { filename: "roster.csv", mimeType: "text/csv", bytes: Buffer.from('Name,Note\r\n"Evans, Luke","<img src=x onerror=window.__pwned=1>"\r\nSam,ok\r\n') },
   ics: { filename: "invite.ics", mimeType: "text/calendar", bytes: Buffer.from(["BEGIN:VCALENDAR", "BEGIN:VEVENT", "UID:qa-1", "SUMMARY:Dentist <b>x</b>", "DTSTART:20261120T140000", "DTEND:20261120T150000", "LOCATION:12 Main St", "DESCRIPTION:Bring the form", "END:VEVENT", "END:VCALENDAR"].join("\r\n")) },
   vcf: { filename: "Sam.vcf", mimeType: "text/plain", bytes: Buffer.from(["BEGIN:VCARD", "VERSION:3.0", "FN:Sam Qa-Tester", "TEL;TYPE=CELL:555-0100", "EMAIL:sam@example.com", "PHOTO;VALUE=URI:https://tracker.example/p.png", "END:VCARD"].join("\r\n")) },
@@ -53,6 +63,8 @@ async function run({ deployed }) {
   const errors = [];
   const calls = { stream: 0, legacy: 0 };
   const popups = [];
+  const requests = [];
+  page.on("request", (r) => requests.push(r.url()));
   page.on("pageerror", (e) => errors.push(e.message));
   ctx.on("page", (p) => popups.push(p.url()));
   await page.addInitScript(() => { window.open = (u) => { (window.__opened ||= []).push(String(u)); return null; }; });
@@ -111,7 +123,7 @@ window.__att = { renderMailMessage, openMailAttachment, contactCount: () => (sta
     return {
       open: d.open, name: d.querySelector(".mail-att-viewer-name")?.textContent,
       pdf: d.querySelector("iframe.mail-att-viewer-pdf")?.src || "", img: d.querySelector("img")?.naturalWidth ?? null,
-      text: d.querySelector("pre")?.textContent || "", empty: !!d.querySelector(".mail-att-viewer-empty"), kind: d.dataset.kind,
+      text: d.querySelector("pre")?.textContent || "", empty: !!d.querySelector(".mail-att-viewer-empty"), emptyText: d.querySelector(".mail-att-viewer-empty p")?.textContent || "", kind: d.dataset.kind,
       cells: [...d.querySelectorAll(".mail-att-table th, .mail-att-table td")].map((c) => c.textContent),
       cardTitle: d.querySelector(".mail-att-card-title")?.textContent || "", fields: [...d.querySelectorAll(".mail-att-field")].map((f) => f.textContent),
       audio: d.querySelector("audio")?.src || "", imgs: d.querySelectorAll(".mail-att-viewer-body img").length, innerEls: d.querySelectorAll(".mail-att-viewer-body b, .mail-att-table img").length,
@@ -143,7 +155,7 @@ window.__att = { renderMailMessage, openMailAttachment, contactCount: () => (sta
 
   await open("docx");
   v = await viewer();
-  check(`[${tag}] Word file offers Download + Open in Gmail`, v?.empty === true);
+  check(`[${tag}] a Word file that can't be read offers Download + Open in Gmail, with the reason`, v?.empty === true && /Word/.test(v.emptyText), v?.emptyText);
   if (process.env.QA_SHOT_DIR) await page.screenshot({ path: `${process.env.QA_SHOT_DIR}/att-docx-${tag}.png` });
   const dl = page.waitForEvent("download", { timeout: 3000 }).catch(() => null);
   await page.evaluate(() => document.querySelector("#mailAttachmentViewer [data-att-download]").click());
@@ -156,6 +168,39 @@ window.__att = { renderMailMessage, openMailAttachment, contactCount: () => (sta
   const pwned = await page.evaluate(() => window.__pwned === 1);
   check(`[${tag}] HTML attachment is never rendered`, v?.empty === true && v.anyFrameOrScript === 0 && !pwned);
   await close(); await page.waitForTimeout(100);
+
+  // A real Word file opens in the word processor, view only.
+  const netBefore = requests.length;
+  await open("word");
+  await page.waitForSelector(".wp-root.is-preview .ProseMirror", { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(600);
+  const wp = await page.evaluate(() => {
+    const r = document.querySelector(".wp-root.is-preview");
+    if (!r) return null;
+    const pm = r.querySelector("[data-doc] .ProseMirror");
+    const shown = (sel) => { const e = r.querySelector(sel); return !!e && getComputedStyle(e).display !== "none"; };
+    return {
+      text: pm?.textContent || "", h1: pm?.querySelector("h1")?.textContent || "", bold: pm?.querySelector("strong")?.textContent || "",
+      editable: pm?.getAttribute("contenteditable"), imgs: pm?.querySelectorAll("img").length, name: r.querySelector(".wp-title input")?.value, nameReadOnly: r.querySelector(".wp-title input")?.readOnly,
+      status: r.querySelector(".wp-status")?.textContent, toolbar: shown("[data-toolbar]"), menubar: shown("[data-menubar]"), mode: shown("[data-mode]"), keep: !!r.querySelector("[data-act=keep]"),
+      fits: document.documentElement.scrollWidth <= window.innerWidth, mailViewer: !!document.getElementById("mailAttachmentViewer")
+    };
+  });
+  if (process.env.QA_SHOT_DIR) await page.screenshot({ path: `${process.env.QA_SHOT_DIR}/att-word-${tag}.png` });
+  check(`[${tag}] Word file opens in the word processor`, wp?.text.startsWith("Lease summary") && wp.bold === "first" && wp.text.includes("Rent is due on the first of the month.") && wp.name === "Lease summary" && !wp.mailViewer, JSON.stringify(wp));
+  check(`[${tag}] it is view only (no editing, no toolbar, name locked)`, wp?.editable === "false" && !wp.toolbar && !wp.menubar && !wp.mode && wp.nameReadOnly === true && /view only/i.test(wp.status || ""), JSON.stringify(wp));
+  check(`[${tag}] markup in the Word file stays text`, wp?.imgs === 0 && wp.text.includes("<img src=x onerror=window.__pwned=1>") && !(await page.evaluate(() => window.__pwned === 1)));
+  check(`[${tag}] word processor preview fits a 360px phone`, wp?.fits);
+  await page.evaluate(() => { const pm = document.querySelector(".wp-root.is-preview [data-doc] .ProseMirror"); pm?.focus(); });
+  await page.keyboard.type("zzz");
+  await page.waitForTimeout(200);
+  check(`[${tag}] typing changes nothing`, !(await page.evaluate(() => document.querySelector(".wp-root.is-preview [data-doc] .ProseMirror")?.textContent.includes("zzz"))));
+  await page.evaluate(() => document.querySelector(".wp-root.is-preview [data-act=close]").click());
+  await page.waitForTimeout(500);
+  const wrote = requests.slice(netBefore).filter((u) => !/gmail|localhost:4174\/(?!\.netlify)|^blob:|^data:/.test(u));
+  check(`[${tag}] closing removes it, and nothing was sent or stored`, !(await page.evaluate(() => !!document.querySelector(".wp-root"))) && wrote.length === 0, wrote.join(","));
+  const kept = await page.evaluate(async () => (await indexedDB.databases()).map((d) => d.name).filter((n) => /doc/i.test(n || "")));
+  check(`[${tag}] no device copy of the preview`, kept.every((n) => !/preview/i.test(n)), kept.join(","));
 
   await open("csv");
   v = await viewer();
@@ -210,8 +255,8 @@ window.__att = { renderMailMessage, openMailAttachment, contactCount: () => (sta
   else check(`[${tag}] a 5MB file goes to Gmail while only the old action exists`, midOpened.length === 1 && mv === null);
   await close();
 
-  if (deployed) check(`[${tag}] streamed endpoint used, legacy action not`, calls.stream >= 9 && calls.legacy === 0, JSON.stringify(calls));
-  else check(`[${tag}] after one 404, the base64 action serves the rest`, calls.stream === 1 && calls.legacy >= 8, JSON.stringify(calls));
+  if (deployed) check(`[${tag}] streamed endpoint used, legacy action not`, calls.stream >= 10 && calls.legacy === 0, JSON.stringify(calls));
+  else check(`[${tag}] after one 404, the base64 action serves the rest`, calls.stream === 1 && calls.legacy >= 9, JSON.stringify(calls));
   check(`[${tag}] no new tabs/windows`, popups.length === 0, popups.join(","));
   check(`[${tag}] no uncaught errors`, errors.length === 0, errors.join(" | "));
   await browser.close();

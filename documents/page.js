@@ -865,6 +865,13 @@ export async function mountDocumentPage(root, deps) {
       thumbs.clear();
       root.innerHTML = "";
     },
+    // A Word file converted elsewhere (Mail's attachment preview, "Save to Document")
+    // becomes a document in the scope and folder on screen, and opens. Call after show().
+    async addConverted(converted, name) {
+      if (inSafe) leaveSafe({ redraw: false });
+      if (!ui.scope) throw new Error("Document isn't open.");
+      return newDocument(converted, String(name || "Untitled document").slice(0, 200));
+    },
     get _debug() { return { ui, library, inSafe, safe }; },
   };
 }

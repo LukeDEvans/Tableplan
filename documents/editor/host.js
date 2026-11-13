@@ -72,6 +72,24 @@ export async function convertDocx(bytes) {
   return docxToDoc(bytes);
 }
 
+// A Word file shown without becoming a file (Mail's attachment viewer): converted on
+// the device, opened view only from memory. Nothing is stored, sent or kept on the
+// device. onKeep(converted) is the header button (Mail: "Save to Document"); the
+// conversion is handed back so the file isn't read twice.
+// → { close, warnings }. Throws when the bytes aren't a Word file.
+export async function openDocxPreview({ bytes, name, me = { id: "preview", name: "" }, deps = {}, host, onKeep = null, keepLabel = "Save to Document", note = "View only", onClose = null }) {
+  const converted = await convertDocx(bytes);
+  const { ydoc } = ydocFromConverted(converted, { importedBy: me });
+  const { createMemoryDocStore } = await import("./store-memory.js");
+  const store = createMemoryDocStore({ content: docToContent(ydoc), images: converted.images || [] });
+  const opened = await openEditorFor({
+    store, file: { id: "preview", name, scope: "preview" }, me, people: [], host, onClose,
+    deps: { toast: deps.toast, isNative: deps.isNative, share: deps.share, nativePdf: deps.nativePdf, startMode: "viewing" },
+    preview: { note, keepLabel, onKeep: onKeep ? () => onKeep(converted) : null },
+  });
+  return { close: () => opened.close(), warnings: [...(converted.warnings || [])] };
+}
+
 // Google Docs: list / convert through the gdocs Netlify function.
 export function googleDocsApi({ fetchImpl = (...a) => fetch(...a), base = "/.netlify/functions", getToken }) {
   async function call(body) {

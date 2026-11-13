@@ -14,7 +14,8 @@
 //     mail-attachment-viewers.js): PDFs, bitmap images and plain text show inline;
 //     a CSV shows as a table, a calendar invite as its events (Add to Calendar), a
 //     contact card as its contacts (Add to Contacts), audio and video play in
-//     place; anything else gets a Download button.
+//     place; a Word file (.docx) opens view-only in the Document page's word
+//     processor; anything else gets a Download button.
 //
 // Bytes come from `gmail-attachment` (streamed raw, up to ATTACHMENT_MAX_BYTES).
 // Until that function is deployed it 404s, and the app falls back to the gmail
@@ -25,6 +26,9 @@
 // runs with this app's origin. Only inert types are ever rendered in the page:
 // bitmap images, PDF, audio/video in a media element, and text — plain text, CSV
 // cells, invite and contact fields all go in as textContent, never as markup.
+// A Word file is converted on the device into the word processor's own document
+// (documents/editor/docx-import.js: its XML is read as data and checked against the
+// editor's schema, so nothing in the file is run or parsed as HTML).
 // HTML, SVG and everything else are never rendered here: Quick Look shows them
 // outside the web view on the iPhone; the web offers a download as
 // application/octet-stream.
@@ -46,7 +50,8 @@ const EXT_KIND = {
   ics: "invite", ical: "invite",
   vcf: "contact", vcard: "contact",
   mp3: "audio", m4a: "audio", aac: "audio", wav: "audio", oga: "audio", ogg: "audio", flac: "audio",
-  mp4: "video", m4v: "video", mov: "video", webm: "video"
+  mp4: "video", m4v: "video", mov: "video", webm: "video",
+  docx: "doc"
 };
 const EXT_MIME = {
   pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
@@ -61,6 +66,7 @@ const MEDIA_MIME = {
   "audio/ogg": "audio/ogg", "audio/flac": "audio/flac", "audio/x-flac": "audio/flac", "audio/webm": "audio/webm",
   "video/mp4": "video/mp4", "video/x-m4v": "video/mp4", "video/quicktime": "video/quicktime", "video/webm": "video/webm"
 };
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const TEXT_MIME_KIND = {
   "text/plain": "text",
   "text/csv": "csv", "text/tab-separated-values": "csv",
@@ -77,13 +83,15 @@ function extOf(name) {
 }
 
 // How the web viewer can show an attachment:
-//   "pdf" | "image" | "text" | "csv" | "invite" | "contact" | "audio" | "video" | "none".
+//   "pdf" | "image" | "text" | "csv" | "invite" | "contact" | "audio" | "video" | "doc" | "none".
+// "doc" is a Word .docx (not the old binary .doc, which the word processor can't read).
 // Many senders label files application/octet-stream, so the extension decides
 // when the declared type is generic — but a declared HTML/SVG/XML type never
 // becomes viewable, whatever the name says. A file labelled text/plain may still
 // be a CSV, an invite or a contact card by its name (Outlook and others do this).
 export function attachmentViewKind(mimeType, filename) {
   const mime = String(mimeType || "").toLowerCase().split(";")[0].trim();
+  if (mime === DOCX_MIME) return "doc"; // exact match, before the next line: its name has "xml" in it
   if (/html|svg|xml|javascript|ecmascript/.test(mime)) return "none";
   if (mime === "application/pdf") return "pdf";
   if (IMAGE_RE.test(mime)) return "image";

@@ -9,6 +9,9 @@
 //   invite (.ics)    each event's title, time, place and notes, with Add to Calendar
 //   contact (.vcf)   each contact's details, with Add to Contacts
 //   audio / video    a media element with controls
+//   doc (.docx)      not drawn here: handed to the word processor through the
+//                    injected openWordDocument (view only, nothing saved); if the file
+//                    can't be read, Download and Open in Gmail with the reason
 //   anything else    Download, and Open in Gmail
 //
 // SECURITY (see mail-attachment-view.js): nothing from the file is ever parsed as
@@ -183,11 +186,18 @@ function renderText(body, text) {
   body.append(pre);
 }
 
-// Opens the viewer. deps: { saveFile, addInviteEvent?, addContacts?, timeZone? }.
-// Returns the kind that was shown ("none" when only Download was offered).
+// Opens the viewer. deps: { saveFile, addInviteEvent?, addContacts?, timeZone?,
+// openWordDocument? }. Returns the kind that was shown ("none" when only Download
+// was offered; "doc" when the word processor was asked to open it).
 export function showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }, deps = {}) {
   document.getElementById("mailAttachmentViewer")?.remove();
   const kind = attachmentViewKind(mimeType, filename);
+  if (kind === "doc" && deps.openWordDocument) {
+    Promise.resolve()
+      .then(() => deps.openWordDocument({ bytes, filename }))
+      .catch((e) => showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }, { ...deps, openWordDocument: null, notice: e?.message || "This Word file couldn't be opened here." }));
+    return "doc";
+  }
   const urls = [];
   const blobUrl = () => {
     const url = URL.createObjectURL(new Blob([bytes], { type: attachmentBlobType(kind, mimeType, filename) }));
@@ -248,12 +258,13 @@ export function showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }
         <button class="primary-btn" type="button" data-att-download>Download</button>
         <a class="secondary-btn" target="_blank" rel="noopener noreferrer">Open in Gmail</a>
       </div>`;
+    if (deps.notice) empty.querySelector("p").textContent = deps.notice;
     empty.querySelector("a").href = gmailUrl;
     empty.querySelector("[data-att-download]").addEventListener("click", download);
     dlg.querySelector(".mail-att-viewer-download").hidden = true;
     body.append(empty);
   }
-  dlg.dataset.kind = shown;
+  dlg.dataset.kind = kind === "doc" ? "none" : shown;
 
   dlg.querySelector(".mail-att-viewer-download").addEventListener("click", download);
   dlg.querySelector(".mail-att-viewer-close").addEventListener("click", close);
