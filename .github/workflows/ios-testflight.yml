@@ -144,7 +144,7 @@ jobs:
           umask 077
           SIGN="$RUNNER_TEMP/signing"; mkdir -p "$SIGN"
           printf '%s\n' "$IOS_DIST_KEY" > "$SIGN/dist.key"
-          DIST_KEY_PATH="$SIGN/dist.key" node scripts/ios-manual-signing.mjs "$SIGN" com.mrlukedevans.live com.mrlukedevans.live.ShareExtension
+          DIST_KEY_PATH="$SIGN/dist.key" REQUIRED_PROFILE_TEXT=group.com.mrlukedevans.live node scripts/ios-manual-signing.mjs "$SIGN" com.mrlukedevans.live com.mrlukedevans.live.ShareExtension
           /usr/bin/openssl x509 -inform DER -in "$SIGN/dist.cer" -out "$SIGN/dist.pem"
           P12PASS=$(/usr/bin/openssl rand -hex 16)
           /usr/bin/openssl pkcs12 -export -inkey "$SIGN/dist.key" -in "$SIGN/dist.pem" -out "$SIGN/dist.p12" -passout "pass:$P12PASS"

@@ -46,11 +46,15 @@ export function certMatchesKey(certDerB64, privatePem) {
   return Buffer.compare(a, b) === 0;
 }
 
-export function profileUsable(profile, certId) {
+// requiredText: strings the profile's plist must contain (e.g. the App Group id),
+// so a profile made before a capability was set on the App ID is made again.
+export function profileUsable(profile, certId, requiredText = []) {
   const a = profile?.attributes || {};
   const certs = profile?.relationships?.certificates?.data || [];
+  const content = a.profileContent ? Buffer.from(a.profileContent, "base64").toString("latin1") : "";
   return a.profileState === "ACTIVE" && certs.some((c) => c.id === certId)
-    && (!a.expirationDate || Date.parse(a.expirationDate) > Date.now() + 7 * 86400e3);
+    && (!a.expirationDate || Date.parse(a.expirationDate) > Date.now() + 7 * 86400e3)
+    && requiredText.every((t) => content.includes(t));
 }
 
 async function main() {
@@ -97,7 +101,8 @@ async function main() {
     if (!bundle) throw new Error(`no App ID ${identifier}`);
     const name = `${PROFILE_PREFIX}${identifier}`;
     const found = (await api("GET", `/profiles?filter[name]=${encodeURIComponent(name)}&include=certificates&limit=20`)).data || [];
-    let profile = found.find((p) => p.attributes?.name === name && profileUsable(p, cert.id));
+    const required = (process.env.REQUIRED_PROFILE_TEXT || "").split(",").map((t) => t.trim()).filter(Boolean);
+    let profile = found.find((p) => p.attributes?.name === name && profileUsable(p, cert.id, required));
     for (const stale of found.filter((p) => p !== profile && p.attributes?.name === name)) {
       await api("DELETE", `/profiles/${stale.id}`);
       console.log(`profile: removed stale ${stale.id} (${name})`);
@@ -109,6 +114,9 @@ async function main() {
       } })).data;
       console.log(`profile: created ${profile.id} (${name})`);
     } else console.log(`profile: using ${profile.id} (${name})`);
+    const content = Buffer.from(profile.attributes.profileContent, "base64").toString("latin1");
+    const missing = required.filter((t) => !content.includes(t));
+    if (missing.length) throw new Error(`${name} was made without ${missing.join(", ")}: the App ID ${identifier} doesn't have it yet (developer.apple.com › Identifiers › ${identifier} › App Groups › Configure, tick it, Save)`);
     writeFileSync(join(outDir, `${profile.attributes.uuid}.mobileprovision`), Buffer.from(profile.attributes.profileContent, "base64"));
     mapping[identifier] = name;
   }
