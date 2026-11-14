@@ -11,6 +11,8 @@ const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const TABLE = `${SUPABASE_URL}/rest/v1/news_articles`;
 const INTEREST = `${SUPABASE_URL}/rest/v1/news_interest`;
 const Rank = require("./_news-rank.js");
+const Front = require("./_news-front.js");
+const Titles = require("./_news-titles.js");
 
 const DAY_MS = 86_400_000;
 const KEEP_DAYS = 3;            // the News window (matches _news-links FRESH_DAYS)
@@ -316,13 +318,67 @@ async function loadCounts(serviceKey, userId, { fetchImpl = fetch, nowMs = Date.
   return countsFromRows(await res.json());
 }
 
-// One page of a view (+ on the first Front page, the recent newsletter leads so
-// they can lead even when older than the newest page).
+// ── The Front page's top stories (NEWS_FRONT_PAGE_DESIGN.md) ──────────────────
+// The last day's stories, slim (no image, no state columns), for _news-front.js to
+// group into events and rank. One read per first Front page, kept for a few
+// minutes per warm function so the page and the dock ticker share it.
+const FRONT_POOL_COLUMNS = "id,url,title,subtitle,paper,section,origin,published_at,lead_at";
+const FRONT_POOL_MAX = 300;
+const FRONT_MEMO_MS = 5 * 60_000;
+const frontMemo = new Map(); // userId → { at, top: [{ id, … }] }
+const frontRankOff = () => /^(1|true|yes)$/i.test(String(process.env.NEWS_FRONT_RANK_DISABLED || ""));
+
+function frontPoolQuery(userId, { nowMs = Date.now() } = {}) {
+  const since = new Date(nowMs - Front.POOL_WINDOW_MS).toISOString();
+  return [
+    `select=${FRONT_POOL_COLUMNS}`, `user_id=eq.${enc(userId)}`, "hidden_at=is.null",
+    `published_at=gte.${enc(since)}`, `and=${enc(`(${FRONT_PAPER_FILTER})`)}`,
+    "order=published_at.desc", `limit=${FRONT_POOL_MAX}`
+  ].join("&");
+}
+
+// The ranked top stories as full rows, in display order. [] when nothing clears
+// the bar (a quiet hour): the page is then simply newest first.
+async function loadFrontTop(serviceKey, userId, { fetchImpl = fetch, nowMs = Date.now(), memo = true } = {}) {
+  let hit = memo ? frontMemo.get(userId) : null;
+  if (!hit || nowMs - hit.at > FRONT_MEMO_MS || nowMs < hit.at) {
+    const pool = await getRows(serviceKey, frontPoolQuery(userId, { nowMs }), { fetchImpl });
+    const top = Front.rankFront(pool, { nowMs, isWeak: (r) => Titles.isWeakTitle(r.title, { url: r.url, origin: r.origin || "rss" }) });
+    hit = { at: nowMs, top };
+    if (memo) frontMemo.set(userId, hit);
+  }
+  if (!hit.top.length) return [];
+  const ids = hit.top.map((t) => t.id);
+  // Read fresh every time, so a story hidden or read since the ranking shows that.
+  const rows = await getRows(serviceKey, [
+    `select=${COLUMNS}`, `user_id=eq.${enc(userId)}`, "hidden_at=is.null", `id=in.(${ids.map((id) => `"${enc(id)}"`).join(",")})`
+  ].join("&"), { fetchImpl });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
+const resetFrontMemo = () => frontMemo.clear();
+
+// One page of a view. On the first Front page the ranked top stories come first.
+//
+// The app (every installed build) shows cards that carry `lead` first, most
+// recent `lead` on top, and calls the first one the lead story; the dock ticker
+// shows the same cards. So the top stories are sent with a `lead` time that
+// encodes their order, and no other Front page card carries `lead`: a
+// newsletter's first link no longer pins a story to the top by itself (it is one
+// signal in the ranking). With NEWS_FRONT_RANK_DISABLED=1 the page goes back to
+// newsletter leads first.
 async function loadFeedPage(serviceKey, userId, opts = {}) {
   const { view = {}, before, q, limit = 150, fetchImpl = fetch, nowMs = Date.now(), athleticTagged = false } = opts;
   const rows = await getRows(serviceKey, feedQuery(userId, { view, before, q, limit, nowMs, athleticTagged }), { fetchImpl });
+  const front = (view.kind || "front") === "front";
+  const firstFront = front && !before && !q;
+  const ranked = front && !frontRankOff();
   let leads = [];
-  if ((view.kind || "front") === "front" && !before && !q) {
+  let top = [];
+  if (firstFront && ranked) {
+    // A failed ranking read leaves a plain newest-first page, never an error.
+    top = await loadFrontTop(serviceKey, userId, { fetchImpl, nowMs }).catch(() => []);
+  } else if (firstFront) {
     const since = new Date(nowMs - LEAD_WINDOW_MS).toISOString();
     leads = await getRows(serviceKey, [
       `select=${COLUMNS}`, `user_id=eq.${enc(userId)}`, "hidden_at=is.null",
@@ -330,10 +386,19 @@ async function loadFeedPage(serviceKey, userId, opts = {}) {
     ].join("&"), { fetchImpl });
   }
   const byId = new Map();
-  for (const r of [...leads, ...rows]) byId.set(r.id, r);
+  for (const r of [...top, ...leads, ...rows]) if (!byId.has(r.id)) byId.set(r.id, r);
+  const topOrder = new Map(top.map((r, i) => [r.id, i]));
   const capped = Math.max(1, Math.min(PAGE_MAX, Number(limit) || 150));
   return {
-    articles: [...byId.values()].map(cardFromRow),
+    articles: [...byId.values()].map((r) => {
+      const c = cardFromRow(r);
+      if (ranked) {
+        delete c.lead;
+        // One second apart, newest first = the ranked order.
+        if (topOrder.has(r.id)) c.lead = new Date(nowMs - topOrder.get(r.id) * 1000).toISOString();
+      }
+      return c;
+    }),
     // A full page means there may be more; the cursor is the last row's (time, id).
     nextBefore: rows.length >= capped ? `${rows[rows.length - 1].published_at}|${rows[rows.length - 1].id}` : null
   };
@@ -436,6 +501,6 @@ function acceptedArticleRecord(card, nowIso) {
 module.exports = {
   KEEP_DAYS, PRUNE_DAYS, PAGE_MAX, COLUMNS, FORYOU_SHOW,
   rowFromCard, cardFromRow, countsFromRows, feedQuery, parseCursor, searchTerm, forYouQuery, arrangeForYouRows,
-  insertArticles, setTopics, markLeads, getRows, patchRows, loadCounts, loadFeedPage, loadForYou, applyDecisions, learnFromDecisions, pruneArticles,
+  insertArticles, setTopics, markLeads, getRows, patchRows, loadCounts, loadFeedPage, loadFrontTop, frontPoolQuery, resetFrontMemo, loadForYou, applyDecisions, learnFromDecisions, pruneArticles,
   forYouReady, resetSchemaProbe, loadInterest, loadInterests, saveInterest
 };
