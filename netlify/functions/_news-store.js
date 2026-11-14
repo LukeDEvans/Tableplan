@@ -13,6 +13,7 @@ const INTEREST = `${SUPABASE_URL}/rest/v1/news_interest`;
 const Rank = require("./_news-rank.js");
 const Front = require("./_news-front.js");
 const Titles = require("./_news-titles.js");
+const Signals = require("./_news-signals.js");
 
 const DAY_MS = 86_400_000;
 const KEEP_DAYS = 3;            // the News window (matches _news-links FRESH_DAYS)
@@ -192,6 +193,19 @@ async function setTopics(serviceKey, userId, cards, origin, { fetchImpl = fetch 
   return rows.length;
 }
 
+// Feed stories stored in the last few hours that have no topics yet: the ones the
+// open check added (_news-feeds.js runOpenCheck), or whose tagging write failed.
+// Ids only; the hourly job tags those it has the card for. Bounded by the window,
+// so nothing is retried forever.
+const UNTAGGED_WINDOW_MS = 3 * 3_600_000;
+async function untaggedRecentIds(serviceKey, userId, { fetchImpl = fetch, nowMs = Date.now() } = {}) {
+  const since = new Date(nowMs - UNTAGGED_WINDOW_MS).toISOString();
+  const rows = await getRows(serviceKey, [
+    "select=id", `user_id=eq.${enc(userId)}`, "origin=eq.rss", "topics=is.null", `discovered_at=gte.${enc(since)}`, "limit=200"
+  ].join("&"), { fetchImpl });
+  return (rows || []).map((r) => String(r.id));
+}
+
 // ── For you: schema probe and interests ─────────────────────────────────────
 // The code ships before its migration may be applied. One cheap probe per warm
 // function instance (re-tried every 10 minutes while missing) decides whether the
@@ -342,8 +356,13 @@ function frontPoolQuery(userId, { nowMs = Date.now() } = {}) {
 async function loadFrontTop(serviceKey, userId, { fetchImpl = fetch, nowMs = Date.now(), memo = true } = {}) {
   let hit = memo ? frontMemo.get(userId) : null;
   if (!hit || nowMs - hit.at > FRONT_MEMO_MS || nowMs < hit.at) {
-    const pool = await getRows(serviceKey, frontPoolQuery(userId, { nowMs }), { fetchImpl });
-    const top = Front.rankFront(pool, { nowMs, isWeak: (r) => Titles.isWeakTitle(r.title, { url: r.url, origin: r.origin || "rss" }) });
+    // The outside headlines ride along (one small row, shared copy); without them
+    // the ranking still runs.
+    const [pool, signalsRow] = await Promise.all([
+      getRows(serviceKey, frontPoolQuery(userId, { nowMs }), { fetchImpl }),
+      Signals.loadSignalsRow(serviceKey, { fetchImpl, nowMs }).catch(() => ({}))
+    ]);
+    const top = Front.rankFront(pool, { nowMs, signals: Signals.signalRows(signalsRow.items, nowMs), isWeak: (r) => Titles.isWeakTitle(r.title, { url: r.url, origin: r.origin || "rss" }) });
     hit = { at: nowMs, top };
     if (memo) frontMemo.set(userId, hit);
   }
@@ -356,7 +375,7 @@ async function loadFrontTop(serviceKey, userId, { fetchImpl = fetch, nowMs = Dat
   const byId = new Map(rows.map((r) => [r.id, r]));
   return ids.map((id) => byId.get(id)).filter(Boolean);
 }
-const resetFrontMemo = () => frontMemo.clear();
+const resetFrontMemo = (userId) => (userId ? frontMemo.delete(userId) : frontMemo.clear());
 
 // One page of a view. On the first Front page the ranked top stories come first.
 //
@@ -501,6 +520,6 @@ function acceptedArticleRecord(card, nowIso) {
 module.exports = {
   KEEP_DAYS, PRUNE_DAYS, PAGE_MAX, COLUMNS, FORYOU_SHOW,
   rowFromCard, cardFromRow, countsFromRows, feedQuery, parseCursor, searchTerm, forYouQuery, arrangeForYouRows,
-  insertArticles, setTopics, markLeads, getRows, patchRows, loadCounts, loadFeedPage, loadFrontTop, frontPoolQuery, resetFrontMemo, loadForYou, applyDecisions, learnFromDecisions, pruneArticles,
+  insertArticles, setTopics, untaggedRecentIds, markLeads, getRows, patchRows, loadCounts, loadFeedPage, loadFrontTop, frontPoolQuery, resetFrontMemo, loadForYou, applyDecisions, learnFromDecisions, pruneArticles,
   forYouReady, resetSchemaProbe, loadInterest, loadInterests, saveInterest
 };

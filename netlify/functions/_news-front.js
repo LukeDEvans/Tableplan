@@ -17,6 +17,8 @@ const FRESH_MS = 12 * HOUR_MS;         // freshness bonus runs out here
 const BREAKING_MS = 6 * HOUR_MS;      // how long a new event keeps its head start
 const TOP_MAX = 8;                     // stories pinned above the newest-first list
 const BIG_EVENT_HEAT = 3;              // an event this hot may show a second story, from another paper
+const SIGNAL_WEIGHT = 0.75;            // an outside headline counts this much of a story toward heat
+const SIGNAL_MAX = 3;                  // …and at most this many of them per event
 const MIN_TOP_SCORE = 4.5;             // below this a story is not "front page"; the list stays newest-first
 
 // How much a section counts toward the front page: hard news leads, features don't.
@@ -149,7 +151,17 @@ function scoreCluster(c, nowMs) {
   const seenTitles = new Set();
   let heat = 0;
   const papers = new Set();
+  // Outside signals (the BBC's and AP's top headlines, _news-signals.js): they are
+  // never shown, but an event they also carry is bigger. The newest few count
+  // toward heat, each outlet counts as a paper, and a place near the top of an
+  // outlet's own front page adds up to 1.5.
+  const outside = c.items.filter((it) => it.row.signal).sort((a, b) => b.at - a.at);
+  const outlets = new Set(outside.map((it) => it.row.paper));
+  for (const it of outside.slice(0, SIGNAL_MAX)) heat += SIGNAL_WEIGHT * Math.exp(-Math.max(0, nowMs - it.at) / HEAT_TAU_MS);
+  const bestPos = Math.min(...outside.map((it) => (Number.isInteger(it.row.pos) ? it.row.pos : Infinity)));
+  const prominence = bestPos <= 2 ? 1.5 : bestPos <= 7 ? 0.75 : 0;
   for (const it of c.items) {
+    if (it.row.signal) continue;
     // The same headline filed twice (a live-blog update and its article) counts once.
     const key = String(it.row.title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     if (seenTitles.has(key)) continue;
@@ -159,16 +171,17 @@ function scoreCluster(c, nowMs) {
     heat += Math.exp(-age / HEAT_TAU_MS) * (it.row.section === "opinion" ? 0.4 : 1);
     if (it.row.paper) papers.add(it.row.paper);
   }
-  const live = c.items.some((it) => isLive(it.row));
+  const live = c.items.some((it) => !it.row.signal && isLive(it.row));
   // Breaking: an event with two or more stories whose first one is under six hours
   // old gets a head start, so it can pass a days-old saga with more stories.
   const firstAt = Math.min(...c.items.map((it) => it.at));
-  const breaking = seenTitles.size >= 2 ? 1.5 * Math.max(0, 1 - Math.max(0, nowMs - firstAt) / BREAKING_MS) : 0;
-  const eventScore = 3 * Math.log2(1 + heat) + (papers.size >= 2 ? 1 : 0) + (live ? 1.5 : 0) + breaking;
+  const breaking = seenTitles.size + outlets.size >= 2 ? 1.5 * Math.max(0, 1 - Math.max(0, nowMs - firstAt) / BREAKING_MS) : 0;
+  const eventScore = 3 * Math.log2(1 + heat) + (papers.size + outlets.size >= 2 ? 1 : 0) + (live ? 1.5 : 0) + breaking + prominence;
   const need = Math.max(1, Math.ceil(c.items.length * 0.3));
+  const stories = c.items.filter((it) => !it.row.signal);
   const paperCount = new Map();
-  for (const it of c.items) paperCount.set(it.row.paper, (paperCount.get(it.row.paper) || 0) + 1);
-  for (const it of c.items) {
+  for (const it of stories) paperCount.set(it.row.paper, (paperCount.get(it.row.paper) || 0) + 1);
+  for (const it of stories) {
     const age = Math.max(0, nowMs - it.at);
     let central = 0;
     for (const t of it.tokens) if ((c.df.get(t) || 0) >= need) central++;
@@ -181,29 +194,36 @@ function scoreCluster(c, nowMs) {
     // story (fresh, hard news) that is most about it, from the paper covering it most.
     it.repScore = it.score
       + Math.min(central, 6) * 0.3
-      + (paperCount.get(it.row.paper) || 0) / c.items.length
+      + (paperCount.get(it.row.paper) || 0) / stories.length
       + (isLive(it.row) && !isLiveUpdate(it.row) ? 3 : 0)
       + (isLiveUpdate(it.row) ? -3 : 0)
       + (it.row.subtitle ? 0 : -0.5);
   }
   c.heat = heat;
   c.papers = papers;
+  c.outlets = outlets;
+  c.stories = stories;
   c.live = live;
   c.eventScore = eventScore;
-  c.ranked = [...c.items].sort((a, b) => b.repScore - a.repScore || a.at - b.at);
-  c.best = Math.max(...c.items.map((it) => it.score));
+  c.ranked = [...stories].sort((a, b) => b.repScore - a.repScore || a.at - b.at);
+  c.best = Math.max(...stories.map((it) => it.score));
 }
 
 // rows: the pool (id, url, title, subtitle, paper, section, published_at, lead_at,
 // topics). Returns the top stories in display order, each { id, score, heat,
-// stories, papers, live }. `isWeak(row)` drops rows whose title is a fragment.
-function rankFront(rows, { nowMs = Date.now(), max = TOP_MAX, isWeak = () => false } = {}) {
-  const pool = (rows || []).filter((r) => r && r.id && r.title && nowMs - ms(r.published_at) <= POOL_WINDOW_MS && nowMs - ms(r.published_at) > -HOUR_MS && !isWeak(r));
-  const clusters = clusterRows(pool);
+// stories, papers, outside, live }. `isWeak(row)` drops rows whose title is a
+// fragment. `signals`: outside headlines as rows marked `signal: true`
+// (_news-signals.js signalRows) — they shape the events' scores and are never returned.
+function rankFront(rows, { nowMs = Date.now(), max = TOP_MAX, isWeak = () => false, signals = [] } = {}) {
+  const inWindow = (r) => nowMs - ms(r.published_at) <= POOL_WINDOW_MS && nowMs - ms(r.published_at) > -HOUR_MS;
+  const pool = (rows || []).filter((r) => r && r.id && r.title && !r.signal && inWindow(r) && !isWeak(r));
+  const extra = (signals || []).filter((r) => r && r.signal && r.title && inWindow(r));
+  // An event nobody we carry has written about has nothing to show.
+  const clusters = clusterRows([...pool, ...extra]).filter((c) => c.items.some((it) => !it.row.signal));
   for (const c of clusters) scoreCluster(c, nowMs);
   clusters.sort((a, b) => b.best - a.best);
   const top = [];
-  const describe = (c, it) => ({ id: it.row.id, score: Math.round(it.score * 100) / 100, heat: Math.round(c.heat * 100) / 100, stories: c.items.length, papers: c.papers.size, live: c.live });
+  const describe = (c, it) => ({ id: it.row.id, score: Math.round(it.score * 100) / 100, heat: Math.round(c.heat * 100) / 100, stories: c.stories.length, papers: c.papers.size, outside: c.outlets.size, live: c.live });
   for (const c of clusters) {
     if (top.length >= max) break;
     const first = c.ranked[0];

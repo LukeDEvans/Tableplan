@@ -101,6 +101,14 @@ Scores. Scores has no menu entry of its own.
   encodes their order and strips `lead` from every other Front page card, because
   installed apps and the dock ticker show `lead` cards first. Don't put `lead` back
   on other Front cards. Kill switch: `NEWS_FRONT_RANK_DISABLED=1`.
+- **NPR is a paper; the BBC and AP are signals only (Luke, 2026-11-14; NEWS_FRONT_PAGE_DESIGN.md
+  §9–§11):** NPR needs no sign-in and goes to every News user (`FEED_SOURCES` / `FREE_PAPERS`
+  in `_news-feeds.js`; `free: true` in `NEWS_PAPERS`). BBC and AP headlines are read by
+  `_news-signals.js` into the `news_signals` row and only shape the Front page ranking:
+  **never store or show them as stories.** Opening the Front page runs `runOpenCheck` (five
+  feeds, at most once in 10 minutes for everyone, claimed in the row before any fetch); it
+  stores stories without topics and the hourly job tags them (`untaggedRecentIds`). Kill
+  switches: `NEWS_NPR_DISABLED`, `NEWS_OPEN_CHECK_DISABLED`.
 - **For you (Luke, 2026-10-27; NEWS_RANKING_DESIGN.md):** a view ranked per person by
   content (paper, section, AI topics, entities, teams, keywords), learning from Open,
   Listen, Save, Hide and the ⋯ menu's More / Less like this and Mute topic; weights
