@@ -62,17 +62,19 @@ function extract(name) {
 }
 
 describe("queue-added items in the Media queue (real app.js functions)", () => {
-  const FNS = ["articleHasListenableBody", "articleQueueItem", "queueAddedItems", "queuedMusicRow", "getAutoPlaylist", "getAllListenList"];
-  function build(state) {
+  const FNS = ["articleHasListenableBody", "articleQueueItem", "listenArticleById", "listenArticleIsRead", "queueAddedItems", "queuedMusicRow", "getAutoPlaylist", "getAllListenList"];
+  // `lib` is the queue's library (LISTEN_QUEUE_DESIGN.md): the view on screen
+  // unless given — e.g. Personal's off-screen copy while Household is showing.
+  function build(state, lib = state) {
     const env = {
-      state, normalizeQueueAdded, libraryAlbumTracks, isMusicShow,
+      state, normalizeQueueAdded, listenLibrary: () => lib, libraryAlbumTracks, isMusicShow,
       withSkippedLast, mediaAllQueueSkipped: [], nowPlayingQueueId: () => null, queueNowId: () => null,
       RECENT_WINDOW_OPTIONS: [{ value: "month", ms: 30 * 864e5 }, 0, 0, 0, { value: "month", ms: 30 * 864e5 }],
       getBundleHeldEpisodeIds: () => new Set(),
       getReadPublications: () => [], articleArtUrl: () => "", getArticleSortDate: (a) => a.savedAt,
       publicationTierFor: () => undefined, hoistResumeEpisode: (l) => l, musicArtUrlFor: () => "", musicLibrary: [],
       playlistItemForEpisodeId: (id) => {
-        for (const p of state.podcasts) { const e = p.episodes.find((x) => x.id === id); if (e) return { ...e, type: "podcast", showId: p.id, showTitle: p.title, showArt: "" }; }
+        for (const p of [...(lib.podcasts || []), ...(lib === state ? [] : state.podcasts || [])]) { const e = p.episodes.find((x) => x.id === id); if (e) return { ...e, type: "podcast", showId: p.id, showTitle: p.title, showArt: "" }; }
         return null;
       },
     };
@@ -151,6 +153,25 @@ describe("queue-added items in the Media queue (real app.js functions)", () => {
     state.mediaQueueAdded = [{ id: "q1", ref: "track:lib:9", kind: "track", source: "library", title: "Song", mq: { kind: "library", id: 9 } }];
     state.mediaAllPinnedOrder = ["q1", "new"];
     expect(build(state).getAllListenList().map((i) => i.id)).toEqual(["q1", "new", "new2"]);
+  });
+
+  // LISTEN_QUEUE_DESIGN.md (Luke, 2026-11-13): one queue per person in every
+  // view, filled from their home library (Personal) even while Household shows.
+  it("in another view, the queue fills from the home library, with this person's played marks", () => {
+    const household = { ...base(), podcasts: [{ id: "h", title: "Household show", episodes: [{ id: "hEp", title: "H", pubDate: recent }] }] };
+    const personal = { podcasts: base().podcasts, savedArticles: [], readArticleIds: [], readingItems: [] };
+    household.podcastProgress = { new: { played: true, playedAt: recent } }; // finished while Household was on screen
+    const ids = build(household, personal).getAllListenList().map((i) => i.id);
+    expect(ids).toEqual(["new2"]); // Personal's shows; "new" is played; Household's show doesn't fill it
+  });
+
+  it("a Household episode added by hand stays in the queue back in Personal", () => {
+    const personal = base();
+    const householdShows = [{ id: "h", title: "Household show", episodes: [{ id: "hEp", title: "H", pubDate: recent }] }];
+    personal.mediaQueueAdded = [{ id: "q1", ref: "episode:hEp", kind: "episode", itemId: "hEp", addedAt: 1 }];
+    const onScreen = { ...personal, podcasts: [...personal.podcasts, ...householdShows] }; // stands in for the shadow lookup
+    const ids = build(onScreen, personal).getAllListenList().map((i) => i.id);
+    expect(ids[ids.length - 1]).toBe("hEp");
   });
 });
 

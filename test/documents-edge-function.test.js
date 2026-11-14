@@ -116,6 +116,22 @@ describe("doc-storage", () => {
     expect((await call({ op: "delete", items: [{ scope, fileId, part: "content" }] })).status).toBe(403);
   });
 
+  it("word processor parts: version slots and images in either tier, nothing else", async () => {
+    allowed = new Set([scope]);
+    const hex = "0123456789abcdef".repeat(2);
+    for (const part of ["vh00", "vh23", "vd01", "vd31", "vw00", "vw52", `vn${hex}`, `i${hex}`]) {
+      for (const tier of [undefined, "everyday"]) {
+        const res = await call({ op: "put", items: [{ scope, fileId, part, size: 10, ...(tier ? { tier } : {}) }] });
+        expect(res.status, `${part} ${tier}`).toBe(200);
+        const { urls } = await res.json();
+        expect(urls[0].url).toContain(`/${tier ? "p/" : ""}${scope}/${fileId}/${part}?`);
+      }
+    }
+    for (const part of ["vh24", "vd00", "vw53", "vn123", `i${hex}0`, "v", "iABC", `vn${hex.toUpperCase()}`]) {
+      expect((await call({ op: "get", items: [{ scope, fileId, part, tier: "everyday" }] })).status, part).toBe(400);
+    }
+  });
+
   it("is off when switched off or not configured", async () => {
     env = { ...ENV, DOCUMENTS_STORAGE_DISABLED: "1" };
     expect((await call({ op: "get", items: [{ scope, fileId, part: "content" }] })).status).toBe(503);

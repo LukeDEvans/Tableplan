@@ -21,13 +21,14 @@ changes to the Listen page's audio (everything except streaming music) only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `media-queue-*.js`, `media-tier.js`, `media-progress.js`, `media-history.js`, `media-state.js`, `media-sources.js`, `media-model.js`, `media-search.js`, `media-provider.js`, `media-provider-podcast.js`, `media-provider-radio.js`, `media-content.js`, `radio*.js`, `podcast-retention.js`, `playback-*.js`, `voice-*.js`, `tts-*.js`, `tts-*.mjs`, `kokoro-*.mjs`, `article-body-backfill.mjs`, `netlify/functions/fetch-podcast.js`, `netlify/functions/generate-tts.js`, `netlify/functions/kokoro-tts.mjs`, `netlify/functions/presynth-*.mjs`, `netlify/functions/_presynth-key.mjs`, `netlify/functions/tts-cache-cleanup.js`, `netlify/functions/check-hcl.js`, `media-music-show.js`, `media-music-show-ui.js`, `netlify/functions/_music-show.js`
+- files: `media-queue-*.js`, `listen-queue.js`, `media-tier.js`, `media-progress.js`, `media-history.js`, `media-state.js`, `media-sources.js`, `media-model.js`, `media-search.js`, `media-provider.js`, `media-provider-podcast.js`, `media-provider-radio.js`, `media-content.js`, `radio*.js`, `podcast-retention.js`, `playback-*.js`, `voice-*.js`, `tts-*.js`, `tts-*.mjs`, `kokoro-*.mjs`, `article-body-backfill.mjs`, `netlify/functions/fetch-podcast.js`, `netlify/functions/generate-tts.js`, `netlify/functions/kokoro-tts.mjs`, `netlify/functions/presynth-*.mjs`, `netlify/functions/_presynth-key.mjs`, `netlify/functions/tts-cache-cleanup.js`, `netlify/functions/check-hcl.js`, `media-music-show.js`, `media-music-show-ui.js`, `netlify/functions/_music-show.js`
 - state: `podcast*`, `media*`, `radio*`, `readingItems`, `readingSettings`, `readingProgress`, `libraryKey`, `publicationTiers`
 
 ## Naming — read this first
 The page is **Listen** to Luke, but **internal keys did not change** (decision 6):
 `activeAppArea` is `"media"`, the page-access key is `read`, `#media` / `#read` /
-`#listen` all open it, and the data stays in the `media` state section. Change
+`#listen` all open it, and the library stays in the `media` state section. The
+person's own queue state and positions are in the **`listen`** section (below). Change
 visible labels only; renaming synced keys makes settings revert on other devices.
 Listen is in the **Media** menu group (with Watch) on the landing page and the page
 menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-player**
@@ -54,7 +55,20 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
   music tab — `showMediaApp`, `renderMediaAllList` (the queue), podcasts, radio,
   Books, `renderMediaSearchResults`, the mini-player / Now Playing. Search:
   `showMediaApp`, `renderMediaAllList`, `podcastQueue`, `mediaQueueAdded`, `miniPlayer`.
-- **Data (`media` section):** `podcasts`, `podcastProgress`, `podcastQueue`,
+- **One queue and player per person (Luke, 2026-11-13; LISTEN_QUEUE_DESIGN.md):**
+  `listen-queue.js` lists the keys that live in the person's own **`listen`** row
+  (`u-<uid>:listen`, never swapped by a view switch): `podcastProgress`,
+  `mediaProgress`, `readingProgress`, `mediaQueueAdded`, `mediaQueueRemoved`,
+  `podcastAutoSkipped`, `mediaAllPinnedOrder`, `mediaHistory`. So a position or a
+  finished mark is the person's in every view. The shows, articles and books that
+  fill the queue automatically are the person's **home library** (`listenLibrary()`
+  in app.js, views.js `listenHomeScope`): Personal for someone who has it, else
+  Household — Luke chose "Personal shows only"; a Household episode joins his queue
+  only by hand. `findPodcastEpisode` also looks in the other view's off-screen copy.
+  Saved shows/episodes stay per view. Watch is unchanged (shared in Household). A
+  one-time move (`seedListenRowOnce`) folds the old per-view copies in. QA:
+  `npm run qa:listen-queue`.
+- **Data (`media` section — the library; the queue keys above moved to `listen`):** `podcasts`, `podcastProgress`, `podcastQueue`,
   `podcast*` settings and tiers, `mediaProgress`, `mediaHistory`, `mediaSaved`,
   `mediaQueueAdded` / `mediaQueueRemoved` / `mediaQueueFallback`,
   `mediaAllPinnedOrder`, `radioFavorites` / `radioFollowedPrograms` /

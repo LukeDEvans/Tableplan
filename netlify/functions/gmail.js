@@ -114,6 +114,16 @@ exports.handler = async (event) => {
     if (view.kind === "foryou" && !forYou) view.kind = "front";
     const wantsWeights = forYou && view.kind === "foryou" && !q;
     const interest = forYou ? await NewsStore.loadInterest(serviceKey, userId, { cols: wantsWeights ? "all" : "teams" }).catch(() => null) : null;
+    // Opening the Front page (or the app: its dock ticker asks for the Front page)
+    // checks the papers' top feeds if nothing has in the last ten minutes, so a
+    // breaking story isn't an hour late (NEWS_FRONT_PAGE_DESIGN.md §10). Bounded,
+    // and never the reason a page fails.
+    if (view.kind === "front" && !light) {
+      await Promise.race([
+        require("./_news-feeds").runOpenCheck(serviceKey).catch((e) => { console.warn("[news] open check:", e.message); }),
+        new Promise((resolve) => setTimeout(resolve, 3500))
+      ]);
+    }
     const pageP = wantsWeights && interest
       ? NewsStore.loadForYou(serviceKey, userId, interest)
       : NewsStore.loadFeedPage(serviceKey, userId, { view: view.kind === "foryou" ? { kind: "front" } : view, before, q, limit: body.limit, athleticTagged: forYou });

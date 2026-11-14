@@ -210,6 +210,13 @@ export function scopeForView(view, section, { hasBusiness = false, hasPersonalFi
   return "personal";
 }
 
+// Which Listen library fills a person's queue in every view
+// (LISTEN_QUEUE_DESIGN.md): their primary view's — Personal for someone who
+// has it, Household for someone who has only Household.
+export function listenHomeScope(available) {
+  return scopeForView(primaryView(available), "media");
+}
+
 // The scopes a section can be in, for this person.
 export function scopesForSection(section, { toggle = true, hasBusiness = false } = {}) {
   if (!toggle) return [];

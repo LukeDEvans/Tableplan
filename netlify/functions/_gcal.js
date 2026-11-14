@@ -7,6 +7,9 @@
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const GCAL_SCOPE = "https://www.googleapis.com/auth/calendar";
+// Read-only Drive + Docs, asked for only when someone brings Google Docs into Document
+// (gcal-auth ?docs=1; gdocs.js checks the stored scopes before using them).
+const DOCS_SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents.readonly"];
 
 function serviceKey() {
   return (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -268,7 +271,7 @@ async function listGoogleEvents(token, googleCalendarId, { mode = "live", timeMi
 }
 
 module.exports = {
-  SUPABASE_URL, GCAL_SCOPE, json, sb, userIdFromRequest, signState, verifyState, redirectUri, appBase,
+  SUPABASE_URL, GCAL_SCOPE, DOCS_SCOPES, json, sb, userIdFromRequest, signState, verifyState, redirectUri, appBase,
   loadAccount, saveAccount, deleteAccount, getAccessToken,
   listLinks, insertLinks, relink, disableLink, linksForAppIds, groupIdFor, chooseLinks, validLinkInput,
   gApi, listGoogleCalendars, listGoogleEvents

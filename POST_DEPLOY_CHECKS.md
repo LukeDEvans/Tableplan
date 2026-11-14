@@ -5,6 +5,25 @@ shipped yet is listed in [UNDEPLOYED.md](UNDEPLOYED.md).) When deploying, move e
 UNDEPLOYED.md entry's "After deploying" steps here under a heading for that deploy.
 Tick items off as they're done; delete a deploy's section once it's all ticked.
 
+## 2026-11-13 deploy (Word processor in Document; email attachments open in the app)
+Web deploy from `main` after #235 (Luke's OK, 2026-11-13: "one deploy when it becomes necessary").
+
+- **Word attachments open in the word processor** · PR #235 · client only. On the laptop in
+  Chrome, open the email with the 16 KB Word file: it opens in the word processor, labelled
+  "From email · view only". Press **Save to Document** and check it appears in that view's
+  Document page and opens there. A file that can't be read offers Download with the reason.
+  The laptop app and the iPhone keep Apple's viewer (Quick Look) for every attachment.
+- **More attachments open in the app** · PR #234 · client only. Open an email with a `.csv`,
+  an `.ics` and a `.vcf`: a table; the event, where Add to Calendar fills the event editor
+  with the right day and time; the contact, where Add to Contacts adds the person.
+- **Word processor in Document** · PR #223 · the Realtime policies, the version tables and
+  doc-storage v7 were already applied before the merge. Now live on the web: new document,
+  Word import / export, PDF, comments, versions, live co-editing. **Google Docs import**
+  needs the new `gdocs` function (live with this deploy) plus the Google Drive and Docs APIs
+  turned on in the Google Cloud project behind `GOOGLE_CLIENT_ID`, and the two read-only
+  scopes added to its consent screen; until then the import says it isn't set up.
+  The phones and the laptop app get the editor with the next TestFlight build from `main`.
+
 ## 2026-11-12 deploy (Finance audit: true numbers, receipts as records, planning, kitchen; account moves; Personal receipts; sign-in code and Face ID; News hint text)
 Web deploy from `main` (branch `claude/finance-true-numbers`, after #232). TestFlight build from `main` the same night for both phones.
 

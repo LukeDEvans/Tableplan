@@ -49,7 +49,8 @@ import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKe
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
-import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes, ROW_RESET_SECTIONS, applyRowReset } from './views.js';
+import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes, ROW_RESET_SECTIONS, applyRowReset, listenHomeScope } from './views.js';
+import { LISTEN_PERSON_KEYS, mergeListenSeed, listenKeysSelect, listenKeysFromRow } from './listen-queue.js';
 import { mergeWatchItems, stampTick, stampTab, touchItem as touchWatchItem } from './watch-merge.js';
 import { watchEpisodes } from './watch-episodes.js';
 import { watchNextFrom, watchOpenSeason, watchSeasonPct } from './watch-place.js';
@@ -64,7 +65,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, nativePdfExport, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
@@ -73,7 +74,8 @@ import { createNativeReminderScheduler } from './calendar/reminders-native.js';
 import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, nativeExtractBlockReason, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
-import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_TEXT_PREVIEW_MAX, attachmentViewKind, attachmentBlobType, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
+import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
+import { showMailAttachmentViewer } from './mail-attachment-viewers.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { normalizeMovedOut, mergeMovedOut, stripMovedOut } from './finance-move.js';
@@ -359,7 +361,10 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData", "watchRowReset"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "mediaQueueAdded", "mediaQueueRemoved", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps", "mediaRowReset"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastSkipAds", "publicationTiers", "libraryKey", "podcastBundleSeries", "podcastReleasedSeries", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps", "mediaRowReset"],
+  // The person's own Listen queue and positions, the same in every view
+  // (listen-queue.js, LISTEN_QUEUE_DESIGN.md). Never swapped by a view switch.
+  listen:    ["podcastProgress", "mediaProgress", "readingProgress", "mediaQueueAdded", "mediaQueueRemoved", "podcastAutoSkipped", "mediaAllPinnedOrder", "mediaHistory"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -402,6 +407,7 @@ const SECTION_SCOPE = {
   do: "toggle",
   watch: "toggle",
   media: "toggle",
+  listen: "personal",     // one queue and player per person, every view (LISTEN_QUEUE_DESIGN.md)
   plan: "toggle",
   // health holds familyMembers, which the shared Meal Plan depends on — it is
   // not a standalone page, so it stays household.
@@ -3362,6 +3368,7 @@ async function initializeApp() {
   }
   refreshAvailableViews(); // the group role is known now (views.js)
   await alignScopesToView(); // each page's data row follows the view, now that state has loaded
+  seedListenRowOnce(); // one-time: queue state and positions from the old per-view rows (LISTEN_QUEUE_DESIGN.md §5)
   await hydrateRecipeRowsFromSupabase();
   resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
@@ -4166,6 +4173,14 @@ function setupDiagnostics() {
       persist();
       return true;
     },
+    // One Listen queue per person (scripts/qa-listen-queue.mjs, LISTEN_QUEUE_DESIGN.md):
+    // the queue as listed, finish an episode, add one by hand, read the person's
+    // played marks. Local dev only.
+    listenQueueForQa: () => (localDevMode ? getAllListenList({ hoist: false }).map((i) => i.id) : null),
+    listenPlayedForQa: (id) => { if (!localDevMode) return null; setPodcastEpisodePlayed(id, true); return true; },
+    listenAddForQa: (id) => (localDevMode ? addEpisodeToMediaQueue(id) : null),
+    listenProgressForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.podcastProgress || {})) : null),
+    listenScopeForQa: () => (localDevMode ? { media: sectionScope("media"), listen: sectionScope("listen"), home: listenHomeScope(currentViewList()) } : null),
     watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); (items || []).forEach((i) => i?.id && unrecordDeletion("watchItems", i.id)); persist(); if (activeAppArea === "watch") { activeWatchCategory = "all"; expandedWatchItemId = null; renderWatchPlanner(); } return true; },
     // The Watch list and its removals as saved (scripts/qa-watch-panel.mjs). Local dev only.
     watchItemsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.watchItems || [])) : null),
@@ -6102,6 +6117,11 @@ function tombstoneOwner(key, scopeOf = sectionScope) {
   }
   const base = String(key || "").split(".")[0]; // "watchSettings.theaters" → watchSettings
   const section = stateKeySections[base] || TOMBSTONE_EXTRA_SECTIONS[base];
+  // The person's own Listen row (queue entries removed): their own delete list.
+  if (section === "listen") {
+    const uid = authSession?.user?.id;
+    return uid ? `u-${uid}` : (localDevMode ? "u-local" : null);
+  }
   if (!section || SECTION_SCOPE[section] !== "toggle") return null;
   const scope = scopeOf(section);
   if (scope === "personal") {
@@ -9304,11 +9324,72 @@ function documentsDeps() {
     toast: (text) => showMailToast(text),
     openMessages: () => { localStorage.setItem(MESSAGE_TAB_KEY, "messages"); showMailApp(); },
     fileReceipts: (scope) => fileWaitingReceipts(scope),
+    // The word processor (WORD_PROCESSOR_DESIGN.md): live co-editing channel, @ chips, PDF.
+    liveDocChannel: (topic, handlers) => openLiveDocChannel(topic, handlers),
+    docChipSource: (q) => docChipSource(q),
+    openDocChip: (kind, id) => openDocChip(kind, id),
+    nativePdfExport,
+    myDisplayName: () => groupMembers.find((m) => m.user_id === authSession?.user?.id)?.display_name || String(authSession?.user?.email || "Me").split("@")[0],
+    // Google consent for bringing Google Docs over: Apple's sign-in sheet in the app (as Calendar), else this tab.
+    openAuthUrl: async (url) => {
+      if (isNativeApp() && nativeWebAuth()) { await nativeWebAuth().start({ url, callbackScheme: APP_CALLBACK_SCHEME }).catch(() => null); return; }
+      window.location.href = url;
+    },
     movePersonalReceipts: () => movePersonalReceiptFilesSoon(),
     // A receipt file shows what was read from it and whether it's matched to a charge.
     receiptInfo: (receiptId) => _finance.financeReceiptInfo(receiptId),
     openReceipt: (receiptId) => openReceiptDetail(receiptId),
   };
+}
+
+// A Supabase Realtime private broadcast channel for one open document (§4). Joined
+// only while the document is open; presence tells each device who else is in.
+// Access is checked by realtime.messages policies (doc_can_access on the topic's scope).
+function openLiveDocChannel(topic, handlers) {
+  if (!supabaseClient?.channel || !authSession?.access_token) return null;
+  try { supabaseClient.realtime?.setAuth?.(authSession.access_token); } catch { /* the client keeps its own */ }
+  const ch = supabaseClient.channel(topic, { config: { private: true, broadcast: { self: false, ack: false }, presence: { key: Math.random().toString(36).slice(2, 10) } } });
+  ch.on("broadcast", { event: "m" }, ({ payload }) => handlers.message(payload));
+  ch.on("presence", { event: "sync" }, () => {
+    const st = ch.presenceState();
+    handlers.presence(Object.values(st).flat());
+  });
+  let meta = null;
+  ch.subscribe((status) => {
+    handlers.status?.(status);
+    if (status === "SUBSCRIBED" && meta) ch.track(meta).catch(() => {});
+  });
+  return {
+    send: (msg) => { ch.send({ type: "broadcast", event: "m", payload: msg }).catch?.(() => {}); },
+    track: (m) => { meta = m; if (ch.state === "joined") ch.track(m).catch(() => {}); },
+    close: () => { try { supabaseClient.removeChannel(ch); } catch { /* gone */ } },
+  };
+}
+
+// @ in a document: Live items matching what's typed (people and dates come from the editor).
+function docChipSource(q) {
+  const needle = String(q || "").trim().toLowerCase();
+  const hit = (s) => !needle || String(s || "").toLowerCase().includes(needle);
+  const out = [];
+  try { for (const r of activeRecipes()) if (hit(r.title || r.name)) { out.push({ kind: "recipe", refId: String(r.id), label: r.title || r.name || "Recipe", sub: "Recipe" }); if (out.length > 30) break; } } catch { /* recipes not loaded */ }
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const evs = (state.planEvents || []).filter((e) => e?.title && hit(e.title)).sort((a, b) => (Math.abs(Date.parse(a.date || today) - Date.now()) - Math.abs(Date.parse(b.date || today) - Date.now())));
+    for (const e of evs.slice(0, 8)) out.push({ kind: "event", refId: `${e.id}|${e.date || ""}`, label: e.title, sub: e.date ? new Date(`${e.date}T12:00:00`).toLocaleDateString([], { month: "short", day: "numeric" }) : "Event" });
+  } catch { /* no calendar */ }
+  try { for (const t of (state.trips || []).filter((x) => hit(x.name || x.destination)).slice(0, 6)) out.push({ kind: "trip", refId: String(t.id), label: t.name || t.destination || "Trip", sub: "Trip" }); } catch { /* no trips */ }
+  try { for (const c of (state.contacts || []).filter((x) => hit(`${x.firstName || ""} ${x.lastName || ""} ${x.name || ""}`)).slice(0, 6)) out.push({ kind: "contact", refId: String(c.id), label: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.name || "Contact", sub: "Contact" }); } catch { /* no contacts */ }
+  const order = { recipe: 2, event: 1, trip: 3, contact: 0 };
+  return out.sort((a, b) => (needle ? 0 : order[a.kind] - order[b.kind])).slice(0, 16);
+}
+
+function openDocChip(kind, id) {
+  const ref = String(id || "");
+  if (kind === "recipe") { showEatApp(); setTimeout(() => { try { openRecipeView(ref); } catch { /* gone */ } }, 50); return; }
+  if (kind === "event") { const [eid, date] = ref.split("|"); showPlanApp(); setTimeout(() => { try { openPlanEventDetail(eid, date || undefined); } catch { /* gone */ } }, 50); return; }
+  if (kind === "trip") { openExploreTrip(ref); return; }
+  if (kind === "contact" || kind === "person") { showContactsApp(); return; }
+  if (kind === "date") { showPlanApp(); }
 }
 
 async function showDocumentsApp(event) {
@@ -9770,6 +9851,8 @@ async function purgeLocalMessaging(headersSnapshot = null) {
           await deleteMessagingStore("live-documents-outbox");
           // The browser's passkey-locked store, and the passkey's (non-secret) id and salt.
           await deleteMessagingStore("live-documents-pk");
+          // The word processor's device copies of documents (documents/editor/cache.js).
+          try { await (await import("./documents/editor/cache.js")).deleteDocCaches(); } catch { /* none */ }
           try { for (const k of Object.keys(localStorage)) if (k.startsWith("liveDocumentsPasskey:")) localStorage.removeItem(k); } catch { /* storage blocked */ }
         } catch { /* nothing stored */ }
         try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }
@@ -12840,83 +12923,55 @@ async function openMailAttachment(chip) {
     const got = await loadMailAttachmentBytes({ messageId: attMessage, attachmentId: attId, filename, size: attSize });
     if (got.tooLarge) { window.open(gmailUrl, "_blank"); return; }
     if (!got.bytes) { offerMailAttachmentInGmail(got.error, gmailUrl); return; }
-    showMailAttachmentViewer({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
+    showMailAttachment({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
   } finally {
     chip.disabled = false;
     chip.classList.remove("is-loading");
   }
 }
 
-// The web viewer: a full-window dialog over the Mail page. PDFs, bitmap images
-// and plain text show inline; other files get Download (and Open in Gmail).
-// SECURITY: see mail-attachment-view.js — only inert types are ever rendered,
-// and the blob never carries the sender's declared type.
-function showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }) {
-  document.getElementById("mailAttachmentViewer")?.remove();
-  const kind = attachmentViewKind(mimeType, filename);
-  const blob = new Blob([bytes], { type: attachmentBlobType(kind, mimeType, filename) });
-  const url = kind === "pdf" || kind === "image" ? URL.createObjectURL(blob) : "";
-
-  const dlg = document.createElement("dialog");
-  dlg.id = "mailAttachmentViewer";
-  dlg.className = "mail-att-viewer";
-  dlg.setAttribute("aria-label", filename);
-  dlg.innerHTML = `
-    <div class="mail-att-viewer-bar">
-      <button class="icon-btn mail-att-viewer-close" type="button" aria-label="Close">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
-      <span class="mail-att-viewer-name"></span>
-      <button class="secondary-btn mail-att-viewer-download" type="button">Download</button>
-    </div>
-    <div class="mail-att-viewer-body"></div>`;
-  dlg.querySelector(".mail-att-viewer-name").textContent = filename;
-  const body = dlg.querySelector(".mail-att-viewer-body");
-  const downloadMailAttachment = () => {
-    saveFile(new Blob([bytes], { type: "application/octet-stream" }), filename).catch((e) => console.warn("attachment save failed", e));
-  };
-
-  if (kind === "pdf") {
-    const frame = document.createElement("iframe");
-    frame.className = "mail-att-viewer-pdf";
-    frame.title = filename;
-    frame.src = url;
-    body.appendChild(frame);
-  } else if (kind === "image") {
-    const img = document.createElement("img");
-    img.className = "mail-att-viewer-img";
-    img.alt = filename;
-    img.src = url;
-    body.appendChild(img);
-  } else if (kind === "text") {
-    const pre = document.createElement("pre");
-    pre.className = "mail-att-viewer-text";
-    let text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    if (text.length > ATTACHMENT_TEXT_PREVIEW_MAX) text = text.slice(0, ATTACHMENT_TEXT_PREVIEW_MAX) + "\n\n… (preview cut short — download for the whole file)";
-    pre.textContent = text;
-    body.appendChild(pre);
-  } else {
-    const empty = document.createElement("div");
-    empty.className = "mail-att-viewer-empty";
-    empty.innerHTML = `<p>This kind of file can't be previewed here.</p>
-      <div class="mail-att-viewer-actions">
-        <button class="primary-btn" type="button" data-att-download>Download</button>
-        <a class="secondary-btn" target="_blank" rel="noopener noreferrer">Open in Gmail</a>
-      </div>`;
-    empty.querySelector("a").href = gmailUrl;
-    empty.querySelector("[data-att-download]").addEventListener("click", () => downloadMailAttachment());
-    dlg.querySelector(".mail-att-viewer-download").hidden = true;
-    body.appendChild(empty);
-  }
-
-  dlg.querySelector(".mail-att-viewer-download").addEventListener("click", downloadMailAttachment);
-  dlg.querySelector(".mail-att-viewer-close").addEventListener("click", () => dlg.close());
-  dlg.addEventListener("close", () => {
-    if (url) URL.revokeObjectURL(url);
-    dlg.remove();
+// The web viewer lives in mail-attachment-viewers.js; this is what it may reach
+// outside Mail: saving the file, the event editor and the contacts import.
+function showMailAttachment({ bytes, filename, mimeType, gmailUrl }) {
+  let timeZone = "";
+  try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { /* no Intl zone */ }
+  return showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }, {
+    saveFile,
+    timeZone,
+    addInviteEvent: (prefill) => openPlanEventDialog(prefill.date, null, prefill),
+    addContacts: (vcfText) => importContactsVcf(vcfText),
+    openWordDocument: openMailWordAttachment
   });
-  document.body.appendChild(dlg);
-  dlg.showModal();
+}
+
+// A Word attachment opens in the Document page's word processor, view only and from
+// memory: nothing is stored or sent. "Save to Document" (signed in, Document enabled)
+// makes it a document in this view's Document page and opens it there.
+async function openMailWordAttachment({ bytes, filename }) {
+  const name = String(filename || "Document").replace(/\.docx$/i, "") || "Document";
+  const { openDocxPreview } = await import("./documents/editor/host.js");
+  const canKeep = !localDevMode && !!authSession?.user?.id && isPageEnabled("documents") && !!elements.documentsMainPage;
+  let preview = null;
+  let keeping = false;
+  preview = await openDocxPreview({
+    bytes, name,
+    me: { id: authSession?.user?.id || "preview", name: "" },
+    deps: { toast: (m) => showMailToast(m), isNative: isNativeApp() },
+    note: "From email · view only",
+    onKeep: canKeep ? async (converted) => {
+      if (keeping) return;
+      keeping = true;
+      try {
+        await preview?.close();
+        await showDocumentsApp();
+        if (!documentsUi?.addConverted) throw new Error("Document isn't ready.");
+        await documentsUi.addConverted(converted, name);
+      } catch (e) {
+        showMailToast(e?.message || "Couldn't save it to Document.");
+      }
+    } : null
+  });
+  if (preview.warnings.length) showMailToast(`Opened. Not everything carried over: ${preview.warnings.slice(0, 3).join(", ")}.`);
 }
 
 // Renders each message body the way Gmail does: HTML mail goes into a
@@ -29055,6 +29110,9 @@ function openPlanEventDialog(date, eventId, prefill) {
       if (prefill.allDay === false) { elements.planEventAllDay.checked = false; elements.planTimeFields.hidden = false; }
       if (prefill.startTime) setPlanTimeField("planEventStart", prefill.startTime);
       if (prefill.endTime) setPlanTimeField("planEventEnd", prefill.endTime);
+      // An emailed invite (Mail's attachment viewer) also brings notes and a place.
+      if (prefill.notes) elements.planEventNotes.value = prefill.notes;
+      if (prefill.location) elements.planEventLocation.value = prefill.location;
     }
   }
   // Recurrence controls (edit a recurring event = edit the whole series). A
@@ -32904,7 +32962,7 @@ function bundleSeriesId(showId, seriesName) {
 // Group one show's episodes into detected multi-part series, flagging each as
 // complete / released / held. Returned for both the playlist filter and the
 // show-view "waiting" cards.
-function getBundleSeriesGroups(show) {
+function getBundleSeriesGroups(show, released = state.podcastReleasedSeries || {}) {
   const groups = new Map();
   for (const ep of (show.episodes || [])) {
     const info = parseSeriesPart(ep.title);
@@ -32915,7 +32973,6 @@ function getBundleSeriesGroups(show) {
     if (info.total) g.total = Math.max(g.total || 0, info.total);
     g.eps.push({ id: ep.id, part: info.part, pubDate: ep.pubDate, title: ep.title });
   }
-  const released = state.podcastReleasedSeries || {};
   const now = Date.now();
   const out = [];
   for (const g of groups.values()) {
@@ -32937,12 +32994,12 @@ function getBundleSeriesGroups(show) {
 }
 
 // Episode ids to withhold from the playlist (unfinished series in opted-in shows).
-function getBundleHeldEpisodeIds() {
+function getBundleHeldEpisodeIds(lib = state) {
   const held = new Set();
-  const bundleOn = state.podcastBundleSeries || {};
-  for (const show of (state.podcasts || [])) {
+  const bundleOn = lib.podcastBundleSeries || {};
+  for (const show of (lib.podcasts || [])) {
     if (!bundleOn[show.id]) continue;
-    for (const g of getBundleSeriesGroups(show)) {
+    for (const g of getBundleSeriesGroups(show, lib.podcastReleasedSeries || {})) {
       if (g.held) for (const e of g.eps) held.add(e.id);
     }
   }
@@ -33010,20 +33067,93 @@ function hoistResumeEpisode(list) {
   return list;
 }
 
+// ── Listen: the one-time move (LISTEN_QUEUE_DESIGN.md §5) ────────────────────
+// Before this build, positions, played marks and queue edits lived in each
+// view's `media` row. Once per person per device, read just those keys from
+// both media rows (a few KB, not the whole row) and fold them into the
+// person's own `listen` row with what this device already has: the more
+// recent position wins, a finished mark sticks, queue adds are joined
+// (Personal's first). Repeating it is harmless, so a second device does the
+// same without undoing the first. Nothing is deleted from the old rows.
+const LISTEN_SEED_KEY = "live-listen-seeded-v1";
+async function seedListenRowOnce() {
+  if (localDevMode || !sharedStorageReady || !authSession?.access_token) return;
+  const uid = authSession.user?.id;
+  if (!uid || seedListenRowOnce.running) return;
+  const flag = `${LISTEN_SEED_KEY}:${uid}`;
+  try { if (localStorage.getItem(flag) === "1") return; } catch { return; }
+  seedListenRowOnce.running = true;
+  try {
+    const ids = scopeRowIds(supabaseConfig().stateId);
+    const personalId = rowIdForScope(ids, "media", "personal");
+    const householdId = ids.stateId ? rowIdForScope(ids, "media", "household") : null;
+    const want = [personalId, householdId].filter(Boolean);
+    if (!want.length) return;
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${want.join(",")})&select=${listenKeysSelect()}`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!res.ok) { console.warn("[listen] one-time move: read failed", res.status); return; } // next launch tries again
+    const rows = await res.json();
+    const byId = new Map((Array.isArray(rows) ? rows : []).map((r) => [r.id, listenKeysFromRow(r)]));
+    const current = Object.fromEntries(LISTEN_PERSON_KEYS.map((k) => [k, state[k]]));
+    const seed = mergeListenSeed(current, byId.get(personalId), byId.get(householdId));
+    const removed = new Set(deletedIdsFor("mediaQueueAdded"));
+    seed.mediaQueueAdded = seed.mediaQueueAdded.filter((e) => !removed.has(e.id));
+    for (const k of LISTEN_PERSON_KEYS) state[k] = seed[k];
+    mediaQueueIdCache = null;
+    persist();
+    try { localStorage.setItem(flag, "1"); } catch { /* full: runs again, harmlessly */ }
+    console.info("[listen] one-time move done", { episodes: Object.keys(seed.podcastProgress).length, queued: seed.mediaQueueAdded.length });
+    if (activeAppArea === "media") render();
+  } catch (e) {
+    console.warn("[listen] one-time move failed:", e.message);
+  } finally {
+    seedListenRowOnce.running = false;
+  }
+}
+
+// ── Listen: the queue's library (LISTEN_QUEUE_DESIGN.md) ─────────────────────
+// The queue and player are the person's, the same in every view; positions,
+// played marks and queue edits live in their own `listen` row, always in
+// `state`. The shows that fill the queue automatically are their home
+// library's: Personal for someone who has it (Luke, 2026-11-13: "Personal shows
+// only"), else Household. In another view that library is the off-screen copy
+// (the shadow); a device that hasn't loaded it yet has an empty queue until it
+// does, rather than showing the other view's shows as the queue.
+const EMPTY_LISTEN_LIBRARY = Object.freeze({});
+function listenLibrary() {
+  const home = listenHomeScope(currentViewList());
+  if (sectionScope("media") === home) return state;
+  return shadowData("media", home) || EMPTY_LISTEN_LIBRARY;
+}
+// A saved article by id: the queue's library first, then the view on screen.
+function listenArticleById(id) {
+  const lib = listenLibrary();
+  return (lib.savedArticles || []).find((x) => x.id === id)
+    || (lib === state ? null : (state.savedArticles || []).find((x) => x.id === id))
+    || null;
+}
+function listenArticleIsRead(id) {
+  const lib = listenLibrary();
+  return (lib.readArticleIds || []).includes(id) || (lib !== state && (state.readArticleIds || []).includes(id));
+}
+
 function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
-  const tiers = state.podcastShowTiers || {};
-  const epTiers = state.podcastEpisodeTiers || {};
-  const pubTiers = state.publicationTiers || {};
+  const lib = listenLibrary();
+  const tiers = lib.podcastShowTiers || {};
+  const epTiers = lib.podcastEpisodeTiers || {};
+  const pubTiers = lib.publicationTiers || {};
   const progress = state.podcastProgress || {};
 
-  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === (state.podcastPlaylistWindow ?? "month")) || RECENT_WINDOW_OPTIONS[4];
+  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === (lib.podcastPlaylistWindow ?? "month")) || RECENT_WINDOW_OPTIONS[4];
   const cutoff = Date.now() - windowOpt.ms;
 
   // Kept out by hand: "Remove from list" (also hides it under Recent) and
   // "Remove from queue" (queue only).
   const skipped = new Set([...(state.podcastAutoSkipped || []), ...(state.mediaQueueRemoved || [])]);
-  const held = getBundleHeldEpisodeIds();
-  const episodes = (state.podcasts || []).flatMap(p =>
+  const held = getBundleHeldEpisodeIds(lib);
+  const episodes = (lib.podcasts || []).flatMap(p =>
     (p.episodes || [])
       .filter(e => !progress[e.id]?.played && !skipped.has(e.id) && !held.has(e.id) && e.pubDate && new Date(e.pubDate).getTime() >= cutoff)
       .map(e => ({ ...e, showId: p.id, showTitle: p.title, showArt: p.art }))
@@ -33032,8 +33162,8 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
   let items = [...episodes];
 
   if (forceIncludeArticles) {
-    const readIds = new Set(state.readArticleIds || []);
-    const articleItems = (state.savedArticles || [])
+    const readIds = new Set(lib.readArticleIds || []);
+    const articleItems = (lib.savedArticles || [])
       .filter(a => !readIds.has(a.id) && !isMusicShow(a) && articleHasListenableBody(a)) // shows live under the Listen bell
       .map(articleQueueItem);
     items = [...items, ...articleItems];
@@ -33043,7 +33173,7 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
     if (e.type === "article") return publicationTierFor(pubTiers, e.publication) ?? 4;
     return epTiers[e.id] ?? tiers[e.showId] ?? 4;
   };
-  const newestFirst = (state.podcastPrioritySort ?? "oldest") === "newest";
+  const newestFirst = (lib.podcastPrioritySort ?? "oldest") === "newest";
 
   const sorted = items.sort((a, b) => {
     const ta = effectiveTier(a), tb = effectiveTier(b);
@@ -33104,7 +33234,7 @@ function getAllListenList({ hoist = true } = {}) {
   const items = getAutoPlaylist(true, { hoist }).map((e) => (e.type === "article"
     ? { ...e, providerId: "tts" }
     : { ...e, type: e.type || "podcast", providerId: "podcast" }));
-  (state.readingItems || [])
+  (listenLibrary().readingItems || [])
     .filter((b) => b.status && b.status !== "finished")
     .forEach((b) => items.push({
       id: b.id,
@@ -33189,7 +33319,6 @@ function queueAddedItems() {
   const entries = normalizeQueueAdded(state.mediaQueueAdded);
   if (!entries.length) return [];
   const progress = state.podcastProgress || {};
-  const readIds = new Set(state.readArticleIds || []);
   const out = [];
   for (const e of entries) {
     if (e.kind === "episode") {
@@ -33197,8 +33326,8 @@ function queueAddedItems() {
       const item = playlistItemForEpisodeId(e.itemId);
       if (item) out.push({ ...item, providerId: "podcast", queueAdded: true });
     } else if (e.kind === "article") {
-      const a = (state.savedArticles || []).find((x) => x.id === e.itemId);
-      if (a && !readIds.has(a.id)) out.push({ ...articleQueueItem(a), providerId: "tts", queueAdded: true });
+      const a = listenArticleById(e.itemId);
+      if (a && !listenArticleIsRead(a.id)) out.push({ ...articleQueueItem(a), providerId: "tts", queueAdded: true });
     } else {
       out.push(queuedMusicRow(e));
     }
@@ -33253,10 +33382,12 @@ function removeQueueAddedEntries(match) {
 // list can't grow without bound. Run when something is added.
 function pruneQueueAddedEntries() {
   const progress = state.podcastProgress || {};
-  const articleIds = new Set((state.savedArticles || []).map((a) => a.id));
+  // Only drop what's known to be gone: before the other view's library has
+  // loaded on this device, its episodes can't be looked up yet.
+  if (listenLibrary() === EMPTY_LISTEN_LIBRARY) return;
   removeQueueAddedEntries((e) =>
     (e.kind === "episode" && (progress[e.itemId]?.played || !findPodcastEpisode(e.itemId).episode)) ||
-    (e.kind === "article" && !articleIds.has(e.itemId)));
+    (e.kind === "article" && !listenArticleById(e.itemId)));
 }
 function afterMediaQueueChange(message) {
   refreshRunningQueueOrder();
@@ -34912,6 +35043,15 @@ function findPodcastEpisode(episodeId) {
   for (const show of (state.podcasts || [])) {
     const episode = show.episodes.find(e => e.id === episodeId);
     if (episode) return { episode, show };
+  }
+  // The queue is the same in every view (LISTEN_QUEUE_DESIGN.md), so an episode
+  // in it may come from the other view's shows: look in the off-screen copies.
+  for (const scope of ["personal", "household"]) {
+    if (sectionScope("media") === scope) continue;
+    for (const show of (shadowData("media", scope)?.podcasts || [])) {
+      const episode = (show.episodes || []).find(e => e.id === episodeId);
+      if (episode) return { episode, show };
+    }
   }
   const cached = podcastTabEpisodeMap.get(episodeId);
   if (cached) return { episode: cached, show: null };

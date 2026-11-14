@@ -20,6 +20,9 @@ import { presignS3 } from "./s3-presign.js";
 
 const PARTS = new Set(["content", "thumb", "text"]);
 const EVERYDAY_PARTS = new Set(["content", "thumb"]);
+// The word processor's parts, either tier (WORD_PROCESSOR_DESIGN.md §3, §6): version
+// slots and images. Keep in step with documents/storage.js EDITOR_PART_RE.
+const EDITOR_PART_RE = /^(v(h(0[0-9]|1[0-9]|2[0-3])|d(0[1-9]|[12][0-9]|3[01])|w([0-4][0-9]|5[0-2])|n[0-9a-f]{32})|i[0-9a-f]{32})$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCOPE_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_PART_BYTES = 70 * 1024 * 1024;
@@ -85,7 +88,7 @@ Deno.serve(async (req) => {
     if (!it || typeof it !== "object") return reply(400, { error: "item" }, origin);
     if (it.tier !== undefined && it.tier !== "everyday") return reply(400, { error: "item" }, origin);
     const parts = it.tier === "everyday" ? EVERYDAY_PARTS : PARTS;
-    if (!SCOPE_RE.test(it.scope || "") || !UUID_RE.test(it.fileId || "") || !parts.has(it.part || "")) return reply(400, { error: "item" }, origin);
+    if (!SCOPE_RE.test(it.scope || "") || !UUID_RE.test(it.fileId || "") || !(parts.has(it.part || "") || EDITOR_PART_RE.test(it.part || ""))) return reply(400, { error: "item" }, origin);
     if (op === "put" && !(Number.isInteger(it.size) && it.size! >= 1 && it.size! <= MAX_PART_BYTES)) return reply(400, { error: "size" }, origin);
   }
 

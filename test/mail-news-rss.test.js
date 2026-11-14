@@ -73,9 +73,9 @@ describe("collectFeedCards", () => {
     expect(status.map((s) => [s.url, s.ok, s.cards])).toEqual([["https://feeds/home", true, 1], ["https://feeds/world", true, 1], ["https://feeds/dead", false, 0]]);
     expect(fetchImpl).toHaveBeenCalledTimes(3); // the economist feed isn't fetched: no one needs it
   });
-  it("every configured feed belongs to one of the four papers", () => {
+  it("every configured feed belongs to one of the four papers or NPR", () => {
     expect(F.FEEDS.length).toBeGreaterThan(40);
-    expect(new Set(F.FEEDS.map((f) => f.paper))).toEqual(new Set(["nyt", "economist", "startribune", "athletic"]));
+    expect(new Set(F.FEEDS.map((f) => f.paper))).toEqual(new Set(["nyt", "economist", "startribune", "athletic", "npr"]));
   });
 });
 
