@@ -18,6 +18,11 @@ Each entry: what shipped · PR · post-deploy steps.
   Personal). Matches its receipt by total and date until the deploy; `share-receipt` now also returns
   the receipt id (used after the next Netlify deploy, not required). Post-TestFlight: share an Amazon
   order screenshot to Live, open Live, open Document › Receipts.
+- **iPhone: byte uploads fixed** · branch `claude/iphone-binary-uploads` · **TestFlight build** (app code
+  only; the web app never had the bug). Capacitor's native HTTP corrupted every upload of raw bytes:
+  receipt photos ("Could not process image" when read) and every Document upload from the phone (never
+  filed). Byte bodies now go through the web view's fetch (`native-fetch-fix.js`). Post-TestFlight: scan a
+  receipt — it's read, and it appears in Document › Receipts.
 - **Listen: one queue and player per person** · #237 · LISTEN_QUEUE_DESIGN.md. Positions, played marks and queue edits move to the person's own `u-<uid>:listen` row; the queue fills from the home library (Personal for Luke). Needs a **TestFlight build** too.
   Post-deploy: reload every open web tab (an old tab keeps writing positions to the media rows). In the API logs, look for one `tableplan_states?id=in.(…:media,…:media)&select=id,podcastProgress:state->…` read per device and a new `u-<uid>:listen` row for Luke and for Marijane. On the phone, start an episode in Personal, switch to Household and let it finish: it should be gone from the queue in both views.
 - **News: the Front page leads with the day's biggest events** · #238 · NEWS_FRONT_PAGE_DESIGN.md. Top stories are ranked from how much the papers are writing about one event (stories, recency, papers, live blog); a newsletter's first link no longer pins a story. Server only: no TestFlight build, no migration.
