@@ -93,6 +93,14 @@ Scores. Scores has no menu entry of its own.
   `NEWSLETTER_MODEL`, one pass, effort low, 16k token cap. Haiku 5.5 rejects prefill and
   sampling parameters (`_claude.js` skips continuation for it) and can refuse; a refusal
   fails the conversion so the mail-jobs attempt cap bounds retries.
+- **Front page top stories (Luke, 2026-11-13; NEWS_FRONT_PAGE_DESIGN.md):** the Front
+  page leads with the biggest events of the last day, not with newsletter leads.
+  `_news-front.js` (pure) groups the pool into events by shared headline words and
+  scores them (stories, recency, papers, live blog, breaking, section);
+  `_news-store.js` `loadFeedPage` sends the top stories first with a `lead` time that
+  encodes their order and strips `lead` from every other Front page card, because
+  installed apps and the dock ticker show `lead` cards first. Don't put `lead` back
+  on other Front cards. Kill switch: `NEWS_FRONT_RANK_DISABLED=1`.
 - **For you (Luke, 2026-10-27; NEWS_RANKING_DESIGN.md):** a view ranked per person by
   content (paper, section, AI topics, entities, teams, keywords), learning from Open,
   Listen, Save, Hide and the ⋯ menu's More / Less like this and Mute topic; weights
