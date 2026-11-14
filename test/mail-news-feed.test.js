@@ -256,6 +256,27 @@ describe("gmail.js News actions", () => {
     expect(m.st.calls.some((c) => c.includes("select=*"))).toBe(false);
   });
 
+  it("opening the Front page runs the open check first; sections, later pages and searches don't", async () => {
+    require("../netlify/functions/_news-feeds.js").resetOpenCheck();
+    require("../netlify/functions/_news-signals.js").resetSignalsCache();
+    const m = mock();
+    vi.spyOn(global, "fetch").mockImplementation(m);
+    const claimed = () => m.st.calls.filter((c) => c.startsWith("POST") && c.includes("tableplan_states?on_conflict=id")).length;
+    await call({ action: "newsFeed", view: { kind: "section", key: "us" } });
+    await call({ action: "newsFeed", before: `${today}|abc` });
+    await call({ action: "newsFeed", q: "senate" });
+    expect(m.st.calls.some((c) => c.includes("news_signals"))).toBe(false);
+    const d = JSON.parse((await call({ action: "newsFeed", view: { kind: "front" }, limit: 1 })).body);
+    expect(Array.isArray(d.articles)).toBe(true);
+    const check = m.st.calls.findIndex((c) => c.includes("id=eq.news_signals"));
+    const page = m.st.calls.findIndex((c, i) => i > check && c.includes("/news_articles") && c.includes("order=published_at.desc"));
+    expect(check).toBeGreaterThan(-1);
+    expect(page).toBeGreaterThan(check); // the page is read after the check, so it shows what the check added
+    expect(claimed()).toBe(1);
+    await call({ action: "newsFeed", view: { kind: "front" } });
+    expect(claimed()).toBe(1); // within ten minutes: no second check
+  });
+
   it("paging further (before=…) or searching skips the counts and sign-in reads", async () => {
     const m = mock();
     vi.spyOn(global, "fetch").mockImplementation(m);

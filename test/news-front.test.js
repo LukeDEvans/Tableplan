@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const Front = require("../netlify/functions/_news-front.js");
 const Store = require("../netlify/functions/_news-store.js");
+const Signals = require("../netlify/functions/_news-signals.js");
 const POOL = require("./fixtures/news-front-2026-11-13.json");
 
 const at = (iso) => Date.parse(iso);
@@ -136,6 +137,60 @@ describe("rankFront (rules)", () => {
   });
 });
 
+// ── Outside signals: BBC and AP headlines count, and are never shown ─────────
+describe("rankFront with outside signals", () => {
+  const NOW = at("2026-11-13T12:00:00Z");
+  const ago = (h) => new Date(NOW - h * 3_600_000).toISOString();
+  const story = (id, title, extra = {}) => ({ id, url: `https://www.nytimes.com/2026/11/13/us/${id}.html`, title, subtitle: "", paper: "nyt", section: "us", origin: "rss", published_at: ago(1), lead_at: null, ...extra });
+  const signal = (paper, title, extra = {}) => ({ id: `signal:${paper}:${title.length}`, signal: true, title, subtitle: "", paper, url: "", published_at: ago(0.5), ...extra });
+  // A running story with three pieces, and one lone story about something new.
+  const rows = [
+    story("b1", "Budget Talks Stall as Shutdown Deadline Nears", { section: "politics" }),
+    story("b2", "What a Shutdown Would Mean as Budget Talks Stall", { section: "politics" }),
+    story("b3", "Budget Talks: Shutdown Deadline Looms Over Capitol", { section: "politics" }),
+    story("quake", "Powerful Earthquake Strikes Northern Japan", { section: "world", published_at: ago(0.3) })
+  ];
+  const outside = [
+    signal("bbc", "Japan earthquake: powerful tremor strikes north, tsunami warning issued", { pos: 0 }),
+    signal("ap", "Strong earthquake strikes northern Japan, triggering tsunami warning")
+  ];
+  it("a lone story that also leads the BBC and the AP outranks a three-story thread", () => {
+    expect(Front.rankFront(rows, { nowMs: NOW })[0].id).toMatch(/^b/);
+    const top = Front.rankFront(rows, { nowMs: NOW, signals: outside });
+    expect(top[0]).toMatchObject({ id: "quake", stories: 1, papers: 1, outside: 2 });
+  });
+  it("signals are never returned, alone or in an event", () => {
+    const lonely = [signal("bbc", "Election results in Portugal point to a hung parliament", { pos: 1 }), signal("ap", "Portugal election results: hung parliament likely")];
+    const top = Front.rankFront(rows, { nowMs: NOW, signals: [...outside, ...lonely] });
+    expect(top.every((t) => !String(t.id).startsWith("signal:"))).toBe(true);
+    expect(top.map((t) => t.id).sort()).toEqual(["b1", "b2", "b3", "quake"].filter((id) => top.some((t) => t.id === id)).sort());
+    // A signal passed in the story pool by mistake is ignored there too.
+    expect(Front.rankFront([...rows, ...outside], { nowMs: NOW }).every((t) => !String(t.id).startsWith("signal:"))).toBe(true);
+  });
+  it("a place at the top of an outlet's front page adds more than a mention further down", () => {
+    const score = (pos) => Front.rankFront(rows, { nowMs: NOW, signals: [signal("bbc", outside[0].title, { pos })] }).find((t) => t.id === "quake").score;
+    expect(score(0)).toBeGreaterThan(score(5));
+    expect(score(5)).toBeGreaterThan(score(20));
+  });
+  it("many outside headlines on one event count as three at most", () => {
+    const flood = Array.from({ length: 12 }, (_, i) => signal("bbc", `Japan earthquake live update ${i}: tremor strikes north`));
+    const three = Front.rankFront(rows, { nowMs: NOW, signals: flood.slice(0, 3) }).find((t) => t.id === "quake").heat;
+    const twelve = Front.rankFront(rows, { nowMs: NOW, signals: flood }).find((t) => t.id === "quake").heat;
+    expect(twelve).toBeCloseTo(three, 1);
+  });
+  it("old signals are ignored", () => {
+    const stale = outside.map((s) => ({ ...s, published_at: ago(30) }));
+    expect(Front.rankFront(rows, { nowMs: NOW, signals: stale })[0].id).toMatch(/^b/);
+  });
+  it("on the 2026-11-13 pool, signals for the ground stop don't change what leads", () => {
+    const sig = [signal("bbc", "All US flights grounded as FAA orders nationwide ground stop", { pos: 0, published_at: "2026-11-13T22:10:00Z" }),
+      signal("ap", "FAA orders nationwide ground stop, halting flights across the US", { published_at: "2026-11-13T21:50:00Z" })];
+    const top = Front.rankFront(poolAt(SCREENSHOT), { nowMs: SCREENSHOT, signals: sig });
+    expect(byId.get(top[0].id).title).toMatch(/^Live: .*(Ground Stop|FAA)/);
+    expect(top[0].outside).toBe(2);
+  });
+});
+
 // ── The Front page read (_news-store.js loadFeedPage) ────────────────────────
 describe("loadFeedPage: ranked Front page", () => {
   const full = (r) => ({ ...r, image: "", source: "", discovered_at: r.published_at, read_at: null, sent_at: null });
@@ -143,6 +198,7 @@ describe("loadFeedPage: ranked Front page", () => {
     const fn = async (url) => {
       const u = decodeURIComponent(String(url));
       st.calls.push(u);
+      if (u.includes("tableplan_states")) return { ok: true, status: 200, json: async () => (st.signals ? [{ state: st.signals }] : []) };
       let out = rows.filter((r) => !st.hidden.has(r.id));
       const ids = u.match(/id=in\.\(([^)]*)\)/)?.[1];
       if (ids) out = out.filter((r) => ids.split(",").map((x) => x.replace(/"/g, "")).includes(r.id));
@@ -153,7 +209,26 @@ describe("loadFeedPage: ranked Front page", () => {
     fn.st = st;
     return fn;
   }
-  beforeEach(() => { Store.resetFrontMemo(); delete process.env.NEWS_FRONT_RANK_DISABLED; });
+  beforeEach(() => { Store.resetFrontMemo(); Signals.resetSignalsCache(); delete process.env.NEWS_FRONT_RANK_DISABLED; });
+
+  it("reads the outside signals row with the pool (only that row, only its state) and ranks with it", async () => {
+    const quiet = at("2026-11-13T21:50:00Z"); // six minutes after the first ground-stop story
+    const signals = { checkedAt: new Date(quiet).toISOString(), items: [
+      { s: "bbc", t: "All US flights grounded as FAA orders nationwide ground stop", at: "2026-11-13T21:48:00Z", pos: 0 },
+      { s: "ap", t: "FAA orders nationwide ground stop, halting flights across the US", at: "2026-11-13T21:46:00Z" }
+    ] };
+    const without = mockDb(poolAt(quiet));
+    const a = await Store.loadFeedPage("k", "u1", { view: { kind: "front" }, fetchImpl: without, nowMs: quiet });
+    expect(a.articles[0].title).not.toMatch(/Ground Stop/);
+    Store.resetFrontMemo(); Signals.resetSignalsCache();
+    const withSignals = mockDb(poolAt(quiet), { calls: [], hidden: new Set(), signals });
+    const b = await Store.loadFeedPage("k", "u1", { view: { kind: "front" }, fetchImpl: withSignals, nowMs: quiet });
+    expect(b.articles[0].title).toBe("Live: Ground Stop Nationwide Flights Faa");
+    const reads = withSignals.st.calls.filter((u) => u.includes("tableplan_states"));
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toContain("id=eq.news_signals&select=state");
+    expect(b.articles.some((x) => /^signal:/.test(x.id))).toBe(false);
+  });
 
   it("sends the top stories first, with `lead` times that give their order; no other card has `lead`", async () => {
     const fetchImpl = mockDb(poolAt(SCREENSHOT));
