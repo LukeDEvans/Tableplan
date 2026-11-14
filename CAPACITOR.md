@@ -225,3 +225,17 @@ live game: the Watch buttons open Xfinity Stream / the network's app.
 - **Stage 1:** CORS + Supabase auth + Gmail native OAuth + confirm asset serving.
 - **Stage 2:** native background-audio queue + on-device TTS behind `native-bridge.js`.
 - **Stage 3:** native Apple Music. **Stage 4:** TestFlight for personal install.
+
+
+## Manual App Store signing (App Group builds, 2026-11-14)
+
+Automatic cloud signing couldn't make App Store profiles once the app and its Share
+Extension use the App Group `group.com.mrlukedevans.live` ("Authentication failed" /
+"No profiles for …"). With the **`IOS_DIST_KEY`** repository secret set (a PEM RSA
+private key, made by Claude and pasted in by Luke), the workflow signs manually:
+`scripts/ios-manual-signing.mjs` keeps an Apple Distribution certificate for that key
+and two App Store profiles named `Live CI <bundle id>` current through the App Store
+Connect API key, and installs them in a throwaway keychain. Without the secret,
+signing stays automatic. Profiles are remade when missing, invalid or near expiry,
+so a capability change on an App ID only needs the next build. The certificate
+lasts a year; when it expires the script makes a new one for the same key.
