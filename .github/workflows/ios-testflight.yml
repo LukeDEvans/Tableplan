@@ -159,8 +159,8 @@ jobs:
               | while IFS= read -r line; do echo "::error title=export::${line:0:900}"; done || true
             DIST=$(grep -oE '/[^ "]*\.xcdistributionlogs' "$LOG" | head -1 || true)
             if [ -n "$DIST" ] && [ -d "$DIST" ]; then
-              grep -rhiE "error|ITMS-|reason|failed|forbidden|statusCode|NSUnderlying|DVTPortal|DVTServices|profile" "$DIST" 2>/dev/null \
-                | grep -viE "^\s*$" | sed 's/%/%25/g' | awk '!seen[$0]++' | tail -25 \
+              grep -rhoiE "(Error Domain|NSLocalizedDescription|NSLocalizedFailureReason|NSLocalizedRecoverySuggestion|statusCode|ITMS-)[^<>]{0,400}" "$DIST" 2>/dev/null \
+                | sed 's/%/%25/g' | awk '!seen[$0]++' | tail -9 \
                 | while IFS= read -r line; do echo "::error title=distribution-log::${line:0:900}"; done || true
             fi
             exit 70
