@@ -1,3 +1,4 @@
+import './native-fetch-fix.js'; // first: byte uploads around Capacitor's native HTTP
 import * as LiveGroceryCatalog from './grocery-catalog.js';
 import { safeUrl, isSafeHref, isSafeSrc, parseInertHtml, scrubActiveAttributes, sanitizeUntrustedHtml } from './html-sanitize.js';
 import { buildMailBodyFrame as buildMailFrame, sanitizeMailFrameHtml } from './mail-frame.js';
