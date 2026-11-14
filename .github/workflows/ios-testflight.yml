@@ -157,7 +157,7 @@ jobs:
             grep -iE "error|failed|reason|ITMS-|NSLocalizedDescription|NSLocalizedFailureReason" "$LOG" \
               | sed 's/%/%25/g' | tail -7 \
               | while IFS= read -r line; do echo "::error title=export::${line:0:900}"; done || true
-            DIST=$(grep -oE "/[^ ]*IDEDistribution[^ ]*\.xcdistributionlogs" "$LOG" | head -1 || true)
+            DIST=$(grep -oE '/[^ "]*\.xcdistributionlogs' "$LOG" | head -1 || true)
             if [ -n "$DIST" ] && [ -d "$DIST" ]; then
               grep -rhiE "error|ITMS-|reason|failed|forbidden|statusCode|NSUnderlying|DVTPortal|DVTServices|profile" "$DIST" 2>/dev/null \
                 | grep -viE "^\s*$" | sed 's/%/%25/g' | awk '!seen[$0]++' | tail -25 \
