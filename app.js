@@ -11916,6 +11916,10 @@ function showMailMoreMenu(thread, lastMsg) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
       Send to Explore
     </button>
+    <button class="mail-more-option" type="button" data-action="send-to-finance">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 2h14v20l-3-2-2 2-2-2-2 2-2-2-3 2z"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
+      Send to Finance
+    </button>
     <div class="mail-more-divider"></div>
     <button class="mail-more-option" type="button" data-action="label">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
@@ -11935,6 +11939,7 @@ function showMailMoreMenu(thread, lastMsg) {
     else if (action === "create-event") createEventFromEmail(lastMsg?.subject || "");
     else if (action === "move-to-media") moveMailToMedia(thread, lastMsg);
     else if (action === "send-to-explore") sendMailToExplore(thread, lastMsg);
+    else if (action === "send-to-finance") sendMailToFinance(thread, lastMsg);
     else if (action === "label") showMailMovePicker(thread);
   });
   btn.closest(".mail-more-wrap").appendChild(menu);
@@ -12059,6 +12064,60 @@ function emailToReaderHtml(html) {
 // "Move to Listen": save the email into the Listen (Media) reading queue, then
 // trash the email and return to the message list — the email lives in Listen
 // now, not the inbox.
+// ── Send to Finance (Luke, 2026-11-14): an emailed receipt → Finance + Document ──
+// The server reads the email as a receipt on request (gmail.js receiptFromThread;
+// the automatic pass only reads emails that look like receipts) and keeps it in
+// the finreceipts_ inbox under the message id, so the same email is never two
+// receipts. Here it joins the receipts list at once (Finance matches it to its
+// bank charge), and the email is filed in Document › Receipts with it: its PDF /
+// image attachments (an invoice), or else a PDF of the email's text. The email
+// itself stays where it is.
+function mailBodyText(msg) {
+  const body = String(msg?.body || "");
+  if (!body.includes("<")) return body;
+  const doc = new DOMParser().parseFromString(body, "text/html");
+  doc.querySelectorAll("script, style, head").forEach((n) => n.remove());
+  doc.querySelectorAll("br").forEach((n) => n.replaceWith("\n"));
+  doc.querySelectorAll("p, div, tr, li, h1, h2, h3, h4, table").forEach((n) => n.append("\n"));
+  doc.querySelectorAll("td, th").forEach((n) => n.append("  "));
+  return (doc.body?.textContent || "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+async function mailReceiptFiles(msg) {
+  const atts = (msg?.attachments || []).filter((a) => !a.inline && a.attachmentId && /^(application\/pdf|image\/(jpeg|png|heic))$/i.test(a.mimeType || "") && (Number(a.size) || 0) < 4_000_000).slice(0, 4);
+  const files = [];
+  for (const a of atts) {
+    const data = await callGmailApi({ action: "attachment", messageId: msg.id, attachmentId: a.attachmentId });
+    if (!data?.data) continue;
+    const bin = atob(String(data.data).replace(/-/g, "+").replace(/_/g, "/"));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    files.push(new Blob([bytes], { type: a.mimeType.toLowerCase() === "image/jpeg" ? "image/jpeg" : a.mimeType.toLowerCase() }));
+  }
+  if (files.length) return files;
+  const { textToPdf } = await import("./documents/text-pdf.js");
+  const head = [`From: ${msg?.from || ""}`, `Date: ${msg?.date || ""}`, ""].join("\n");
+  return [new Blob([textToPdf(`${head}\n${mailBodyText(msg)}`, { title: msg?.subject || "Receipt" })], { type: "application/pdf" })];
+}
+
+async function sendMailToFinance(thread, lastMsg) {
+  if (!lastMsg) return;
+  showMailToast("Reading the receipt…");
+  const data = await callGmailApi({ action: "receiptFromThread", threadId: thread.id, messageId: lastMsg.id });
+  if (!data) { showMailToast(lastGmailApiError || "Couldn't send to Finance."); return; }
+  const r = data.receipt;
+  if (!r) { showMailToast("No receipt with a total found in this email."); return; }
+  try { importFinanceInboxReceipts([{ ...r, source: "email" }]); } catch { /* the inbox import picks it up on Finance */ }
+  const receiptId = `receipt-email-${r.id}`;
+  const money = Number(r.total).toLocaleString(undefined, { style: "currency", currency: "USD" });
+  showMailToast(`Sent to Finance: ${r.merchant || "Receipt"} · ${money}`);
+  try {
+    const files = await mailReceiptFiles(lastMsg);
+    const at = lastMsg.internalDate ? Number(lastMsg.internalDate) : Date.parse(lastMsg.date || "") || null;
+    await queueReceiptForDocuments(files, { receiptId, at });
+  } catch (e) { console.warn("[mail] receipt file for Document:", e?.message || e); }
+}
+
 async function moveMailToMedia(thread, lastMsg) {
   if (!lastMsg) return;
   const id = "email-" + thread.id;

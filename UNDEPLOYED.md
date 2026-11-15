@@ -10,6 +10,13 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Mail: Send to Finance** · branch `claude/mail-send-to-finance` · **Netlify deploy** (new `gmail.js`
+  action `receiptFromThread`) + client. The email ⋯ menu gains "Send to Finance" beside Save to News / Send
+  to Explore: the email is read as a receipt on request (no subject hint needed), saved to the
+  `finreceipts_` inbox under its message id (same id as the automatic pass — never two receipts), added to
+  the receipts list at once, and filed in Document › Receipts (its PDF/image attachments, or a PDF of the
+  email's text — `documents/text-pdf.js`). Post-deploy: open a receipt email › ⋯ › Send to Finance; the
+  toast names the store and total; it's in Finance and in Document › Receipts.
 - **Listen: one queue and player per person** · #237 · LISTEN_QUEUE_DESIGN.md. Positions, played marks and queue edits move to the person's own `u-<uid>:listen` row; the queue fills from the home library (Personal for Luke). Needs a **TestFlight build** too.
   Post-deploy: reload every open web tab (an old tab keeps writing positions to the media rows). In the API logs, look for one `tableplan_states?id=in.(…:media,…:media)&select=id,podcastProgress:state->…` read per device and a new `u-<uid>:listen` row for Luke and for Marijane. On the phone, start an episode in Personal, switch to Household and let it finish: it should be gone from the queue in both views.
 - **News: the Front page leads with the day's biggest events** · #238 · NEWS_FRONT_PAGE_DESIGN.md. Top stories are ranked from how much the papers are writing about one event (stories, recency, papers, live blog); a newsletter's first link no longer pins a story. Server only: no TestFlight build, no migration.

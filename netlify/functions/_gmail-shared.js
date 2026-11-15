@@ -985,5 +985,9 @@ module.exports = {
   saveSnoozes,
   findOrCreateSnoozedLabel,
   modifyWholeThread,
-  processDueSnoozes
+  processDueSnoozes,
+  // "Send to Finance" in the email menu (gmail.js receiptFromThread).
+  loadReceiptContext,
+  extractReceipt,
+  saveFinanceReceipts
 };

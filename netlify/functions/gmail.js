@@ -5,6 +5,7 @@ const {
   getUserId, getValidAccessToken, gFetch, gBatchGet, headersMap, extractBody,
   htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep,
   loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread, loadAppConfig
+  , loadReceiptContext, extractReceipt, saveFinanceReceipts
 } = require("./_gmail-shared");
 const { loadMailAiRow, dismissPendingRecipe } = require("./_recipe-digest");
 const NewsLinks = require("./_news-links");
@@ -500,6 +501,46 @@ exports.handler = async (event) => {
       console.error("Travel thread interpretation failed:", e.message);
       return json(502, { error: e.message || "Interpretation failed." });
     }
+  }
+
+  // "Send to Finance" in the email menu (Luke, 2026-11-14): read the email as a
+  // receipt on request — no subject/sender hint needed, unlike the automatic pass —
+  // and put it in the finreceipts_ inbox under the message id, the same id the
+  // automatic pass uses, so the same email never becomes two receipts.
+  // → { receipt } (null when the email has no itemized purchase with a total).
+  if (action === "receiptFromThread") {
+    const { threadId, messageId } = body;
+    if (!threadId && !messageId) return json(400, { error: "threadId or messageId required" });
+    const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+    if (!anthropicKey) return json(503, { error: "ANTHROPIC_API_KEY not configured." });
+    const ctx = await loadReceiptContext(serviceKey, userId, {});
+    if (!ctx) return json(409, { error: "Set up a budget in Finance first." });
+    let msg = null;
+    if (messageId) {
+      const r = await gFetch(gToken, `/messages/${encodeURIComponent(messageId)}?format=full`);
+      if (r.ok) msg = await r.json();
+    }
+    if (!msg && threadId) {
+      const r = await gFetch(gToken, `/threads/${encodeURIComponent(threadId)}?format=full`);
+      if (!r.ok) return json(502, { error: "Gmail thread fetch failed." });
+      const messages = (await r.json()).messages || [];
+      msg = messages[messages.length - 1] || null;
+    }
+    if (!msg) return json(404, { error: "Email not found." });
+    const hdrs = headersMap(msg.payload?.headers);
+    const meta = { subject: hdrs.subject || "(no subject)", from: hdrs.from || "", date: hdrs.date || "" };
+    let receipt = null;
+    try {
+      receipt = await extractReceipt(anthropicKey, { ...meta, bodyText: htmlToText(extractBody(msg.payload)), categories: ctx.categories });
+    } catch (e) {
+      console.error("[receipt] send-to-finance extraction failed:", e.message);
+      return json(502, { error: "Couldn't read the receipt — try again." });
+    }
+    if (!receipt) return json(200, { receipt: null });
+    receipt.id = msg.id;
+    await saveFinanceReceipts(serviceKey, ctx.groupId, [receipt]);
+    console.log(`[receipt] sent to finance: ${receipt.merchant || "?"} $${receipt.total} (${receipt.items.length} items)`);
+    return json(200, { receipt });
   }
 
   if (action === "get") {
