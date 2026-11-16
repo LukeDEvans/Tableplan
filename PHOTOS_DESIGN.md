@@ -255,7 +255,7 @@ Settings › Beta › Photos Check gains **Sync to Personal** (admin; only into 
 
 ---
 
-## 17. Sync with the screen closed (decided 2026-11-16; in progress)
+## 17. Sync with the screen closed (decided 2026-11-16; server live, iPhone side built)
 
 **Decisions (Luke, 2026-11-16):** syncing must keep going with the screen closed. Same-day photos should reach Liv the same day. A first big sync, then automatic. Build it so moving away from Apple later is as easy as possible.
 
@@ -272,6 +272,15 @@ Settings › Beta › Photos Check gains **Sync to Personal** (admin; only into 
 **Applied 2026-11-16 with Luke's OK** (schema_migrations 20261116213000; each function locked to the server in the same step that made it). Checked live: row security and both policies, no anon access, signed-in users can't read secrets, add or delete devices, only the server runs the `photo_sync_*` functions, the 1,550 photos untouched.
 
 **Verified so far:** `test/photos-sync-devices-migration.test.js` (11, PGlite, as Luke, his wife, a stranger, anon and the server); `test/photos-sync-function.test.js` (7: the function run against the real migration, end to end); planted bugs caught in both.
+
+**iPhone side (built 2026-11-16, branch `claude/photos-background-native`):**
+- `ios/App/App/PhotoSyncEngine.swift` does the whole sync natively, in batches of 50, newest first: `mine` → JPEGs on the phone → `add` → `sign` (25 at a time) → uploads straight to R2 (native `URLSession`, so no CapacitorHttp problem) → `done`. Same ids and device key as the web view sync, so the 1,550 already synced are skipped. The "listed up to" time is kept on the phone and saved only after a run with no failures.
+- **Sync now** (the panel): sets up the device key the first time (the sign-in is handed over once and not kept), then starts. On iOS 26 it's a continued processing task: lock the phone and it carries on, with iOS's own progress. Older iOS: as long as iOS lets a backgrounded app run.
+- **Sync automatically** (on by default, a switch in the panel): on opening Liv (at most every 10 minutes) and in iOS's background refresh and overnight processing. Automatic syncs wait for Wi-Fi unless **Use cellular** is on, and skip Low Power Mode.
+- **Turn off syncing on this iPhone** revokes the key on the server and forgets it on the phone. Signing out of Liv forgets it too (like Messages' keys). A key the server rejects (revoked) is forgotten by the phone.
+- A build without the engine still gets the web view sync.
+
+**Verified:** `test/photos-native-parity.test.js` (6: the Swift's ids, device key, ops, batch limits, Keychain setting and task names match the JS, the server and Info.plist); the full suite; the build; the boot check. **Not verified:** the Swift compiles only in the PR's iOS check; everything on the phone (the continued task's progress, background runs, the Keychain after a restart, memory over 17,768 photos) needs TestFlight.
 
 ---
 

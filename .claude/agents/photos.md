@@ -64,6 +64,15 @@ You are the **Photos** domain agent for **Live / Tableplan**.
   sign / done). All rules are in the database functions (`photo_sync_*`, server
   only). Luke wants it built so moving away from Apple later is easy: keep the
   protocol plain HTTP and the iPhone-only code small. See PHOTOS_DESIGN.md §17.
+  Live and deployed 2026-11-16. The iPhone side is `ios/App/App/PhotoSyncEngine.swift`
+  (same ids and device key as `photos/sync.js`; Keychain secret; a sync you start
+  runs as an iOS 26 continued processing task; automatic syncs on open, at most
+  every 10 minutes, plus `BGAppRefreshTask` / `BGProcessingTask`, ids in Info.plist),
+  driven through the plugin's `sync*` calls from the Photos Check panel
+  (`runPhotosNativeSync`, `turnOffPhotosSyncHere`; older builds fall back to
+  `runPhotosSync`). Signing out forgets the key on the phone (`forgetPhotoSyncDevice`).
+  `test/photos-native-parity.test.js` holds the Swift to the JS ids, the protocol's
+  ops and the task names.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are

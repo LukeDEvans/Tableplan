@@ -26,6 +26,14 @@ import UIKit
 //       small JPEGs (longest side `size`, default 400) made on the phone; a video
 //       gives its poster frame. An id it can't read comes back with `error`.
 //   • status() also says whether the network is expensive (cellular / hotspot).
+// The sync that keeps going with the screen closed (PHOTOS_DESIGN.md §17) is
+// PhotoSyncEngine; these calls drive it:
+//   • syncStatus() → { registered, running, trigger?, progress?, auto, cellular, last?, continuedTasks }
+//   • syncSetup({ endpoint, apiKey, token, name }) — trades the sign-in (used once,
+//       not kept) for a photo-only device key kept in the Keychain.
+//   • syncStart({ cellular? }) — a sync you start; rejects BUSY / NOT_SET_UP.
+//   • syncStop(), syncForget(), syncOptions({ auto?, cellular? })
+//   • events "photoSyncProgress" { trigger, done, total, added } and "photoSyncDone" (the result).
 // Sizes and "is the original on this phone" come from PHAssetResource's `fileSize`
 // and `locallyAvailable`, which Apple doesn't document; both are read only when the
 // object answers to them, and a resource without them is counted under sizeUnknown.
@@ -40,7 +48,13 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "cancel", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deviceKey", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "list", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "thumbs", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "thumbs", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncStatus", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncSetup", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncStop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncForget", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncOptions", returnType: CAPPluginReturnPromise)
     ]
 
     private let queue = DispatchQueue(label: "live.photos.probe", qos: .utility)
@@ -56,6 +70,47 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin {
             self.lock.lock(); self.expensive = path.isExpensive; self.lock.unlock()
         }
         pathMonitor.start(queue: DispatchQueue(label: "live.photos.path"))
+        let engine = PhotoSyncEngine.shared
+        engine.onProgress = { [weak self] p in self?.notifyListeners("photoSyncProgress", data: p) }
+        engine.onFinish = { [weak self] r in self?.notifyListeners("photoSyncDone", data: r) }
+    }
+
+    @objc func syncStatus(_ call: CAPPluginCall) {
+        call.resolve(PhotoSyncEngine.shared.status())
+    }
+
+    @objc func syncSetup(_ call: CAPPluginCall) {
+        guard let endpoint = call.getString("endpoint"), let apiKey = call.getString("apiKey"),
+              let token = call.getString("token"), !token.isEmpty else { call.reject("Missing details", "BAD_REQUEST"); return }
+        PhotoSyncEngine.shared.setup(endpoint: endpoint, apiKey: apiKey, token: token, name: call.getString("name") ?? "iPhone") { result in
+            switch result {
+            case .success: call.resolve(PhotoSyncEngine.shared.status())
+            case .failure(let e):
+                if case .revoked = e { call.reject("Sign in again", "SIGNED_OUT") } else { call.reject(e.text, "FAILED") }
+            }
+        }
+    }
+
+    @objc func syncStart(_ call: CAPPluginCall) {
+        guard readable() else { call.reject("Photo access is off for Live", "DENIED"); return }
+        let engine = PhotoSyncEngine.shared
+        guard engine.config() != nil else { call.reject("Not set up", "NOT_SET_UP"); return }
+        if engine.startUser(cellular: call.getBool("cellular") ?? false) { call.resolve() } else { call.reject("A sync is already running", "BUSY") }
+    }
+
+    @objc func syncStop(_ call: CAPPluginCall) {
+        PhotoSyncEngine.shared.stop()
+        call.resolve()
+    }
+
+    @objc func syncForget(_ call: CAPPluginCall) {
+        PhotoSyncEngine.shared.forget()
+        call.resolve()
+    }
+
+    @objc func syncOptions(_ call: CAPPluginCall) {
+        PhotoSyncEngine.shared.setOptions(auto: call.getBool("auto"), cellular: call.getBool("cellular"))
+        call.resolve(PhotoSyncEngine.shared.status())
     }
 
     private func accessName(_ status: PHAuthorizationStatus) -> String {
@@ -75,12 +130,10 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func deviceKey(_ call: CAPPluginCall) {
-        guard let vendor = UIDevice.current.identifierForVendor?.uuidString else {
+        guard let key = PhotoSyncEngine.deviceKey() else {
             call.reject("No device id", "UNAVAILABLE"); return
         }
-        let digest = SHA256.hash(data: Data("live-photos|\(vendor)".utf8))
-        let key = digest.map { String(format: "%02x", $0) }.joined().prefix(32)
-        call.resolve(["key": String(key)])
+        call.resolve(["key": key])
     }
 
     private func readable() -> Bool {
