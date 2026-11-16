@@ -58,6 +58,12 @@ You are the **Photos** domain agent for **Live / Tableplan**.
   (`runPhotosSync`, `loadPhotosSyncSummary` in app.js).
 - A thumbnail is uploaded only after its record exists (the storage function signs
   nothing for a photo with no row). Thumbnail links last 10 minutes.
+- **Sync with the screen closed (2026-11-16, decided; in progress):** a photo-only
+  device key (`photo_sync_devices`, `migrations/2026-11-16b-photo-sync-devices.sql`)
+  and the sync protocol in `supabase/functions/photo-sync` (register / mine / add /
+  sign / done). All rules are in the database functions (`photo_sync_*`, server
+  only). Luke wants it built so moving away from Apple later is easy: keep the
+  protocol plain HTTP and the iPhone-only code small. See PHOTOS_DESIGN.md §17.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
