@@ -18973,9 +18973,10 @@ async function renderPhotosCheckPanel() {
     <div class="settings-action-grid">
       ${plugin ? (running
         ? `<button type="button" data-photos-cancel>Stop</button>`
-        : `<button type="button" data-photos-count>${saved ? "Count again" : "Count my library"}</button>`) : ""}
+        : `<button type="button" data-photos-count ${photosSyncRun ? "disabled" : ""}>${saved ? "Count again" : "Count my library"}</button>`) : ""}
       ${saved ? `<button type="button" data-photos-copy>Copy results</button><button type="button" data-photos-clear>Clear</button>` : ""}
     </div>
+    ${plugin ? photosSyncSectionHtml(formatCount) : ""}
     ${report ? `
       ${when ? `<p class="settings-panel-note">Counted ${escapeHtml(when)}.</p>` : ""}
       ${report.groups.map((g) => `
@@ -18989,6 +18990,10 @@ async function renderPhotosCheckPanel() {
         </div>`).join("")}
       ${report.notes.map((n) => `<p class="settings-panel-note">${escapeHtml(n)}</p>`).join("")}` : ""}`;
   body.querySelector("[data-photos-count]")?.addEventListener("click", () => runPhotosProbe());
+  body.querySelector("[data-photos-sync]")?.addEventListener("click", () => runPhotosSync());
+  body.querySelector("[data-photos-sync-stop]")?.addEventListener("click", () => photosSyncRun?.controller.abort());
+  // Thumbnail links last 10 minutes; refresh the totals and links after 5.
+  if (plugin && !photosSyncRun && !photosSyncSummaryLoading && (!photosSyncSummary || Date.now() - (photosSyncSummary.at || 0) > 5 * 60 * 1000)) loadPhotosSyncSummary();
   body.querySelector("[data-photos-cancel]")?.addEventListener("click", () => { try { nativePhotoLibrary()?.cancel(); } catch { /* the count ends by itself */ } });
   body.querySelector("[data-photos-copy]")?.addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(probeReportText(saved.result, { when })); showMailToast("Copied."); } catch { showMailToast("Couldn't copy."); }
@@ -19000,7 +19005,7 @@ async function renderPhotosCheckPanel() {
 }
 async function runPhotosProbe() {
   const plugin = nativePhotoLibrary();
-  if (!plugin || photosProbeRun) return;
+  if (!plugin || photosProbeRun || photosSyncRun) return;
   photosProbeRun = { done: 0, total: 0 };
   const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open !== false) renderPhotosCheckPanel(); };
   redraw();
@@ -19023,6 +19028,132 @@ async function runPhotosProbe() {
   } finally {
     try { await sub?.remove?.(); } catch { /* already gone */ }
     photosProbeRun = null;
+    redraw();
+  }
+}
+
+// Photos sync (PHOTOS_DESIGN.md §12 step 2): the phone's library into Personal Photos —
+// a record and a small thumbnail per photo, originals stay on the phone / in iCloud.
+// photos/sync.js does the work and is safe to stop and re-run. Admin only (this panel),
+// and only into the person's own Personal library (decision 5). The sync stops when
+// the app goes to the background; the next run carries on.
+const PHOTOS_SYNC_KEY = "live-photos-sync-v1";
+let photosSyncRun = null;        // { controller, phase, done, total, added } while running
+let photosSyncSummary = null;    // { count, thumbBytes, recent, error? } for this panel
+let photosSyncSummaryLoading = false;
+let photosSyncLast = null;       // the last run's stats, shown until the panel closes
+function photosPersonalScope() {
+  const id = authSession?.user?.id;
+  return !localDevMode && id ? `u-${id}` : null;
+}
+async function photosRest(path, { method = "GET", body, prefer } = {}) {
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${path}`, {
+    method,
+    cache: "no-store",
+    headers: { ...supabaseHeaders(), ...(prefer ? { prefer } : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) { const err = new Error(`photos: ${res.status}`); err.status = res.status; throw err; }
+  const text = method === "HEAD" ? "" : await res.text();
+  return { data: text ? JSON.parse(text) : null, headers: res.headers };
+}
+async function photosPresigner() {
+  const { edgePresigner } = await import("./documents/storage.js");
+  return edgePresigner({ functionsUrl: `${supabaseBaseUrl()}/functions/v1`, getToken: async () => authSession?.access_token || "" });
+}
+function readPhotosSince(deviceKey) {
+  try { return Number(JSON.parse(localStorage.getItem(PHOTOS_SYNC_KEY) || "{}")[deviceKey]) || null; } catch { return null; }
+}
+function writePhotosSince(deviceKey, ms) {
+  try {
+    const all = JSON.parse(localStorage.getItem(PHOTOS_SYNC_KEY) || "{}");
+    all[deviceKey] = ms;
+    localStorage.setItem(PHOTOS_SYNC_KEY, JSON.stringify(all));
+  } catch { /* the next run lists everything again, which is safe */ }
+}
+function photosSyncSectionHtml(formatCount) {
+  const scope = photosPersonalScope();
+  const run = photosSyncRun;
+  const sum = photosSyncSummary;
+  const mb = (b) => `${(Number(b || 0) / (1024 * 1024)).toFixed(b > 100 * 1024 * 1024 ? 0 : 1)} MB`;
+  const line = run
+    ? (run.phase === "listing"
+      ? `Reading your library… ${formatCount(run.done)}${run.total ? ` of ${formatCount(run.total)}` : ""}`
+      : `Syncing… ${formatCount(run.done)} of ${formatCount(run.total)} (${formatCount(run.added)} added)`)
+    : "";
+  const last = photosSyncLast
+    ? (photosSyncLast.error
+      ? `The sync stopped: ${photosSyncLast.error}`
+      : `${photosSyncLast.stopped ? "Stopped" : "Done"}: ${formatCount(photosSyncLast.added)} added, ${formatCount(photosSyncLast.skipped)} already there${photosSyncLast.thumbsFailed ? `, ${formatCount(photosSyncLast.thumbsFailed)} thumbnails to retry` : ""}.`)
+    : "";
+  return `
+    <div class="fin-subhead">Sync to Personal</div>
+    <p class="settings-panel-note">Adds each photo and video to your Personal Photos with a small thumbnail (about 30 KB). Originals stay on this phone and in iCloud. Use Wi-Fi and keep this screen open; if it stops, tap Sync again and it carries on where it left off.</p>
+    ${!scope ? `<p class="settings-panel-note">Sign in to sync.</p>` : `
+    ${sum && !sum.error ? `<p class="settings-panel-note">In Personal now: ${escapeHtml(formatCount(sum.count))} photos and videos, ${escapeHtml(mb(sum.thumbBytes))} of thumbnails.</p>` : ""}
+    ${sum?.error ? `<p class="settings-panel-note">Couldn't read Personal Photos (${escapeHtml(sum.error)}).</p>` : ""}
+    ${line ? `<p class="settings-panel-note" data-photos-sync-progress>${escapeHtml(line)}</p>` : ""}
+    ${last && !run ? `<p class="settings-panel-note">${escapeHtml(last)}</p>` : ""}
+    <div class="settings-action-grid">
+      ${run ? `<button type="button" data-photos-sync-stop>Stop</button>` : `<button type="button" data-photos-sync ${photosProbeRun ? "disabled" : ""}>${sum?.count ? "Sync again" : "Sync to Personal"}</button>`}
+    </div>
+    ${sum?.recent?.length ? `<div class="photos-sync-grid" aria-label="Newest in Personal">${sum.recent.map((r) => `
+      <figure>${r.url ? `<img src="${escapeHtml(r.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}${r.kind === "video" && r.duration ? `<figcaption>${escapeHtml(`${Math.floor(r.duration / 60)}:${String(Math.round(r.duration % 60)).padStart(2, "0")}`)}</figcaption>` : ""}</figure>`).join("")}</div>` : ""}`}`;
+}
+async function loadPhotosSyncSummary() {
+  const scope = photosPersonalScope();
+  if (!scope || photosSyncSummaryLoading) return;
+  photosSyncSummaryLoading = true;
+  try {
+    const { photosSummary } = await import("./photos/sync.js");
+    photosSyncSummary = { ...(await photosSummary({ rest: photosRest, presign: await photosPresigner(), scope })), at: Date.now() };
+  } catch (error) {
+    photosSyncSummary = { error: String(error?.status || error?.code || "offline"), count: 0, recent: [], at: Date.now() };
+  } finally {
+    photosSyncSummaryLoading = false;
+    if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel();
+  }
+}
+async function runPhotosSync() {
+  const plugin = nativePhotoLibrary();
+  const scope = photosPersonalScope();
+  if (!plugin || !scope || photosSyncRun || photosProbeRun) return;
+  try {
+    const status = await plugin.status();
+    if (status?.access !== "authorized" && status?.access !== "limited") {
+      showMailToast("Photo access is off. Turn it on for Live in iPhone Settings › Privacy › Photos.");
+      return;
+    }
+    if (status?.expensive && !window.confirm("You're on cellular data. The first sync uploads about 30 KB per photo (roughly 0.5 GB for 17,000 photos). Sync anyway?")) return;
+  } catch { /* an older build without status: carry on */ }
+  const controller = new AbortController();
+  photosSyncRun = { controller, phase: "listing", done: 0, total: 0, added: 0 };
+  photosSyncLast = null;
+  const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel(); };
+  const onHide = () => { if (document.visibilityState === "hidden") controller.abort(); };
+  document.addEventListener("visibilitychange", onHide);
+  redraw();
+  let lastPaint = 0;
+  try {
+    const { createPhotoSync } = await import("./photos/sync.js");
+    const sync = createPhotoSync({
+      plugin, rest: photosRest, presign: await photosPresigner(), scope,
+      getSince: readPhotosSince, setSince: writePhotosSince,
+      onProgress: (p) => {
+        if (!photosSyncRun) return;
+        Object.assign(photosSyncRun, p);
+        const t = Date.now();
+        if (t - lastPaint > 400 || p.done === p.total) { lastPaint = t; redraw(); }
+      },
+    });
+    photosSyncLast = await sync.run({ signal: controller.signal });
+  } catch (error) {
+    const code = String(error?.code || "");
+    photosSyncLast = { error: code === "DENIED" ? "photo access is off" : (error?.status === 401 ? "signed out" : "a connection problem — tap Sync to carry on") };
+  } finally {
+    document.removeEventListener("visibilitychange", onHide);
+    photosSyncRun = null;
+    photosSyncSummary = null;
     redraw();
   }
 }
