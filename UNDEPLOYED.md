@@ -26,5 +26,5 @@ Each entry: what shipped · PR · post-deploy steps.
   Post-deploy: on the phone, Photos Check › Sync again (thumbnails appear under the button); add a file to Document from the phone and open it.
 - **Photos: device keys + sync protocol** · #246 · PHOTOS_DESIGN.md §17. The table and functions are **live** (applied 2026-11-16) and the `photo-sync` Supabase function is deployed; nothing in the app uses them until the native sync engine ships (next PR, TestFlight).
   Post-deploy: none for the web.
-- **Photos: native background sync** · #247 · PHOTOS_DESIGN.md §17. iPhone only (TestFlight): Sync now keeps going with the screen locked (iOS 26), automatic syncs on open and in the background, the Photos Check panel's new switches. No migration.
+- **Photos: native background sync** · #247 · PHOTOS_DESIGN.md §17. iPhone only (TestFlight): Sync now keeps going with the screen locked (iOS 26), automatic syncs on open and in the background, the Photos Check panel's new switches. No migration. Cellular on by default, no cellular prompt (#248).
   Post-deploy: none for the web (the panel's native part only shows in a build with the engine).
