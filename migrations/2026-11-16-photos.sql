@@ -174,7 +174,8 @@ grant update (scope, kind, is_screenshot, is_live, burst_id, taken_at, width, he
   content_hash, favorite, labels, body_text, has_thumb, thumb_bytes, deleted_at) on public.photo_items to authenticated;
 grant select, insert on public.photo_sources to authenticated;
 grant update (missing_at) on public.photo_sources to authenticated;
-grant all on public.photo_items, public.photo_sources to service_role;
+grant all on public.photo_items to service_role;
+grant all on public.photo_sources to service_role;
 
 revoke all on function public.photo_rows_guard() from public, anon, authenticated;
 revoke all on function public.photo_can_access(uuid), public.photo_purge(uuid), public.photo_blob_allowed(uuid, boolean),
