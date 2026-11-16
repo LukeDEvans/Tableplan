@@ -18,6 +18,8 @@
 //   fetchImpl — for the uploads to the signed URLs
 //   getSince / setSince — the saved "listed up to" time (ms), per device
 
+import { bytesUploadFetch } from "../documents/storage.js";
+
 export const BATCH = 50;
 export const LIST_PAGE = 500;
 export const PRESIGN_BATCH = 25;
@@ -72,14 +74,22 @@ export function b64ToBytes(b64) {
 const inList = (ids) => `in.(${ids.join(",")})`;
 const chunks = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 
-export function createPhotoSync({ plugin, rest, presign, fetchImpl = (...a) => globalThis.fetch(...a), scope, getSince, setSince, now = () => Date.now(), onProgress = () => {} }) {
+// Each step's failures carry `step`, so the panel can say what stopped a sync.
+async function step(name, fn) {
+  try { return await fn(); } catch (error) {
+    if (error && typeof error === "object" && !error.step) error.step = name;
+    throw error;
+  }
+}
+
+export function createPhotoSync({ plugin, rest, presign, fetchImpl = bytesUploadFetch(), scope, getSince, setSince, now = () => Date.now(), onProgress = () => {} }) {
   if (!/^u-[0-9a-f-]{36}$/.test(scope || "")) throw new Error("photos: sync only into a Personal library");
 
   async function listAll(since, signal) {
     const items = [];
     for (let offset = 0; ; offset += LIST_PAGE) {
       if (signal?.aborted) return null;
-      const page = await plugin.list({ offset, limit: LIST_PAGE, ...(since ? { since } : {}) });
+      const page = await step("reading the library", () => plugin.list({ offset, limit: LIST_PAGE, ...(since ? { since } : {}) }));
       const got = Array.isArray(page?.items) ? page.items : [];
       items.push(...got);
       onProgress({ phase: "listing", done: items.length, total: Number(page?.total) || items.length });
@@ -89,15 +99,18 @@ export function createPhotoSync({ plugin, rest, presign, fetchImpl = (...a) => g
     return items.filter((it) => typeof it?.id === "string" && it.id && !seen.has(it.id) && seen.add(it.id));
   }
 
+  const uploadErrors = [];
+
   async function uploadThumbs(entries) {
     const done = [];
     for (const group of chunks(entries, PRESIGN_BATCH)) {
-      const signed = await presign("put", group.map((e) => ({ tier: "photos", fileId: e.id, part: "thumb", size: e.bytes.length })));
+      const signed = await step("getting upload links", () => presign("put", group.map((e) => ({ tier: "photos", fileId: e.id, part: "thumb", size: e.bytes.length }))));
       const results = await Promise.all(group.map(async (e, i) => {
         try {
           const res = await fetchImpl(signed[i].url, { method: "PUT", headers: signed[i].headers || {}, body: e.bytes });
+          if (!res.ok) uploadErrors.push(`HTTP ${res.status}`);
           return res.ok ? e.id : null;
-        } catch { return null; }
+        } catch (error) { uploadErrors.push(String(error?.message || error).slice(0, 80)); return null; }
       }));
       done.push(...results.filter(Boolean));
     }
@@ -106,11 +119,12 @@ export function createPhotoSync({ plugin, rest, presign, fetchImpl = (...a) => g
 
   async function run({ signal } = {}) {
     const started = now();
-    const { key: deviceKey } = await plugin.deviceKey();
+    const { key: deviceKey } = await step("reading the device key", () => plugin.deviceKey());
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(deviceKey || "")) throw new Error("photos: no device key");
     const since = getSince(deviceKey);
     const listed = await listAll(since ? since - SINCE_MARGIN_MS : null, signal);
     const stats = { listed: listed?.length || 0, added: 0, skipped: 0, thumbsFailed: 0, stopped: false };
+    if (uploadErrors.length) uploadErrors.length = 0;
     if (!listed) return { ...stats, stopped: true };
 
     // Newest first, so the photos you know best show up first.
@@ -119,29 +133,29 @@ export function createPhotoSync({ plugin, rest, presign, fetchImpl = (...a) => g
     for (const batch of chunks(listed, BATCH)) {
       if (signal?.aborted) return { ...stats, stopped: true };
       const ids = await Promise.all(batch.map((it) => photoIdFor(deviceKey, it.id)));
-      const have = await rest(`photo_items?select=id&has_thumb=is.true&id=${inList(ids)}`);
+      const have = await step("checking what's already synced", () => rest(`photo_items?select=id&has_thumb=is.true&id=${inList(ids)}`));
       const done = new Set((have.data || []).map((r) => r.id));
       const todo = batch.map((it, i) => ({ it, id: ids[i] })).filter((t) => !done.has(t.id));
       stats.skipped += batch.length - todo.length;
 
       if (todo.length) {
-        const shot = await plugin.thumbs({ ids: todo.map((t) => t.it.id) });
+        const shot = await step("making thumbnails", () => plugin.thumbs({ ids: todo.map((t) => t.it.id) }));
         const byLocal = new Map((shot?.items || []).filter((x) => x && typeof x.b64 === "string" && x.b64).map((x) => [x.id, b64ToBytes(x.b64)]));
         const entries = todo.map((t) => ({ ...t, bytes: byLocal.get(t.it.id) || null }));
-        await rest("photo_items?on_conflict=id", {
+        await step("saving records", () => rest("photo_items?on_conflict=id", {
           method: "POST",
           prefer: "resolution=ignore-duplicates,return=minimal",
           body: entries.map((e) => rowFor(e.it, { id: e.id, scope, thumbBytes: e.bytes?.length || 0 })),
-        });
-        await rest("photo_sources?on_conflict=kind,device_key,local_id", {
+        }));
+        await step("saving sources", () => rest("photo_sources?on_conflict=kind,device_key,local_id", {
           method: "POST",
           prefer: "resolution=ignore-duplicates,return=minimal",
           body: entries.map((e) => ({ photo_id: e.id, kind: "iphone", device_key: deviceKey, local_id: e.it.id })),
-        });
+        }));
         const withThumb = entries.filter((e) => e.bytes && e.bytes.length);
         const uploaded = withThumb.length ? await uploadThumbs(withThumb) : [];
         if (uploaded.length) {
-          await rest(`photo_items?id=${inList(uploaded)}`, { method: "PATCH", prefer: "return=minimal", body: { has_thumb: true } });
+          await step("marking thumbnails done", () => rest(`photo_items?id=${inList(uploaded)}`, { method: "PATCH", prefer: "return=minimal", body: { has_thumb: true } }));
         }
         stats.added += todo.length;
         stats.thumbsFailed += todo.length - uploaded.length;
@@ -150,7 +164,7 @@ export function createPhotoSync({ plugin, rest, presign, fetchImpl = (...a) => g
       onProgress({ phase: "syncing", done: processed, total: listed.length, added: stats.added });
     }
     if (!stats.thumbsFailed) setSince(deviceKey, started);
-    return stats;
+    return uploadErrors.length ? { ...stats, uploadError: uploadErrors[0] } : stats;
   }
 
   return { run };

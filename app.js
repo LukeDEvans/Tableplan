@@ -19084,7 +19084,7 @@ function photosSyncSectionHtml(formatCount) {
   const last = photosSyncLast
     ? (photosSyncLast.error
       ? `The sync stopped: ${photosSyncLast.error}`
-      : `${photosSyncLast.stopped ? "Stopped" : "Done"}: ${formatCount(photosSyncLast.added)} added, ${formatCount(photosSyncLast.skipped)} already there${photosSyncLast.thumbsFailed ? `, ${formatCount(photosSyncLast.thumbsFailed)} thumbnails to retry` : ""}.`)
+      : `${photosSyncLast.stopped ? "Stopped" : "Done"}: ${formatCount(photosSyncLast.added)} added, ${formatCount(photosSyncLast.skipped)} already there${photosSyncLast.thumbsFailed ? `, ${formatCount(photosSyncLast.thumbsFailed)} thumbnails to retry (${photosSyncLast.uploadError || "no reason given"})` : ""}.`)
     : "";
   return `
     <div class="fin-subhead">Sync to Personal</div>
@@ -19149,7 +19149,11 @@ async function runPhotosSync() {
     photosSyncLast = await sync.run({ signal: controller.signal });
   } catch (error) {
     const code = String(error?.code || "");
-    photosSyncLast = { error: code === "DENIED" ? "photo access is off" : (error?.status === 401 ? "signed out" : "a connection problem — tap Sync to carry on") };
+    const detail = String(error?.message || error || "").slice(0, 120);
+    console.error("[photos] sync stopped", error?.step || "", error);
+    photosSyncLast = { error: code === "DENIED" ? "photo access is off"
+      : (error?.status === 401 ? "signed out"
+        : `${error?.step ? `while ${error.step}` : "unexpectedly"}${detail ? ` (${detail})` : ""}. Tap Sync to carry on.`) };
   } finally {
     document.removeEventListener("visibilitychange", onHide);
     photosSyncRun = null;

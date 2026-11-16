@@ -200,3 +200,33 @@ describe("summary", () => {
     expect(s.recent[0].url).toBe(`mem://get/ph/${await photoIdFor("dev-abc", "L29/L0/001")}/thumb`);
   });
 });
+
+describe("uploads on the iPhone", () => {
+  it("go through the web view's own fetch (CapacitorWebFetch), never Capacitor's native HTTP, which mangles bytes", async () => {
+    const phone = fakePhone(3);
+    const db = fakeDb();
+    const store = fakeStore();
+    const seen = [];
+    globalThis.CapacitorWebFetch = async (url, init) => { seen.push(init.body instanceof Uint8Array); return store.fetchImpl(url, init); };
+    try {
+      const { createPhotoSync: create } = await import("../photos/sync.js");
+      const sync = create({ plugin: phone, rest: db.rest, presign: store.presign, scope: SCOPE, getSince: () => null, setSince: () => {} });
+      const stats = await sync.run();
+      expect(stats.thumbsFailed).toBe(0);
+      expect(seen).toEqual([true, true, true]);
+      expect(store.objects.size).toBe(3);
+    } finally { delete globalThis.CapacitorWebFetch; }
+  });
+
+  it("say what went wrong: a failed upload's status, and the step a sync stopped at", async () => {
+    const phone = fakePhone(2);
+    const db = fakeDb();
+    const store = fakeStore({ failPut: () => true });
+    const stats = await setup(phone, db, store).sync.run();
+    expect(stats).toMatchObject({ thumbsFailed: 2, uploadError: "HTTP 500" });
+    const broken = fakePhone(2);
+    broken.thumbs = async () => { throw new Error("boom"); };
+    const err = await setup(broken, fakeDb(), fakeStore()).sync.run().catch((e) => e);
+    expect(err.step).toBe("making thumbnails");
+  });
+});

@@ -251,6 +251,8 @@ Settings › Beta › Photos Check gains **Sync to Personal** (admin; only into 
 
 **Not yet:** photos deleted or changed on the phone after syncing (step 3 with the page); Household; the page itself.
 
+**First run on Luke's phone (2026-11-16):** 100 records and sources went in, their thumbnails were made on the phone and the storage function signed every link, but **no upload landed**, and the sync stopped after the second batch with "a connection problem". Cause: Capacitor's native HTTP (CapacitorHttp, on for the app) reads a byte body as text before sending it, so each JPEG arrived changed and at a different length from the signed one. Fix: byte uploads go through the web view's own fetch (`CapacitorWebFetch`; `bytesUploadFetch` in documents/storage.js), which Document's uploads now use too. The panel now names the step a sync stopped at and why an upload failed. The second run's stop (before saving the first batch again) wasn't explained by the logs; the new message will say which step.
+
 ---
 
 ## Related: gaps noted alongside this outline (2026-11-15)

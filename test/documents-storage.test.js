@@ -97,3 +97,20 @@ describe("storage adapter", () => {
     expect(new StorageError("X", "y", 1)).toBeInstanceOf(Error);
   });
 });
+
+describe("uploads on the iPhone (CapacitorHttp mangles byte bodies)", () => {
+  it("PUTs go through CapacitorWebFetch when it exists; downloads and signing don't", async () => {
+    const calls = { web: [], normal: [] };
+    const presign = async (op, items) => items.map((it) => ({ url: `https://store.example/${op}/${it.part}`, headers: {} }));
+    const fetchImpl = async (url, init = {}) => { calls.normal.push(init.method || "GET"); return new Response(new Uint8Array([1, 2]), { status: 200 }); };
+    globalThis.CapacitorWebFetch = async (url, init) => { calls.web.push(init.method); return new Response(null, { status: 200 }); };
+    try {
+      const storage = createDocumentsStorage({ presign, fetchImpl });
+      await storage.put("u-1", "a0000000-0000-0000-0000-000000000001", { content: new Uint8Array([9, 9, 9]) });
+      await storage.putPart("u-1", "a0000000-0000-0000-0000-000000000001", "i" + "0".repeat(32), new Uint8Array([7]));
+      await storage.get("u-1", "a0000000-0000-0000-0000-000000000001", "content").catch(() => {});
+      expect(calls.web).toEqual(["PUT", "PUT"]);
+      expect(calls.normal.every((m) => m !== "PUT")).toBe(true);
+    } finally { delete globalThis.CapacitorWebFetch; }
+  });
+});
