@@ -226,7 +226,7 @@ No Photos page yet. The count lives in **Settings › Beta › Photos Check** (a
 
 ## 15. Step 2: the tables (applied 2026-11-16)
 
-`migrations/2026-11-16-photos.sql` (§3). Additive only: two tables, their row security, a guard trigger and four functions (`photo_can_access`, `photo_purge`, `photo_blob_allowed`, `photo_usage`). **Applied 2026-11-16 with Luke's OK** (schema_migrations 20261116120500). Checked live afterwards: row security on both tables, three policies each, the guard triggers, no anon access, no DELETE or TRUNCATE for signed-in users, the author column not updatable, the guard function not callable; the security advisor lists the four functions as callable by signed-in users, which is intended (each answers only for photos the caller can see).
+`migrations/2026-11-16-photos.sql` (§3). Additive only: two tables, their row security, a guard trigger and four functions (`photo_can_access`, `photo_purge`, `photo_blob_allowed`, `photo_usage`). **`photo-sync` deployed to Supabase 2026-11-16** (version 1, sign-in checked inside the function). The security advisor lists no `photo_sync_*` function. **Applied 2026-11-16 with Luke's OK** (schema_migrations 20261116120500). Checked live afterwards: row security on both tables, three policies each, the guard triggers, no anon access, no DELETE or TRUNCATE for signed-in users, the author column not updatable, the guard function not callable; the security advisor lists the four functions as callable by signed-in users, which is intended (each answers only for photos the caller can see).
 
 **Verified:** `test/photos-migration.test.js` (11) against PGlite with the real Document and messaging migrations, as Luke, his wife, a coworker, a stranger and anon: Personal private, Household shared, moves only between scopes the person uses, sources follow their photo and can't be doubled or re-pointed, no hard deletes, purge only after 30 days, thumbnails only for photos the caller can see. **Planted bugs:** six, each caught; three of them only once a second safeguard was also removed (the read policy re-checks a move; column grants and the guard both stop author and source changes).
 
@@ -252,6 +252,26 @@ Settings › Beta › Photos Check gains **Sync to Personal** (admin; only into 
 **Not yet:** photos deleted or changed on the phone after syncing (step 3 with the page); Household; the page itself.
 
 **First run on Luke's phone (2026-11-16):** 100 records and sources went in, their thumbnails were made on the phone and the storage function signed every link, but **no upload landed**, and the sync stopped after the second batch with "a connection problem". Cause: Capacitor's native HTTP (CapacitorHttp, on for the app) reads a byte body as text before sending it, so each JPEG arrived changed and at a different length from the signed one. Fix: byte uploads go through the web view's own fetch (`CapacitorWebFetch`; `bytesUploadFetch` in documents/storage.js), which Document's uploads now use too. The panel now names the step a sync stopped at and why an upload failed. The second run's stop (before saving the first batch again) wasn't explained by the logs; the new message will say which step.
+
+---
+
+## 17. Sync with the screen closed (decided 2026-11-16; in progress)
+
+**Decisions (Luke, 2026-11-16):** syncing must keep going with the screen closed. Same-day photos should reach Liv the same day. A first big sync, then automatic. Build it so moving away from Apple later is as easy as possible.
+
+**Design:**
+- **A photo-only device key.** A phone registers once while Liv is open and signed in, and gets a random secret that only it keeps (the iPhone's Keychain). The database keeps its SHA-256. The key can only add photos to its owner's Personal library and upload their thumbnails; the owner can revoke it (final). It never holds the person's sign-in, so background work can't sign them out or do anything else as them.
+- **The sync protocol** (`supabase/functions/photo-sync`, one POST endpoint): `register` (with the person's sign-in) → `{ deviceId, secret }`; then with `x-photo-device: <deviceId>.<secret>`: `mine` (which of these ids already have thumbnails), `add` (records + this device as their source), `sign` (upload links for `ph/<id>/thumb`), `done` (mark uploaded, with sizes). Plain HTTP + JSON: **nothing Apple-specific**; an Android phone, a computer, or the Google Takeout import can speak it.
+- **The rules live in the database** (`migrations/2026-11-16b-photo-sync-devices.sql`): `photo_sync_register / _device / _mine / _add / _done`, callable only by the server. Records always go into the owner's Personal library; a device can only see, sign for and mark its own photos (those with its source row); an id that belongs to someone else is never touched. `photo_rows_guard` keeps the author a server sets only when there is no signed-in user.
+- **On the phone (next):** the sync moves into native code (`PhotoLibraryPlugin`), keeping the same ids as the first sync (device key + the phone's photo id), so the 1,550 already synced count as done. Three ways it runs:
+  1. **Sync you start** (the big first one): an iOS 26 *continued processing task*, so locking the phone doesn't stop it; iOS shows its progress.
+  2. **When Liv opens or comes back:** a quick sync of anything new or changed.
+  3. **On its own:** a background refresh iOS runs a few times a day (usually while charging on Wi-Fi), for photos taken without opening Liv. iOS decides when.
+  The Apple-specific part stays small: reading the library, making JPEGs, iOS's task scheduling, and the Keychain.
+
+**Applied 2026-11-16 with Luke's OK** (schema_migrations 20261116213000; each function locked to the server in the same step that made it). Checked live: row security and both policies, no anon access, signed-in users can't read secrets, add or delete devices, only the server runs the `photo_sync_*` functions, the 1,550 photos untouched.
+
+**Verified so far:** `test/photos-sync-devices-migration.test.js` (11, PGlite, as Luke, his wife, a stranger, anon and the server); `test/photos-sync-function.test.js` (7: the function run against the real migration, end to end); planted bugs caught in both.
 
 ---
 
