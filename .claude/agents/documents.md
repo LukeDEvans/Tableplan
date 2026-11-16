@@ -224,3 +224,10 @@ Everyday files with `kind = 'doc'` are Live documents, edited in `documents/edit
      module, function or state key in this domain, update these lines in the same PR. -->
 - files: `documents/*.js`, `documents/crypto/*.js`, `documents/editor/*.js`, `netlify/functions/gdocs.js`
 - state: none — documents never go in tableplan_states; they live in the doc_ tables, R2 and on each device
+
+## Uploads from the iPhone (2026-11-16)
+Byte uploads to R2 must use `bytesUploadFetch` (documents/storage.js), which prefers
+`window.CapacitorWebFetch`: Capacitor's native HTTP (on in capacitor.config.json)
+decodes a Uint8Array body as text, so a binary PUT through the patched `fetch`
+arrives changed and fails the signed length. `createDocumentsStorage` does this by
+default; pass `putFetch` only in tests.

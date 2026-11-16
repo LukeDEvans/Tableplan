@@ -39,8 +39,20 @@ export class StorageError extends Error {
   }
 }
 
-export function createDocumentsStorage({ presign, fetchImpl = (...a) => globalThis.fetch(...a), tier = null }) {
+// Uploads of raw bytes must not go through Capacitor's native HTTP layer
+// (CapacitorHttp, on in capacitor.config.json): it reads a Uint8Array body as UTF-8
+// text before sending it, so a JPEG or PDF arrives changed, at a different length
+// from the one signed into the URL, and the store refuses it. Capacitor keeps the
+// web view's own fetch as `CapacitorWebFetch`; uploads use it (the bucket's CORS
+// already allows the app's origin). In a browser there is no CapacitorWebFetch and
+// this is plain fetch. (2026-11-16: found when Photos' first sync uploaded nothing.)
+export function bytesUploadFetch(fallback = (...a) => globalThis.fetch(...a)) {
+  return (...a) => (typeof globalThis.CapacitorWebFetch === "function" ? globalThis.CapacitorWebFetch(...a) : fallback(...a));
+}
+
+export function createDocumentsStorage({ presign, fetchImpl = (...a) => globalThis.fetch(...a), putFetch = null, tier = null }) {
   const withTier = (it) => (tier ? { ...it, tier } : it);
+  const putImpl = putFetch || bytesUploadFetch(fetchImpl);
   async function urls(op, items) {
     items = items.map(withTier);
     items.forEach(objectKey);
@@ -61,7 +73,7 @@ export function createDocumentsStorage({ presign, fetchImpl = (...a) => globalTh
       if (!items.some((i) => i.part === "content")) throw new Error("storage: content is required");
       const signed = await urls("put", items.map(({ bytes, ...i }) => i));
       await Promise.all(items.map(async (it, i) => {
-        const res = await fetchImpl(signed[i].url, { method: "PUT", headers: signed[i].headers || {}, body: it.bytes });
+        const res = await putImpl(signed[i].url, { method: "PUT", headers: signed[i].headers || {}, body: it.bytes });
         if (!res.ok) throw new StorageError("UPLOAD", `Upload failed (${res.status}).`, res.status);
       }));
       return items.reduce((n, i) => n + i.size, 0);
@@ -72,7 +84,7 @@ export function createDocumentsStorage({ presign, fetchImpl = (...a) => globalTh
       if (!(bytes instanceof Uint8Array) || !bytes.length) throw new Error("storage: parts must be bytes");
       if (bytes.length > MAX_PART_BYTES) throw new StorageError("TOO_LARGE", "That file is too large.");
       const [signed] = await urls("put", [{ scope, fileId, part, size: bytes.length }]);
-      const res = await fetchImpl(signed.url, { method: "PUT", headers: signed.headers || {}, body: bytes });
+      const res = await putImpl(signed.url, { method: "PUT", headers: signed.headers || {}, body: bytes });
       if (!res.ok) throw new StorageError("UPLOAD", `Upload failed (${res.status}).`, res.status);
       return bytes.length;
     },
