@@ -1,6 +1,6 @@
 # Photos — outline
 
-Status: **OUTLINE, ALL OPEN QUESTIONS ANSWERED** (decisions from Luke, 2026-11-15). **Build step 1 (count and probe) is built** on branch `claude/photos-probe` (§14); it needs a TestFlight build to run. Nothing else is built. Items marked *check* need confirming before their step is designed in detail.
+Status: **OUTLINE, ALL OPEN QUESTIONS ANSWERED** (decisions from Luke, 2026-11-15). **Step 1 (count) built and run on Luke's phone (§14); step 2 (tables, thumbnails, first sync into Personal) built (§15, §16).** Next: step 3, the page. Items marked *check* need confirming before their step is designed in detail.
 
 Goal: a **Photos** page that gathers the family's photos from iCloud Photos and Google Photos into one library inside Liv, shared in Household and private in Personal, searchable by an assistant later. It should also **encourage cleaning up**: finding and removing duplicates, old screenshots and other clutter. It starts as a layer over Apple and Google and takes over the originals when the home server arrives.
 
@@ -230,7 +230,26 @@ No Photos page yet. The count lives in **Settings › Beta › Photos Check** (a
 
 **Verified:** `test/photos-migration.test.js` (11) against PGlite with the real Document and messaging migrations, as Luke, his wife, a coworker, a stranger and anon: Personal private, Household shared, moves only between scopes the person uses, sources follow their photo and can't be doubled or re-pointed, no hard deletes, purge only after 30 days, thumbnails only for photos the caller can see. **Planted bugs:** six, each caught; three of them only once a second safeguard was also removed (the read policy re-checks a move; column grants and the guard both stop author and source changes).
 
-**Still to build in step 2:** the storage function's photo links (a `doc-storage` change, a Supabase function, not a Netlify deploy), the phone's thumbnail export and first sync into Personal, and the panel bug.
+**Rest of step 2:** §16.
+
+---
+
+## 16. Step 2: the first sync (built 2026-11-16)
+
+Settings › Beta › Photos Check gains **Sync to Personal** (admin; only into the person's own `u-<uid>` library, decision 5).
+
+- **Phone** (`PhotoLibraryPlugin.swift`): `deviceKey()` (a hash of the vendor id: stable for this install, says nothing about the phone), `list({ offset, limit, since })` (details in pages, oldest first so new photos never shift a page; `since` keeps only photos added or changed after it), `thumbs({ ids })` (JPEG, longest side 400 px, quality 0.72, made on the phone; iCloud-only photos are fetched at that size, never the original), and `status()` now says whether the network is expensive.
+- **`photos/sync.js`** (tested with a fake phone, database and store): a photo's record id is derived from (device key, the phone's id for it), so a re-run or a crash never doubles a photo; inserts ignore rows that exist; each batch of 50 first asks which already have a thumbnail and skips them; the "listed up to" time is saved only after a run with no failed thumbnails, so anything missed is retried. Newest photos go first.
+- Per batch of 50: one read, one insert of records, one of sources, two signing calls, 50 uploads straight to R2, one update. No photo bytes touch Supabase.
+- **Storage function** (`doc-storage`): a `photos` tier signs `ph/<photo id>/thumb` only when `photo_blob_allowed` says the caller can see the photo (and, to delete, that it's 30 days in Recently deleted); 2 MB cap per thumbnail; no scope in the request. Document's paths are unchanged.
+- **Panel:** progress, Stop, a cellular warning before uploading, what's in Personal (count, thumbnail storage) and the 12 newest thumbnails (links last 10 minutes; the panel refreshes after 5). Going to the background stops the sync; Sync again carries on.
+- **Settings sheet:** sized and centred within the safe area, so a long panel no longer scrolls under the status bar (§14's bug).
+
+**Verified:** `test/photos-sync.test.js` (9: ids, rows, a full sync newest first, a re-run that uploads nothing, a stop part way that finishes cleanly, failed thumbnails retried, Personal only, the summary); photos tests in `test/documents-edge-function.test.js` (signing, refusals, deletes, mixed batches); planted bugs in both caught; full suite, build, boot check; the Settings sheet at 360 px (centred, a long panel scrolls inside it).
+
+**Not verified:** the Swift (compiled by the PR's iOS check) and anything on the iPhone: thumbnail quality and speed, iCloud-only photos, memory over 17,768 photos, the safe-area fix under the real status bar.
+
+**Not yet:** photos deleted or changed on the phone after syncing (step 3 with the page); Household; the page itself.
 
 ---
 

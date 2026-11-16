@@ -29,6 +29,11 @@ beforeAll(async () => {
       const { p_scope, p_file } = JSON.parse(init.body);
       return new Response(JSON.stringify(deletable.has(`${p_scope}/${p_file}`)), { status: 200 });
     }
+    if (String(url).endsWith("/rest/v1/rpc/photo_blob_allowed")) {
+      const { p_photo, p_delete } = JSON.parse(init.body);
+      const ok = init.headers.authorization === "Bearer good.token" && (p_delete ? deletable.has(`ph/${p_photo}`) : allowed.has(`photo:${p_photo}`));
+      return new Response(JSON.stringify(ok), { status: 200 });
+    }
     if (String(url).endsWith("/rest/v1/rpc/doc_pblob_deletable")) {
       const { p_scope, p_file } = JSON.parse(init.body);
       return new Response(JSON.stringify(deletable.has(`p/${p_scope}/${p_file}`)), { status: 200 });
@@ -130,6 +135,42 @@ describe("doc-storage", () => {
     for (const part of ["vh24", "vd00", "vw53", "vn123", `i${hex}0`, "v", "iABC", `vn${hex.toUpperCase()}`]) {
       expect((await call({ op: "get", items: [{ scope, fileId, part, tier: "everyday" }] })).status, part).toBe(400);
     }
+  });
+
+  it("photo thumbnails: ph/<photo id>/thumb, only for photos the caller can see, no scope, small", async () => {
+    const p1 = "a0000000-0000-0000-0000-000000000001";
+    const p2 = "a0000000-0000-0000-0000-000000000002";
+    allowed = new Set([`photo:${p1}`, `photo:${p2}`]);
+    const res = await call({ op: "put", items: [{ tier: "photos", fileId: p1, part: "thumb", size: 30000 }, { tier: "photos", fileId: p2.toUpperCase(), part: "thumb", size: 900 }] });
+    expect(res.status).toBe(200);
+    const { urls } = await res.json();
+    expect(urls[0].url).toMatch(new RegExp(`^https://acct\\.r2\\.cloudflarestorage\\.com/liv-documents/ph/${p1}/thumb\\?`));
+    expect(urls[1].url).toContain(`/ph/${p2}/thumb?`);
+    // one photo the caller can't see spoils the batch
+    allowed = new Set([`photo:${p1}`]);
+    expect((await call({ op: "get", items: [{ tier: "photos", fileId: p1, part: "thumb" }, { tier: "photos", fileId: p2, part: "thumb" }] })).status).toBe(403);
+    expect((await call({ op: "get", items: [{ tier: "photos", fileId: p1, part: "thumb" }] }, { auth: "Bearer other.token" })).status).toBe(403);
+    // deletes only once the database says so
+    expect((await call({ op: "delete", items: [{ tier: "photos", fileId: p1, part: "thumb" }] })).status).toBe(403);
+    deletable = new Set([`ph/${p1}`]);
+    expect((await call({ op: "delete", items: [{ tier: "photos", fileId: p1, part: "thumb" }] })).status).toBe(200);
+    deletable = new Set();
+    for (const bad of [
+      { op: "get", items: [{ tier: "photos", fileId: p1, part: "content" }] },
+      { op: "get", items: [{ tier: "photos", scope, fileId: p1, part: "thumb" }] },
+      { op: "get", items: [{ tier: "photos", fileId: "nope", part: "thumb" }] },
+      { op: "put", items: [{ tier: "photos", fileId: p1, part: "thumb" }] },
+      { op: "put", items: [{ tier: "photos", fileId: p1, part: "thumb", size: 3 * 1024 * 1024 }] },
+      { op: "get", items: [{ tier: "videos", fileId: p1, part: "thumb" }] },
+    ]) expect((await call(bad)).status).toBe(400);
+  });
+
+  it("a batch mixing photos and documents checks both", async () => {
+    const p1 = "a0000000-0000-0000-0000-000000000001";
+    allowed = new Set([`photo:${p1}`]);
+    expect((await call({ op: "get", items: [{ tier: "photos", fileId: p1, part: "thumb" }, { scope, fileId, part: "content" }] })).status).toBe(403);
+    allowed = new Set([`photo:${p1}`, scope]);
+    expect((await call({ op: "get", items: [{ tier: "photos", fileId: p1, part: "thumb" }, { scope, fileId, part: "content" }] })).status).toBe(200);
   });
 
   it("is off when switched off or not configured", async () => {

@@ -1,6 +1,6 @@
 ---
 name: photos
-description: Use for changes to Photos — the planned page that gathers the family's iCloud and Google photos into one library (Household shared, Personal private), with clean-up, a Face ID private album and on-device search. Today only build step 1 exists, the Photos Check in Settings › Beta (the iPhone's PhotoLibrary plugin counts the library; photos/probe.js builds the report).
+description: Use for changes to Photos — the planned page that gathers the family's iCloud and Google photos into one library (Household shared, Personal private), with clean-up, a Face ID private album and on-device search. Built so far — Settings › Beta › Photos Check: the library count (photos/probe.js) and the first sync into Personal (photos/sync.js, the PhotoLibrary plugin, the photo_ tables, the doc-storage photos tier).
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -48,6 +48,16 @@ You are the **Photos** domain agent for **Live / Tableplan**.
   Check, admin). The result stays on the device (`live-photos-probe-v1`).
 - Sizes and "on this phone" use `PHAssetResource`'s undocumented `fileSize` and
   `locallyAvailable`, read only when present; otherwise counted as unknown.
+  On Luke's phone (2026-11-16) sizes worked; `locallyAvailable` didn't answer.
+- **Step 2 (2026-11-16):** tables `photo_items` / `photo_sources`
+  (`migrations/2026-11-16-photos.sql`, live). The first sync: the plugin's
+  `deviceKey` / `list` / `thumbs`, `photos/sync.js` (deterministic ids from device key
+  + the phone's id; safe to stop and re-run), the `photos` tier in
+  `supabase/functions/doc-storage` (`ph/<photo id>/thumb`, checked with
+  `photo_blob_allowed`), and "Sync to Personal" in the Photos Check panel
+  (`runPhotosSync`, `loadPhotosSyncSummary` in app.js).
+- A thumbnail is uploaded only after its record exists (the storage function signs
+  nothing for a photo with no row). Thumbnail links last 10 minutes.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are

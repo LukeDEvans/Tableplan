@@ -2655,6 +2655,47 @@ select:focus {
 .dialog-head-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .dialog-head-title-row h2 { margin: 0; }
 .context-settings-back-btn { flex-shrink: 0; }
+/* Keep the Settings sheet clear of the status bar and home indicator on the phone
+   (Luke, 2026-11-16: a long panel scrolled under the clock). The dialog is centred
+   within the safe area instead of the whole screen. */
+.context-settings-dialog {
+  top: var(--safe-top);
+  bottom: var(--safe-bottom);
+  max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 28px);
+}
+.context-settings-dialog > .recipe-form {
+  max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 28px);
+}
+/* Photos Check: the newest synced thumbnails. */
+.photos-sync-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.photos-sync-grid figure {
+  position: relative;
+  margin: 0;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--line);
+}
+.photos-sync-grid img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.photos-sync-grid figcaption {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  color: var(--surface);
+  background: color-mix(in srgb, var(--ink) 72%, transparent);
+}
 
 /* Settings › Household (Luke, 2026-10-14): read-only list + Edit; names always
    fit (ellipsis), roles are small pills, nothing scrolls sideways. */
