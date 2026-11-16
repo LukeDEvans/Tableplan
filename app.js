@@ -3527,6 +3527,7 @@ async function initializeSupabaseAuth() {
         purgeLocalMusicContent(),
         purgeLocalFinanceTxnStore(),
         keepSecureStores ? Promise.resolve() : purgeLocalMessaging(), // the old session is already gone here, so only the local wipe happens
+        keepSecureStores ? Promise.resolve() : forgetPhotoSyncDevice(),
         syncShareTokenForSession(false),
       ]);
       window.location.reload();
@@ -4773,6 +4774,7 @@ async function toggleAuth() {
     purgeLocalMusicContent();   // same: drop local uploaded-music blobs (live-music IDB)
     purgeLocalFinanceTxnStore(); // same: drop the durable-transaction mirror (live-finance-txns IDB)
     await purgeLocalMessaging(messagingHeaders); // secure messages: remove this device from the account, delete its store and key
+    await forgetPhotoSyncDevice(); // background photo sync stops on this iPhone
     await syncShareTokenForSession(false); // the iPhone Share Extension stops sending receipts for this account
     try {
       await supabaseClient.auth.signOut();
@@ -18991,7 +18993,18 @@ async function renderPhotosCheckPanel() {
       ${report.notes.map((n) => `<p class="settings-panel-note">${escapeHtml(n)}</p>`).join("")}` : ""}`;
   body.querySelector("[data-photos-count]")?.addEventListener("click", () => runPhotosProbe());
   body.querySelector("[data-photos-sync]")?.addEventListener("click", () => runPhotosSync());
-  body.querySelector("[data-photos-sync-stop]")?.addEventListener("click", () => photosSyncRun?.controller.abort());
+  body.querySelector("[data-photos-sync-stop]")?.addEventListener("click", () => {
+    if (photosNative?.running) { try { nativePhotoLibrary()?.syncStop(); } catch { /* it ends by itself */ } }
+    else photosSyncRun?.controller.abort();
+  });
+  body.querySelector("[data-photos-auto]")?.addEventListener("change", async (e) => {
+    try { photosNative = await nativePhotoLibrary().syncOptions({ auto: e.target.checked }); } catch { showMailToast("Couldn't change that."); }
+  });
+  body.querySelector("[data-photos-cellular]")?.addEventListener("change", async (e) => {
+    try { photosNative = await nativePhotoLibrary().syncOptions({ cellular: e.target.checked }); } catch { showMailToast("Couldn't change that."); }
+  });
+  body.querySelector("[data-photos-forget]")?.addEventListener("click", () => turnOffPhotosSyncHere());
+  if (plugin && photosHasNativeSync(plugin) && !photosNative && !photosNativeSub) refreshPhotosNative().then(() => { if (photosNative && contextSettingsKind === "photos-check") renderPhotosCheckPanel(); });
   // Thumbnail links last 10 minutes; refresh the totals and links after 5.
   if (plugin && !photosSyncRun && !photosSyncSummaryLoading && (!photosSyncSummary || Date.now() - (photosSyncSummary.at || 0) > 5 * 60 * 1000)) loadPhotosSyncSummary();
   body.querySelector("[data-photos-cancel]")?.addEventListener("click", () => { try { nativePhotoLibrary()?.cancel(); } catch { /* the count ends by itself */ } });
@@ -19071,8 +19084,74 @@ function writePhotosSince(deviceKey, ms) {
     localStorage.setItem(PHOTOS_SYNC_KEY, JSON.stringify(all));
   } catch { /* the next run lists everything again, which is safe */ }
 }
+// A build with the native engine (PHOTOS_DESIGN.md §17) syncs with the screen closed,
+// on open and in the background; older builds fall back to the web view sync below.
+let photosNative = null;          // the engine's syncStatus(), or null on an older build
+let photosNativeSub = null;       // progress / done listeners, added once
+let photosNativeBusy = false;     // setup or turning off in progress
+const photosHasNativeSync = (plugin) => typeof plugin?.syncStatus === "function";
+async function refreshPhotosNative() {
+  const plugin = nativePhotoLibrary();
+  if (!photosHasNativeSync(plugin)) { photosNative = null; return; }
+  try { photosNative = await plugin.syncStatus(); } catch { photosNative = null; }
+  if (!photosNativeSub) {
+    photosNativeSub = true;
+    const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel(); };
+    let lastPaint = 0;
+    try {
+      await plugin.addListener("photoSyncProgress", (p) => {
+        photosNative = { ...(photosNative || {}), running: true, trigger: p?.trigger, progress: p };
+        const t = Date.now();
+        if (t - lastPaint > 400) { lastPaint = t; redraw(); }
+      });
+      await plugin.addListener("photoSyncDone", (r) => {
+        photosNative = { ...(photosNative || {}), running: false, progress: null, ...(r && (r.trigger === "user" || r.added || r.error) ? { last: r } : {}) };
+        photosSyncSummary = null;
+        refreshPhotosNative().then(redraw);
+      });
+    } catch { /* the panel still reads status when it opens */ }
+  }
+}
+function photosNativeLastText(last, formatCount) {
+  if (!last) return "";
+  const when = last.at ? new Date(last.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const how = { user: "you started", open: "on opening Liv", refresh: "in the background", processing: "in the background" }[last.trigger] || "";
+  const head = `Last sync${how ? ` (${how})` : ""}${when ? `, ${when}` : ""}`;
+  if (last.error) return `${head}: stopped, ${last.error}.`;
+  return `${head}: ${last.stopped ? "stopped part way, " : ""}${formatCount(last.added || 0)} added, ${formatCount(last.skipped || 0)} already there${last.thumbsFailed ? `, ${formatCount(last.thumbsFailed)} thumbnails to retry (${last.uploadError || "no reason given"})` : ""}.`;
+}
+function photosNativeSectionHtml(formatCount) {
+  const n = photosNative;
+  const sum = photosSyncSummary;
+  const mb = (b) => `${(Number(b || 0) / (1024 * 1024)).toFixed(b > 100 * 1024 * 1024 ? 0 : 1)} MB`;
+  const p = n.running ? (n.progress || {}) : null;
+  const line = p ? (p.total ? `Syncing… ${formatCount(p.done || 0)} of ${formatCount(p.total)} (${formatCount(p.added || 0)} added)` : "Syncing…") : "";
+  return `
+    <div class="fin-subhead">Sync to Personal</div>
+    <p class="settings-panel-note">Adds each photo and video to your Personal Photos with a small thumbnail (about 30 KB). Originals stay on this phone and in iCloud. ${n.continuedTasks ? "A sync you start keeps going with the screen locked; iOS shows its progress." : "Keep Liv open for a big first sync."}</p>
+    ${sum && !sum.error ? `<p class="settings-panel-note">In Personal now: ${escapeHtml(formatCount(sum.count))} photos and videos, ${escapeHtml(mb(sum.thumbBytes))} of thumbnails.</p>` : ""}
+    ${sum?.error ? `<p class="settings-panel-note">Couldn't read Personal Photos (${escapeHtml(sum.error)}).</p>` : ""}
+    ${line ? `<p class="settings-panel-note" data-photos-sync-progress>${escapeHtml(line)}</p>` : ""}
+    ${!n.running && n.last ? `<p class="settings-panel-note">${escapeHtml(photosNativeLastText(n.last, formatCount))}</p>` : ""}
+    <div class="settings-action-grid">
+      ${n.running ? `<button type="button" data-photos-sync-stop>Stop</button>` : `<button type="button" data-photos-sync ${photosProbeRun || photosNativeBusy ? "disabled" : ""}>${sum?.count ? "Sync now" : "Sync to Personal"}</button>`}
+    </div>
+    ${n.registered ? `
+    <label class="page-access-row">
+      <span class="page-access-text"><span class="page-access-name">Sync automatically</span><span class="page-access-note">New photos go up when Liv opens, and in the background a few times a day (iOS picks when, usually while charging on Wi-Fi).</span></span>
+      <input type="checkbox" class="live-toggle" data-photos-auto aria-label="Sync automatically" ${n.auto ? "checked" : ""} />
+    </label>
+    <label class="page-access-row">
+      <span class="page-access-text"><span class="page-access-name">Use cellular for automatic syncs</span><span class="page-access-note">Off: automatic syncs wait for Wi-Fi.</span></span>
+      <input type="checkbox" class="live-toggle" data-photos-cellular aria-label="Use cellular for automatic syncs" ${n.cellular ? "checked" : ""} />
+    </label>
+    <div class="settings-action-grid"><button type="button" data-photos-forget ${n.running || photosNativeBusy ? "disabled" : ""}>Turn off syncing on this iPhone</button></div>` : ""}
+    ${sum?.recent?.length ? `<div class="photos-sync-grid" aria-label="Newest in Personal">${sum.recent.map((r) => `
+      <figure>${r.url ? `<img src="${escapeHtml(r.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}${r.kind === "video" && r.duration ? `<figcaption>${escapeHtml(`${Math.floor(r.duration / 60)}:${String(Math.round(r.duration % 60)).padStart(2, "0")}`)}</figcaption>` : ""}</figure>`).join("")}</div>` : ""}`;
+}
 function photosSyncSectionHtml(formatCount) {
   const scope = photosPersonalScope();
+  if (scope && photosNative) return photosNativeSectionHtml(formatCount);
   const run = photosSyncRun;
   const sum = photosSyncSummary;
   const mb = (b) => `${(Number(b || 0) / (1024 * 1024)).toFixed(b > 100 * 1024 * 1024 ? 0 : 1)} MB`;
@@ -19118,6 +19197,7 @@ async function runPhotosSync() {
   const plugin = nativePhotoLibrary();
   const scope = photosPersonalScope();
   if (!plugin || !scope || photosSyncRun || photosProbeRun) return;
+  if (photosHasNativeSync(plugin)) return runPhotosNativeSync(plugin);
   try {
     const status = await plugin.status();
     if (status?.access !== "authorized" && status?.access !== "limited") {
@@ -19160,6 +19240,73 @@ async function runPhotosSync() {
     photosSyncSummary = null;
     redraw();
   }
+}
+
+async function runPhotosNativeSync(plugin) {
+  if (photosNativeBusy || photosNative?.running) return;
+  const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel(); };
+  let cellular = false;
+  try {
+    const status = await plugin.status();
+    if (status?.access !== "authorized" && status?.access !== "limited") {
+      showMailToast("Photo access is off. Turn it on for Live in iPhone Settings › Privacy › Photos.");
+      return;
+    }
+    if (status?.expensive) {
+      if (!window.confirm("You're on cellular data. A big sync uploads about 30 KB per photo (roughly 0.5 GB for 17,000 photos). Sync anyway?")) return;
+      cellular = true;
+    }
+  } catch { /* carry on; the engine checks again */ }
+  photosNativeBusy = true;
+  redraw();
+  try {
+    await refreshPhotosNative();
+    if (!photosNative?.registered) {
+      // Once per iPhone: trade this sign-in for a photo-only key (kept in the Keychain).
+      const token = authSession?.access_token;
+      if (!token) { showMailToast("Sign in to sync."); return; }
+      photosNative = await plugin.syncSetup({
+        endpoint: `${supabaseBaseUrl()}/functions/v1/photo-sync`,
+        apiKey: supabaseConfig().anonKey,
+        token,
+        name: "iPhone",
+      });
+    }
+    await plugin.syncStart({ cellular });
+    photosNative = { ...(photosNative || {}), running: true, progress: null };
+  } catch (error) {
+    const code = String(error?.code || "");
+    showMailToast(code === "DENIED" ? "Photo access is off. Turn it on for Live in iPhone Settings › Privacy › Photos."
+      : code === "SIGNED_OUT" ? "Sign in again, then tap Sync."
+        : code === "BUSY" ? "A sync is already running."
+          : `Couldn't start the sync (${String(error?.message || error).slice(0, 80)}).`);
+  } finally {
+    photosNativeBusy = false;
+    redraw();
+  }
+}
+// Revokes this iPhone's photo key on the server (the owner may; final) and forgets it here.
+async function turnOffPhotosSyncHere() {
+  const plugin = nativePhotoLibrary();
+  if (!photosHasNativeSync(plugin) || photosNativeBusy) return;
+  if (!window.confirm("Turn off photo syncing on this iPhone? Photos already in Liv stay. Tap Sync later to turn it back on.")) return;
+  photosNativeBusy = true;
+  try {
+    const id = photosNative?.deviceId;
+    if (id && /^[0-9a-f-]{36}$/i.test(id)) {
+      try { await photosRest(`photo_sync_devices?id=eq.${id}&revoked_at=is.null`, { method: "PATCH", prefer: "return=minimal", body: { revoked_at: new Date().toISOString() } }); }
+      catch { /* forgotten here anyway: without the secret the key is useless */ }
+    }
+    await plugin.syncForget();
+    await refreshPhotosNative();
+  } finally {
+    photosNativeBusy = false;
+    if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel();
+  }
+}
+// Sign-out: this iPhone stops syncing the account's photos (the key stays useless without its secret).
+async function forgetPhotoSyncDevice() {
+  try { const plugin = nativePhotoLibrary(); if (photosHasNativeSync(plugin)) await plugin.syncForget(); } catch { /* nothing to forget */ }
 }
 
 // Where a Settings panel's back arrow goes (anything not listed → the main list).
