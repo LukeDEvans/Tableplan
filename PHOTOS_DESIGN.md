@@ -269,6 +269,8 @@ Settings › Beta › Photos Check gains **Sync to Personal** (admin; only into 
   3. **On its own:** a background refresh iOS runs a few times a day (usually while charging on Wi-Fi), for photos taken without opening Liv. iOS decides when.
   The Apple-specific part stays small: reading the library, making JPEGs, iOS's task scheduling, and the Keychain.
 
+**Applied 2026-11-16 with Luke's OK** (schema_migrations 20261116213000; each function locked to the server in the same step that made it). Checked live: row security and both policies, no anon access, signed-in users can't read secrets, add or delete devices, only the server runs the `photo_sync_*` functions, the 1,550 photos untouched.
+
 **Verified so far:** `test/photos-sync-devices-migration.test.js` (11, PGlite, as Luke, his wife, a stranger, anon and the server); `test/photos-sync-function.test.js` (7: the function run against the real migration, end to end); planted bugs caught in both.
 
 ---

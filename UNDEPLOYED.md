@@ -24,3 +24,5 @@ Each entry: what shipped · PR · post-deploy steps.
   Post-deploy (web): nothing beyond the Settings sheet fix; the sync is phone-only. On the phone: run Sync to Personal on Wi-Fi with the screen open; check the totals and the newest thumbnails; Supabase API logs show no repeated reads of `photo_items`.
 - **iPhone uploads around CapacitorHttp** · #244. Byte uploads (Photos thumbnails, Document files) use the web view's own fetch; the native HTTP layer was mangling them. Photos panel names the step a sync stopped at. Needs the **TestFlight build**; on the web nothing changes.
   Post-deploy: on the phone, Photos Check › Sync again (thumbnails appear under the button); add a file to Document from the phone and open it.
+- **Photos: device keys + sync protocol** · #246 · PHOTOS_DESIGN.md §17. The table and functions are **live** (applied 2026-11-16) and the `photo-sync` Supabase function is deployed; nothing in the app uses them until the native sync engine ships (next PR, TestFlight).
+  Post-deploy: none for the web.
