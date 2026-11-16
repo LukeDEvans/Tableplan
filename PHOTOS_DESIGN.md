@@ -50,19 +50,20 @@ Goal: a **Photos** page that gathers the family's photos from iCloud Photos and 
 
 ---
 
-## 3. Data model (sketch)
+## 3. Data model
 
-New tables with a `photo_` prefix. **Nothing in `tableplan_states`, no `STATE_SCHEMA_VERSION` bump** (same rule as Document). Row security by scope: Household group id or `u-<uid>`.
+`migrations/2026-11-16-photos.sql`, applied 2026-11-16 (§15). **Nothing in `tableplan_states`, no `STATE_SCHEMA_VERSION` bump** (same rule as Document). Row security by scope, through Document's existing `doc_can_access()`: Household group id or `u-<uid>`.
 
-- `photo_items`: id, scope, kind (photo / video / live / screenshot), taken_at, width, height, duration, place (lat, lng, name), **content hash**, labels, text read from the picture, favourite, private, added_by, deleted_at.
-- `photo_sources`: which device or import holds the original (phone library id, Google export file, home server path later). One photo can have several.
-- `photo_albums`, `photo_album_items`: manual albums, plus automatic ones (a trip, a recipe, an event).
-- `photo_people`, `photo_faces`: named people and where they appear.
+- `photo_items`: id (made on the phone), scope, kind (photo / video), screenshot / Live / burst flags, taken_at, width, height, duration, bytes of the original, lat, lng, place_name, content_hash (later), favourite, labels and body_text (later, §6), has_thumb, thumb_bytes, added_by, created / updated / deleted.
+- `photo_sources`: where an original is: `iphone` (a per-install device key + Apple's local id), `google`, `upload`, `home` (stage 2). Unique per (kind, device key, local id), so a re-sync can't double a photo. `missing_at` when the source no longer has it.
+- Albums and people come with their steps (6 and 11), as their own tables.
 
 Rules:
-- **Every photo belongs to one scope** (VIEWS_DESIGN §2.2). Sharing a Personal photo with the household **moves** it; Personal can show Household as a layer.
+- **Every photo belongs to one scope** (VIEWS_DESIGN §2.2), and **can move** (decision 5): the update policy needs access to the old scope and the new one, so a person can only move a photo between scopes they use. Sources follow their photo.
 - **Duplicates** are matched by content hash first, then by date + size + camera for copies Google re-compressed. Exact matches across sources become one photo with two sources; near matches are offered in Clean up (§8), never merged silently.
-- **Thumbnails** go in R2 under `ph/<scope>/<id>/thumb` (about 400 px, ~30 KB), fetched with short-lived links from the existing `doc-storage` function or a twin of it.
+- **Thumbnails** go in R2 at `ph/<photo id>/thumb` (about 400 px, ~30 KB). No scope in the path, so moving a photo copies nothing. The storage function signs a link only when `photo_blob_allowed()` says the caller can see the photo; with no row, nobody can upload.
+- Nothing is hard-deleted by a client: Recently deleted for 30 days, then `photo_purge()` (sources go with it, and the thumbnail may then be deleted).
+- `photo_usage(scope)` gives the thumbnail bytes, added to Document's figure for the 7 GB warning.
 - Clients fetch **changes since** their last sync, never the whole table.
 
 ---
@@ -154,11 +155,11 @@ Photos exposes the same small set of calls every page should offer the future as
 
 | Item | Size | Volume (guess) | Where |
 |---|---|---|---|
-| Thumbnail | ~30 KB | 30,000 photos ≈ 0.9 GB | R2 (free tier is 10 GB, shared with Document) |
-| Record | ~1 KB | 30,000 ≈ 30 MB | Supabase rows |
+| Thumbnail | ~30 KB | 17,768 now ≈ 521 MB (Luke's library, counted 2026-11-16) | R2 (free tier is 10 GB, shared with Document) |
+| Record | ~1 KB | 17,768 ≈ 17 MB | Supabase rows |
 | Originals, video, screen-size copies | — | — | **Not stored in stage 1** (decisions 1, 6, 7) |
 
-- The real library size is unknown: count it first (build step 1).
+- **Counted (2026-11-16, §14):** Luke's library is 17,768 items, 102 GB of originals; thumbnails ≈ 521 MB, 5% of the free tier.
 - Thumbnails download free from R2 and are cached on each device; nothing passes through a Netlify function or `tableplan_states`.
 - The first sync of a large library is the one heavy moment: do it in batches, on Wi-Fi and power, with a progress line.
 - Storage shows in the same "storage used" figure as Document, with the 7 GB warning.
@@ -213,6 +214,23 @@ No Photos page yet. The count lives in **Settings › Beta › Photos Check** (a
 **Not verified:** the Swift (no compiler in the session; the iOS compile check runs on the pull request) and everything on an iPhone: the permission prompt, whether `fileSize` and `locallyAvailable` answer on the current iOS, how long a full library takes, memory use. That needs the TestFlight build.
 
 **What the result decides:** if thumbnails fit the free tier (§11), step 2 goes ahead as written. If most originals are only in iCloud, the first sync (step 2) must ask iOS for thumbnails only, never originals.
+
+---
+
+**Result (Luke's phone, 2026-11-16):** 17,277 photos and 491 videos (3 h 1 min), May 2012 to Nov 2026; originals 88.0 GB of photos and 13.7 GB of video (102 GB); 254 screenshots (637 MB), 8,987 Live Photos, 5 bursts, 97 favourites, 87% with a place. 2022 (6,727) and 2023 (5,075) hold two-thirds of it. Counted in 144 seconds.
+- **"On this phone" didn't work:** every item came back unknown (`locallyAvailable` doesn't answer on this iOS). Sizes did. Not needed for step 2 (iOS supplies thumbnails either way); stage 2 needs another way to tell.
+- **Screenshots are a small part** (254), so near-duplicates are the bigger clean-up; consider moving them ahead of screenshots in Clean up.
+- **Panel bug:** the Settings sheet's top row scrolls under the status bar on the phone. Fix with step 2's build.
+
+---
+
+## 15. Step 2: the tables (applied 2026-11-16)
+
+`migrations/2026-11-16-photos.sql` (§3). Additive only: two tables, their row security, a guard trigger and four functions (`photo_can_access`, `photo_purge`, `photo_blob_allowed`, `photo_usage`). **Applied 2026-11-16 with Luke's OK** (schema_migrations 20261116120500). Checked live afterwards: row security on both tables, three policies each, the guard triggers, no anon access, no DELETE or TRUNCATE for signed-in users, the author column not updatable, the guard function not callable; the security advisor lists the four functions as callable by signed-in users, which is intended (each answers only for photos the caller can see).
+
+**Verified:** `test/photos-migration.test.js` (11) against PGlite with the real Document and messaging migrations, as Luke, his wife, a coworker, a stranger and anon: Personal private, Household shared, moves only between scopes the person uses, sources follow their photo and can't be doubled or re-pointed, no hard deletes, purge only after 30 days, thumbnails only for photos the caller can see. **Planted bugs:** six, each caught; three of them only once a second safeguard was also removed (the read policy re-checks a move; column grants and the guard both stop author and source changes).
+
+**Still to build in step 2:** the storage function's photo links (a `doc-storage` change, a Supabase function, not a Netlify deploy), the phone's thumbnail export and first sync into Personal, and the panel bug.
 
 ---
 
