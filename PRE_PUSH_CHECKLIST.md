@@ -39,6 +39,16 @@ screen, nothing important clipped at the right edge:
       the deploy, move each entry's post-deploy steps into
       [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md) (under a heading for this deploy), do
       the ones you can, then empty UNDEPLOYED.md.
+- [ ] **Every migration is on the live database first** (Luke, 2026-11-16: "ensure everything
+      … is migrated before using the deploy"). Check what each file in `migrations/` and the
+      root `supabase-*.sql` creates (tables, columns, functions, policies, indexes, triggers)
+      against the live schema with read-only queries — the migration history alone isn't
+      enough, since some files were run by hand under other names. Objects a later migration
+      dropped or renamed on purpose are fine; anything else missing gets applied (additive
+      parts through `execute_sql`, recorded in `schema_migrations`) before the deploy. Also
+      check each `supabase/functions/*` matches what's deployed. Last full check: 2026-11-16
+      (everything present after applying `photos` and the never-applied
+      `supabase-nutrition-estimates.sql`).
 - [ ] Deploy = a commit on `main` whose message contains `[deploy]` (e.g. merge a PR
       titled "… [deploy]").
 - [ ] After deploy: any pending post-deploy reminders (finance version-stamp +

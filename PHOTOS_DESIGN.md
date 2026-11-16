@@ -52,7 +52,7 @@ Goal: a **Photos** page that gathers the family's photos from iCloud Photos and 
 
 ## 3. Data model
 
-Written 2026-11-16 as `migrations/2026-11-16-photos.sql` (**not applied yet**; §15). **Nothing in `tableplan_states`, no `STATE_SCHEMA_VERSION` bump** (same rule as Document). Row security by scope, through Document's existing `doc_can_access()`: Household group id or `u-<uid>`.
+`migrations/2026-11-16-photos.sql`, applied 2026-11-16 (§15). **Nothing in `tableplan_states`, no `STATE_SCHEMA_VERSION` bump** (same rule as Document). Row security by scope, through Document's existing `doc_can_access()`: Household group id or `u-<uid>`.
 
 - `photo_items`: id (made on the phone), scope, kind (photo / video), screenshot / Live / burst flags, taken_at, width, height, duration, bytes of the original, lat, lng, place_name, content_hash (later), favourite, labels and body_text (later, §6), has_thumb, thumb_bytes, added_by, created / updated / deleted.
 - `photo_sources`: where an original is: `iphone` (a per-install device key + Apple's local id), `google`, `upload`, `home` (stage 2). Unique per (kind, device key, local id), so a re-sync can't double a photo. `missing_at` when the source no longer has it.
@@ -224,9 +224,9 @@ No Photos page yet. The count lives in **Settings › Beta › Photos Check** (a
 
 ---
 
-## 15. Step 2: the tables (written 2026-11-16, not applied)
+## 15. Step 2: the tables (applied 2026-11-16)
 
-`migrations/2026-11-16-photos.sql` (§3). Additive only: two tables, their row security, a guard trigger and four functions (`photo_can_access`, `photo_purge`, `photo_blob_allowed`, `photo_usage`). Waits for Luke's OK before it's applied.
+`migrations/2026-11-16-photos.sql` (§3). Additive only: two tables, their row security, a guard trigger and four functions (`photo_can_access`, `photo_purge`, `photo_blob_allowed`, `photo_usage`). **Applied 2026-11-16 with Luke's OK** (schema_migrations 20261116120500). Checked live afterwards: row security on both tables, three policies each, the guard triggers, no anon access, no DELETE or TRUNCATE for signed-in users, the author column not updatable, the guard function not callable; the security advisor lists the four functions as callable by signed-in users, which is intended (each answers only for photos the caller can see).
 
 **Verified:** `test/photos-migration.test.js` (11) against PGlite with the real Document and messaging migrations, as Luke, his wife, a coworker, a stranger and anon: Personal private, Household shared, moves only between scopes the person uses, sources follow their photo and can't be doubled or re-pointed, no hard deletes, purge only after 30 days, thumbnails only for photos the caller can see. **Planted bugs:** six, each caught; three of them only once a second safeguard was also removed (the read policy re-checks a move; column grants and the guard both stop author and source changes).
 
