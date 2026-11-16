@@ -213,7 +213,7 @@ final class PhotoSyncEngine {
                 guard self.writeSecret(secret) else { throw SyncError.bad("couldn't save the key") }
                 let old = self.config()
                 self.saveConfig(Config(endpoint: endpoint, apiKey: apiKey, deviceId: deviceId, name: name,
-                                       auto: old?.auto ?? true, cellular: old?.cellular ?? false,
+                                       auto: old?.auto ?? true, cellular: old?.cellular ?? true, // cellular on by default (Luke, 2026-11-16: unlimited data)
                                        registeredAt: Date().timeIntervalSince1970 * 1000))
                 self.scheduleBackground()
                 completion(.success(()))

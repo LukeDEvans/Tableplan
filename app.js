@@ -19142,7 +19142,7 @@ function photosNativeSectionHtml(formatCount) {
       <input type="checkbox" class="live-toggle" data-photos-auto aria-label="Sync automatically" ${n.auto ? "checked" : ""} />
     </label>
     <label class="page-access-row">
-      <span class="page-access-text"><span class="page-access-name">Use cellular for automatic syncs</span><span class="page-access-note">Off: automatic syncs wait for Wi-Fi.</span></span>
+      <span class="page-access-text"><span class="page-access-name">Use cellular for automatic syncs</span><span class="page-access-note">On by default. Off: automatic syncs wait for Wi-Fi.</span></span>
       <input type="checkbox" class="live-toggle" data-photos-cellular aria-label="Use cellular for automatic syncs" ${n.cellular ? "checked" : ""} />
     </label>
     <div class="settings-action-grid"><button type="button" data-photos-forget ${n.running || photosNativeBusy ? "disabled" : ""}>Turn off syncing on this iPhone</button></div>` : ""}
@@ -19245,16 +19245,14 @@ async function runPhotosSync() {
 async function runPhotosNativeSync(plugin) {
   if (photosNativeBusy || photosNative?.running) return;
   const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel(); };
-  let cellular = false;
+  // A sync you start uses cellular when that's what there is (Luke, 2026-11-16: unlimited
+  // data); the switch below only governs automatic syncs.
+  const cellular = true;
   try {
     const status = await plugin.status();
     if (status?.access !== "authorized" && status?.access !== "limited") {
       showMailToast("Photo access is off. Turn it on for Live in iPhone Settings › Privacy › Photos.");
       return;
-    }
-    if (status?.expensive) {
-      if (!window.confirm("You're on cellular data. A big sync uploads about 30 KB per photo (roughly 0.5 GB for 17,000 photos). Sync anyway?")) return;
-      cellular = true;
     }
   } catch { /* carry on; the engine checks again */ }
   photosNativeBusy = true;

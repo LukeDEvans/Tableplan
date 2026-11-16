@@ -66,6 +66,7 @@ describe("native photo sync matches the web view sync", () => {
     expect(modes).toContain("<string>audio</string>"); // still there
     expect(delegate).toMatch(/didFinishLaunchingWithOptions[\s\S]*registerBackgroundTasks\(\)[\s\S]*return true/);
     expect(swift).toContain("if #available(iOS 26.0, *)");
+    expect(swift).toContain("cellular: old?.cellular ?? true"); // Luke, 2026-11-16: cellular on by default
   });
 
   it("is compiled into the app", () => {

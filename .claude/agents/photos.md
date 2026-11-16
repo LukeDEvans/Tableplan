@@ -68,6 +68,8 @@ You are the **Photos** domain agent for **Live / Tableplan**.
   (same ids and device key as `photos/sync.js`; Keychain secret; a sync you start
   runs as an iOS 26 continued processing task; automatic syncs on open, at most
   every 10 minutes, plus `BGAppRefreshTask` / `BGProcessingTask`, ids in Info.plist),
+  cellular is on by default (Luke, 2026-11-16: unlimited data; the switch stays for
+  other phones),
   driven through the plugin's `sync*` calls from the Photos Check panel
   (`runPhotosNativeSync`, `turnOffPhotosSyncHere`; older builds fall back to
   `runPhotosSync`). Signing out forgets the key on the phone (`forgetPhotoSyncDevice`).

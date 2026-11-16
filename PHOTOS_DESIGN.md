@@ -276,7 +276,7 @@ Settings › Beta › Photos Check gains **Sync to Personal** (admin; only into 
 **iPhone side (built 2026-11-16, branch `claude/photos-background-native`):**
 - `ios/App/App/PhotoSyncEngine.swift` does the whole sync natively, in batches of 50, newest first: `mine` → JPEGs on the phone → `add` → `sign` (25 at a time) → uploads straight to R2 (native `URLSession`, so no CapacitorHttp problem) → `done`. Same ids and device key as the web view sync, so the 1,550 already synced are skipped. The "listed up to" time is kept on the phone and saved only after a run with no failures.
 - **Sync now** (the panel): sets up the device key the first time (the sign-in is handed over once and not kept), then starts. On iOS 26 it's a continued processing task: lock the phone and it carries on, with iOS's own progress. Older iOS: as long as iOS lets a backgrounded app run.
-- **Sync automatically** (on by default, a switch in the panel): on opening Liv (at most every 10 minutes) and in iOS's background refresh and overnight processing. Automatic syncs wait for Wi-Fi unless **Use cellular** is on, and skip Low Power Mode.
+- **Sync automatically** (on by default, a switch in the panel): on opening Liv (at most every 10 minutes) and in iOS's background refresh and overnight processing. Automatic syncs use cellular too (**Use cellular** is on by default, Luke 2026-11-16: unlimited data; turn it off and they wait for Wi-Fi), and skip Low Power Mode. A sync you start uses cellular without asking.
 - **Turn off syncing on this iPhone** revokes the key on the server and forgets it on the phone. Signing out of Liv forgets it too (like Messages' keys). A key the server rejects (revoked) is forgotten by the phone.
 - A build without the engine still gets the web view sync.
 
