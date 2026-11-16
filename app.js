@@ -65,7 +65,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, nativePdfExport, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, nativePdfExport, nativePhotoLibrary, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
@@ -18479,7 +18479,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "watch", "watch-services", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "link-test", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "watch-services", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "link-test", "photos-check", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -18939,8 +18939,96 @@ function renderLinkTestPanel() {
   });
 }
 
+// Photos Check (Settings › Beta, admin; PHOTOS_DESIGN.md §12 step 1). The iPhone's
+// PhotoLibrary plugin counts the library (photos, videos, screenshots, sizes, how many
+// originals are on the phone vs only in iCloud); photos/probe.js turns that into the
+// report. The last result stays on this device only; "Copy results" puts it on the
+// clipboard to paste into a chat. Nothing is uploaded and no photo is read.
+const PHOTOS_PROBE_KEY = "live-photos-probe-v1";
+let photosProbeRun = null; // { done, total } while a count is running
+function readPhotosProbe() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PHOTOS_PROBE_KEY) || "null");
+    return saved && typeof saved === "object" && saved.result ? saved : null;
+  } catch { return null; }
+}
+async function renderPhotosCheckPanel() {
+  const body = elements.contextSettingsBody;
+  const plugin = nativePhotoLibrary();
+  if (!plugin && !readPhotosProbe()) {
+    body.innerHTML = `<p class="settings-panel-note">${isNativeApp()
+      ? "This build of the app can't count photos yet. Install the newest TestFlight build, then come back."
+      : "This is a check for the iPhone app: it counts the photo library on the phone. Open Settings › Beta › Photos Check there."}</p>`;
+    return;
+  }
+  const { summarizeProbe, probeReportText, formatCount } = await import("./photos/probe.js");
+  if (contextSettingsKind !== "photos-check") return;
+  const saved = readPhotosProbe();
+  const when = saved?.at ? new Date(saved.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const report = saved ? summarizeProbe(saved.result) : null;
+  const running = photosProbeRun;
+  body.innerHTML = `
+    <p class="settings-panel-note">Counts the photos and videos on this iPhone (with iCloud Photos on, that's your iCloud library). Nothing leaves the phone and no photo is opened. A large library can take a minute or two; keep this screen open.</p>
+    ${running ? `<p class="settings-panel-note" data-photos-progress>${running.total ? `Counting… ${escapeHtml(formatCount(running.done))} of ${escapeHtml(formatCount(running.total))}` : "Counting…"}</p>` : ""}
+    <div class="settings-action-grid">
+      ${plugin ? (running
+        ? `<button type="button" data-photos-cancel>Stop</button>`
+        : `<button type="button" data-photos-count>${saved ? "Count again" : "Count my library"}</button>`) : ""}
+      ${saved ? `<button type="button" data-photos-copy>Copy results</button><button type="button" data-photos-clear>Clear</button>` : ""}
+    </div>
+    ${report ? `
+      ${when ? `<p class="settings-panel-note">Counted ${escapeHtml(when)}.</p>` : ""}
+      ${report.groups.map((g) => `
+        <div class="fin-subhead">${escapeHtml(g.title)}</div>
+        <div class="link-test-list">
+          ${g.rows.map((r) => `
+            <div class="link-test-row">
+              <span class="link-test-name">${escapeHtml(r.label)}</span>
+              <span class="link-test-result">${escapeHtml(r.value)}</span>
+            </div>`).join("")}
+        </div>`).join("")}
+      ${report.notes.map((n) => `<p class="settings-panel-note">${escapeHtml(n)}</p>`).join("")}` : ""}`;
+  body.querySelector("[data-photos-count]")?.addEventListener("click", () => runPhotosProbe());
+  body.querySelector("[data-photos-cancel]")?.addEventListener("click", () => { try { nativePhotoLibrary()?.cancel(); } catch { /* the count ends by itself */ } });
+  body.querySelector("[data-photos-copy]")?.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(probeReportText(saved.result, { when })); showMailToast("Copied."); } catch { showMailToast("Couldn't copy."); }
+  });
+  body.querySelector("[data-photos-clear]")?.addEventListener("click", () => {
+    try { localStorage.removeItem(PHOTOS_PROBE_KEY); } catch { /* noop */ }
+    renderPhotosCheckPanel();
+  });
+}
+async function runPhotosProbe() {
+  const plugin = nativePhotoLibrary();
+  if (!plugin || photosProbeRun) return;
+  photosProbeRun = { done: 0, total: 0 };
+  const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open !== false) renderPhotosCheckPanel(); };
+  redraw();
+  let sub = null;
+  try {
+    try {
+      sub = await plugin.addListener("photoProbeProgress", (e) => {
+        if (!photosProbeRun) return;
+        photosProbeRun = { done: Number(e?.done) || 0, total: Number(e?.total) || 0 };
+        const line = contextSettingsKind === "photos-check" ? elements.contextSettingsBody.querySelector("[data-photos-progress]") : null;
+        if (line) line.textContent = `Counting… ${photosProbeRun.done.toLocaleString("en-US")} of ${photosProbeRun.total.toLocaleString("en-US")}`;
+      });
+    } catch { /* no progress line; the count still runs */ }
+    const result = await plugin.probe();
+    try { localStorage.setItem(PHOTOS_PROBE_KEY, JSON.stringify({ at: new Date().toISOString(), result })); } catch { /* shown this once only */ }
+  } catch (error) {
+    const code = String(error?.code || "");
+    if (code === "DENIED") showMailToast("Photo access is off. Turn it on for Live in iPhone Settings › Privacy › Photos.");
+    else if (code !== "CANCELLED") showMailToast("Couldn't count the library.");
+  } finally {
+    try { await sub?.remove?.(); } catch { /* already gone */ }
+    photosProbeRun = null;
+    redraw();
+  }
+}
+
 // Where a Settings panel's back arrow goes (anything not listed → the main list).
-const SETTINGS_PANEL_PARENT = { assistant: "beta", "ai-log": "beta", "link-test": "beta" };
+const SETTINGS_PANEL_PARENT = { assistant: "beta", "ai-log": "beta", "link-test": "beta", "photos-check": "beta" };
 
 // A small (i) button beside a setting; tapping it opens that setting's write-up
 // in a little window under the row (Luke, 2026-10-14), so long explanations
@@ -19015,6 +19103,7 @@ function renderContextSettingsDialog(kind) {
     "sign-in": "Sign-in",
     "beta": "Beta",
     "link-test": "Link Test",
+    "photos-check": "Photos Check",
     "ai-log": "AI Action Log"
   };
   const isSubPanel = !["general", "watch", "watch-services", "radio", "recreate", "read-sync", "mail-ai"].includes(kind);
@@ -19066,6 +19155,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="assistant">Assistant</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
         <button type="button" data-context-settings-action="link-test">Link Test</button>
+        <button type="button" data-context-settings-action="photos-check">Photos Check</button>
       </div>
     `;
     return;
@@ -19076,6 +19166,13 @@ function renderContextSettingsDialog(kind) {
   // "Copy results" puts them on the clipboard to paste into a chat.
   if (kind === "link-test") {
     renderLinkTestPanel();
+    return;
+  }
+
+  // Photos Check (admin, PHOTOS_DESIGN.md build step 1): count the iPhone's photo
+  // library to settle the Photos page's storage plan. Nothing leaves the phone.
+  if (kind === "photos-check") {
+    renderPhotosCheckPanel();
     return;
   }
 
@@ -19966,6 +20063,7 @@ function handleContextSettingsAction(event) {
     "api-usage": () => renderContextSettingsDialog("api-usage"),
     "beta": () => renderContextSettingsDialog("beta"),
     "link-test": () => renderContextSettingsDialog("link-test"),
+    "photos-check": () => renderContextSettingsDialog("photos-check"),
     "paper-signin": () => signInToArticlePaper(SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper)),
     "paper-signout": async () => {
       const paper = SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper);

@@ -389,3 +389,21 @@ export function nativeLinkOut() {
   } catch { _linkOut = null; }
   return _linkOut;
 }
+
+// The phone's photo library (PhotoLibrary plugin, PHOTOS_DESIGN.md §2): status(),
+// probe() → counts and sizes (nothing leaves the phone), cancel(), and
+// addListener("photoProbeProgress"). null in a browser or an app build from before
+// the plugin → the Photos check says to update the app.
+let _photoLibrary;
+export function nativePhotoLibrary() {
+  if (_photoLibrary !== undefined) return _photoLibrary;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _photoLibrary = null;
+      return _photoLibrary;
+    }
+    const p = registerPlugin("PhotoLibrary");
+    _photoLibrary = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("PhotoLibrary")) ? p : null;
+  } catch { _photoLibrary = null; }
+  return _photoLibrary;
+}
