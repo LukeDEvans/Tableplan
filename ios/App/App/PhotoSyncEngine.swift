@@ -577,6 +577,7 @@ final class PhotoSyncEngine {
             //    their details and a fresh thumbnail (an edit changes the picture).
             var historyMark: Data? = nil
             if #available(iOS 16.0, *) {
+              do {
                 let tracked = phoneChanges()
                 historyMark = tracked.token
                 var gone = Array(tracked.deleted)
@@ -607,6 +608,12 @@ final class PhotoSyncEngine {
                         failed += reThumb.count - up
                     }
                 }
+              } catch SyncError.http(400, let op) where op == "gone" || op == "update" {
+                // A server without these steps yet (PHOTOS_DESIGN.md §18): keep the old
+                // history mark so these changes are sent once it has them, and go on
+                // adding new photos.
+                historyMark = nil
+              }
             }
 
             // 2. Newest first, so the photos you know best show up first; only those

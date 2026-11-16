@@ -14,7 +14,7 @@ export const PAGE_GROUPS = [
   { key: "plan",     label: "Plan",     pages: ["calendar", "meal-plan"] },
   { key: "inform",   label: "Inform",   pages: ["news"] },
   { key: "resource", label: "Resource", pages: ["finance", "shop", "documents"] },
-  { key: "media",    label: "Media",    pages: ["watch", "listen"] },
+  { key: "media",    label: "Media",    pages: ["watch", "listen", "photos"] },
   { key: "message",  label: "Message",  pages: ["mail"] },
   { key: "recreate", label: "Recreate", pages: ["explore", "exercise", "leisure"] },
 ];
@@ -25,7 +25,7 @@ const AREA_GROUP = {
   plan: "plan", eat: "plan", do: "plan",
   news: "inform", weather: "inform",
   finance: "resource", shop: "resource", inventory: "resource", documents: "resource",
-  watch: "media", media: "media",
+  watch: "media", media: "media", photos: "media",
   mail: "message", contacts: "message",
   explore: "recreate", play: "recreate", recreate: "recreate", scores: "recreate",
 };

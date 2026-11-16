@@ -40,8 +40,9 @@ scoping**, so it is still shared infrastructure: every change here is flagged to
   (`viewDisplayPrefs`) belong to the settings agent.
 
 ## Decisions (Luke) — keep these true
-- Three views: **Personal** (Calendar, News, Finance, Watch, Listen, Mail, Exercise,
-  Leisure), **Household** (Calendar, Meal Plan, Finance, Shop, Watch, Listen, Explore),
+- Three views: **Personal** (Calendar, News, Finance, Document, Watch, Listen, Photos,
+  Mail, Exercise, Leisure; Photos is Personal only until it can share into Household,
+  Luke 2026-11-16), **Household** (Calendar, Meal Plan, Finance, Shop, Watch, Listen, Explore),
   **Business** (Calendar). Only the admin has more than one; everyone else has Household
   only, with the band and no chevrons. Multi-view is gated by the server's role, not
   hidden UI.

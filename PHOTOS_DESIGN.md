@@ -1,6 +1,6 @@
 # Photos — outline
 
-Status: **OUTLINE, ALL OPEN QUESTIONS ANSWERED** (decisions from Luke, 2026-11-15). **Step 1 (count) built and run on Luke's phone (§14); step 2 (tables, thumbnails, first sync into Personal) built (§15, §16).** Next: step 3, the page. Items marked *check* need confirming before their step is designed in detail.
+Status: **OUTLINE, ALL OPEN QUESTIONS ANSWERED** (decisions from Luke, 2026-11-15). **Step 1 (count) built and run on Luke's phone (§14); step 2 (tables, thumbnails, first sync into Personal) built (§15, §16); background sync built (§17); step 3, the page, built (§18).** Items marked *check* need confirming before their step is designed in detail.
 
 Goal: a **Photos** page that gathers the family's photos from iCloud Photos and Google Photos into one library inside Liv, shared in Household and private in Personal, searchable by an assistant later. It should also **encourage cleaning up**: finding and removing duplicates, old screenshots and other clutter. It starts as a layer over Apple and Google and takes over the originals when the home server arrives.
 
@@ -281,6 +281,27 @@ Settings › Beta › Photos Check gains **Sync to Personal** (admin; only into 
 - A build without the engine still gets the web view sync.
 
 **Verified:** `test/photos-native-parity.test.js` (6: the Swift's ids, device key, ops, batch limits, Keychain setting and task names match the JS, the server and Info.plist); the full suite; the build; the boot check. **Not verified:** the Swift compiles only in the PR's iOS check; everything on the phone (the continued task's progress, background runs, the Keychain after a restart, memory over 17,768 photos) needs TestFlight.
+
+---
+
+## 18. Step 3: the page (built 2026-11-16)
+
+**Decisions (Luke, 2026-11-16):**
+- **Editing is Apple's Markup inside Liv.** iOS gives apps no way to open one photo in the Photos app's editor, so Edit opens Markup over the photo; saving stores the result as an edit of the photo in the library, which the Photos app can revert.
+- **Photos is Personal only until step 4**, when photos can be shared into Household.
+
+**What's built:**
+- **Page** (`photos/page.js`, Personal › Media › Photos, `#photos`): All · Favourites · Recently deleted; the timeline newest first under month headings, drawing only the rows on screen (`photos/grid.js`), so 17,000 photos scroll like 50.
+- **Data** (`photos/library.js`, `photos/cache.js`): the records are kept on the device and only what changed is asked for (cursor on updated_at + id), so a visit costs a few hundred bytes after the first (~3 MB for 17,000). Thumbnails are signed 25 at a time when they come on screen, fetched straight from storage once, and kept on the device. Everything is cleared on sign-out.
+- **Photo view:** swipe between photos, down to close, arrow keys on the laptop. On the iPhone that has the photo: full size (a 2,048 px copy made on the phone; iCloud-only photos are fetched at that size), video playback, Share (share sheet), Favourite (also in the Photos app), Markup, Delete. On the laptop: the thumbnail, Favourite and Delete in Liv.
+- **Deleting everywhere (decision 11):** on the phone, iOS asks and the photo goes to its Recently Deleted, and to Liv's. On the laptop, Liv marks it deleted, and the phone carries it out the next time Photos opens there (one iOS confirmation for all of them; if the person says no there, they come back in Liv). Recently deleted shows days left and Put back; a photo whose original is already in the Photos app's Recently Deleted says to put it back there too (apps can't).
+- **Phone actions:** `PhotoLibraryActions.swift` (`image`, `playVideo`, `share`, `favorite`, `deletePhotos`, `markup`). After Markup the page makes and uploads a new thumbnail itself.
+
+**Changes made in the Photos app (held):** `migrations/2026-11-16c-photo-sync-changes.sql` adds `photo_sync_update` (favourites, edits, date or place changes; an edit also gets a new thumbnail) and `photo_sync_gone` (deleted on the phone → Liv's Recently deleted, unless another source still has the photo). The phone finds them with iOS's change history (iOS 16+). Written and tested; **Luke said "not yet" to applying it (2026-11-16)**, so the `photo-sync` service isn't redeployed with the two steps. Until then the phone skips them and keeps its place in the change history, so nothing is lost once they're live. Changes made *in Liv* don't need it.
+
+**Verified:** `test/photos-library.test.js` (14: paging a big library without skipping rows written together, device copy first then changes only, libraries kept apart, saving a change, thumbnails from the device or signed 25 at a time, the three tabs, the layout and what's on screen); `test/photos-sync-changes-migration.test.js` (11, with two planted bugs caught); `test/photos-sync-function.test.js` (now with update / gone); the parity test; full suite; build; boot check; the page in a 360 px browser with 5,000 fake photos (63 cells drawn at a time, thumbnails loading as it scrolls, the photo view, favourite, delete, Recently deleted, no console errors, no sideways scroll). **Not verified:** the Swift beyond the compile check, and everything on the phone (full size, video, share, Markup's save, iOS's delete prompt, scrolling 17,000 real thumbnails). That needs TestFlight.
+
+**Not yet:** search, albums, people, places, Clean up (steps 5–7); Household (step 4); the laptop needs a Netlify deploy to see the page.
 
 ---
 
