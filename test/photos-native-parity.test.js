@@ -35,11 +35,12 @@ describe("native photo sync matches the web view sync", () => {
 
   it("speaks only ops the server has, within its limits", () => {
     const sent = [...swift.matchAll(/"op": "([a-z]+)"/g)].map((m) => m[1]);
-    expect(new Set(sent)).toEqual(new Set(["register", "mine", "add", "sign", "done"]));
+    expect(new Set(sent)).toEqual(new Set(["register", "mine", "add", "sign", "done", "gone", "update"]));
     for (const op of sent) expect(fn).toContain(`op === "${op}"`);
     expect(swift).toContain("static let batchSize = 50");   // mine ≤200, add ≤100, done ≤200
     expect(swift).toContain("static let signBatch = 25");   // sign ≤25
     expect(fn).toContain("raw.length > 25");
+    expect(swift).toContain("gone.prefix(200)");              // gone ≤200
     expect(swift).toContain('"x-photo-device"');
     expect(swift).toMatch(/2 \* 1024 \* 1024/);              // the server's thumbnail cap
   });
