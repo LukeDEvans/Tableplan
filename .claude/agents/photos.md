@@ -88,7 +88,7 @@ You are the **Photos** domain agent for **Live / Tableplan**.
   iOS asks and the photo goes to its Recently Deleted; on the laptop, Liv marks it
   and the phone carries it out the next time Photos opens there (one iOS
   confirmation; saying no there puts it back in Liv).
-- **Changes from the Photos app (§18):** `migrations/2026-11-16c-photo-sync-changes.sql`
+- **Changes from the Photos app (§18):** the change-tracking migration (2026-11-16c)
   (`photo_sync_update` / `photo_sync_gone`) and the `update` / `gone` ops are written
   and tested in their own PR, **held by Luke (2026-11-16, "not yet")**; the phone skips them
   while the server lacks them (keeps its change-history mark).
