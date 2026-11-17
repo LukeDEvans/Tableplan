@@ -65,7 +65,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, nativePdfExport, nativePhotoLibrary, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, nativePdfExport, nativePhotoLibrary, nativeFileSrc, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
@@ -790,6 +790,7 @@ const PAGE_ACCESS_GROUPS = [
   { key: "recreate", label: "Recreate",  keys: ["recreate", "play", "explore"], note: "Explore, Exercise and Leisure" },
   { key: "shop",     label: "Shop",      keys: ["shop"] },
   { key: "watch",    label: "Watch",     keys: ["watch"] },
+  { key: "photos",   label: "Photos",    keys: ["photos"] },
 ];
 const pageGroupKeys = (value) => String(value || "").split(",").filter(Boolean);
 
@@ -1401,6 +1402,7 @@ const elements = {
   mediaMainPage: document.querySelector("#mediaMainPage"),
   watchMainPage: document.querySelector("#watchMainPage"),
   documentsMainPage: document.querySelector("#documentsMainPage"),
+  photosMainPage: document.querySelector("#photosMainPage"),
   readingPlannerGrid: document.querySelector("#readingPlannerGrid"),
   readingSearchDialog: document.querySelector("#readingSearchDialog"),
   readingSearchDialogInput: document.querySelector("#readingSearchDialogInput"),
@@ -3406,6 +3408,7 @@ function handleHashNavigation() {
     shop: showShopApp,
     watch: showWatchApp,
     documents: showDocumentsApp,
+    photos: showPhotosApp,
     recreate: showRecreateApp, // Recreate is a menu group now; its old hash opens Leisure
     leisure: showRecreateApp,
     exercise: showPlayApp,
@@ -3526,6 +3529,7 @@ async function initializeSupabaseAuth() {
         purgeLocalCadenceContent(),
         purgeLocalMusicContent(),
         purgeLocalFinanceTxnStore(),
+        purgeLocalPhotos(),
         keepSecureStores ? Promise.resolve() : purgeLocalMessaging(), // the old session is already gone here, so only the local wipe happens
         keepSecureStores ? Promise.resolve() : forgetPhotoSyncDevice(),
         syncShareTokenForSession(false),
@@ -4773,6 +4777,7 @@ async function toggleAuth() {
     purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
     purgeLocalMusicContent();   // same: drop local uploaded-music blobs (live-music IDB)
     purgeLocalFinanceTxnStore(); // same: drop the durable-transaction mirror (live-finance-txns IDB)
+    purgeLocalPhotos();          // same: drop the device copy of Photos' records and thumbnails (live-photos IDB)
     await purgeLocalMessaging(messagingHeaders); // secure messages: remove this device from the account, delete its store and key
     await forgetPhotoSyncDevice(); // background photo sync stops on this iPhone
     await syncShareTokenForSession(false); // the iPhone Share Extension stops sending receipts for this account
@@ -9214,6 +9219,10 @@ function hideAllPages() {
     elements.documentsMainPage.hidden = true;
     documentsUi?.hide(); // closes an open document and stops drawing
   }
+  if (elements.photosMainPage && !elements.photosMainPage.hidden) {
+    elements.photosMainPage.hidden = true;
+    photosUi?.hide(); // closes an open photo and stops drawing
+  }
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -9424,6 +9433,58 @@ async function showDocumentsApp(event) {
     documentsUiLoading = null;
     root.innerHTML = `<div class="msg-pane"><p class="msg-error">Document couldn't open: ${escapeHtml(e?.message || String(e))}</p></div>`;
   }
+}
+
+// Photos (PHOTOS_DESIGN.md §7, step 3): the person's Personal library — Personal only
+// until step 4 lets photos be shared into Household (Luke, 2026-11-16). The page
+// itself is photos/page.js; records and thumbnails are cached on the device.
+let photosUi = null;
+let photosUiLoading = null;
+async function showPhotosApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("photos") || !elements.photosMainPage || currentViewKey() !== "personal") { showHomeApp(); return; }
+  activeAppArea = "photos";
+  hideAllPages();
+  elements.photosMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Photos");
+  setPageHash("photos");
+  closePageTitleMenu();
+  closeAppMenu();
+  const root = document.getElementById("photosRoot");
+  const scope = photosPersonalScope();
+  if (!scope) {
+    root.innerHTML = `<div class="msg-pane"><p class="msg-muted">Sign in to see your photos.</p></div>`;
+    photosUi = null;
+    photosUiLoading = null;
+    return;
+  }
+  try {
+    if (!photosUi) {
+      photosUiLoading ||= Promise.all([import("./photos/page.js"), import("./documents/storage.js"), photosPresigner()]).then(([m, storage, presign]) => m.mountPhotosPage(root, {
+        rest: photosRest,
+        presign,
+        plugin: nativePhotoLibrary(),
+        convertFileSrc: nativeFileSrc,
+        putFetch: storage.bytesUploadFetch(),
+        toast: (text) => showMailToast(text),
+        confirm: (text) => window.confirm(text),
+      }));
+      photosUi = await photosUiLoading;
+    }
+    if (activeAppArea === "photos") await photosUi.show(scope);
+  } catch (e) {
+    photosUiLoading = null;
+    photosUi = null;
+    root.innerHTML = `<div class="msg-pane"><p class="msg-error">Photos couldn't open: ${escapeHtml(e?.message || String(e))}</p></div>`;
+  }
+}
+async function purgeLocalPhotos() {
+  try { photosUi?.destroy?.(); } catch { /* already gone */ }
+  photosUi = null;
+  photosUiLoading = null;
+  try { await (await import("./photos/cache.js")).deletePhotosCache(); } catch { /* nothing kept */ }
 }
 
 // Recreate is a menu group (page-groups.js) of four pages: Explore, Exercise,
@@ -13397,6 +13458,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "inventory") return "Shop"; // a space of the Shop page
   if (activeAppArea === "watch") return "Watch";
   if (activeAppArea === "documents") return "Document";
+  if (activeAppArea === "photos") return "Photos";
   if (activeAppArea === "media") return "Listen";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Leisure";
@@ -18198,6 +18260,7 @@ function pageNavButtons() {
     { home: "homeDocumentsBtn", title: "titleDocumentsBtn", page: "documents", areas: ["documents"],        open: showDocumentsApp },
     { home: "homeWatchBtn",    title: "titleWatchBtn",     page: "watch",    areas: ["watch"],              open: showWatchApp },
     { home: "homeListenBtn",   title: "titleListenBtn",    page: "read",     areas: ["media"],              open: showListenApp },
+    { home: "homePhotosBtn",   title: "titlePhotosBtn",    page: "photos",   areas: ["photos"],             open: showPhotosApp },
     { home: "homeMailBtn",     title: "titleMailBtn",      page: "mail",     areas: ["mail", "contacts"],   open: showMailApp },
     { home: "homeExploreBtn",  title: "titleExploreBtn",   page: "explore",  areas: ["explore"],            open: showExploreApp },
     { home: "homeExerciseBtn", title: "titleExerciseBtn",  page: "play",     areas: ["play"],               open: showPlayApp },
@@ -39731,7 +39794,7 @@ function returnToReaderOrigin(origin) {
     mail: () => showMailApp(), shop: showShopApp, inventory: showInventoryApp,
     finance: showFinanceApp, recreate: showRecreateApp, explore: showExploreApp,
     play: showPlayApp, weather: showWeatherApp, contacts: showContactsApp,
-    home: showHomeApp, watch: showWatchApp, documents: showDocumentsApp,
+    home: showHomeApp, watch: showWatchApp, documents: showDocumentsApp, photos: showPhotosApp,
   }[origin.area];
   if (!show) return;
   // Media comes back exactly as it was left (tab, search, open show); other

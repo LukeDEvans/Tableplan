@@ -407,3 +407,9 @@ export function nativePhotoLibrary() {
   } catch { _photoLibrary = null; }
   return _photoLibrary;
 }
+
+// A file on the phone (a file:// URL or path from a plugin) as a URL the web view can
+// load (Photos' full-size images).
+export function nativeFileSrc(path) {
+  try { return CapCore && typeof CapCore.convertFileSrc === "function" ? CapCore.convertFileSrc(path) : path; } catch { return path; }
+}

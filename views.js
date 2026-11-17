@@ -29,9 +29,11 @@ export const VIEW_LABELS = Object.freeze({
 // from Personal, Luke 2026-10-22); Tasks lives inside the
 // Calendar, Weather opens from the dock, and Scores is News → Sports — none of
 // those three has a menu entry. Document (Luke, 2026-11-03; renamed 2026-11-04) is in Household
-// (shared) and Personal (Luke only), each with its own encrypted vault.
+// (shared) and Personal (Luke only), each with its own encrypted vault. Photos
+// (PHOTOS_DESIGN.md) is Personal only until photos can be shared into Household
+// (step 4; Luke, 2026-11-16).
 export const VIEW_PAGES = Object.freeze({
-  personal: Object.freeze(["plan", "news", "finance", "documents", "watch", "read", "mail", "play", "recreate"]),
+  personal: Object.freeze(["plan", "news", "finance", "documents", "watch", "read", "photos", "mail", "play", "recreate"]),
   household: Object.freeze(["plan", "eat", "finance", "shop", "documents", "watch", "read", "explore"]),
   business: Object.freeze(["plan"]),
 });

@@ -75,6 +75,23 @@ You are the **Photos** domain agent for **Live / Tableplan**.
   `runPhotosSync`). Signing out forgets the key on the phone (`forgetPhotoSyncDevice`).
   `test/photos-native-parity.test.js` holds the Swift to the JS ids, the protocol's
   ops and the task names.
+- **Step 3, the page (2026-11-16):** `photos/page.js` (`mountPhotosPage`; All /
+  Favourites / Recently deleted; a timeline that draws only the rows on screen;
+  the photo view), `photos/library.js` (records pulled by changes-since with an
+  (updated_at, id) cursor, thumbnails signed 25 at a time and cached),
+  `photos/grid.js`, `photos/cache.js` (IndexedDB `live-photos`, cleared on
+  sign-out by `purgeLocalPhotos`); app.js `showPhotosApp`. **Personal only until
+  step 4** (Luke). Phone actions are `PhotoLibraryActions.swift`: `image`,
+  `playVideo`, `share`, `favorite`, `deletePhotos`, `markup`. **Editing is Apple's
+  Markup inside Liv, saved as an edit of the photo** (Luke, 2026-11-16: iOS can't
+  open one photo in the Photos app's editor). Deleting: on the phone that has it,
+  iOS asks and the photo goes to its Recently Deleted; on the laptop, Liv marks it
+  and the phone carries it out the next time Photos opens there (one iOS
+  confirmation; saying no there puts it back in Liv).
+- **Changes from the Photos app (§18):** the change-tracking migration (2026-11-16c)
+  (`photo_sync_update` / `photo_sync_gone`) and the `update` / `gone` ops are written
+  and tested in their own PR, **held by Luke (2026-11-16, "not yet")**; the phone skips them
+  while the server lacks them (keeps its change-history mark).
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are

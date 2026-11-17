@@ -300,6 +300,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 
 
 ## P2
+
+- [ ] **[P2] Photos: a favourite set on the laptop can be undone by the phone once §18's change step is live** (photos · supabase/functions/photo-sync update + PhotoSyncEngine · 2026-11-16) — the laptop's Favourite changes only Liv; when that photo next changes on the phone, `photo_sync_update` sends the phone's favourite and overwrites Liv's. → Suggestion: before applying the held migration, have the phone apply laptop favourites (Liv newer than the asset's modificationDate) instead of overwriting. Verdict: not live yet (migration held).
 - [ ] **[P2] Word processor: saving is read-then-write without a conditional PUT** (documents · documents/editor/doc-model.js mergeAndSave · 2026-11-09, independent review)
       Device B reads, A writes, B writes: A's edits leave storage until A saves or reopens (A's device copy repairs it). Lost only if A's copy is gone and A never reopens. Suggestion: R2 conditional PUT on the ETag (needs doc-storage to sign If-Match) and retry the merge. Verdict: open.
 - [ ] **[P2] Word processor: a Safe document's content isn't bound to a version, so a server could serve an older copy unnoticed** (documents · documents/editor/store-safe.js saveContent · 2026-11-09, independent review)
@@ -514,6 +516,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+
+- [ ] **[P3] Photos: a second account set up on the same iPhone gets no photos** (photos · PhotoSyncEngine.photoId · 2026-11-16) — photo ids are derived from (device key, the phone's photo id), so another person signing in on Luke's phone produces the same ids, the inserts are ignored as already there, and `photo_sync_mine` (author = the other user) answers nothing. Not a leak (nothing of Luke's is reachable), just an empty library. → Include the user in the id for new libraries if a shared phone ever matters. Verdict: unlikely (each person syncs their own phone).
 - [x] **[P3] Kept copies outlive a purge, and the 200 MB cap counts raw bytes** (documents · documents/library.js:243 purge, documents/ui.js:161 openedFilesCache · 2026-11-03)
       `purge` removes `rev:`/`meta:` but not `blob:<scope>/<id>/content` or its `blobidx` entry, so a file deleted for good keeps its ciphertext on every device that opened it until evicted (undecryptable — the wrapped key went with the row — but the space stays). Values are stored as base64 JSON inside AES-GCM, so 200 MB of blobs is ~270 MB on disk, doubled during a passkey move. → Remove the cache entry in `purge`; count stored size. Verdict: CONFIRMED (code read).
       ✅ 2026-11-04: Fixed on `claude/documents-later`: `purge` calls `blobCache.drop`; sizes count `storedSize` (base64 + wrapper).

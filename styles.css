@@ -25815,3 +25815,191 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
 .docs-gdocs-list li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .docs-gdocs-list li:last-child { border-bottom: 0; }
 .docs-gdocs-list label { flex: 1; display: flex; gap: 8px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+
+/* Photos page (PHOTOS_DESIGN.md §7, step 3). The timeline draws only the rows on
+   screen, absolutely placed in a canvas as tall as the whole library. */
+.photos-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.photos-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.photos-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.photos-tabs button {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.photos-tabs button[aria-selected="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent, var(--surface-strong));
+}
+.photos-count {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.photos-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.photos-scroll {
+  position: relative;
+  min-width: 0;
+}
+.photos-canvas {
+  position: relative;
+  width: 100%;
+}
+.photos-empty {
+  color: var(--muted);
+  padding: 32px 4px;
+  text-align: center;
+}
+.photos-month {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 2px 8px;
+  font-weight: 650;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+.photos-cell {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  overflow: hidden;
+  background: var(--line);
+  cursor: pointer;
+}
+.photos-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.photos-cell img:not([src]) {
+  visibility: hidden;
+}
+.photos-badge,
+.photos-fav {
+  position: absolute;
+  bottom: 3px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: var(--surface-strong);
+  background: color-mix(in srgb, var(--ink) 70%, transparent);
+}
+.photos-badge { right: 3px; }
+.photos-fav { left: 3px; }
+
+.photos-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--ink);
+  padding: calc(var(--safe-top, 0px) + 6px) 10px calc(var(--safe-bottom, 0px) + 10px);
+}
+.photos-viewer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+}
+.photos-viewer-when {
+  font-size: 0.9rem;
+  color: var(--muted);
+  min-width: 0;
+}
+.photos-viewer-top button,
+.photos-viewer-actions button {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: inherit;
+  min-height: 40px;
+}
+.photos-viewer-close {
+  font-weight: 650;
+}
+.photos-viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.photos-viewer-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* a thumbnail (laptop) fills the screen too */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.photos-play {
+  position: absolute;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  border: 0;
+  font-size: 1.6rem;
+  color: var(--surface-strong);
+  background: color-mix(in srgb, var(--ink) 65%, transparent);
+}
+.photos-viewer-note {
+  margin: 6px 0 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+/* Actions on the right, where a right thumb reaches (Luke holds the phone right-handed). */
+.photos-viewer-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+}
+.photos-viewer-actions [aria-pressed="true"] {
+  color: var(--tomato);
+}
+.photos-viewer-actions .is-danger {
+  color: var(--tomato);
+}
+.photos-viewer-left {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}

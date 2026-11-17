@@ -54,7 +54,13 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "syncStart", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "syncStop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "syncForget", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "syncOptions", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "syncOptions", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "image", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "playVideo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "share", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "favorite", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deletePhotos", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "markup", returnType: CAPPluginReturnPromise)
     ]
 
     private let queue = DispatchQueue(label: "live.photos.probe", qos: .utility)

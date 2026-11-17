@@ -90,6 +90,7 @@ final class PhotoSyncEngine {
     private let configKey = "live.photos.sync.config"
     private let lastKey = "live.photos.sync.last"
     private func sinceKey(_ deviceKey: String) -> String { "live.photos.sync.since.\(deviceKey)" }
+    private let historyKey = "live.photos.sync.changeToken"
 
     private init() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -153,8 +154,16 @@ final class PhotoSyncEngine {
 
     func forget() {
         stop()
+        clearKey()
+    }
+
+    // The key and how far it got: another account set up on this phone later starts
+    // from the beginning (its library row is different).
+    private func clearKey() {
         SecItemDelete(keychainQuery() as CFDictionary)
         saveConfig(nil)
+        if let key = Self.deviceKey() { defaults.removeObject(forKey: sinceKey(key)) }
+        defaults.removeObject(forKey: historyKey)
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.refreshTaskId)
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.processingTaskId)
     }
@@ -250,6 +259,16 @@ final class PhotoSyncEngine {
         lock.unlock()
         if recent { return }
         startWithGrace(.open, cellular: cfg.cellular)
+    }
+
+    // After a change made from Liv (favourite, delete, Markup): sync it now rather than
+    // at the next open, so Liv's record and thumbnail follow within seconds.
+    func nudge() {
+        guard let cfg = config(), !isRunning() else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self = self, !self.isRunning() else { return }
+            self.startWithGrace(.open, cellular: cfg.cellular)
+        }
     }
 
     private func isRunning() -> Bool {
@@ -437,6 +456,40 @@ final class PhotoSyncEngine {
         onProgress?(p)
     }
 
+    // The phone's own change history since the last clean run. The first time, it
+    // only starts tracking (everything is new to Liv anyway). If iOS no longer has the
+    // history (it's kept for a limited time), tracking restarts and a deletion made in
+    // that gap is missed until the Clean up pass (§8) compares the whole library.
+    @available(iOS 16.0, *)
+    private func phoneChanges() -> (updated: Set<String>, inserted: Set<String>, deleted: Set<String>, token: Data?) {
+        let library = PHPhotoLibrary.shared()
+        let current = try? NSKeyedArchiver.archivedData(withRootObject: library.currentChangeToken, requiringSecureCoding: true)
+        guard let saved = defaults.data(forKey: historyKey),
+              let token = try? NSKeyedUnarchiver.unarchivedObject(ofClass: PHPersistentChangeToken.self, from: saved) else {
+            return ([], [], [], current)
+        }
+        var updated = Set<String>(), inserted = Set<String>(), deleted = Set<String>()
+        do {
+            let changes = try library.fetchPersistentChanges(since: token)
+            for change in changes {
+                let details = try change.changeDetails(for: .asset)
+                updated.formUnion(details.updatedLocalIdentifiers)
+                inserted.formUnion(details.insertedLocalIdentifiers)
+                deleted.formUnion(details.deletedLocalIdentifiers)
+            }
+        } catch {
+            return ([], [], [], current)
+        }
+        // A photo deleted and then put back is present again: not gone.
+        if !deleted.isEmpty {
+            let back = PHAsset.fetchAssets(withLocalIdentifiers: Array(deleted), options: nil)
+            back.enumerateObjects { asset, _, _ in deleted.remove(asset.localIdentifier) }
+        }
+        updated.subtract(deleted)
+        inserted.subtract(deleted)
+        return (updated, inserted, deleted, current)
+    }
+
     // One whole sync. Returns (and saves) what happened.
     @discardableResult
     private func run(_ trigger: Trigger, cellular: Bool, shouldStop: @escaping () -> Bool, report: (Int, Int) -> Void) -> [String: Any] {
@@ -448,7 +501,7 @@ final class PhotoSyncEngine {
         lock.unlock()
 
         let started = Date()
-        var added = 0, skipped = 0, failed = 0, total = 0
+        var added = 0, skipped = 0, failed = 0, total = 0, changed = 0, removed = 0
         var stopped = false
         var errorText: String? = nil
         var uploadError: String? = nil
@@ -468,8 +521,103 @@ final class PhotoSyncEngine {
                 try self.post(session: session, url: url, apiKey: cfg.apiKey, body: body, headers: cred)
             }
 
-            // Newest first, so the photos you know best show up first; only those
-            // added or changed since the last clean run.
+            let manager = PHImageManager.default()
+            let imageOptions = PHImageRequestOptions()
+            imageOptions.isSynchronous = true
+            imageOptions.deliveryMode = .highQualityFormat
+            imageOptions.resizeMode = .fast
+            imageOptions.isNetworkAccessAllowed = true
+            imageOptions.version = .current
+            let iso = ISO8601DateFormatter()
+
+            // Makes thumbnails for these photos (records already on the server), uploads
+            // them straight to storage and marks them done. Returns how many went up.
+            let uploadThumbs = { (pairs: [(PHAsset, String)]) throws -> Int in
+                var thumbs: [String: Data] = [:]
+                for (asset, id) in pairs {
+                    autoreleasepool {
+                        if let data = self.jpeg(for: asset, manager: manager, options: imageOptions), data.count <= 2 * 1024 * 1024 { thumbs[id] = data }
+                    }
+                }
+                let withThumb = pairs.map { $0.1 }.filter { thumbs[$0] != nil }
+                var uploaded: [String] = []
+                var sizes: [Int] = []
+                var i = 0
+                while i < withThumb.count {
+                    let group = Array(withThumb[i..<min(withThumb.count, i + Self.signBatch)])
+                    i += Self.signBatch
+                    let signed = try call(["op": "sign", "items": group.map { ["id": $0, "size": thumbs[$0]!.count] }])
+                    guard let urls = signed["urls"] as? [[String: Any]], urls.count == group.count else { throw SyncError.bad("unexpected reply (sign)") }
+                    let resultLock = NSLock()
+                    let wait = DispatchGroup()
+                    for (n, id) in group.enumerated() {
+                        guard let s = urls[n]["url"] as? String, let putURL = URL(string: s) else { continue }
+                        var req = URLRequest(url: putURL)
+                        req.httpMethod = "PUT"
+                        req.setValue("image/jpeg", forHTTPHeaderField: "content-type")
+                        let data = thumbs[id]!
+                        wait.enter()
+                        session.uploadTask(with: req, from: data) { _, response, error in
+                            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                            resultLock.lock()
+                            if (200..<300).contains(code) { uploaded.append(id); sizes.append(data.count) }
+                            else if uploadError == nil { uploadError = error.map { String($0.localizedDescription.prefix(80)) } ?? "HTTP \(code)" }
+                            resultLock.unlock()
+                            wait.leave()
+                        }.resume()
+                    }
+                    wait.wait()
+                }
+                if !uploaded.isEmpty { _ = try call(["op": "done", "ids": uploaded, "bytes": sizes]) }
+                return uploaded.count
+            }
+
+            // 1. What changed on the phone since the last clean run (iOS 16+'s change
+            //    history): deletions go to Liv's Recently deleted, changed photos get
+            //    their details and a fresh thumbnail (an edit changes the picture).
+            var historyMark: Data? = nil
+            if #available(iOS 16.0, *) {
+              do {
+                let tracked = phoneChanges()
+                historyMark = tracked.token
+                var gone = Array(tracked.deleted)
+                while !gone.isEmpty {
+                    let chunk = Array(gone.prefix(200)); gone.removeFirst(chunk.count)
+                    let r = try call(["op": "gone", "ids": chunk.map { Self.photoId(deviceKey: deviceKey, localId: $0) }])
+                    removed += (r["count"] as? Int) ?? 0
+                }
+                let present = PHAsset.fetchAssets(withLocalIdentifiers: Array(tracked.updated.union(tracked.inserted)), options: nil)
+                var changedAssets: [PHAsset] = []
+                present.enumerateObjects { asset, _, _ in changedAssets.append(asset) }
+                var k = 0
+                while k < changedAssets.count {
+                    lock.lock(); let stopNow = stopRequested; lock.unlock()
+                    if stopNow || shouldStop() { stopped = true; break }
+                    let batch = Array(changedAssets[k..<min(changedAssets.count, k + Self.batchSize)])
+                    k += Self.batchSize
+                    let ids = batch.map { Self.photoId(deviceKey: deviceKey, localId: $0.localIdentifier) }
+                    let mine = try call(["op": "mine", "ids": ids])
+                    let known = Set(((mine["items"] as? [[String: Any]]) ?? []).compactMap { ($0["id"] as? String)?.lowercased() })
+                    let pairs = zip(batch, ids).filter { known.contains($0.1) }
+                    if pairs.isEmpty { continue } // new to Liv: the listing below adds them
+                    _ = try call(["op": "update", "items": pairs.map { record($0.0, id: $0.1, thumbBytes: 0, iso: iso) }])
+                    changed += pairs.count
+                    let reThumb = pairs.filter { tracked.updated.contains($0.0.localIdentifier) }
+                    if !reThumb.isEmpty {
+                        let up = try uploadThumbs(reThumb)
+                        failed += reThumb.count - up
+                    }
+                }
+              } catch SyncError.http(400, let op) where op == "gone" || op == "update" {
+                // A server without these steps yet (PHOTOS_DESIGN.md §18): keep the old
+                // history mark so these changes are sent once it has them, and go on
+                // adding new photos.
+                historyMark = nil
+              }
+            }
+
+            // 2. Newest first, so the photos you know best show up first; only those
+            //    added or changed since the last clean run.
             let options = PHFetchOptions()
             options.includeHiddenAssets = false
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
@@ -479,18 +627,9 @@ final class PhotoSyncEngine {
                 options.predicate = NSPredicate(format: "modificationDate > %@ OR creationDate > %@", date as NSDate, date as NSDate)
             }
             let assets = PHAsset.fetchAssets(with: options)
-            total = assets.count
+            total = stopped ? 0 : assets.count
             setProgress(trigger, phase: "syncing", done: 0, total: total, added: 0)
             report(0, total)
-
-            let manager = PHImageManager.default()
-            let imageOptions = PHImageRequestOptions()
-            imageOptions.isSynchronous = true
-            imageOptions.deliveryMode = .highQualityFormat
-            imageOptions.resizeMode = .fast
-            imageOptions.isNetworkAccessAllowed = true
-            imageOptions.version = .current
-            let iso = ISO8601DateFormatter()
 
             var start = 0
             while start < total {
@@ -506,59 +645,25 @@ final class PhotoSyncEngine {
                 skipped += batch.count - todo.count
 
                 if !todo.isEmpty {
-                    var thumbs: [String: Data] = [:]
-                    for (asset, id) in todo {
-                        autoreleasepool {
-                            if let data = jpeg(for: asset, manager: manager, options: imageOptions), data.count <= 2 * 1024 * 1024 { thumbs[id] = data }
-                        }
-                    }
-                    let items = todo.map { record($0.0, id: $0.1, thumbBytes: thumbs[$0.1]?.count ?? 0, iso: iso) }
+                    // Records first: the storage function signs nothing for a photo with
+                    // no record. `done` then sets each thumbnail's real size.
+                    let items = todo.map { record($0.0, id: $0.1, thumbBytes: 0, iso: iso) }
                     _ = try call(["op": "add", "items": items])
-
-                    let withThumb = todo.map { $0.1 }.filter { thumbs[$0] != nil }
-                    var uploaded: [String] = []
-                    var sizes: [Int] = []
-                    var i = 0
-                    while i < withThumb.count {
-                        let group = Array(withThumb[i..<min(withThumb.count, i + Self.signBatch)])
-                        i += Self.signBatch
-                        let signed = try call(["op": "sign", "items": group.map { ["id": $0, "size": thumbs[$0]!.count] }])
-                        guard let urls = signed["urls"] as? [[String: Any]], urls.count == group.count else { throw SyncError.bad("unexpected reply (sign)") }
-                        let resultLock = NSLock()
-                        let wait = DispatchGroup()
-                        for (n, id) in group.enumerated() {
-                            guard let s = urls[n]["url"] as? String, let putURL = URL(string: s) else { continue }
-                            var req = URLRequest(url: putURL)
-                            req.httpMethod = "PUT"
-                            req.setValue("image/jpeg", forHTTPHeaderField: "content-type")
-                            let data = thumbs[id]!
-                            wait.enter()
-                            session.uploadTask(with: req, from: data) { _, response, error in
-                                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-                                resultLock.lock()
-                                if (200..<300).contains(code) { uploaded.append(id); sizes.append(data.count) }
-                                else if uploadError == nil { uploadError = error.map { String($0.localizedDescription.prefix(80)) } ?? "HTTP \(code)" }
-                                resultLock.unlock()
-                                wait.leave()
-                            }.resume()
-                        }
-                        wait.wait()
-                    }
-                    if !uploaded.isEmpty { _ = try call(["op": "done", "ids": uploaded, "bytes": sizes]) }
+                    let up = try uploadThumbs(Array(todo))
                     added += todo.count
-                    failed += todo.count - uploaded.count
+                    failed += todo.count - up
                 }
                 start = end
                 setProgress(trigger, phase: "syncing", done: start, total: total, added: added)
                 report(start, total)
             }
-            if !stopped && failed == 0 { defaults.set(started.timeIntervalSince1970 * 1000, forKey: sinceKey(deviceKey)) }
+            if !stopped && failed == 0 {
+                defaults.set(started.timeIntervalSince1970 * 1000, forKey: sinceKey(deviceKey))
+                if let mark = historyMark { defaults.set(mark, forKey: historyKey) }
+            }
         } catch let e as SyncError {
             errorText = e.text
-            if case .revoked = e {
-                SecItemDelete(keychainQuery() as CFDictionary)
-                saveConfig(nil)
-            }
+            if case .revoked = e { clearKey() }
         } catch {
             errorText = String(error.localizedDescription.prefix(120))
         }
@@ -568,11 +673,12 @@ final class PhotoSyncEngine {
             "at": Date().timeIntervalSince1970 * 1000,
             "seconds": Date().timeIntervalSince(started),
             "listed": total, "added": added, "skipped": skipped, "thumbsFailed": failed, "stopped": stopped,
+            "changed": changed, "removed": removed,
         ]
         if let errorText = errorText { result["error"] = errorText }
         if let uploadError = uploadError, failed > 0 { result["uploadError"] = uploadError }
         // Quiet automatic runs that found nothing new don't replace a more useful last result.
-        let quiet = trigger != .user && errorText == nil && added == 0
+        let quiet = trigger != .user && errorText == nil && added == 0 && changed == 0 && removed == 0
         if !quiet, let data = try? JSONSerialization.data(withJSONObject: result) { defaults.set(data, forKey: lastKey) }
 
         lock.lock(); running = nil; progress = [:]; lock.unlock()

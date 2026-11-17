@@ -29,6 +29,7 @@
 		4D5E6A152F10000100C0FFEE /* PdfExportPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A162F10000100C0FFEE /* PdfExportPlugin.swift */; };
 		4D5E6A172F10000100C0FFEE /* PhotoLibraryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A182F10000100C0FFEE /* PhotoLibraryPlugin.swift */; };
 		4D5E6A192F10000100C0FFEE /* PhotoSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A1A2F10000100C0FFEE /* PhotoSyncEngine.swift */; };
+		4D5E6A1B2F10000100C0FFEE /* PhotoLibraryActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A1C2F10000100C0FFEE /* PhotoLibraryActions.swift */; };
 		A1C0FFEE2E90000100A1C0DE /* AppIconPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */; };
 		B7A11AC02E90000100A77AC0 /* AttachmentPreviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */; };
 		D07C4A102E90000100D07C4A /* LiveLanguagePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */; };
@@ -90,6 +91,7 @@
 		4D5E6A162F10000100C0FFEE /* PdfExportPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PdfExportPlugin.swift; sourceTree = "<group>"; };
 		4D5E6A182F10000100C0FFEE /* PhotoLibraryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryPlugin.swift; sourceTree = "<group>"; };
 		4D5E6A1A2F10000100C0FFEE /* PhotoSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSyncEngine.swift; sourceTree = "<group>"; };
+		4D5E6A1C2F10000100C0FFEE /* PhotoLibraryActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryActions.swift; sourceTree = "<group>"; };
 		A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconPlugin.swift; sourceTree = "<group>"; };
 		B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPreviewPlugin.swift; sourceTree = "<group>"; };
 		D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLanguagePlugin.swift; sourceTree = "<group>"; };
@@ -169,6 +171,7 @@
 				4D5E6A162F10000100C0FFEE /* PdfExportPlugin.swift */,
 				4D5E6A182F10000100C0FFEE /* PhotoLibraryPlugin.swift */,
 				4D5E6A1A2F10000100C0FFEE /* PhotoSyncEngine.swift */,
+				4D5E6A1C2F10000100C0FFEE /* PhotoLibraryActions.swift */,
 				A1C0FFEF2E90000100A1C0DE /* AppIconPlugin.swift */,
 				B7A11AC12E90000100A77AC0 /* AttachmentPreviewPlugin.swift */,
 				D07C4A112E90000100D07C4A /* LiveLanguagePlugin.swift */,
@@ -372,6 +375,7 @@
 				4D5E6A152F10000100C0FFEE /* PdfExportPlugin.swift in Sources */,
 				4D5E6A172F10000100C0FFEE /* PhotoLibraryPlugin.swift in Sources */,
 				4D5E6A192F10000100C0FFEE /* PhotoSyncEngine.swift in Sources */,
+				4D5E6A1B2F10000100C0FFEE /* PhotoLibraryActions.swift in Sources */,
 				A1C0FFEE2E90000100A1C0DE /* AppIconPlugin.swift in Sources */,
 				B7A11AC02E90000100A77AC0 /* AttachmentPreviewPlugin.swift in Sources */,
 				D07C4A102E90000100D07C4A /* LiveLanguagePlugin.swift in Sources */,
