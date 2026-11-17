@@ -1287,6 +1287,8 @@ const elements = {
   titleShopBtn: document.querySelector("#titleShopBtn"),
   homeDocumentsBtn: document.querySelector("#homeDocumentsBtn"),
   titleDocumentsBtn: document.querySelector("#titleDocumentsBtn"),
+  homePhotosBtn: document.querySelector("#homePhotosBtn"),
+  titlePhotosBtn: document.querySelector("#titlePhotosBtn"),
   inventoryMainPage: document.querySelector("#inventoryMainPage"),
   inventoryPlannerGrid: document.querySelector("#inventoryPlannerGrid"),
   inventoryBoxDialog: document.querySelector("#inventoryBoxDialog"),
