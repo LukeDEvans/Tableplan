@@ -64,6 +64,15 @@ describe("page groups", () => {
     for (const id of ids) expect(app).toContain(`"${id}"`);
   });
 
+  // pageNavButtons() reaches each button through `elements[id]`, so naming the id
+  // there isn't enough: without an `elements` entry the button shows but does
+  // nothing when tapped (Photos, 2026-11-17).
+  it("every menu button is in the elements map", () => {
+    const ids = [...menuGroups("homePageGroups"), ...menuGroups("pageTitleMenu")].flatMap((g) => g.pages.map((p) => p.id));
+    const missing = ids.filter((id) => !app.includes(`${id}: document.querySelector("#${id}")`));
+    expect(missing).toEqual([]);
+  });
+
   it("knows which group each page's area is in", () => {
     expect(groupForArea("eat")).toBe("plan");
     expect(groupForArea("inventory")).toBe("resource");
