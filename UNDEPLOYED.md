@@ -30,3 +30,5 @@ Each entry: what shipped · PR · post-deploy steps.
   Post-deploy: none for the web (the panel's native part only shows in a build with the engine).
 - **Photos: the page (step 3)** · #249 · PHOTOS_DESIGN.md §18. Personal › Photos: timeline, photo view, favourites, delete everywhere, Recently deleted, Markup. iPhone via TestFlight; the laptop sees it after a deploy. No migration (the change-tracking one is held in its own PR and isn't needed by this).
   Post-deploy: on the laptop, open Personal › Photos: thumbnails load, a photo opens with "Full size is on your iPhone", a laptop delete is carried out on the phone next time Photos opens there.
+- **Photos: the landing and page-menu buttons open the page** · #251. `homePhotosBtn` / `titlePhotosBtn` weren't in the `elements` map, so they had no click handler; a page-groups test now checks every menu button is there. Needs the **TestFlight build** for the phone; on the web it goes live with the deploy. No migration.
+  Post-deploy: tap Photos on the landing page and from the page menu (Personal view) — both open the Photos page.
