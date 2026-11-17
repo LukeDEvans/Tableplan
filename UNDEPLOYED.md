@@ -28,5 +28,3 @@ Each entry: what shipped · PR · post-deploy steps.
   Post-deploy: none for the web.
 - **Photos: native background sync** · #247 · PHOTOS_DESIGN.md §17. iPhone only (TestFlight): Sync now keeps going with the screen locked (iOS 26), automatic syncs on open and in the background, the Photos Check panel's new switches. No migration. Cellular on by default, no cellular prompt (#248).
   Post-deploy: none for the web (the panel's native part only shows in a build with the engine).
-- **Photos: the page (step 3)** · #249 · PHOTOS_DESIGN.md §18. Personal › Photos: timeline, photo view, favourites, delete everywhere, Recently deleted, Markup. iPhone via TestFlight; the laptop sees it after a deploy. No migration (the change-tracking one is held in its own PR and isn't needed by this).
-  Post-deploy: on the laptop, open Personal › Photos: thumbnails load, a photo opens with "Full size is on your iPhone", a laptop delete is carried out on the phone next time Photos opens there.
