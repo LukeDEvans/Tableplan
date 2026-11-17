@@ -8539,9 +8539,11 @@ function seedLastWrittenFromLoad(sharedState = null) {
         console.warn("[sync] couldn't compare the loaded state (rewriting changed sections):", e.message);
         return null;
       } finally {
-        // normalizeState lays out the meal plan from the config it's given; put
-        // the live state's layout back.
+        // normalizeState sets two module-level things from the copy it's given:
+        // the meal-plan layout and the ingredient pickers' options. Put the live
+        // state's back.
         recomputeMealPlanLayout(normalizeMealPlanConfig(state.mealPlanConfig));
+        syncIngredientOptionGlobals(state);
       }
     },
   );

@@ -18,12 +18,14 @@ almost all your work is there. Make focused changes to the Groceries domain only
 
 **App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** a known store's heading has an open-app button, and an item's long-press menu has **Find at <store>** (the store's product search) for up to four of the household's stores. Stores are recognised by name in `out-catalog.js`; `handOff` is injected from app.js.
 
+**Next Stop merges by union with add/remove stamps** (2026-11-17, `stamped-lists.js`, stamps in `groceryNextStopStamps`): stamps are made in `persist()` against a baseline, so a Next Stop add/remove/buy only needs its usual `persist()`.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
 - files: `groceries-ui.js`, `grocery-*.js`, `instacart.js`, `receipt-*.js`, `scan-content.js`, `netlify/functions/instacart-list.mjs`, `netlify/functions/scan-receipt.js`, `netlify/functions/scan-receipt-background.js`, `netlify/functions/receipt-scans.js`, `netlify/functions/_receipt-scans.js`, `netlify/functions/auto-tag-grocery.js`, `netlify/functions/google-places.js`
-- state: `grocery*`, `pantry`, `persistentManualGroceries`, `persistentManualGroceryStamps`, `checkedGroceries`, `receipts`, `receiptItemMappings`, `priceHistory`, `nextStopItems`, `instacartOrders`, `dailyDozenTagSeedVersion`
+- state: `grocery*`, `pantry`, `persistentManualGroceries`, `persistentManualGroceryStamps`, `groceryNextStopStamps`, `checkedGroceries`, `receipts`, `receiptItemMappings`, `priceHistory`, `nextStopItems`, `instacartOrders`, `dailyDozenTagSeedVersion`
 
 ## Your scope (edit these)
 - **Receipts: scan and go, code does the math (Luke, 2026-10-26).** The AI only *transcribes*

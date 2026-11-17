@@ -17,6 +17,8 @@ changes to the Listen page's audio (everything except streaming music) only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+**Radio favourites and followed programs merge by union with add/remove stamps** (2026-11-17, `stamped-lists.js`, stamps in `mediaListStamps`): stamps are made in `persist()` against a baseline, so favouriting or following only needs its usual `persist()`.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
