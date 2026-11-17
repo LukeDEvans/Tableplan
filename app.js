@@ -20565,8 +20565,16 @@ function togglePageTitleMenu(event) {
   }
 }
 
+// When the page menu last opened. Opening it shows the view band, which shifts the
+// layout; a scrolled pane (an open email in Mail) then fires a scroll event, and
+// the scroll-closes-menus rule shut the menu the moment it opened (laptop check,
+// 2026-11-17). Scrolls in the first moment after opening are layout, not the user.
+let pageTitleMenuOpenedAt = 0;
+const PAGE_MENU_SCROLL_GRACE_MS = 400;
+
 function openPageTitleMenu() {
   // Opens on the current view, on the group of the page you're on; the others stay closed.
+  pageTitleMenuOpenedAt = Date.now();
   menuViewKey.view = null;
   syncPageMenuToView();
   showHeaderViewBand(true);
@@ -20613,6 +20621,7 @@ function closeFloatingMenus() {
 
 function closeFloatingMenusOnPageScroll(event) {
   if (elements.weekJumpMenu?.contains(event.target)) return;
+  if (Date.now() - pageTitleMenuOpenedAt < PAGE_MENU_SCROLL_GRACE_MS) return;
   // Scrolling inside a menu (a long Watch tab list) isn't a page scroll.
   if (event.target instanceof Element && event.target.closest(".folder-context-menu")) return;
   const startMenu = document.getElementById("groceryRangeStartMenu");
