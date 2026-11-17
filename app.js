@@ -77,6 +77,7 @@ import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin
 import { saveFile } from './save-file.js';
 import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
 import { showMailAttachmentViewer } from './mail-attachment-viewers.js';
+import { listSnapshot, stampListChanges, mergeListStamps, mergeStampedList, normalizeListStamps, pruneListStamps } from './stamped-lists.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { normalizeMovedOut, mergeMovedOut, stripMovedOut } from './finance-move.js';
@@ -324,6 +325,8 @@ const state = loadState();
 // stamps whatever differs from this (see settings-sync.js). Re-adopted after any
 // change that did NOT come from the user (a cloud load or merge).
 let settingsBaseline = settingsSnapshot(state);
+// Ids in the stamped lists (stamped-lists.js) at the last persist() / cloud load.
+let listBaseline = listSnapshot(state);
 // What this member's shared meal-plan snapshot looked like when it was last known
 // not to have been changed HERE (see syncOwnMealPlanShare). null until first taken.
 let mealPlanShareBaseline = null;
@@ -358,11 +361,11 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "memberDiets", "activeCooking", "mealPlanSharedEvents"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders", "grocerySettingStamps"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "groceryNextStopStamps", "instacartOrders", "grocerySettingStamps"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData", "watchRowReset"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastSkipAds", "publicationTiers", "libraryKey", "podcastBundleSeries", "podcastReleasedSeries", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps", "mediaRowReset"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastSkipAds", "publicationTiers", "libraryKey", "podcastBundleSeries", "podcastReleasedSeries", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaListStamps", "mediaSettingStamps", "mediaRowReset"],
   // The person's own Listen queue and positions, the same in every view
   // (listen-queue.js, LISTEN_QUEUE_DESIGN.md). Never swapped by a view switch.
   listen:    ["podcastProgress", "mediaProgress", "readingProgress", "mediaQueueAdded", "mediaQueueRemoved", "podcastAutoSkipped", "mediaAllPinnedOrder", "mediaHistory"],
@@ -5348,6 +5351,10 @@ function stampChangedSettings() {
   if (bootedWithEmptyStorage && !sharedStorageReady) { adoptSettingsBaseline(); return []; }
   const { baseline, changed } = stampSettingChanges(state, settingsBaseline, state.stateUpdatedAt);
   settingsBaseline = baseline;
+  // Same for the small lists that merge by union with add/remove stamps
+  // (radio favourites, followed programs, Next Stop items — stamped-lists.js).
+  const lists = stampListChanges(state, listBaseline, state.stateUpdatedAt);
+  listBaseline = lists.baseline;
   if (changed.length && !settingsFlushDueAt) {
     settingsFlushDueAt = Date.now() + Math.max(SETTINGS_FLUSH_DEBOUNCE_MS, SETTINGS_FLUSH_MIN_INTERVAL_MS - (Date.now() - lastSharedStorageWriteAt));
   }
@@ -5358,6 +5365,7 @@ function stampChangedSettings() {
 // take them as the new baseline so the next persist() doesn't stamp them.
 function adoptSettingsBaseline() {
   settingsBaseline = settingsSnapshot(state);
+  listBaseline = listSnapshot(state);
   adoptMealPlanShareBaseline();
 }
 
@@ -5713,6 +5721,8 @@ function defaultState() {
     groceryCleared: {},
     groceryChecklist: { config: [], provisional: {}, submissions: {} },
     nextStopItems: [],
+    groceryNextStopStamps: {},
+    mediaListStamps: {},
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
     groceryCatalogVersion: 1,
@@ -5909,6 +5919,8 @@ function normalizeState(parsed) {
     groceryCleared: parsed?.groceryCleared && typeof parsed.groceryCleared === "object" ? parsed.groceryCleared : {},
     groceryChecklist: normalizeGroceryChecklist(parsed?.groceryChecklist),
     nextStopItems: LiveGrocerySources.normalizeNextStopItems(parsed?.nextStopItems),
+    groceryNextStopStamps: pruneListStamps(parsed?.groceryNextStopStamps, parsed, new Date().toISOString()),
+    mediaListStamps: pruneListStamps(parsed?.mediaListStamps, parsed, new Date().toISOString()),
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
     groceryCatalogVersion: Number(parsed?.groceryCatalogVersion) || 0,
@@ -7486,8 +7498,8 @@ function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
     // Radio user-added stations: each gets a fresh random `user_…` id and is
     // never re-added under the same id, so tombstones (deleteRadioUserStation)
     // are exact. Previously newer-wins — a station added on one device vanished
-    // when another device synced. (radioFavorites / radioFollowedPrograms stay
-    // newer-wins: see MERGE_NEWER_WINS_KEYS in test/architecture-state-merge-coverage.test.js.)
+    // when another device synced. (radioFavorites / radioFollowedPrograms merge
+    // with add/remove stamps further down — stamped-lists.js.)
     "radioUserStations",
     // Manual "Add to queue" entries (media-queue-added.js): each add gets a fresh
     // random id, so a removal's tombstone is exact and re-adding still works.
@@ -7706,6 +7718,15 @@ function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
     const stripped = stripMovedOut(merged);
     if (stripped !== merged) for (const key of STATE_SECTIONS.finance) if (key in stripped) merged[key] = stripped[key];
   }
+
+  // Radio favourites, followed programs, Next Stop items: union, minus what was
+  // removed after it was (last) added (stamped-lists.js). They used to be
+  // newer-copy-wins, so an empty copy on a fresh device could erase them.
+  merged.mediaListStamps = mergeListStamps(newer.mediaListStamps, older.mediaListStamps);
+  merged.groceryNextStopStamps = mergeListStamps(newer.groceryNextStopStamps, older.groceryNextStopStamps);
+  merged.radioFavorites = mergeStampedList("radioFavorites", newer.radioFavorites, older.radioFavorites, merged.mediaListStamps);
+  merged.radioFollowedPrograms = mergeStampedList("radioFollowedPrograms", newer.radioFollowedPrograms, older.radioFollowedPrograms, merged.mediaListStamps);
+  merged.nextStopItems = mergeStampedList("nextStopItems", newer.nextStopItems, older.nextStopItems, merged.groceryNextStopStamps);
 
   mergeTrackedSettings(merged, newer, older);
 
