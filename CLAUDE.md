@@ -39,6 +39,10 @@ bottom of this file.
   was previously caused by an unguarded retry / `useEffect`-style loop re-running
   session/auth checks. When touching auth/session code, guard re-entry, **bound
   retries**, and pin effect dependencies so a session check can't re-trigger itself.
+- **Every user table needs the MFA policy** (2026-11-17): a new `public` table with RLS
+  policies also gets `create policy require_mfa_when_enrolled on public.<t> as restrictive
+  for all to authenticated using ((select public.session_meets_mfa())) with check ((select
+  public.session_meets_mfa()))` — otherwise an aal1 token skips the authenticator code there.
 - **Don't trust infra status alone when debugging Supabase.** The Supabase
   `get_project` API can report **`ACTIVE_HEALTHY`** even while the dashboard shows
   billing / quota / egress problems. Cross-check the dashboard (usage, billing,

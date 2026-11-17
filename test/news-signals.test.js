@@ -96,7 +96,7 @@ function world({ signalsRow = null, existing = [], subs = { [U1]: { nyt: { statu
   const st = { calls: [], signalsRow, inserted: [], topics: [] };
   const body = {
     "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml": rss([{ title: "F.A.A. Grounds All Flights Nationwide", url: "https://www.nytimes.com/2026/11/14/us/faa-ground-stop.html" }]),
-    "https://www.startribune.com/arc/outboundfeeds/rss/?outputType=xml": rss([{ title: "Departures halted at MSP", url: "https://www.startribune.com/departures-halted-at-msp/601919999" }]),
+    "https://www.startribune.com/local/index.rss2": rss([{ title: "Departures halted at MSP", url: "https://www.startribune.com/departures-halted-at-msp/601919999" }]),
     "https://feeds.npr.org/1001/rss.xml": rss([{ title: "FAA halts flights nationwide : NPR", url: "https://www.npr.org/2026/11/14/nx-s1-5600123/faa-halts-flights" }]),
     "https://feeds.bbci.co.uk/news/rss.xml": rss([{ title: "All US flights grounded by regulator" }]),
     "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml": rss([{ title: "All US flights grounded by regulator" }]),

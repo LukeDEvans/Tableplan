@@ -69,10 +69,9 @@ function svc() {
   return { get, rpc };
 }
 
-// Only columns that exist in prod (checked 2026-11-17): eat_recipes has no
-// prep_time / cook_time there (the app's loader falls back without them), and
-// asking PostgREST for a missing column is a 400.
-const RECIPE_COLUMNS = "id,name,time,servings,source_url,ingredients,steps,tags";
+// Only columns that exist in prod — asking PostgREST for a missing column is a
+// 400. prep_time / cook_time were added to prod 2026-11-17 (migration 20261117200000).
+const RECIPE_COLUMNS = "id,name,time,prep_time,cook_time,servings,source_url,ingredients,steps,tags";
 
 // The one database surface tools.js sees.
 function makeDb(s: ReturnType<typeof svc>) {

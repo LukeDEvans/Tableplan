@@ -39,6 +39,7 @@ const SHARED_FILES = {
   "vitest.config.mjs": "test config",
   "supabase-config.js": "Supabase client config",
   "state-sync.js": "state + sync",
+  "stamped-lists.js": "state + sync: add/remove stamps for small union-merged lists (radio, Next Stop)",
   "settings-sync.js": "synced-settings stamps",
   "native-bridge.js": "Capacitor bridge",
   "link-out.js": "the one hand-off to streaming apps, used by Watch and Scores (STREAMING_HANDOFF_DESIGN.md)",

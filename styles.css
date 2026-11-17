@@ -1763,8 +1763,32 @@ body {
 .home-page {
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 8px 24px;
 }
+/* Centred when it fits; when it doesn't, the auto margins drop to zero and the
+   logo starts at the top rather than being cut off above the scroll. */
+.home-page > .home-center {
+  margin: auto;
+}
+
+/* Landing page: the settings and scan buttons float over the page instead of
+   taking a row of their own, so the logo can rise into the gap between them
+   and the page list gets that height back (Luke, 2026-11-17 — with Photos added
+   the list no longer fit and the landing page scrolled). The header collapses to
+   zero height but still paints its buttons (and their menus) above the page;
+   only those controls take taps, so a swipe across the logo still reaches the
+   landing page's view switcher. */
+body:has(#homeMainPage:not([hidden])) .topbar {
+  position: relative;
+  z-index: 5;
+  height: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+body:has(#homeMainPage:not([hidden])) .topbar :is(button, input, .app-menu) {
+  pointer-events: auto;
+}
+
 
 .home-center {
   display: grid;

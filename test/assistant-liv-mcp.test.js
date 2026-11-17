@@ -57,7 +57,7 @@ function install() {
     }
     if (u.pathname === "/rest/v1/eat_recipes") {
       // Prod's real columns (2026-11-17) — PostgREST answers 400 for any other.
-      const PROD_COLUMNS = ["id", "name", "time", "servings", "folder_id", "source_url", "photo_url", "ingredients", "steps", "created_at", "updated_at", "tags", "nutrition", "cook_log", "nutrition_estimate", "ingredient_nutrition_matches"];
+      const PROD_COLUMNS = ["id", "name", "time", "prep_time", "cook_time", "servings", "folder_id", "source_url", "photo_url", "ingredients", "steps", "created_at", "updated_at", "tags", "nutrition", "cook_log", "nutrition_estimate", "ingredient_nutrition_matches"];
       if (u.searchParams.get("select").split(",").some((c) => !PROD_COLUMNS.includes(c))) return json({ message: "column does not exist" }, 400);
       const idf = u.searchParams.get("id");
       const ids = idf ? idf.slice(4, -1).split(",").map((s) => s.replace(/"/g, "")) : null;
