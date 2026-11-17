@@ -300,6 +300,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 
 
 ## P2
+- [ ] **[P2] 23 of 88 news feeds failing** (news · newsfeeds_status · 2026-11-17)
+      Found by the new `liv_health` tool: Star Tribune 10× HTTP 429 (rate-limited — the hourly run asks for too many of its feeds at once) and 4× 404; The Athletic 8× 404 (feed URLs moved or retired); NYT 1× "200 but not ok" (parsed nothing). Stories from those feeds silently stop arriving; nothing in the app shows it. → Space out Star Tribune requests or cut its feed list; find the Athletic's current feed URLs (or drop them — Luke wants Athletic limited to favorite teams anyway); check the NYT feed's format. Verdict: CONFIRMED (live status row).
 
 - [ ] **[P2] Photos: a favourite set on the laptop can be undone by the phone once §18's change step is live** (photos · supabase/functions/photo-sync update + PhotoSyncEngine · 2026-11-16) — the laptop's Favourite changes only Liv; when that photo next changes on the phone, `photo_sync_update` sends the phone's favourite and overwrites Liv's. → Suggestion: before applying the held migration, have the phone apply laptop favourites (Liv newer than the asset's modificationDate) instead of overwriting. Verdict: not live yet (migration held).
 - [ ] **[P2] Word processor: saving is read-then-write without a conditional PUT** (documents · documents/editor/doc-model.js mergeAndSave · 2026-11-09, independent review)
@@ -516,8 +518,6 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
-- [ ] **[P3] liv-mcp: "1 servings" in recipe search** (assistant · supabase/functions/liv-mcp/tools.js:376 · 2026-11-17)
-      `search_recipes` prints `· 1 servings` (most of the box is 1 serving). Cosmetic; fix with the next liv-mcp deploy so the repo and the live function don't drift. Verdict: CONFIRMED (seen in the live check).
 
 - [ ] **[P3] Photos: a second account set up on the same iPhone gets no photos** (photos · PhotoSyncEngine.photoId · 2026-11-16) — photo ids are derived from (device key, the phone's photo id), so another person signing in on Luke's phone produces the same ids, the inserts are ignored as already there, and `photo_sync_mine` (author = the other user) answers nothing. Not a leak (nothing of Luke's is reachable), just an empty library. → Include the user in the id for new libraries if a shared phone ever matters. Verdict: unlikely (each person syncs their own phone).
 - [x] **[P3] Kept copies outlive a purge, and the 200 MB cap counts raw bytes** (documents · documents/library.js:243 purge, documents/ui.js:161 openedFilesCache · 2026-11-03)

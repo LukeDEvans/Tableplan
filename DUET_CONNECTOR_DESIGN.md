@@ -38,6 +38,7 @@ layer ARCHITECTURE.md §9 already requires, reachable from outside the app.
 | `search_recipes`, `get_recipe` | The recipe box (`eat_recipes`). |
 | `get_watchlist` | Household or Personal, want / watched. |
 | `list_trips` | Explore's trips with status. |
+| `liv_health` | Is Liv working (§4). Admin only. |
 
 **Never readable:** Finance, Documents (incl. the Safe), Photos, Messages, Mail,
 Contacts, Settings — and nobody's Personal rows but the key owner's.
@@ -106,7 +107,23 @@ v1 failed on recipes: prod's `eat_recipes` has no `prep_time`/`cook_time` — th
 fake PostgREST now rejects unknown columns. Left for Luke: steps 4–5.
 6. Off switch: revoke the key, or set the `LIV_MCP_DISABLED=1` secret.
 
-## 4. Phase 2 — writes and a Settings screen (not built)
+## 4. `liv_health` — is Liv working? (live since 2026-11-17)
+
+Luke, 2026-11-17: "Let's go ahead with the diagnostics tool." His aim: take as much
+routine checking off him as possible, with Duet watching between sessions.
+
+- **Admin only** (`role = admin`); a member's key gets a refusal and no database call.
+- **Metadata only**: times, counts, sizes, statuses; never content, tokens or secrets.
+  One service-only function, `assistant_health(user)` (migrations/2026-11-17b-assistant-health.sql).
+- Reads: finance nightly status, news feed run + failing feeds, newest story, mail sweep
+  (incl. a stuck lock), Google Calendar link, photo library + sync devices, the person's
+  sync rows (size, last write), whole-state snapshot count (save-loop / egress gauge),
+  push subscriptions, assistant keys.
+- Problems first, with thresholds in `HEALTH_LIMITS` set well past normal gaps so a
+  check-in every few hours doesn't cry wolf.
+- First live run found 23 of 88 news feeds failing (ISSUES.md).
+
+## 5. Phase 2 — writes and a Settings screen (not built)
 
 - **Settings › Assistant:** mint (secret shown once), name, revoke, last used.
 - **Write tools**, bounded and typed like `assistant-tools.js`: add task, add
@@ -116,7 +133,7 @@ fake PostgREST now rejects unknown columns. Left for Luke: steps 4–5.
 - Duet already asks before sends, payments, signatures and deletes; Liv adds its own
   rule: **no delete or edit tools** until the adds have proven themselves.
 
-## 5. Open questions (to take one at a time)
+## 6. Open questions (to take one at a time)
 
 1. **First key:** mint it now from SQL with the secret given to Luke in chat
    (recommended — read-only and revocable), or wait for the Settings screen?
