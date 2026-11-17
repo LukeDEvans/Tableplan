@@ -90,7 +90,7 @@ You are the **Photos** domain agent for **Live / Tableplan**.
   confirmation; saying no there puts it back in Liv).
 - **Changes from the Photos app (§18):** `migrations/2026-11-16c-photo-sync-changes.sql`
   (`photo_sync_update` / `photo_sync_gone`) and the `update` / `gone` ops are written
-  and tested but **held by Luke (2026-11-16, "not yet")**; the phone skips them
+  and tested in their own PR, **held by Luke (2026-11-16, "not yet")**; the phone skips them
   while the server lacks them (keeps its change-history mark).
 
 ## Ownership (checked by CI)
