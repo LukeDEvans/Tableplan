@@ -21,6 +21,8 @@ const RPC_SQL = {
   photo_sync_mine: ["select * from public.photo_sync_mine($1::uuid, $2, $3::uuid[])", (a) => [a.p_device, a.p_secret_hash, a.p_ids], "rows"],
   photo_sync_add: ["select * from public.photo_sync_add($1::uuid, $2, $3::jsonb) as photo_sync_add", (a) => [a.p_device, a.p_secret_hash, JSON.stringify(a.p_items)], "column"],
   photo_sync_done: ["select public.photo_sync_done($1::uuid, $2, $3::uuid[], $4::int[]) as r", (a) => [a.p_device, a.p_secret_hash, a.p_ids, a.p_bytes], "scalar"],
+  photo_sync_update: ["select public.photo_sync_update($1::uuid, $2, $3::jsonb) as r", (a) => [a.p_device, a.p_secret_hash, JSON.stringify(a.p_items)], "scalar"],
+  photo_sync_gone: ["select public.photo_sync_gone($1::uuid, $2, $3::uuid[]) as r", (a) => [a.p_device, a.p_secret_hash, a.p_ids], "scalar"],
 };
 
 let db;
@@ -34,6 +36,7 @@ beforeAll(async () => {
   db = await createDocumentsDatabase();
   await db.exec(read("2026-11-16-photos.sql"));
   await db.exec(read("2026-11-16b-photo-sync-devices.sql"));
+  await db.exec(read("2026-11-16c-photo-sync-changes.sql"));
   globalThis.Deno = { env: { get: (k) => env[k] }, serve: (h) => { handler = h; } };
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
@@ -113,6 +116,24 @@ describe("photo-sync", () => {
     const mine = await (await call({ op: "mine", ids: [id(1), id(2), id(60)] }, cred)).json();
     expect(mine.items.sort((a, b) => a.id.localeCompare(b.id))).toEqual([{ id: id(1), has_thumb: true }, { id: id(2), has_thumb: false }]);
     expect((await db.query(`select has_thumb from public.photo_items where id = $1`, [id(60)])).rows[0].has_thumb).toBe(false);
+  });
+
+  it("brings changes and deletions from the phone across, only for its own photos", async () => {
+    const res = await call({ op: "update", items: [{ id: id(1), favorite: true, taken_at: "2024-01-02T03:04:05Z", injected: "x", scope: "u-someone" }] }, cred);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ count: 1 });
+    const [r] = (await db.query(`select favorite, scope from public.photo_items where id = $1`, [id(1)])).rows;
+    expect(r).toEqual({ favorite: true, scope: `u-${luke}` });
+    const gone = await call({ op: "gone", ids: [id(2)] }, cred);
+    expect(await gone.json()).toEqual({ count: 1 });
+    expect((await db.query(`select deleted_at from public.photo_items where id = $1`, [id(2)])).rows[0].deleted_at).not.toBeNull();
+    for (const body of [{ op: "update", items: [] }, { op: "update", items: [{ id: "x" }] }, { op: "gone", ids: [] }, { op: "gone", ids: ["x"] }]) {
+      expect((await call(body, cred)).status).toBe(400);
+    }
+    const [deviceId] = cred["x-photo-device"].split(".");
+    const wrong = { "x-photo-device": `${deviceId}.${"A".repeat(43)}` };
+    expect((await call({ op: "update", items: [{ id: id(1), favorite: false }] }, wrong)).status).toBe(401);
+    expect((await call({ op: "gone", ids: [id(1)] }, wrong)).status).toBe(401);
   });
 
   it("refuses a wrong or revoked key, and junk", async () => {
