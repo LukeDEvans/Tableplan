@@ -42,3 +42,5 @@ Each entry: what shipped · PR · post-deploy steps.
   Post-deploy: none.
 - **News: the Star Tribune's Politics, Nation, World and Health stories come back** · #257. Adds the paper's `/rss/` (whole paper) plus its outdoors and things-to-do feeds, and places every Star Tribune story by its own section tags. Server-side only (Netlify functions).
   Post-deploy: after the next hourly run, `newsfeeds_status` shows every startribune feed 200, and `news_articles` has fresh startribune rows in politics / us / world.
+- **The page menu stays open over an open email** · #258. Opening the menu shifted the layout, the open email's pane scrolled, and the scroll rule closed the menu at once. Found in the laptop checks.
+  Post-deploy: in Mail, open an email, tap the page title: the menu stays open.

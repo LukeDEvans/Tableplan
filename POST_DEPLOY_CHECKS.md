@@ -49,20 +49,16 @@ Do these once your phone has the newest TestFlight build.
       sync was never connected; Calendar reads Google only through old iCal links. Calendar
       › Add Calendar › Connect Google Calendar (Luke approves Google's screen); then check
       timed events, a new Google event appearing within ~5 min, and the severance report.
-- [ ] **Word processor + attachments** (#223, #234, #235) — open the email with the Word
-      file: opens in the editor "From email · view only"; Save to Document; a .csv / .ics /
-      .vcf open as a table / event / contact.
-- [ ] **Document on the laptop** (#213, #215, #218) — Household Document opens; drag a PDF
+- [x] **Word processor + attachments** (#223, #234, #235) — **checked 2026-11-17 in Luke's Chrome:** the 2027Holiday .docx opened "From email · view only", Save to Document made a working doc (but the Document page showed blank until reopened — ISSUES); an .ics opened as an event card with Add to Calendar. No .csv / .vcf email handy, so those weren't tried.
+- [ ] **Document on the laptop** (#213, #215, #218) — (2026-11-17: Household Document opens and lists its receipts; the PDF drag and passkey lock still need Luke) — Household Document opens; drag a PDF
       in (then check it on the phone); passkey lock on/off.
-- [ ] **Deletes stay per view** (#229) — same title in Personal and Household Watch; remove
-      from Household; still in Personal; remove there; gone from both after a refresh.
+- [x] **Deletes stay per view** (#229) — **checked 2026-11-17:** Nosferatu (1922) added to Personal and Household; removed from Household, still in Personal (server rows checked); removed there; gone from both rows and after a reload.
 - [ ] **Two people's Watch ticks both stick** (#206) — tick an episode on the laptop while
       Luke ticks a different one on the phone.
-- [ ] **Mail folder switching** (#221) — Inbox → AI Trash → Inbox fast, several times: no
-      "Quota exceeded"; archive, switch away and back: it's gone.
-- [ ] **Watch: a show opens where you are** (#210) — SNL opens on its latest season.
+- [x] **Mail folder switching** (#221) — **checked 2026-11-17:** Inbox ↔ Trash three times about a second apart: no error; archive, switch away and back: gone. Ten switches 200 ms apart right after opening an email still hit "Quota exceeded" (recovers within a minute) — ISSUES P3.
+- [x] **Watch: a show opens where you are** (#210) — **checked 2026-11-17:** SNL opens on Season 52 with watched episodes struck through.
 - [ ] **Display per view** (#219) — Household: upload a logo, rename the view.
-- [ ] **Version stamp** (#176) — Settings shows "Version <commit> · <date>" for the last deploy.
+- [x] **Version stamp** (#176) — **checked 2026-11-17:** Settings shows "Version 0fec005 · Nov 13, 1:57 PM", the last [deploy] commit.
 - [ ] **Link the laptop browser in Messages** (#201) — Link this browser → Luke scans the QR.
 
 ## Claude, server
