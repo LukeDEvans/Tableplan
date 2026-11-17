@@ -27,6 +27,7 @@ import { createScoresModule, gameCardHtml } from './scores-ui.js';
 import { OUT_TARGETS, openOutLink, titleHandoff, targetHandoff, linkOutAttrs, linkOutFromElement } from './link-out.js';
 import { PLACES, placeHandoff, billerForBill, mapsHandoffs, travelPlaceFor, storeSearchHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 import { matchProviderId } from './media-availability.js';
+import { mergeLibraries as mergeMusicLibraries, normalizeLibrary as normalizeMusicLibrary } from './music-library-model.js';
 import { createStreamLinksCache, linksForProvider } from './media-stream-links.js';
 import { createLanguageModule } from './language-ui.js';
 import { createSpeech } from './language-speech.js';
@@ -5855,9 +5856,7 @@ function normalizeState(parsed) {
     mediaHistory: Array.isArray(parsed?.mediaHistory) ? parsed.mediaHistory : [],
     // App-owned unified Saved store (Watch-Later / Listen-Later / Favourites).
     mediaSaved: Array.isArray(parsed?.mediaSaved) ? parsed.mediaSaved : [],
-    musicLibrary: (parsed?.musicLibrary && typeof parsed.musicLibrary === "object")
-      ? { favorites: Array.isArray(parsed.musicLibrary.favorites) ? parsed.musicLibrary.favorites : [], playlists: Array.isArray(parsed.musicLibrary.playlists) ? parsed.musicLibrary.playlists : [] }
-      : { favorites: [], playlists: [] },
+    musicLibrary: normalizeMusicLibrary(parsed?.musicLibrary),
     radioFavorites: Array.isArray(parsed?.radioFavorites) ? parsed.radioFavorites : [],
     radioFollowedPrograms: Array.isArray(parsed?.radioFollowedPrograms) ? parsed.radioFollowedPrograms : [],
     radioUserStations: Array.isArray(parsed?.radioUserStations) ? parsed.radioUserStations : [],
@@ -7496,6 +7495,12 @@ function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
+
+  // Music favourites and playlists: union, each playlist from the side that
+  // changed it last, deletions kept in the library's own `removed` stamps
+  // (music-library-model.js). Was whole-object newer-wins, which let a device
+  // with an older copy erase a new playlist (Luke's "Bike", 2026-11-16).
+  merged.musicLibrary = mergeMusicLibraries(newer.musicLibrary, older.musicLibrary);
 
   // Watch items: a show on both sides is merged episode by episode and tab by
   // tab, each by its own time, so two people's ticks both stick (watch-merge.js,
@@ -36963,9 +36968,7 @@ async function getMusicCanon() {
 
 // Personal library lives at state.musicLibrary = { favorites, playlists }.
 function getMusicLibraryState() {
-  if (!state.musicLibrary || typeof state.musicLibrary !== "object") state.musicLibrary = { favorites: [], playlists: [] };
-  if (!Array.isArray(state.musicLibrary.favorites)) state.musicLibrary.favorites = [];
-  if (!Array.isArray(state.musicLibrary.playlists)) state.musicLibrary.playlists = [];
+  state.musicLibrary = normalizeMusicLibrary(state.musicLibrary);
   return state.musicLibrary;
 }
 function saveMusicLibrary(lib) { state.musicLibrary = lib; persist(); }
