@@ -46,7 +46,7 @@ import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRo
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { SPEED_MIN, SPEED_MAX, snapPlaybackSpeed, stepPlaybackSpeed, formatSpeedLabel, speedStepperHtml } from './playback-speed.js';
-import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, effectiveTombstones, tombstoneIdsFor, addTombstone, removeTombstone, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
+import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, effectiveTombstones, tombstoneIdsFor, addTombstone, removeTombstone, computeDirtySections, settledSectionsAfterLoad, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
@@ -7975,7 +7975,7 @@ async function runHydrateStateFromSharedStorage() {
           }
           applyStoredState(merged);
           adoptSettingsBaseline(); // cloud-merged values are not user changes
-          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
+          seedLastWrittenFromLoad(sharedState); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           await provider.write();
         } else {
@@ -7985,7 +7985,7 @@ async function runHydrateStateFromSharedStorage() {
           guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated);
           applyStoredState(merged);
           adoptSettingsBaseline(); // cloud-merged values are not user changes
-          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
+          seedLastWrittenFromLoad(sharedState); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           // Only write back if local actually contributed something new (tombstones, additions).
           // Comparing signatures detects whether the merge changed anything vs the remote state —
@@ -8497,9 +8497,37 @@ function storedPodcasts(podcasts, source) {
 // rewrites the sections the merge really changed instead of every section.
 let lastLoadedSectionJson = null;
 
-function seedLastWrittenFromLoad() {
-  lastWrittenSections = lastLoadedSectionJson ? { ...lastLoadedSectionJson } : null;
+// `sharedState` = what the server held (the load's assembled active rows). A
+// section counts as written when the live copy equals the server's after the
+// same normalizeState pass, so a boot doesn't re-send untouched rows
+// (state-sync.js settledSectionsAfterLoad).
+function seedLastWrittenFromLoad(sharedState = null) {
+  const loaded = lastLoadedSectionJson;
   lastLoadedSectionJson = null;
+  lastWrittenSections = settledSectionsAfterLoad(
+    STATE_SECTIONS,
+    loaded,
+    (keys) => JSON.stringify(extractSectionData(keys)),
+    () => {
+      if (!sharedState) return null;
+      try {
+        const tidied = normalizeState(structuredClone(sharedState));
+        cleanupAutoAppliedFutureMealDefaults(tidied);
+        return (keys) => JSON.stringify(extractSectionData(keys, tidied));
+      } catch (e) {
+        console.warn("[sync] couldn't compare the loaded state (rewriting changed sections):", e.message);
+        return null;
+      } finally {
+        // normalizeState lays out the meal plan from the config it's given; put
+        // the live state's layout back.
+        recomputeMealPlanLayout(normalizeMealPlanConfig(state.mealPlanConfig));
+      }
+    },
+  );
+  if (lastWrittenSections && loaded) {
+    const resend = Object.keys(STATE_SECTIONS).filter((s) => s in loaded && lastWrittenSections[s] !== JSON.stringify(extractSectionData(STATE_SECTIONS[s])));
+    if (resend.length) console.info(`[sync] after load, rewriting changed sections: ${resend.join(", ")}`);
+  }
 }
 
 function assembleSectionRows(rows) {

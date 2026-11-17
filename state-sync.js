@@ -149,6 +149,39 @@ export function computeDirtySections(sections, sectionJson, lastWritten, skip = 
 }
 
 /**
+ * After a load + merge, which sections the server already holds — so a boot
+ * rewrites only sections the merge actually changed (INF-4; ISSUES 2026-11-17).
+ *
+ * `loaded[section]` is the server's raw JSON. The app tidies data as it loads it
+ * (normalizeState: defaults, migrated fields, pruned episodes), so the live JSON
+ * of an untouched section rarely equals the raw text, and every cold start of
+ * the iPhone app re-sent all ~12 rows (~13×/day, seen in the edge logs). A
+ * section whose live JSON equals the server copy *after the same tidying* holds
+ * nothing new, so it counts as written. `normalizedJson` is called lazily (the
+ * tidy pass costs a full normalizeState) and only for sections that differ raw;
+ * it returns null when the tidied copy can't be produced, which keeps them dirty.
+ *
+ * @param {Object<string,string[]>} sections  STATE_SECTIONS
+ * @param {Object<string,string>|null} loaded  section → server JSON (active rows only)
+ * @param {(keys:string[]) => string} currentJson  live JSON for a section's keys
+ * @param {() => ((keys:string[]) => string)|null} normalizedJson  makes the tidied-server reader
+ * @returns {Object<string,string>|null}  the new lastWrittenSections (null ⇒ write everything)
+ */
+export function settledSectionsAfterLoad(sections, loaded, currentJson, normalizedJson) {
+  if (!loaded) return null;
+  const written = { ...loaded };
+  let tidied;
+  for (const [section, keys] of Object.entries(sections)) {
+    if (!(section in loaded)) continue; // no server row yet: stays dirty so it gets created
+    const current = currentJson(keys);
+    if (current === loaded[section]) continue;
+    if (tidied === undefined) tidied = normalizedJson() || null;
+    if (tidied && tidied(keys) === current) written[section] = current;
+  }
+  return written;
+}
+
+/**
  * Write every dirty section concurrently; one failure never blocks recording the
  * others. `writeOne(entry)` resolves with the JSON it actually sent (it may differ
  * from entry.json when a conflict merge rewrote the section before retrying); a
