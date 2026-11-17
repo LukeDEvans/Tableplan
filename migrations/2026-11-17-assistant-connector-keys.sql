@@ -34,6 +34,7 @@ create table if not exists public.assistant_connector_keys (
   revoked_at   timestamptz
 );
 create index if not exists assistant_connector_keys_user on public.assistant_connector_keys (user_id);
+alter table public.assistant_connector_keys enable row level security;
 
 -- Revoking is the only change an owner can make, and it can't be undone. The usage
 -- columns are the server's (the check function below).
@@ -67,6 +68,11 @@ language plpgsql volatile security definer set search_path = ''
 as $$
 declare v_id uuid;
 begin
+  -- Defense in depth beside the grants below: only the server (or the SQL editor,
+  -- which carries no JWT) may call this, even before the revokes have run.
+  if coalesce((select auth.role()), 'service_role') <> 'service_role' then
+    raise exception 'server only' using errcode = '42501';
+  end if;
   if p_user is null then raise exception 'no user' using errcode = '42501'; end if;
   insert into public.assistant_connector_keys (user_id, name, secret_hash, scopes)
     values (p_user, left(coalesce(p_name, ''), 60), p_secret_hash, coalesce(p_scopes, array['read']::text[]))
@@ -83,6 +89,11 @@ language plpgsql volatile security definer set search_path = ''
 as $$
 declare r public.assistant_connector_keys;
 begin
+  -- Defense in depth beside the grants below: only the server (or the SQL editor,
+  -- which carries no JWT) may call this, even before the revokes have run.
+  if coalesce((select auth.role()), 'service_role') <> 'service_role' then
+    raise exception 'server only' using errcode = '42501';
+  end if;
   select * into r from public.assistant_connector_keys k
     where k.id = p_key and k.secret_hash = p_secret_hash and k.revoked_at is null
     for update;
@@ -108,6 +119,11 @@ language plpgsql stable security definer set search_path = ''
 as $$
 declare v_state jsonb; v_out jsonb := '{}'::jsonb; p text; parts text[];
 begin
+  -- Defense in depth beside the grants below: only the server (or the SQL editor,
+  -- which carries no JWT) may call this, even before the revokes have run.
+  if coalesce((select auth.role()), 'service_role') <> 'service_role' then
+    raise exception 'server only' using errcode = '42501';
+  end if;
   if cardinality(p_paths) > 12 then raise exception 'too many paths' using errcode = '22023'; end if;
   select s.state into v_state from public.tableplan_states s where s.id = p_row;
   if v_state is null then return null; end if;
@@ -120,7 +136,6 @@ begin
   return v_out;
 end $$;
 
-alter table public.assistant_connector_keys enable row level security;
 do $$ begin
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'assistant_connector_keys' and policyname = 'assistant keys: read own') then
     create policy "assistant keys: read own" on public.assistant_connector_keys for select to authenticated using (user_id = (select auth.uid()));

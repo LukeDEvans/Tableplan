@@ -516,6 +516,8 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+- [ ] **[P3] liv-mcp: "1 servings" in recipe search** (assistant · supabase/functions/liv-mcp/tools.js:376 · 2026-11-17)
+      `search_recipes` prints `· 1 servings` (most of the box is 1 serving). Cosmetic; fix with the next liv-mcp deploy so the repo and the live function don't drift. Verdict: CONFIRMED (seen in the live check).
 
 - [ ] **[P3] Photos: a second account set up on the same iPhone gets no photos** (photos · PhotoSyncEngine.photoId · 2026-11-16) — photo ids are derived from (device key, the phone's photo id), so another person signing in on Luke's phone produces the same ids, the inserts are ignored as already there, and `photo_sync_mine` (author = the other user) answers nothing. Not a leak (nothing of Luke's is reachable), just an empty library. → Include the user in the id for new libraries if a shared phone ever matters. Verdict: unlikely (each person syncs their own phone).
 - [x] **[P3] Kept copies outlive a purge, and the 200 MB cap counts raw bytes** (documents · documents/library.js:243 purge, documents/ui.js:161 openedFilesCache · 2026-11-03)

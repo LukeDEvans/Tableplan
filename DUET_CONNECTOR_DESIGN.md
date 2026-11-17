@@ -24,7 +24,7 @@ layer ARCHITECTURE.md §9 already requires, reachable from outside the app.
 - Runs as a Supabase Edge Function — no Netlify deploy, no deploy credits. The
   existing photo-sync / finance-nightly / doc-storage functions set the pattern.
 
-## 3. Phase 1 — read-only (built, not deployed)
+## 3. Phase 1 — read-only (live since 2026-11-17)
 
 **Tools** (all `readOnlyHint`; text answers, America/Chicago dates):
 
@@ -86,7 +86,7 @@ the photo-sync device-key pattern:
   fails when it's stale, and runs the real index.ts against a fake Supabase (keys,
   protocol, every tool, the view rules).
 
-### 3.4 Going live (each step needs Luke's OK)
+### 3.4 Going live (Luke OK'd all three, 2026-11-17)
 
 1. Apply the migration (Supabase MCP `execute_sql`, then a `schema_migrations` row).
 2. Deploy `liv-mcp` with **verify JWT off** (the key isn't a Supabase JWT).
@@ -97,6 +97,13 @@ the photo-sync device-key pattern:
    `https://noyocjcltrenwdovqrql.supabase.co/functions/v1/liv-mcp`, No sign-in,
    Request header `authorization` = `Bearer <key>`.
 5. Ask Duet something only Liv knows ("what's for dinner Thursday?").
+
+**Done 2026-11-17:** migration applied (`schema_migrations` 20261117160000; anon and
+signed-in callers verified unable to run the functions or read hashes); `liv-mcp`
+v2 deployed with verify JWT off; key `Claude Duet` minted for Luke. Every tool was
+checked against real data through `pg_net` with a throwaway key, since revoked.
+v1 failed on recipes: prod's `eat_recipes` has no `prep_time`/`cook_time` — the test's
+fake PostgREST now rejects unknown columns. Left for Luke: steps 4–5.
 6. Off switch: revoke the key, or set the `LIV_MCP_DISABLED=1` secret.
 
 ## 4. Phase 2 — writes and a Settings screen (not built)

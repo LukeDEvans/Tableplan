@@ -52,6 +52,9 @@ function install() {
       return json(uid === LUKE ? [{ space_id: SPACE }] : []);
     }
     if (u.pathname === "/rest/v1/eat_recipes") {
+      // Prod's real columns (2026-11-17) — PostgREST answers 400 for any other.
+      const PROD_COLUMNS = ["id", "name", "time", "servings", "folder_id", "source_url", "photo_url", "ingredients", "steps", "created_at", "updated_at", "tags", "nutrition", "cook_log", "nutrition_estimate", "ingredient_nutrition_matches"];
+      if (u.searchParams.get("select").split(",").some((c) => !PROD_COLUMNS.includes(c))) return json({ message: "column does not exist" }, 400);
       const idf = u.searchParams.get("id");
       const ids = idf ? idf.slice(4, -1).split(",").map((s) => s.replace(/"/g, "")) : null;
       return json(db.recipes.filter((r) => !ids || ids.includes(r.id)));
@@ -79,7 +82,7 @@ beforeEach(() => {
   };
   db = {
     recipes: [
-      { id: "r-tacos", name: "Fish Tacos", servings: 4, tags: ["dinner"], ingredients: [{ amount: "1", quantity: "lb", item: "cod" }], steps: "1. Season fish\n2. Grill", prep_time: "10 min", cook_time: "15 min" },
+      { id: "r-tacos", name: "Fish Tacos", servings: 4, tags: ["dinner"], ingredients: [{ amount: "1", quantity: "lb", item: "cod" }], steps: "1. Season fish\n2. Grill", time: "25 min" },
       { id: "r-oats", name: "Overnight Oats", servings: 2, tags: ["breakfast"], ingredients: [{ amount: "1", quantity: "C", item: "oats" }], steps: "" },
     ],
     [`u-${LUKE}:plan`]: { planEvents: [
