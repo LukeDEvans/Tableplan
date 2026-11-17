@@ -182,9 +182,11 @@ describe("The Athletic team feeds", () => {
       { key: "nba:minnesota-timberwolves", scope: "nba", name: "Minnesota Timberwolves", league: "nba" },
       { key: "nfl:minnesota-vikings", scope: "nfl", name: "Minnesota Vikings", league: "nfl" },
       { key: "soccer:minnesota-united-fc", scope: "soccer", name: "Minnesota United FC", league: "mls" },
-      { key: "soccer:afc-ajax", scope: "soccer", name: "AFC Ajax", league: "eredivisie" }
+      { key: "soccer:afc-ajax", scope: "soccer", name: "AFC Ajax", league: "eredivisie" },
+      { key: "soccer:ajax-amsterdam", scope: "soccer", name: "Ajax Amsterdam", league: "eredivisie" }, // checked: no team feed
+      { key: "soccer:fc-utrecht", scope: "soccer", name: "FC Utrecht", league: "eredivisie" }
     ]).map((f) => f.url.replace("https://www.nytimes.com/athletic/rss/", ""));
-    expect(urls).toEqual(["nba/timberwolves/", "nfl/vikings/", "football/minnesota-united/", "football/minnesotaunited/", "football/ajax/", "news/", "nba/", "nfl/", "football/"]);
+    expect(urls).toEqual(["nba/timberwolves/", "nfl/vikings/", "football/mnufc/", "football/ajax/", "football/utrecht/", "news/", "nba/", "nfl/", "football/"]);
   });
   it("league feeds for everyone unless every Athletic reader has favourites", () => {
     const users = [{ userId: "u1", papers: new Set(["nyt", "athletic"]) }, { userId: "u2", papers: new Set(["athletic"]) }];
