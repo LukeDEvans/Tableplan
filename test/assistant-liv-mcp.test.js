@@ -21,7 +21,7 @@ const sha = (s) => createHash("sha256").update(s).digest("hex");
 // Tue 2026-11-17, 10:00 in Minneapolis. The prep week starts Fri 2026-11-13.
 const NOW = new Date("2026-11-17T16:00:00Z");
 
-let handle, realFetch, db, keys, readsOf, limited;
+let handle, realFetch, db, keys, readsOf, limited, health, healthCalls;
 const realDate = Date;
 
 function install() {
@@ -42,6 +42,10 @@ function install() {
       const out = {};
       for (const p of p_paths) out[p] = p.split(".").reduce((v, k) => (v == null ? undefined : v[k]), st) ?? null;
       return json(out);
+    }
+    if (u.pathname === "/rest/v1/rpc/assistant_health") {
+      healthCalls.push(JSON.parse(init.body).p_user);
+      return json(health);
     }
     if (u.pathname === "/rest/v1/live_group_members") {
       const uid = u.searchParams.get("user_id").replace("eq.", "");
@@ -76,6 +80,20 @@ afterAll(() => { globalThis.fetch = realFetch; delete globalThis.Deno; globalThi
 beforeEach(() => {
   limited = false;
   readsOf = [];
+  healthCalls = [];
+  health = {
+    checkedAt: "2026-11-17T16:00:00Z",
+    rows: [{ section: "plan", scope: "personal", bytes: 40000, updatedAt: "2026-11-17T15:50:00Z" }, { section: "eat", scope: "household", bytes: 380000, updatedAt: "2026-11-17T12:00:00Z" }],
+    historyWrites: { last24h: 11, last7d: 69 },
+    financeNightly: { startedAt: "2026-11-17T11:40:00Z", finishedAt: "2026-11-17T11:40:27Z", ok: true, lastGood: "2026-11-17T11:40:27Z" },
+    newsFeeds: { runAt: "2026-11-17T15:07:00Z", total: 40, failing: [{ paper: "startribune", status: 429 }, { paper: "startribune", status: 429 }, { paper: "athletic", status: 404 }] },
+    newsLatest: "2026-11-17T15:00:00Z",
+    mailSweep: { enabled: true, lastSweepAt: "2026-11-17T15:30:00Z", lockedAt: null },
+    googleCalendar: [{ updatedAt: "2026-11-17T15:00:00Z", tokenExpiresAt: "2026-11-17T16:00:00Z" }],
+    photos: { items: 1200, withThumb: 1190, newestAdded: "2026-11-17T14:00:00Z", devices: [{ name: "Luke's iPhone", lastUsedAt: "2026-11-17T14:00:00Z" }] },
+    pushSubscriptions: 2,
+    assistantKeys: [{ name: "Claude Duet", lastUsedAt: "2026-11-17T16:00:00Z" }],
+  };
   keys = {
     [KEY_ID]: { user: LUKE, hash: sha(SECRET), scopes: ["read"] },
     [MJ_KEY_ID]: { user: MJ, hash: sha(SECRET), scopes: ["read"] },
@@ -258,6 +276,38 @@ describe("view rules (a household member without Personal/Business)", () => {
   it("Luke's key reads only his own Personal rows", async () => {
     await call("liv_today");
     expect(readsOf.filter((id) => id.startsWith("u-")).every((id) => id.startsWith(`u-${LUKE}:`))).toBe(true);
+  });
+});
+
+describe("liv_health", () => {
+  it("leads with the problems it finds, then the readings", async () => {
+    const { text } = await call("liv_health");
+    expect(healthCalls).toEqual([LUKE]);
+    expect(text).toMatch(/^LIV HEALTH — 1 problem:/);
+    expect(text).toContain("3 of 40 news feeds failing: 2× startribune (429), 1× athletic (404)");
+    expect(text).toContain("Finance nightly: ok");
+    expect(text).toContain("Photos: 1200 in the library");
+    expect(text).toContain("Writes: 11 state snapshots in 24 h");
+  });
+  it("flags stuck jobs, a save loop, a huge row and a silent phone", async () => {
+    health.financeNightly = { ok: false, error: "TypeError", finishedAt: "2026-11-15T11:40:00Z", lastGood: "2026-11-14T11:40:00Z" };
+    health.mailSweep = { enabled: true, lastSweepAt: "2026-11-17T09:00:00Z", lockedAt: "2026-11-17T14:00:00Z" };
+    health.historyWrites = { last24h: 900, last7d: 1200 };
+    health.rows.push({ section: "media", scope: "household", bytes: 2_400_000, updatedAt: "2026-11-17T10:00:00Z" });
+    health.photos.devices = [{ name: "Luke's iPhone", lastUsedAt: "2026-11-12T10:00:00Z" }];
+    const { text } = await call("liv_health");
+    expect(text).toContain("Finance nightly job's last run failed (TypeError)");
+    expect(text).toContain("Finance nightly job last ran 2 days ago");
+    expect(text).toContain("Mail sweep last ran 7 h ago");
+    expect(text).toContain("locked since 2 h ago (stuck?)");
+    expect(text).toContain("900 state snapshots in 24 h");
+    expect(text).toContain("household media row is 2.4 MB");
+    expect(text).toContain('Photo sync device "Luke\'s iPhone" last synced 5 days ago');
+  });
+  it("is the admin's only — a member's key gets no health", async () => {
+    const { text } = await call("liv_health", {}, { key: `${MJ_KEY_ID}.${SECRET}` });
+    expect(text).toMatch(/admin only/);
+    expect(healthCalls).toEqual([]);
   });
 });
 

@@ -279,6 +279,12 @@ export const TOOLS = [
     },
   },
   {
+    name: "liv_health",
+    title: "Liv health",
+    description: "Is Liv working? Checks background jobs (finance nightly, news feeds, mail sweep), sync rows and write volume, photo sync and notifications, and lists anything that looks wrong first. Metadata only (times, counts, sizes) — no personal content. Luke only. Use it for a routine check-in or when something in Liv seems off.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
     name: "list_trips",
     title: "Trips",
     description: "The household's trips in Explore (ideas, planning, booked, under way), with dates and destinations.",
@@ -373,7 +379,7 @@ const HANDLERS = {
     if (!hits.length) return "No recipes found matching those criteria.";
     const shown = hits.slice(0, limit);
     return [`Found ${hits.length} recipe${hits.length === 1 ? "" : "s"}${hits.length > shown.length ? ` (showing ${shown.length})` : ""}:`,
-      ...shown.map((r) => `  - ${r.name}${r.tags?.length ? ` [${r.tags.join(", ")}]` : ""}${r.servings ? ` · ${r.servings} servings` : ""}`)].join("\n");
+      ...shown.map((r) => `  - ${r.name}${r.tags?.length ? ` [${r.tags.join(", ")}]` : ""}${r.servings ? ` · ${r.servings} serving${Number(r.servings) === 1 ? "" : "s"}` : ""}`)].join("\n");
   },
 
   async get_recipe(db, _ctx, args) {
@@ -405,12 +411,105 @@ const HANDLERS = {
     return [`${VIEW_LABELS[view]} watchlist (${items.length}):`, ...items.map((i) => `  - ${String(i.title).trim()}${i.year ? ` (${i.year})` : ""} · ${i.type === "tv" ? "show" : "movie"}${status === "all" ? ` · ${i.status === "watched" ? "watched" : "want to watch"}` : ""}`)].join("\n");
   },
 
+  async liv_health(db, ctx, _args, now) {
+    if (ctx.role !== "admin") return "Liv health is for the household's admin only.";
+    const h = await db.health(ctx.userId);
+    if (!h) return "Liv health couldn't be read.";
+    return formatHealth(h, now);
+  },
+
   async list_trips(db, ctx, args, now) {
     if (!viewsFor(ctx).includes("household")) return "Explore is a Household page, and Household isn't available.";
     const trips = await tripsList(db, ctx, localDateKey(now), { includeCompleted: args.include_completed === true });
     return trips.length ? `TRIPS (${trips.length}):\n${trips.map((t) => `  - ${t}`).join("\n")}` : "No trips.";
   },
 };
+
+// ── Health (admin only; metadata, never content) ─────────────────────────────
+// Thresholds for "this looks wrong". Duet checks in every few hours, so each is
+// set well past a normal gap to keep false alarms rare.
+export const HEALTH_LIMITS = Object.freeze({
+  financeNightlyHours: 26,   // runs once a day
+  newsFeedsHours: 2,         // runs hourly
+  newsLatestHours: 24,
+  mailSweepHours: 2,
+  mailLockMinutes: 15,       // a sweep holds its lock for seconds
+  photoDeviceDays: 2,        // sync runs whenever the app opens
+  rowBytes: 1_500_000,       // a section row this big makes every sync expensive
+  historyWrites24h: 200,     // whole-state snapshots per day (egress gauge)
+});
+
+const hoursSince = (iso, now) => (iso ? (now - Date.parse(iso)) / 3.6e6 : Infinity);
+const ago = (iso, now) => {
+  if (!iso) return "never";
+  const h = hoursSince(iso, now);
+  if (h < 1) return `${Math.max(0, Math.round(h * 60))} min ago`;
+  if (h < 48) return `${Math.round(h)} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+};
+const kb = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} KB`);
+
+// h = assistant_health() JSON. Returns text: problems first, then the readings.
+export function formatHealth(h, now = new Date()) {
+  const L = HEALTH_LIMITS;
+  const t = now.getTime();
+  const problems = [];
+  const lines = [];
+
+  const fin = h?.financeNightly;
+  if (!fin) problems.push("Finance nightly job has never reported.");
+  else {
+    if (fin.ok === false) problems.push(`Finance nightly job's last run failed${fin.error ? ` (${fin.error})` : ""}.`);
+    if (hoursSince(fin.finishedAt || fin.startedAt, t) > L.financeNightlyHours) problems.push(`Finance nightly job last ran ${ago(fin.finishedAt || fin.startedAt, t)}.`);
+    lines.push(`Finance nightly: ${fin.ok ? "ok" : "not ok"}, ran ${ago(fin.finishedAt || fin.startedAt, t)}; last good ${ago(fin.lastGood, t)}.`);
+  }
+
+  const nf = h?.newsFeeds;
+  if (nf) {
+    if (hoursSince(nf.runAt, t) > L.newsFeedsHours) problems.push(`News feed job last ran ${ago(nf.runAt, t)}.`);
+    const groups = new Map();
+    for (const f of nf.failing || []) {
+      const k = `${f.paper || "?"} (${f.status ?? "no answer"})`;
+      groups.set(k, (groups.get(k) || 0) + 1);
+    }
+    if (groups.size) problems.push(`${(nf.failing || []).length} of ${nf.total} news feeds failing: ${[...groups].map(([k, n]) => `${n}× ${k}`).join(", ")}.`);
+    lines.push(`News feeds: ${nf.total - (nf.failing || []).length}/${nf.total} ok, ran ${ago(nf.runAt, t)}; newest story ${ago(h.newsLatest, t)}.`);
+  }
+  if (h?.newsLatest && hoursSince(h.newsLatest, t) > L.newsLatestHours) problems.push(`No new news stories for ${ago(h.newsLatest, t).replace(" ago", "")}.`);
+
+  const ms = h?.mailSweep;
+  if (ms) {
+    if (ms.enabled !== false && hoursSince(ms.lastSweepAt, t) > L.mailSweepHours) problems.push(`Mail sweep last ran ${ago(ms.lastSweepAt, t)}.`);
+    if (ms.lockedAt && hoursSince(ms.lockedAt, t) * 60 > L.mailLockMinutes) problems.push(`Mail sweep has been locked since ${ago(ms.lockedAt, t)} (stuck?).`);
+    lines.push(`Mail sweep: ${ms.enabled === false ? "off" : "on"}, last ran ${ago(ms.lastSweepAt, t)}.`);
+  }
+
+  const gc = h?.googleCalendar || [];
+  lines.push(gc.length ? `Google Calendar: ${gc.length} account${gc.length === 1 ? "" : "s"} linked, token refreshed ${ago(gc[0].updatedAt, t)}.` : "Google Calendar: not linked on the server.");
+
+  const ph = h?.photos;
+  if (ph) {
+    for (const d of ph.devices || []) {
+      if (hoursSince(d.lastUsedAt, t) / 24 > L.photoDeviceDays) problems.push(`Photo sync device "${d.name || "iPhone"}" last synced ${ago(d.lastUsedAt, t)}.`);
+    }
+    lines.push(`Photos: ${ph.items} in the library (${ph.withThumb} with thumbnails), newest added ${ago(ph.newestAdded, t)}; ${(ph.devices || []).length} sync device${(ph.devices || []).length === 1 ? "" : "s"}.`);
+  }
+
+  const rows = Array.isArray(h?.rows) ? h.rows : [];
+  for (const r of rows) if (r.bytes > L.rowBytes) problems.push(`The ${r.scope} ${r.section} row is ${kb(r.bytes)} — every sync of it is expensive.`);
+  const hw = h?.historyWrites;
+  if (hw && hw.last24h > L.historyWrites24h) problems.push(`${hw.last24h} state snapshots in 24 h (normal is well under ${L.historyWrites24h}) — something may be saving in a loop.`);
+  if (hw) lines.push(`Writes: ${hw.last24h} state snapshots in 24 h, ${hw.last7d} in 7 days.`);
+  if (rows.length) {
+    const biggest = [...rows].sort((a, b) => b.bytes - a.bytes).slice(0, 3).map((r) => `${r.scope} ${r.section} ${kb(r.bytes)}`).join(", ");
+    lines.push(`Sync rows: ${rows.length}; last write ${ago(rows[0].updatedAt, t)} (${rows[0].scope} ${rows[0].section}); largest ${biggest}.`);
+  }
+
+  lines.push(`Push subscriptions: ${h?.pushSubscriptions ?? 0}. Assistant keys: ${(h?.assistantKeys || []).map((k) => `${k.name || "key"} used ${ago(k.lastUsedAt, t)}`).join("; ") || "none"}.`);
+
+  const head = problems.length ? `LIV HEALTH — ${problems.length} problem${problems.length === 1 ? "" : "s"}:\n${problems.map((p) => `  ⚠ ${p}`).join("\n")}` : "LIV HEALTH — no problems found.";
+  return `${head}\n\nReadings:\n${lines.map((l) => `  - ${l}`).join("\n")}`;
+}
 
 async function tripsList(db, ctx, today, { includeCompleted = false, soonDays = null } = {}) {
   const row = await readRow(db, rowFor(ctx, "household", "travel"), ["trips"]);

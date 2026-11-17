@@ -78,6 +78,7 @@ const RECIPE_COLUMNS = "id,name,time,servings,source_url,ingredients,steps,tags"
 function makeDb(s: ReturnType<typeof svc>) {
   return {
     row: (id: string, keys: string[]) => s.rpc("assistant_state_read", { p_row: id, p_paths: keys }),
+    health: (userId: string) => s.rpc("assistant_health", { p_user: userId }),
     async recipes(ids: string[] | null) {
       if (ids && !ids.length) return [];
       const filter = ids ? `&id=in.(${ids.map((i) => `"${String(i).replace(/["\\]/g, "")}"`).join(",")})` : "";
