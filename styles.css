@@ -1766,6 +1766,32 @@ body {
   padding: 24px;
 }
 
+/* Landing page: the settings and scan buttons float over the page instead of
+   taking a row of their own, so the logo can rise into the gap between them
+   and the page list gets that height back (Luke, 2026-11-17 — with Photos added
+   the list no longer fit and the landing page scrolled). The header collapses to
+   zero height but still paints its buttons (and their menus) above the page;
+   only those controls take taps, so a swipe across the logo still reaches the
+   landing page's view switcher. */
+body:has(#homeMainPage:not([hidden])) .topbar {
+  position: relative;
+  z-index: 5;
+  height: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+body:has(#homeMainPage:not([hidden])) .topbar :is(button, input, .app-menu) {
+  pointer-events: auto;
+}
+/* Phones: start at the top rather than centring, so the logo sits level with
+   the two buttons and the list hangs directly below it. */
+@media (max-width: 680px) {
+  .home-page {
+    place-items: start center;
+    padding-top: 0;
+  }
+}
+
 .home-center {
   display: grid;
   justify-items: center;
