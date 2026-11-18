@@ -1,3 +1,4 @@
+const { authUserFetch } = require("./_auth-user.js");
 const GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com/v1";
 const STORE_TYPES = ["grocery_store", "supermarket", "warehouse_store", "food_store", "market"];
 const RESTAURANT_TYPES = ["restaurant", "cafe", "bar", "bakery", "fast_food_restaurant"];
@@ -118,7 +119,7 @@ async function authorizeRequest(event) {
   const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   if (!serviceRoleKey) return { ok: false, statusCode: 503, error: "Store search authentication is not configured." };
   const supabaseUrl = String(process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL).replace(/\/$/, "");
-  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+  const response = await authUserFetch(`${supabaseUrl}/auth/v1/user`, {
     headers: {
       apikey: serviceRoleKey,
       authorization: `Bearer ${token}`

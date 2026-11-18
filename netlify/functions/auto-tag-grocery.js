@@ -1,3 +1,4 @@
+const { authUserFetch } = require("./_auth-user.js");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 // GRO-18: bound the paid AI call. Over-long names are dropped (they'd never be a
 // real grocery item); lists beyond MAX_ITEMS are tagged in first-N order — the
@@ -73,7 +74,7 @@ function jsonResponse(statusCode, body) {
 
 async function verifySession(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     return res.ok;

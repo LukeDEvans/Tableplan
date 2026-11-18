@@ -6,6 +6,7 @@
 // which applies each call). Mail and finance tools are opt-in: this function
 // reads the two flags from the household config row itself and only offers
 // those tools when they're on (CLAUDE.md "Mail AI features").
+import { authUserFetch } from "./_auth-user.js";
 
 import { ASSISTANT_CHAT_MODEL, toolSpecsForRequest } from "../../assistant-tools.js";
 import groupLookup from "./_group-lookup.js";
@@ -176,7 +177,7 @@ export default async (req, context) => {
 // Returns the signed-in user's id, or null.
 async function verifySession(token, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${token}` }
     });
     if (!res.ok) return null;

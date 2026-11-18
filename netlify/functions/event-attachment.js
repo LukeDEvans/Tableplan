@@ -2,6 +2,7 @@
 // "event-files", created on first use) and returns its public URL.
 // Client sends JSON { name, type, data(base64) }, capped at ~4MB binary —
 // well inside Netlify's request limit once base64-encoded.
+const { authUserFetch } = require("./_auth-user.js");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const BUCKET = "event-files";
 
@@ -59,7 +60,7 @@ async function ensureBucket(serviceKey) {
 
 async function getUserId(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     if (!res.ok) return null;

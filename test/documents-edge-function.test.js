@@ -16,6 +16,7 @@ let env = { ...ENV };
 let allowed = new Set();
 let deletable = new Set();
 const realFetch = globalThis.fetch;
+let mfaChecks = 0;
 
 beforeAll(async () => {
   globalThis.Deno = { env: { get: (k) => env[k] }, serve: (h) => { handler = h; } };
@@ -38,6 +39,10 @@ beforeAll(async () => {
       const { p_scope, p_file } = JSON.parse(init.body);
       return new Response(JSON.stringify(deletable.has(`p/${p_scope}/${p_file}`)), { status: 200 });
     }
+    if (String(url).endsWith("/rest/v1/rpc/session_meets_mfa")) {
+      mfaChecks++;
+      return new Response(JSON.stringify(init.headers.authorization !== "Bearer enrolled.token"), { status: 200 });
+    }
     throw new Error(`unexpected fetch ${url}`);
   };
   const out = await build({ entryPoints: [fileURLToPath(new URL("../supabase/functions/doc-storage/index.ts", import.meta.url))], bundle: true, format: "esm", write: false, platform: "neutral", logLevel: "silent" });
@@ -51,6 +56,17 @@ const call = (body, { auth = "Bearer good.token", origin = "capacitor://localhos
   handler(new Request("https://proj.supabase.co/functions/v1/doc-storage", { method, headers: { authorization: auth, origin, "content-type": "application/json" }, body: method === "POST" ? JSON.stringify(body) : undefined }));
 
 describe("doc-storage", () => {
+  it("refuses a sign-in that skipped the authenticator code; an aal2 token skips the check", async () => {
+    allowed = new Set([scope]);
+    const res = await call({ op: "get", items: [{ scope, fileId, part: "content" }] }, { auth: "Bearer enrolled.token" });
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe("authenticator code");
+    const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const before = mfaChecks;
+    await call({ op: "get", items: [{ scope, fileId, part: "content" }] }, { auth: `Bearer ${b64({ alg: "HS256" })}.${b64({ aal: "aal2" })}.sig` });
+    expect(mfaChecks).toBe(before);
+  });
+
   it("signs uploads for a scope the caller may use, pinning each size", async () => {
     allowed = new Set([scope]);
     const res = await call({ op: "put", items: [{ scope, fileId, part: "content", size: 1234 }, { scope, fileId, part: "thumb", size: 10 }] });

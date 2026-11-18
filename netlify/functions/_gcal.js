@@ -46,7 +46,7 @@ async function userIdFromRequest(event) {
   const key = serviceKey();
   if (!token || !key) return null;
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${token}` } });
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${token}` } });
     if (!res.ok) return null;
     const user = await res.json();
     return user?.id || null;
@@ -54,6 +54,7 @@ async function userIdFromRequest(event) {
 }
 
 const { userGroupQuery } = require("./_group-lookup.js");
+const { authUserFetch } = require("./_auth-user.js");
 
 // ── Signed OAuth state ───────────────────────────────────────────────────────
 // Same signed, expiring state as the Gmail flow (_oauth-state.js, SRV-1), under

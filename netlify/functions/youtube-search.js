@@ -4,6 +4,7 @@
 // returns an empty result set (200) rather than an error, so Discover simply
 // shows no YouTube results until YOUTUBE_API_KEY is set at deploy — no user-
 // facing failure. No scraping, no restriction circumvention.
+const { authUserFetch } = require("./_auth-user.js");
 
 const YT_SEARCH = "https://www.googleapis.com/youtube/v3/search";
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
@@ -49,7 +50,7 @@ function jsonResponse(statusCode, body) {
 
 async function verifySession(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` },
     });
     return res.ok;
