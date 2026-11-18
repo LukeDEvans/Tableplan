@@ -2774,7 +2774,20 @@ function bindEvents() {
     if (e.target.closest("#mailSuggestions, #mailSuggCheckNow")) return;
     setMailNotifPanelOpen(false);
   }, { capture: true });
-  elements.mailSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") loadMailList(currentMailbox, e.target.value); });
+  // Enter searches. Emptying the box (the clear "x" or deleting the text) after a
+  // search puts the folder's list back, so a cleared box never leaves the old
+  // results (or "Inbox empty") showing.
+  let mailSearchShown = "";
+  elements.mailSearchInput?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    mailSearchShown = e.target.value.trim();
+    loadMailList(currentMailbox, e.target.value);
+  });
+  elements.mailSearchInput?.addEventListener("input", (e) => {
+    if (e.target.value.trim() || !mailSearchShown) return;
+    mailSearchShown = "";
+    loadMailList(currentMailbox, "");
+  });
   document.getElementById("mailSelectAll")?.addEventListener("click", toggleMailSelectAll);
   document.getElementById("mailRefreshBtn")?.addEventListener("click", refreshMailList);
   document.getElementById("mailPagePrev")?.addEventListener("click", () => mailGoToPage(-1));
