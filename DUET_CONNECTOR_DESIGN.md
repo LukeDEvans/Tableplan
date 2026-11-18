@@ -149,8 +149,14 @@ stay read-only.** This replaces the earlier "adds only, no edits or deletes" rul
 - **Keys:** a key's scopes are fixed when it's minted (`assistant_connector_keys_guard`).
   Write access therefore means a new key, `Claude Duet (write)`, handed to Luke once
   in chat. Revoke the old read-only `Claude Duet` key once Duet uses the new one.
-- **Not built:** Settings › Assistant (mint with the secret shown once, name, revoke,
-  last used, and a view of `assistant_changes`).
+- **Settings › Beta › Connected Assistants** (`assistant-connectors-ui.js`, 2026-11-17)
+  lists the person's keys, makes one, revokes one, and lists `assistant_changes` with
+  Undo. Making a key: the secret is made on the device and only its SHA-256 goes to
+  `assistant_connector_mint_mine` (migration 20261117230000). That function makes keys
+  only for the signed-in person, checks `session_meets_mfa()`, and allows at most 5 active keys. Undo:
+  liv-mcp accepts the person's own sign-in for `list_recent_changes` and `undo_change`
+  only. That sign-in is refused below aal2 when a factor is verified; the undo is logged
+  against the key that made the change; CORS is limited to Liv's origins.
 
 ## 6. Open questions (to take one at a time)
 

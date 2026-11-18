@@ -143,15 +143,70 @@ async function contextFor(s: ReturnType<typeof svc>, userId: string, scopes: str
   return { userId, groupId: g.group_id, role: g.role || "member", spaceId: spaces?.[0]?.space_id || "", scopes };
 }
 
+// Liv itself (Settings › Connected assistants), signed in as the person: it may list
+// and undo the changes assistants made for them, nothing else. Same rule as every
+// function: a sign-in below aal2 is refused when the person has a verified factor.
+const JWT_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const SIGNED_IN_TOOLS = new Set(["list_recent_changes", "undo_change"]);
+const ALLOWED_ORIGINS = [
+  /^https:\/\/effervescent-malabi-e0af55\.netlify\.app$/,
+  /^https:\/\/[a-z0-9-]+--effervescent-malabi-e0af55\.netlify\.app$/,
+  /^capacitor:\/\/localhost$/,
+  /^http:\/\/localhost:4174$/,
+  /^http:\/\/127\.0\.0\.1:4174$/,
+];
+function cors(origin: string | null): Record<string, string> {
+  if (!origin || !ALLOWED_ORIGINS.some((re) => re.test(origin))) return {};
+  return { "access-control-allow-origin": origin, "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "POST, OPTIONS", vary: "origin" };
+}
+function tokenAal(token: string): string {
+  try { return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aal || ""; } catch { return ""; }
+}
+
+async function handleSignedIn(req: Request, token: string, origin: string | null): Promise<Response> {
+  const h = cors(origin);
+  const raw = await req.text();
+  if (raw.length > MAX_BODY) return json(413, { error: "too large" }, h);
+  let msg: { jsonrpc?: string; id?: unknown; method?: string; params?: { name?: string; arguments?: Record<string, unknown> } };
+  try { msg = JSON.parse(raw); } catch { return json(400, { error: "json" }, h); }
+  const name = msg?.params?.name || "";
+  if (msg?.method !== "tools/call" || !SIGNED_IN_TOOLS.has(name)) return json(403, { error: "Only list_recent_changes and undo_change." }, h);
+  const res = await fetch(`${env("SUPABASE_URL")}/auth/v1/user`, { headers: { apikey: env("SUPABASE_ANON_KEY")!, authorization: `Bearer ${token}` } });
+  if (!res.ok) return json(401, { error: "sign in" }, h);
+  const user = await res.json();
+  const factors = Array.isArray(user?.factors) ? user.factors : [];
+  if (tokenAal(token) !== "aal2" && factors.some((f: { status?: string }) => f?.status === "verified")) return json(401, { error: "authenticator code" }, h);
+  if (!UUID_RE.test(String(user?.id || ""))) return json(401, { error: "sign in" }, h);
+  const s = svc();
+  // An undo is logged against the key that made the change.
+  let keyId = "";
+  if (name === "undo_change") {
+    const changeId = String(msg.params?.arguments?.change_id || "");
+    if (!UUID_RE.test(changeId)) return json(400, { error: "change_id" }, h);
+    const rows = await s.get(`assistant_changes?id=eq.${enc(changeId)}&user_id=eq.${enc(user.id)}&select=key_id`);
+    keyId = rows?.[0]?.key_id || "";
+    if (!keyId) return json(404, { error: "No such change." }, h);
+  }
+  let ctx;
+  try { ctx = await contextFor(s, user.id, ["read", "write"]); } catch { return json(502, { error: "Couldn't load the account." }, h); }
+  if (!ctx) return json(403, { error: "Not in a household." }, h);
+  const out = await handleRpc(msg, { db: makeDb(s, { keyId, userId: user.id }), ctx, now: new Date() });
+  return json(out.status, out.body, h);
+}
+
 export async function handle(req: Request): Promise<Response> {
   if (env("LIV_MCP_DISABLED") === "1") return json(503, { error: "disabled" });
-  if (req.method === "OPTIONS") return json(204, null, { allow: "POST, OPTIONS" });
+  const origin = req.headers.get("origin");
+  if (req.method === "OPTIONS") return json(204, null, { allow: "POST, OPTIONS", ...cors(origin) });
   if (req.method !== "POST") return json(405, { error: "POST only" }, { allow: "POST, OPTIONS" });
 
   const key = keyFrom(req);
   const [keyId, secret] = key.split(".");
   const unauthorized = () => json(401, { error: "A valid Liv connector key is required." });
-  if (!UUID_RE.test(keyId || "") || !SECRET_RE.test(secret || "")) return unauthorized();
+  if (!UUID_RE.test(keyId || "") || !SECRET_RE.test(secret || "")) {
+    if (JWT_RE.test(key)) return handleSignedIn(req, key, origin);
+    return unauthorized();
+  }
 
   const raw = await req.text();
   if (raw.length > MAX_BODY) return json(413, { error: "too large" });

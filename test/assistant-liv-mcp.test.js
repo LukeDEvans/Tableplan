@@ -18,6 +18,19 @@ const KEY_ID = "44444444-4444-4444-8444-444444444444";
 const MJ_KEY_ID = "55555555-5555-4555-8555-555555555555";
 const SECRET = "s".repeat(43);
 const sha = (s) => createHash("sha256").update(s).digest("hex");
+const b64u = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const jwt = (claims) => `${b64u({ alg: "HS256" })}.${b64u(claims)}.sig`;
+const LUKE_JWT = jwt({ sub: LUKE, aal: "aal1" });
+const MJ_JWT = jwt({ sub: MJ, aal: "aal1" });
+const ENROLLED_AAL1 = jwt({ sub: LUKE, aal: "aal1", n: 1 });
+const ENROLLED_AAL2 = jwt({ sub: LUKE, aal: "aal2" });
+const verified = [{ id: "f1", status: "verified" }];
+const SIGNED_IN = {
+  [LUKE_JWT]: { id: LUKE },
+  [MJ_JWT]: { id: MJ },
+  [ENROLLED_AAL1]: { id: LUKE, factors: verified },
+  [ENROLLED_AAL2]: { id: LUKE, factors: verified },
+};
 // Tue 2026-11-17, 10:00 in Minneapolis. The prep week starts Fri 2026-11-13.
 const NOW = new Date("2026-11-17T16:00:00Z");
 
@@ -76,6 +89,10 @@ function install() {
         return json([{ updated_at: body.updated_at }]);
       }
       if (method === "POST") { if (db[body.id]) return json([]); db[body.id] = body.state; db.__stamps[body.id] = body.updated_at; writes.push(body.id); return json([{ updated_at: body.updated_at }]); }
+    }
+    if (u.pathname === "/auth/v1/user") {
+      const who = SIGNED_IN[String(init.headers?.authorization || "").replace("Bearer ", "")];
+      return who ? json(who) : json({ msg: "bad jwt" }, 401);
     }
     if (u.pathname === "/rest/v1/assistant_changes") {
       const method = init.method || "GET";
@@ -498,5 +515,53 @@ describe("write tools (a key with the write scope)", () => {
     const r = await call("list_recent_changes", {});
     expect(r.text).toMatch(/Recent changes/);
     expect(r.text).toMatch(/Bread/);
+  });
+});
+
+describe("Liv itself, signed in (Settings › Connected assistants)", () => {
+  beforeEach(() => { keys[KEY_ID].scopes = ["read", "write"]; });
+  const asUser = (token, name, args = {}, origin) => handle(new Request(`${URL_BASE}/functions/v1/liv-mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}`, ...(origin ? { origin } : {}) },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+  }));
+  const lastChangeId = async () => (await call("list_recent_changes", {})).text.match(/\[([0-9a-f-]{36})\]/)[1];
+
+  it("can undo a change an assistant made, logged against that key", async () => {
+    await call("add_shopping_items", { items: ["Bread"] });
+    const id = await lastChangeId();
+    const res = await asUser(LUKE_JWT, "undo_change", { change_id: id }, "capacitor://localhost");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe("capacitor://localhost");
+    expect((await res.json()).result.content[0].text).toMatch(/Removed/);
+    expect(db[`${G}:grocery`].persistentManualGroceries).not.toContain("Bread");
+    expect(changes[0].tool).toBe("undo_change");
+    expect(changes[0].key_id).toBe(KEY_ID);
+  });
+
+  it("can list changes but nothing else", async () => {
+    expect((await asUser(LUKE_JWT, "list_recent_changes")).status).toBe(200);
+    expect((await asUser(LUKE_JWT, "add_event", { title: "X", date: "2026-11-20" })).status).toBe(403);
+    expect((await asUser(LUKE_JWT, "liv_today")).status).toBe(403);
+    expect(writes).toEqual([]);
+  });
+
+  it("can't undo someone else's change, or without an id", async () => {
+    await call("add_shopping_items", { items: ["Bread"] });
+    const id = await lastChangeId();
+    expect((await asUser(MJ_JWT, "undo_change", { change_id: id })).status).toBe(404);
+    expect((await asUser(LUKE_JWT, "undo_change", {})).status).toBe(400);
+    expect(db[`${G}:grocery`].persistentManualGroceries).toContain("Bread");
+  });
+
+  it("refuses a sign-in that skipped the authenticator code; aal2 is fine", async () => {
+    expect((await asUser(ENROLLED_AAL1, "list_recent_changes")).status).toBe(401);
+    expect((await asUser(ENROLLED_AAL2, "list_recent_changes")).status).toBe(200);
+    expect((await asUser(jwt({ sub: "nobody" }), "list_recent_changes")).status).toBe(401);
+  });
+
+  it("gives no CORS header to other sites", async () => {
+    const res = await asUser(LUKE_JWT, "list_recent_changes", {}, "https://evil.example");
+    expect(res.headers.get("access-control-allow-origin")).toBe(null);
   });
 });
