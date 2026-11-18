@@ -123,15 +123,34 @@ routine checking off him as possible, with Duet watching between sessions.
   check-in every few hours doesn't cry wolf.
 - First live run found 23 of 88 news feeds failing (ISSUES.md).
 
-## 5. Phase 2 — writes and a Settings screen (not built)
+## 5. Phase 2 — writes (live since 2026-11-17; Settings screen not built)
 
-- **Settings › Assistant:** mint (secret shown once), name, revoke, last used.
-- **Write tools**, bounded and typed like `assistant-tools.js`: add task, add
-  shopping item, add Liv event, set a meal, add to watchlist. Server-side appliers
-  through `_state-sections.js updateSection` (optimistic locking, tombstones), never
-  raw writes. Every write logged where Luke can see it in Liv.
-- Duet already asks before sends, payments, signatures and deletes; Liv adds its own
-  rule: **no delete or edit tools** until the adds have proven themselves.
+**Decision (Luke, 2026-11-17):** Duet gets full access to everyday data. In his
+words, the app "is intended to be used with an AI with full access". That covers
+calendar and tasks, the shopping list and meal plan, Watch, and trips. **Finance and Mail
+stay read-only.** This replaces the earlier "adds only, no edits or deletes" rule.
+
+- **Tools** (`supabase/functions/liv-mcp/write-tools.js`, shown only to a key with
+  the `write` scope): add/update/delete_event, add/complete/delete_task,
+  add/remove_shopping_items, set_meal / clear_meal, add_watch_item /
+  set_watch_status / remove_watch_item, add_trip, list_recent_changes, undo_change.
+  Items are found by title; when several match, the tool lists them and changes nothing.
+- **How it writes:** read-change-write of one section row with a conditional PATCH
+  on `updated_at`. It is retried, sets a fresh `stateUpdatedAt`, and sends the
+  `x-live-writer: liv-mcp` header, without which the `enforce_live_writer` trigger refuses it.
+  Deletes add owned tombstones to the config row. Shopping changes stamp
+  `persistentManualGroceryStamps`.
+- **Log and undo:** every change becomes a row in `assistant_changes`, which holds the
+  summary and an undo recipe. The owner can read it; only the service role writes it,
+  and it is under the MFA policy. `undo_change` reverses a change; a deleted item comes back under a new id.
+- **Known limits:** an edit can lose to a phone that saves its older copy of
+  the same item at about the same time. Clearing a meal can be put back by a phone
+  that still shows the old meal. Both are rare, and clearing is safest in the app.
+- **Keys:** a key's scopes are fixed when it's minted (`assistant_connector_keys_guard`).
+  Write access therefore means a new key, `Claude Duet (write)`, handed to Luke once
+  in chat. Revoke the old read-only `Claude Duet` key once Duet uses the new one.
+- **Not built:** Settings › Assistant (mint with the secret shown once, name, revoke,
+  last used, and a view of `assistant_changes`).
 
 ## 6. Open questions (to take one at a time)
 

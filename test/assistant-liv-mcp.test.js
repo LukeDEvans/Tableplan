@@ -21,7 +21,7 @@ const sha = (s) => createHash("sha256").update(s).digest("hex");
 // Tue 2026-11-17, 10:00 in Minneapolis. The prep week starts Fri 2026-11-13.
 const NOW = new Date("2026-11-17T16:00:00Z");
 
-let handle, realFetch, db, keys, readsOf, limited, health, healthCalls;
+let handle, realFetch, db, keys, readsOf, limited, health, healthCalls, changes, writes;
 const realDate = Date;
 
 function install() {
@@ -63,6 +63,28 @@ function install() {
       const ids = idf ? idf.slice(4, -1).split(",").map((s) => s.replace(/"/g, "")) : null;
       return json(db.recipes.filter((r) => !ids || ids.includes(r.id)));
     }
+    if (u.pathname === "/rest/v1/tableplan_states") {
+      const idq = u.searchParams.get("id")?.replace("eq.", "");
+      const method = init.method || "GET";
+      if (method === "GET") return json(db[idq] ? [{ state: db[idq], updated_at: db.__stamps?.[idq] || "2026-11-01T00:00:00Z" }] : []);
+      const body = JSON.parse(init.body);
+      db.__stamps = db.__stamps || {};
+      if (method === "PATCH") {
+        const want = u.searchParams.get("updated_at")?.replace("eq.", "");
+        if ((db.__stamps[idq] || "2026-11-01T00:00:00Z") !== want) return json([]);
+        db[idq] = body.state; db.__stamps[idq] = body.updated_at; writes.push(idq);
+        return json([{ updated_at: body.updated_at }]);
+      }
+      if (method === "POST") { if (db[body.id]) return json([]); db[body.id] = body.state; db.__stamps[body.id] = body.updated_at; writes.push(body.id); return json([{ updated_at: body.updated_at }]); }
+    }
+    if (u.pathname === "/rest/v1/assistant_changes") {
+      const method = init.method || "GET";
+      if (method === "POST") { const row = { id: `c${changes.length + 1}`.padEnd(8, "0") + "-0000-4000-8000-000000000000", created_at: new Date().toISOString(), undone_at: null, ...JSON.parse(init.body) }; changes.unshift(row); return json([{ id: row.id }]); }
+      if (method === "PATCH") { const id = u.searchParams.get("id").replace("eq.", ""); const r = changes.find((c) => c.id === id); if (r) r.undone_at = new Date().toISOString(); return new Response(null, { status: 204 }); }
+      const idq = u.searchParams.get("id")?.replace("eq.", "");
+      const uid = u.searchParams.get("user_id").replace("eq.", "");
+      return json(changes.filter((c) => c.user_id === uid && (!idq || c.id === idq)).slice(0, Number(u.searchParams.get("limit") || 30)));
+    }
     return json({ message: `unexpected ${u.pathname}` }, 500);
   };
 }
@@ -79,6 +101,8 @@ afterAll(() => { globalThis.fetch = realFetch; delete globalThis.Deno; globalThi
 
 beforeEach(() => {
   limited = false;
+  changes = [];
+  writes = [];
   readsOf = [];
   healthCalls = [];
   health = {
@@ -333,5 +357,146 @@ describe("pure helpers", () => {
   it("formatDayMeals collapses a meal everyone shares", () => {
     const byId = new Map();
     expect(formatDayMeals({ "MJ Dinner": "Pizza", "Luke Dinner": "Pizza", "Sophia Dinner": "Pizza" }, byId)).toEqual(["Dinner: Pizza"]);
+  });
+});
+
+describe("write tools (a key with the write scope)", () => {
+  const W = { scopes: ["read", "write"] };
+  beforeEach(() => { keys[KEY_ID].scopes = ["read", "write"]; });
+
+  it("a read-only key isn't shown them and can't call them", async () => {
+    keys[KEY_ID].scopes = ["read"];
+    const list = await (await post({ jsonrpc: "2.0", id: 1, method: "tools/list" })).json();
+    expect(list.result.tools.map((t) => t.name)).not.toContain("add_event");
+    const r = await call("add_event", { title: "X", date: "2026-11-20" });
+    expect(r.body.result.isError).toBe(true);
+    expect(writes).toEqual([]);
+  });
+
+  it("lists them for a write key", async () => {
+    const list = await (await post({ jsonrpc: "2.0", id: 1, method: "tools/list" })).json();
+    const names = list.result.tools.map((t) => t.name);
+    for (const n of ["add_event", "update_event", "delete_event", "add_task", "complete_task", "delete_task", "add_shopping_items", "remove_shopping_items", "set_meal", "clear_meal", "add_watch_item", "set_watch_status", "remove_watch_item", "add_trip", "list_recent_changes", "undo_change"]) expect(names).toContain(n);
+  });
+
+  it("adds an event to the right row, stamped newer, and logs an undoable change", async () => {
+    const r = await call("add_event", { title: "Haircut", date: "2026-11-20", start_time: "09:30", view: "household" });
+    expect(r.text).toMatch(/Added to the Household calendar: "Haircut"/);
+    const ev = db[`${G}:plan`].planEvents.find((e) => e.title === "Haircut");
+    expect(ev).toMatchObject({ date: "2026-11-20", startTime: "09:30", allDay: false });
+    expect(db[`${G}:plan`].stateUpdatedAt).toBe(NOW.toISOString());
+    expect(changes[0]).toMatchObject({ tool: "add_event", user_id: LUKE, key_id: KEY_ID });
+    const u = await call("undo_change", {});
+    expect(u.text).toMatch(/Removed it again/);
+    expect(db[`${G}:plan`].planEvents.some((e) => e.title === "Haircut")).toBe(false);
+    expect(db[`${G}:config`].tombstones["planEvents@household"]).toContain(ev.id);
+  });
+
+  it("updates an event by title and date, and undo puts it back", async () => {
+    const r = await call("update_event", { title: "dentist", date: "2026-11-17", new_date: "2026-11-19", start_time: "10:00" });
+    expect(r.text).toMatch(/Updated "Dentist"/);
+    expect(db[`u-${LUKE}:plan`].planEvents.find((e) => e.id === "e1")).toMatchObject({ date: "2026-11-19", startTime: "10:00" });
+    await call("undo_change", {});
+    expect(db[`u-${LUKE}:plan`].planEvents.find((e) => e.id === "e1")).toMatchObject({ date: "2026-11-17", startTime: "14:00" });
+  });
+
+  it("deletes an event with a per-view tombstone; undo re-adds it under a new id", async () => {
+    const r = await call("delete_event", { title: "Sophia swim", view: "household" });
+    expect(r.text).toMatch(/Deleted "Sophia swim"/);
+    expect(db[`${G}:plan`].planEvents).toHaveLength(0);
+    expect(db[`${G}:config`].tombstones["planEvents@household"]).toEqual(["h1"]);
+    await call("undo_change", {});
+    const back = db[`${G}:plan`].planEvents[0];
+    expect(back.title).toBe("Sophia swim");
+    expect(back.id).not.toBe("h1");
+  });
+
+  it("asks for more when a title is ambiguous, and changes nothing", async () => {
+    db[`u-${LUKE}:plan`].planEvents.push({ id: "e9", title: "Dentist", date: "2026-12-01" });
+    const r = await call("delete_event", { title: "Dentist" });
+    expect(r.text).toMatch(/2 events match/);
+    expect(writes).toEqual([]);
+  });
+
+  it("adds, completes and deletes tasks", async () => {
+    expect((await call("add_task", { title: "Buy stamps", date: "2026-11-19" })).text).toMatch(/Thu, Nov 19/);
+    expect(db[`u-${LUKE}:do`].doPlans["2026-11-13"].thursday.map((t) => t.title)).toContain("Buy stamps");
+    expect((await call("add_task", { title: "Someday" })).text).toMatch(/backlog/);
+    expect((await call("complete_task", { title: "call plumber" })).text).toMatch(/Marked done: "Call plumber"/);
+    expect(db[`u-${LUKE}:do`].doPlans["2026-11-13"].tuesday[0].done).toBe(true);
+    expect((await call("delete_task", { title: "Fix gate" })).text).toMatch(/Deleted task "Fix gate"/);
+    expect(db[`${G}:config`].tombstones[`doBacklog@u-${LUKE}`]).toEqual(["b1"]);
+  });
+
+  it("adds and removes shopping items with the app's stamps", async () => {
+    const r = await call("add_shopping_items", { items: ["Eggs", "milk"] });
+    expect(r.text).toMatch(/Added to the shopping list: Eggs \(already there: milk\)/);
+    const g = db[`${G}:grocery`];
+    expect(g.persistentManualGroceries).toEqual(["Coffee", "Eggs", "Milk"]);
+    expect(g.persistentManualGroceryStamps.eggs.added).toBe(NOW.toISOString());
+    await call("remove_shopping_items", { items: ["coffee"] });
+    expect(db[`${G}:grocery`].persistentManualGroceries).not.toContain("Coffee");
+    expect(db[`${G}:grocery`].persistentManualGroceryStamps.coffee.removed).toBe(NOW.toISOString());
+    await call("undo_change", {});
+    expect(db[`${G}:grocery`].persistentManualGroceries).toContain("coffee");
+  });
+
+  it("plans a meal from the recipe box, as text, or out; clears one; undo restores", async () => {
+    expect((await call("set_meal", { date: "2026-11-18", meal: "dinner", recipe: "fish tacos" })).text).toMatch(/Dinner on Wed, Nov 18 for everyone: Fish Tacos/);
+    expect(db[`${G}:eat`].plans["2026-11-13"].slots.wednesday).toMatchObject({ "MJ Dinner": "r-tacos", "Luke Dinner": "r-tacos", "Sophia Dinner": "r-tacos" });
+    await call("set_meal", { date: "2026-11-18", meal: "lunch", who: "Luke", special: "out", note: "Pho" });
+    expect(db[`${G}:eat`].plans["2026-11-13"].slots.wednesday["Luke Lunch"]).toBe("special-meal::out::Pho");
+    await call("set_meal", { date: "2026-11-21", meal: "breakfast", who: "Sophia", text: "Pancakes" });
+    expect(db[`${G}:eat`].plans["2026-11-20"].slots.saturday["Sophia Breakfast"]).toBe("grocery-item::Pancakes::1");
+    await call("clear_meal", { date: "2026-11-17", meal: "breakfast" });
+    expect(db[`${G}:eat`].plans["2026-11-13"].slots.tuesday["MJ Breakfast"]).toBe("");
+    await call("undo_change", {});
+    expect(db[`${G}:eat`].plans["2026-11-13"].slots.tuesday["MJ Breakfast"]).toBe("r-oats");
+  });
+
+  it("adds, marks and removes Watch items", async () => {
+    expect((await call("add_watch_item", { title: "Shogun", type: "tv" })).text).toMatch(/Added to the Household Watch list: "Shogun"/);
+    expect((await call("add_watch_item", { title: "severance" })).text).toMatch(/already on/);
+    expect((await call("set_watch_status", { title: "Severance", status: "watched" })).text).toMatch(/marked watched/);
+    expect(db[`${G}:watch`].watchItems.find((w) => w.id === "w1")).toMatchObject({ status: "watched", watchedDate: "2026-11-17" });
+    await call("remove_watch_item", { title: "Dune" });
+    expect(db[`${G}:config`].tombstones["watchItems@household"]).toContain("w2");
+  });
+
+  it("adds a trip to the household's list", async () => {
+    expect((await call("add_trip", { name: "Ely cabin", start_date: "2027-02-12", end_date: "2027-02-14", status: "booked" })).text).toMatch(/Trip added/);
+    expect(db[`${G}:travel`].trips.at(-1)).toMatchObject({ name: "Ely cabin", status: "booked", startDate: "2027-02-12" });
+  });
+
+  it("retries when a phone saved the row in between", async () => {
+    let first = true;
+    const inner = globalThis.fetch;
+    globalThis.fetch = async (url, init = {}) => {
+      if (first && (init.method === "PATCH") && String(url).includes("tableplan_states")) {
+        first = false;
+        const id = new URL(String(url)).searchParams.get("id").replace("eq.", "");
+        db[id] = { ...db[id], watchItems: [...db[id].watchItems, { id: "phone", title: "From phone" }] };
+        db.__stamps = { ...(db.__stamps || {}), [id]: "2026-11-17T15:59:00Z" };
+      }
+      return inner(url, init);
+    };
+    try { await call("add_watch_item", { title: "Arrival" }); } finally { globalThis.fetch = inner; }
+    const titles = db[`${G}:watch`].watchItems.map((w) => w.title);
+    expect(titles).toContain("From phone");
+    expect(titles).toContain("Arrival");
+  });
+
+  it("MJ's write key can't touch Luke's Personal rows", async () => {
+    keys[MJ_KEY_ID].scopes = ["read", "write"];
+    const r = await call("add_event", { title: "X", date: "2026-11-20", view: "personal" }, { key: `${MJ_KEY_ID}.${SECRET}` });
+    expect(r.text).toMatch(/isn't available/);
+    expect(writes).toEqual([]);
+  });
+
+  it("lists recent changes with ids", async () => {
+    await call("add_shopping_items", { items: ["Bread"] });
+    const r = await call("list_recent_changes", {});
+    expect(r.text).toMatch(/Recent changes/);
+    expect(r.text).toMatch(/Bread/);
   });
 });
