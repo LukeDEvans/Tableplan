@@ -21,14 +21,14 @@
 // Pure apart from the injected `db` and `newId`: no fetch, no clock reads.
 
 import { normalizePlanEvents } from "../../../calendar/model.js";
-import { scopeForView, rowIdForScope, VIEW_LABELS, availableViews } from "../../../views.js";
+import { scopeForView, rowIdForScope, VIEW_LABELS, VIEW_TOGGLE_SECTIONS, availableViews } from "../../../views.js";
 import { addTombstone } from "../../../state-sync.js";
 import { stampGroceryAdd, stampGroceryRemove, groceryKey } from "../../../grocery-list-stamps.js";
 import { resetBoughtMarks } from "../../../grocery-bought.js";
 import { addDaysKey, weekdayLabel } from "../../../assistant-queries.js";
 
 // Sections whose rows differ per view; their deletes are recorded per owner.
-const TOGGLE_SECTIONS = new Set(["grocery", "do", "watch", "media", "plan", "travel", "finance"]);
+const TOGGLE_SECTIONS = new Set(VIEW_TOGGLE_SECTIONS);
 const MAX_TOMBSTONES_PER_KEY = 200; // app.js MAX_TOMBSTONES_PER_KEY
 
 const PREP_DAYS = [
@@ -50,6 +50,14 @@ function dayIdFor(dateKey) {
   const week = prepWeekKey(dateKey);
   const hit = PREP_DAYS.find(([, off]) => addDaysKey(week, off) === dateKey);
   return { week, dayId: hit ? hit[0] : null };
+}
+
+// The meal plan's Friday is split across two weeks (app.js prepDays): the new week's
+// "friday-start" holds only dinner; Friday breakfast and lunch are the previous
+// week's "friday-finish".
+function mealDayFor(dateKey, meal) {
+  if (weekdayOf(dateKey) === 5 && norm(meal) !== "dinner") return { week: addDaysKey(dateKey, -7), dayId: "friday-finish" };
+  return dayIdFor(dateKey);
 }
 
 function viewsFor(ctx) { return availableViews({ isAdmin: ctx.role === "admin" }).filter((v) => v !== "business" || ctx.spaceId); }
@@ -311,7 +319,7 @@ async function setMeal(db, ctx, args, _env, clear = false) {
       value = `grocery-item::${encodeURIComponent(clean(args.text, 120))}::1`; label = clean(args.text, 120);
     } else return { text: "Give a recipe (name from the recipe box), text, or special: out / leftovers." };
   }
-  const { week, dayId } = dayIdFor(args.date);
+  const { week, dayId } = mealDayFor(args.date, args.meal);
   const ref = { id: `${ctx.groupId}:eat` };
   let before = {};
   await db.update(ref.id, (state) => {
@@ -584,12 +592,18 @@ export async function runWriteTool(name, db, ctx, args, env) {
     return ["Recent changes (newest first):", ...rows.map((r) => `  - [${r.id}] ${r.created_at.slice(0, 16).replace("T", " ")} UTC · ${r.summary}${r.undone_at ? " (undone)" : r.undo ? "" : " (can't be undone)"}`)].join("\n");
   }
   if (name === "undo_change") {
-    const row = args.change_id ? await db.change(String(args.change_id)) : (await db.changes(1))?.[0];
-    if (!row) return "No such change.";
+    // No id: the latest change that can still be undone (not an undo itself).
+    const row = args.change_id
+      ? await db.change(String(args.change_id))
+      : ((await db.changes(30)) || []).find((r) => r.undo && !r.undone_at && r.tool !== "undo_change");
+    if (!row) return args.change_id ? "No such change." : "Nothing to undo.";
     if (row.undone_at) return "That change was already undone.";
     if (!row.undo) return "That change can't be undone.";
-    const text = await applyUndo(db, ctx, row.undo, env);
-    await db.markUndone(row.id);
+    // Claim it first, so two undos at once can't both apply.
+    if (!(await db.markUndone(row.id))) return "That change was already undone.";
+    let text;
+    try { text = await applyUndo(db, ctx, row.undo, env); }
+    catch (e) { await db.unmarkUndone?.(row.id); throw e; }
     await db.log({ tool: "undo_change", summary: `Undid: ${row.summary}`, undo: null });
     return text;
   }

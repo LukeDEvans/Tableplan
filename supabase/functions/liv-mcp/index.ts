@@ -115,13 +115,18 @@ function makeDb(s: ReturnType<typeof svc>, who: { keyId: string; userId: string 
       const rows = await s.send("POST", "assistant_changes?select=id", { key_id: who.keyId, user_id: who.userId, tool: entry.tool, summary: entry.summary, undo: entry.undo ?? null });
       return rows?.[0] || null;
     },
-    changes: (limit: number) => s.get(`assistant_changes?user_id=eq.${enc(who.userId)}&select=id,summary,undo,undone_at,created_at&order=created_at.desc&limit=${Math.min(30, Math.max(1, limit))}`),
+    changes: (limit: number) => s.get(`assistant_changes?user_id=eq.${enc(who.userId)}&select=id,tool,summary,undo,undone_at,created_at&order=created_at.desc&limit=${Math.min(30, Math.max(1, limit))}`),
     async change(id: string) {
       if (!UUID_RE.test(id)) return null;
-      const rows = await s.get(`assistant_changes?id=eq.${enc(id)}&user_id=eq.${enc(who.userId)}&select=id,summary,undo,undone_at,created_at`);
+      const rows = await s.get(`assistant_changes?id=eq.${enc(id)}&user_id=eq.${enc(who.userId)}&select=id,tool,summary,undo,undone_at,created_at`);
       return rows?.[0] || null;
     },
-    markUndone: (id: string) => s.send("PATCH", `assistant_changes?id=eq.${enc(id)}&undone_at=is.null`, { undone_at: new Date().toISOString() }, "return=minimal"),
+    // True only for the call that marked it (the row must still be not undone).
+    async markUndone(id: string) {
+      const rows = await s.send("PATCH", `assistant_changes?id=eq.${enc(id)}&undone_at=is.null&select=id`, { undone_at: new Date().toISOString() });
+      return Array.isArray(rows) && rows.length > 0;
+    },
+    unmarkUndone: (id: string) => s.send("PATCH", `assistant_changes?id=eq.${enc(id)}`, { undone_at: null }, "return=minimal"),
     row: (id: string, keys: string[]) => s.rpc("assistant_state_read", { p_row: id, p_paths: keys }),
     health: (userId: string) => s.rpc("assistant_health", { p_user: userId }),
     async recipes(ids: string[] | null) {

@@ -97,7 +97,12 @@ function install() {
     if (u.pathname === "/rest/v1/assistant_changes") {
       const method = init.method || "GET";
       if (method === "POST") { const row = { id: `c${changes.length + 1}`.padEnd(8, "0") + "-0000-4000-8000-000000000000", created_at: new Date().toISOString(), undone_at: null, ...JSON.parse(init.body) }; changes.unshift(row); return json([{ id: row.id }]); }
-      if (method === "PATCH") { const id = u.searchParams.get("id").replace("eq.", ""); const r = changes.find((c) => c.id === id); if (r) r.undone_at = new Date().toISOString(); return new Response(null, { status: 204 }); }
+      if (method === "PATCH") {
+        const id = u.searchParams.get("id").replace("eq.", "");
+        const r = changes.find((c) => c.id === id && (u.searchParams.get("undone_at") !== "is.null" || !c.undone_at));
+        if (r) r.undone_at = JSON.parse(init.body).undone_at;
+        return u.searchParams.get("select") ? json(r ? [{ id: r.id }] : []) : new Response(null, { status: 204 });
+      }
       const idq = u.searchParams.get("id")?.replace("eq.", "");
       const uid = u.searchParams.get("user_id").replace("eq.", "");
       return json(changes.filter((c) => c.user_id === uid && (!idq || c.id === idq)).slice(0, Number(u.searchParams.get("limit") || 30)));
@@ -563,5 +568,36 @@ describe("Liv itself, signed in (Settings › Connected assistants)", () => {
   it("gives no CORS header to other sites", async () => {
     const res = await asUser(LUKE_JWT, "list_recent_changes", {}, "https://evil.example");
     expect(res.headers.get("access-control-allow-origin")).toBe(null);
+  });
+});
+
+describe("write tools: review fixes (2026-11-17)", () => {
+  beforeEach(() => { keys[KEY_ID].scopes = ["read", "write"]; });
+
+  it("Friday breakfast and lunch go on the previous week's Friday; dinner on the new week's", async () => {
+    // Fri 2026-11-20 starts the prep week 2026-11-20; its breakfast/lunch belong to week 2026-11-13.
+    await call("set_meal", { date: "2026-11-20", meal: "lunch", text: "Soup" });
+    await call("set_meal", { date: "2026-11-20", meal: "dinner", text: "Pizza" });
+    const eat = db[`${G}:eat`];
+    expect(eat.plans["2026-11-13"].slots["friday-finish"]["MJ Lunch"]).toBe("grocery-item::Soup::1");
+    expect(eat.plans["2026-11-20"].slots["friday-start"]["MJ Dinner"]).toBe("grocery-item::Pizza::1");
+    expect(eat.plans["2026-11-20"]?.slots?.["friday-start"]?.["MJ Lunch"]).toBeUndefined();
+  });
+
+  it("undo with no id skips undos and undone changes; a second undo of the same change does nothing", async () => {
+    await call("add_shopping_items", { items: ["Bread"] });
+    await call("add_shopping_items", { items: ["Eggs"] });
+    expect((await call("undo_change", {})).text).toMatch(/Eggs/);
+    expect((await call("undo_change", {})).text).toMatch(/Bread/);
+    expect((await call("undo_change", {})).text).toMatch(/Nothing to undo/);
+    expect(db[`${G}:grocery`].persistentManualGroceries).not.toContain("Bread");
+  });
+
+  it("two undos of one change at once: only one applies", async () => {
+    await call("add_watch_item", { title: "Arrival" });
+    const del = await call("remove_watch_item", { title: "Arrival" });
+    const id = del.text.match(/\[change ([0-9a-f-]{36})\]/)[1];
+    await Promise.all([call("undo_change", { change_id: id }), call("undo_change", { change_id: id })]);
+    expect(db[`${G}:watch`].watchItems.filter((w) => w.title === "Arrival")).toHaveLength(1);
   });
 });
