@@ -20,6 +20,7 @@ create index if not exists assistant_changes_user_created on public.assistant_ch
 alter table public.assistant_changes enable row level security;
 revoke all on public.assistant_changes from anon, authenticated;
 grant select on public.assistant_changes to authenticated;
+grant select, insert, update, delete on public.assistant_changes to service_role;
 
 create policy assistant_changes_owner_read on public.assistant_changes
   for select to authenticated using (user_id = (select auth.uid()));
