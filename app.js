@@ -10801,7 +10801,9 @@ async function fetchAndRenderMailPage({ fresh = false } = {}) {
   if (!data) {
     data = await callGmailApi({
       action: "list",
-      labelIds: [labelId],
+      // A search covers all the person's mail, like Gmail's (Luke, 2026-11-17);
+      // spam and trash stay out, as in Gmail. A plain folder view lists that folder.
+      labelIds: mailCurrentQuery ? [] : [labelId],
       q: mailCurrentQuery || undefined,
       pageToken: token || undefined,
       maxResults: MAIL_PAGE_SIZE,

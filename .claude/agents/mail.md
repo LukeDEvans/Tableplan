@@ -179,3 +179,8 @@ say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/`
 other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
 the client, and native `ios/` changes only ship this way), or both. Log anything real
 you notice but don't fix to `ISSUES.md`.
+
+## Search covers all mail (Luke, 2026-11-17)
+A Mail search looks through all of the person's mail, as Gmail's does (spam and trash
+excluded), not just the open folder: `loadMailList` sends `labelIds: []` when there's
+a query. Emptying the search box brings the folder back.
