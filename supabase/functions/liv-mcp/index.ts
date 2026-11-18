@@ -20,6 +20,8 @@
 //
 // Provided by Supabase: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 // Optional secret: LIV_MCP_DISABLED=1 switches it off (every call → 503).
+// Writes (a key with the "write" scope) go through makeDb().update and are logged
+// in assistant_changes (migrations/2026-11-17d-assistant-changes.sql).
 
 import { handleRpc } from "./tools.bundle.js";
 
@@ -60,22 +62,66 @@ function svc() {
     if (!res.ok) throw new Error(`read ${res.status}`);
     return res.json();
   }
+  // x-live-writer: the enforce_live_writer trigger refuses section writes without it.
+  async function send(method: string, path: string, body: unknown, prefer = "return=representation") {
+    const res = await fetch(`${url}/rest/v1/${path}`, { method, headers: { ...headers, "content-type": "application/json", Prefer: prefer, "x-live-writer": "liv-mcp" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`${method.toLowerCase()} ${res.status}`);
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  }
   async function rpc(fn: string, args: Record<string, unknown>) {
     const res = await fetch(`${url}/rest/v1/rpc/${fn}`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(args) });
     if (!res.ok) throw new Error(`rpc ${fn} ${res.status}`);
     const text = await res.text();
     return text ? JSON.parse(text) : null;
   }
-  return { get, rpc };
+  return { get, rpc, send };
 }
 
 // Only columns that exist in prod — asking PostgREST for a missing column is a
 // 400. prep_time / cook_time were added to prod 2026-11-17 (migration 20261117200000).
 const RECIPE_COLUMNS = "id,name,time,prep_time,cook_time,servings,source_url,ingredients,steps,tags";
 
-// The one database surface tools.js sees.
-function makeDb(s: ReturnType<typeof svc>) {
+type Mutate = (state: Record<string, unknown>) => { changed?: boolean } | Promise<{ changed?: boolean }>;
+const enc = encodeURIComponent;
+
+// The one database surface tools.js / write-tools.js see.
+function makeDb(s: ReturnType<typeof svc>, who: { keyId: string; userId: string }) {
   return {
+    // Read-change-write one section row, the way a phone saves (app.js section
+    // writes): only if updated_at still matches what was read, retried; the new
+    // stateUpdatedAt makes this copy the newer one in the app's merge.
+    async update(id: string, mutate: Mutate) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const rows = await s.get(`tableplan_states?id=eq.${enc(id)}&select=state,updated_at`);
+        const row = rows?.[0];
+        const state = (row?.state && typeof row.state === "object") ? structuredClone(row.state) : {};
+        const out = await mutate(state);
+        if (!out?.changed) return out;
+        const now = new Date().toISOString();
+        const body = { state: { ...state, stateUpdatedAt: now }, updated_at: now };
+        if (!row) {
+          const ins = await s.send("POST", `tableplan_states?on_conflict=id&select=updated_at`, { id, ...body }, "return=representation,resolution=ignore-duplicates");
+          if (Array.isArray(ins) && ins.length) return out;
+          continue; // someone created it meanwhile — read again
+        }
+        const upd = await s.send("PATCH", `tableplan_states?id=eq.${enc(id)}&updated_at=eq.${enc(row.updated_at)}&select=updated_at`, body);
+        if (Array.isArray(upd) && upd.length) return out;
+        await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+      }
+      throw new Error("row busy");
+    },
+    async log(entry: { tool: string; summary: string; undo: unknown }) {
+      const rows = await s.send("POST", "assistant_changes?select=id", { key_id: who.keyId, user_id: who.userId, tool: entry.tool, summary: entry.summary, undo: entry.undo ?? null });
+      return rows?.[0] || null;
+    },
+    changes: (limit: number) => s.get(`assistant_changes?user_id=eq.${enc(who.userId)}&select=id,summary,undo,undone_at,created_at&order=created_at.desc&limit=${Math.min(30, Math.max(1, limit))}`),
+    async change(id: string) {
+      if (!UUID_RE.test(id)) return null;
+      const rows = await s.get(`assistant_changes?id=eq.${enc(id)}&user_id=eq.${enc(who.userId)}&select=id,summary,undo,undone_at,created_at`);
+      return rows?.[0] || null;
+    },
+    markUndone: (id: string) => s.send("PATCH", `assistant_changes?id=eq.${enc(id)}&undone_at=is.null`, { undone_at: new Date().toISOString() }, "return=minimal"),
     row: (id: string, keys: string[]) => s.rpc("assistant_state_read", { p_row: id, p_paths: keys }),
     health: (userId: string) => s.rpc("assistant_health", { p_user: userId }),
     async recipes(ids: string[] | null) {
@@ -128,7 +174,7 @@ export async function handle(req: Request): Promise<Response> {
   try { ctx = await contextFor(s, who.user_id, who.scopes || []); } catch { return json(502, { error: "Couldn't load the account." }); }
   if (!ctx) return json(403, { error: "This key's owner isn't in a household." });
 
-  const { status, body } = await handleRpc(msg, { db: makeDb(s), ctx, now: new Date() });
+  const { status, body } = await handleRpc(msg, { db: makeDb(s, { keyId, userId: who.user_id }), ctx, now: new Date() });
   return json(status, body);
 }
 
