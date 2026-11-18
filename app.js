@@ -122,6 +122,7 @@ import * as TravelIngest from './travel-ingest.js';
 import { usableViewportBottom } from './dock-space.js';
 import { installStatusTapScroll } from './status-tap-scroll.js';
 import { installInputClear } from './input-clear.js';
+import { createAssistantConnectorsPanel } from './assistant-connectors-ui.js';
 import { makeReaderOrigin, readerReturnTarget, captureScroll, restoreScroll } from './reader-return.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
@@ -19429,7 +19430,15 @@ async function forgetPhotoSyncDevice() {
 }
 
 // Where a Settings panel's back arrow goes (anything not listed → the main list).
-const SETTINGS_PANEL_PARENT = { assistant: "beta", "ai-log": "beta", "link-test": "beta", "photos-check": "beta" };
+const SETTINGS_PANEL_PARENT = { assistant: "beta", "ai-log": "beta", "link-test": "beta", "photos-check": "beta", "assistant-keys": "beta" };
+// Settings › Beta › Connected Assistants (assistant-connectors-ui.js).
+const assistantConnectorsPanel = createAssistantConnectorsPanel({
+  baseUrl: () => supabaseBaseUrl(),
+  headers: () => supabaseHeaders(),
+  accessToken: () => authSession?.access_token || "",
+  escapeHtml: (v) => escapeHtml(v),
+  stillShowing: () => contextSettingsKind === "assistant-keys" && elements.contextSettingsDialog?.open,
+});
 
 // A small (i) button beside a setting; tapping it opens that setting's write-up
 // in a little window under the row (Luke, 2026-10-14), so long explanations
@@ -19505,6 +19514,7 @@ function renderContextSettingsDialog(kind) {
     "beta": "Beta",
     "link-test": "Link Test",
     "photos-check": "Photos Check",
+    "assistant-keys": "Connected Assistants",
     "ai-log": "AI Action Log"
   };
   const isSubPanel = !["general", "watch", "watch-services", "radio", "recreate", "read-sync", "mail-ai"].includes(kind);
@@ -19557,6 +19567,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
         <button type="button" data-context-settings-action="link-test">Link Test</button>
         <button type="button" data-context-settings-action="photos-check">Photos Check</button>
+        <button type="button" data-context-settings-action="assistant-keys">Connected Assistants</button>
       </div>
     `;
     return;
@@ -19574,6 +19585,11 @@ function renderContextSettingsDialog(kind) {
   // library to settle the Photos page's storage plan. Nothing leaves the phone.
   if (kind === "photos-check") {
     renderPhotosCheckPanel();
+    return;
+  }
+
+  if (kind === "assistant-keys") {
+    assistantConnectorsPanel.render(elements.contextSettingsBody);
     return;
   }
 
@@ -20465,6 +20481,7 @@ function handleContextSettingsAction(event) {
     "beta": () => renderContextSettingsDialog("beta"),
     "link-test": () => renderContextSettingsDialog("link-test"),
     "photos-check": () => renderContextSettingsDialog("photos-check"),
+    "assistant-keys": () => renderContextSettingsDialog("assistant-keys"),
     "paper-signin": () => signInToArticlePaper(SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper)),
     "paper-signout": async () => {
       const paper = SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper);

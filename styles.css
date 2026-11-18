@@ -26027,3 +26027,14 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+/* Settings › Beta › Connected Assistants (assistant-connectors-ui.js) */
+.assistant-small { margin: 2px 0 0; font-size: 0.78rem; color: var(--muted); }
+.assistant-key-row, .assistant-change-row { align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line, var(--border-subtle)); }
+.assistant-change-row span { overflow-wrap: anywhere; }
+.assistant-new-key { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 6px; }
+.assistant-new-key input[type="text"] { flex: 1 1 180px; min-width: 0; }
+.assistant-write-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; }
+.assistant-fresh-key { display: grid; gap: 6px; margin-top: 12px; padding: 10px; border-radius: 10px; background: var(--surface-2, var(--surface)); border: 1px solid var(--accent); }
+.assistant-key-text { display: block; font-size: 0.75rem; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.assistant-message { color: var(--accent); }
