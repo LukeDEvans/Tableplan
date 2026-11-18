@@ -14,6 +14,31 @@ git (this file before 2026-11-17).
 - **Luke, iPhone** — only what needs the phone itself (TestFlight build, lock screen,
   Face ID, native players, the camera). Kept short and batched: one pass per TestFlight build.
 
+
+## Deploy 2026-11-17 night (all of UNDEPLOYED.md as of #266)
+Steps copied from UNDEPLOYED.md; Claude sorts them into the sections above after the deploy and does the server and Chrome ones. Entries whose step is "none" can be deleted.
+- [ ] **Listen: one queue and player per person** (#237): reload every open web tab (an old tab keeps writing positions to the media rows). In the API logs, look for one `tableplan_states?id=in.(…:media,…:media)&select=id,podcastProgress:state->…` read per device and a new `u-<uid>:listen` row for Luke and for Marijane. On the phone, start an episode in Personal, switch to Household and let it finish: it should be gone from the queue in both views.
+- [ ] **News: the Front page leads with the day's biggest events** (#238): open News on the phone — the lead card and the dock ticker should show the biggest current story, with "Lead story" on it. In the API logs, one `news_articles?select=id,url,title,subtitle,paper,section,origin,published_at,lead_at` read per Front page open (at most one per 5 minutes per warm function). If the order looks wrong, set `NEWS_FRONT_RANK_DISABLED=1` in Netlify to go back to newsletter leads.
+- [ ] **News: NPR as a paper, BBC / AP as ranking signals, and a check when News opens** (#239): after the next hourly run read `newsfeeds_status` — the nine `feeds.npr.org` feeds and the three `signal: true` feeds (two BBC, one Flipboard/AP) should be `ok`; fix or drop any that aren't. Check the `news_signals` row has `items` and a fresh `checkedAt`. Open News twice within ten minutes: the API logs should show one `tableplan_states?on_conflict=id` claim and one round of feed reads, not two. Open an NPR story in the reader. Switches if needed: `NEWS_NPR_DISABLED=1`, `NEWS_OPEN_CHECK_DISABLED=1`.
+- [ ] **Photos: count the iPhone's library (step 1)** (#240): nothing on the web beyond the Beta panel saying it's a check for the iPhone app. On the phone: Settings › Beta › Photos Check › Count my library, allow full access, then "Copy results".
+- [ ] **Photos: the stage 1 tables** (#241): none. (Same day, the never-applied `supabase-nutrition-estimates.sql` columns were added to `eat_recipes`, so recipe loads and saves stop failing once and retrying; watch the API logs for `eat_recipes` 400s going away — no deploy needed for that.)
+- [ ] **Photos step 2: the first sync into Personal** (#242): (web): nothing beyond the Settings sheet fix; the sync is phone-only. On the phone: run Sync to Personal on Wi-Fi with the screen open; check the totals and the newest thumbnails; Supabase API logs show no repeated reads of `photo_items`.
+- [ ] **iPhone uploads around CapacitorHttp** (#244): on the phone, Photos Check › Sync again (thumbnails appear under the button); add a file to Document from the phone and open it.
+- [ ] **Photos: device keys + sync protocol** (#246): none for the web.
+- [ ] **Photos: native background sync** (#247): none for the web (the panel's native part only shows in a build with the engine).
+- [ ] **Photos: the page (step 3)** (#249): on the laptop, open Personal › Photos: thumbnails load, a photo opens with "Full size is on your iPhone", a laptop delete is carried out on the phone next time Photos opens there.
+- [ ] **Photos: the landing and page-menu buttons open the page** (#251): tap Photos on the landing page and from the page menu (Personal view) — both open the Photos page.
+- [ ] **Listen: music playlists and favourites merge instead of newest-copy-wins** (#252): reload every open web tab (an old tab can still overwrite the library). On the phone, make a playlist, then open Listen › Music on the laptop: it should appear and survive the laptop saving something in Listen. Delete a test playlist on one device: it stays gone on the other.
+- [ ] **Landing: logo and page list use the top of the screen** (#254, #255): on the phone, the landing page shows every Personal page centred, without scrolling; tap the settings gear and the scan button; swipe across the logo to change views.
+- [ ] **Issues sweep: boot re-send fix, stamped lists, news feeds** (#256): liv_health — history writes per day drop (was ~13 bursts of 12 rows from the iPhone); the API logs show no PATCH burst ~3 s after a cold boot (the console's `[sync] after load, rewriting changed sections` line names any section still re-sent). After the next nightly news run, `newsfeeds_status` has no failing feeds. Remove a radio favourite on one device, open the other: it stays gone.
+- [ ] **Claude Duet connector (`liv-mcp`) and `liv_health`** (#253): none.
+- [ ] **News: the Star Tribune's Politics, Nation, World and Health stories come back** (#257): after the next hourly run, `newsfeeds_status` shows every startribune feed 200, and `news_articles` has fresh startribune rows in politics / us / world.
+- [ ] **The page menu stays open over an open email** (#258): in Mail, open an email, tap the page title: the menu stays open.
+- [ ] **Functions refuse a sign-in that skipped the authenticator code** (#261): (Claude): in the function logs, no new 401s from signed-in use; open Mail, News and Shop in Chrome and check they load. The security-definer RPCs got the same check in #264 (migration 20261117240000, applied). Before Luke turns the code on: the Chrome extension has no code step (ISSUES.md).
+- [ ] **Settings › Beta › Connected Assistants** (#262): (Claude, in Chrome): open the panel, check the Duet key is listed, make a throwaway key, revoke it; undo one harmless change. (Luke, iPhone): open the panel once to check it fits.
+- [ ] **Mail: emptying the search box puts the folder back; a search covers all mail** (#263, #265): (Claude, in Chrome): search Mail for something archived and check it's found; clear the box with the x and check the folder comes back.
+- [ ] **Duet: review fixes** (this branch): none.
+
 ## Luke, iPhone (one pass, ~15 min)
 
 Do these once your phone has the newest TestFlight build.
