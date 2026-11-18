@@ -412,7 +412,7 @@ function resetBoughtMarks(checked, cleared, rowKey) {
 }
 
 // supabase/functions/liv-mcp/write-tools.js
-var TOGGLE_SECTIONS = /* @__PURE__ */ new Set(["grocery", "do", "watch", "media", "plan", "travel", "finance"]);
+var TOGGLE_SECTIONS = new Set(VIEW_TOGGLE_SECTIONS);
 var MAX_TOMBSTONES_PER_KEY = 200;
 var PREP_DAYS = [
   ["friday-start", 0],
@@ -442,6 +442,10 @@ function dayIdFor(dateKey) {
   const week = prepWeekKey(dateKey);
   const hit = PREP_DAYS.find(([, off]) => addDaysKey(week, off) === dateKey);
   return { week, dayId: hit ? hit[0] : null };
+}
+function mealDayFor(dateKey, meal) {
+  if (weekdayOf(dateKey) === 5 && norm(meal) !== "dinner") return { week: addDaysKey(dateKey, -7), dayId: "friday-finish" };
+  return dayIdFor(dateKey);
 }
 function viewsFor(ctx) {
   return availableViews({ isAdmin: ctx.role === "admin" }).filter((v) => v !== "business" || ctx.spaceId);
@@ -732,7 +736,7 @@ async function setMeal(db, ctx, args, _env, clear = false) {
       label = clean(args.text, 120);
     } else return { text: "Give a recipe (name from the recipe box), text, or special: out / leftovers." };
   }
-  const { week, dayId } = dayIdFor(args.date);
+  const { week, dayId } = mealDayFor(args.date, args.meal);
   const ref = { id: `${ctx.groupId}:eat` };
   let before = {};
   await db.update(ref.id, (state) => {
@@ -1134,12 +1138,18 @@ async function runWriteTool(name, db, ctx, args, env) {
     return ["Recent changes (newest first):", ...rows.map((r) => `  - [${r.id}] ${r.created_at.slice(0, 16).replace("T", " ")} UTC \xB7 ${r.summary}${r.undone_at ? " (undone)" : r.undo ? "" : " (can't be undone)"}`)].join("\n");
   }
   if (name === "undo_change") {
-    const row = args.change_id ? await db.change(String(args.change_id)) : (await db.changes(1))?.[0];
-    if (!row) return "No such change.";
+    const row = args.change_id ? await db.change(String(args.change_id)) : (await db.changes(30) || []).find((r) => r.undo && !r.undone_at && r.tool !== "undo_change");
+    if (!row) return args.change_id ? "No such change." : "Nothing to undo.";
     if (row.undone_at) return "That change was already undone.";
     if (!row.undo) return "That change can't be undone.";
-    const text2 = await applyUndo(db, ctx, row.undo, env);
-    await db.markUndone(row.id);
+    if (!await db.markUndone(row.id)) return "That change was already undone.";
+    let text2;
+    try {
+      text2 = await applyUndo(db, ctx, row.undo, env);
+    } catch (e) {
+      await db.unmarkUndone?.(row.id);
+      throw e;
+    }
     await db.log({ tool: "undo_change", summary: `Undid: ${row.summary}`, undo: null });
     return text2;
   }
