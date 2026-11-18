@@ -12,6 +12,7 @@
 //   nothing else. Revocable any time at beta-bridge.simplefin.org.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const { userGroupQuery } = require("./_group-lookup.js");
+const { authUserFetch } = require("./_auth-user.js");
 const { ingestFeed, remapAccount, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } = require("./_finance-ingest.js");
 const { loadFinanceCategories } = require("./_finance-categories.js");
 const { personalScopeId, loadAccountViews, splitAccounts, accountsForMember, ownsAny } = require("./_finance-split.js");
@@ -397,7 +398,7 @@ function svc(serviceKey) {
 
 async function getUserId(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     if (!res.ok) return null;

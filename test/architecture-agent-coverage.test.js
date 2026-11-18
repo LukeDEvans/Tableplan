@@ -75,6 +75,7 @@ const SHARED_FILES = {
   "netlify/functions/_state-sections.js": "server-side state access",
   "netlify/functions/_group-lookup.js": "server-side \"the user's group\" lookup, ordered like the client (auth/state)",
   "netlify/functions/_oauth-state.js": "signed OAuth state (Gmail + Google Calendar)",
+  "netlify/functions/_auth-user.js": "every function's sign-in check; refuses a token that skipped the authenticator code (auth)",
   "netlify/functions/chat.js": "assistant",
   "netlify/functions/daily-briefing.js": "daily maintenance (TTS cleanup, finance snapshot) + the briefing push until notifications Phase 2 retires it",
   "netlify/functions/push-subscribe.js": "notifications/push",

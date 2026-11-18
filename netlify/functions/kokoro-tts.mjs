@@ -17,6 +17,8 @@
 import {
   validateKokoroRequest, chunkText, sanitizeKey, errorForStatus, categorizeFetchError, KOKORO_ERRORS, KOKORO_VOICES,
 } from "../../kokoro-core.mjs";
+import { createRequire } from "node:module";
+const { authUserFetch } = createRequire(import.meta.url)("./_auth-user.js");
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 // Reuse the existing article-audio bucket: the cache key already namespaces by
@@ -192,7 +194,7 @@ function bearer(event) {
 
 async function getUserId(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
     if (!res.ok) return null;
     const user = await res.json();
     return user.id || null;

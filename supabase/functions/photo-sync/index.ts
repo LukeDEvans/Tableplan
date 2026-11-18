@@ -110,6 +110,13 @@ function cleanItem(raw: Record<string, unknown>) {
 
 const uuids = (v: unknown, max: number) => (Array.isArray(v) && v.length >= 1 && v.length <= max && v.every((x) => typeof x === "string" && UUID_RE.test(x)) ? (v as string[]).map((x) => x.toLowerCase()) : null);
 
+function tokenAal(auth: string): string {
+  try {
+    const part = auth.replace(/^Bearer\s+/i, "").split(".")[1] || "";
+    return JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/"))).aal || "";
+  } catch { return ""; }
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origin) });
@@ -128,7 +135,13 @@ Deno.serve(async (req) => {
       if (!DEVICE_KEY_RE.test(deviceKey)) return reply(400, { error: "device" }, origin);
       const who = await fetch(`${Deno.env.get("SUPABASE_URL")}/auth/v1/user`, { headers: { apikey: Deno.env.get("SUPABASE_ANON_KEY")!, authorization: auth } });
       if (!who.ok) return reply(401, { error: "sign in" }, origin);
-      const userId = (await who.json())?.id;
+      const whoUser = await who.json();
+      // Refuse a sign-in that skipped the authenticator code when a factor is verified
+      // (the tables' require_mfa_when_enrolled rule; this path uses the service role).
+      if (tokenAal(auth) !== "aal2" && Array.isArray(whoUser?.factors) && whoUser.factors.some((f: { status?: string }) => f?.status === "verified")) {
+        return reply(401, { error: "authenticator code" }, origin);
+      }
+      const userId = whoUser?.id;
       if (!UUID_RE.test(String(userId || ""))) return reply(401, { error: "sign in" }, origin);
       const secret = newSecret();
       const name = typeof body.name === "string" ? body.name.slice(0, 60) : "";
