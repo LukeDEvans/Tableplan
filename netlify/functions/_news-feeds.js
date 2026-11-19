@@ -93,7 +93,9 @@ const ATHLETIC_SCOPE_LEAGUE = { nfl: "nfl", nba: "nba", wnba: "wnba", nhl: "nhl"
 const ATHLETIC_KNOWN_SLUGS = { "nba:minnesota-timberwolves": "timberwolves", "nhl:minnesota-wild": "wild", "mlb:minnesota-twins": "twins", "soccer:atlanta-united-fc": "atlunited", "mlb:atlanta-braves": "braves", "soccer:minnesota-united-fc": "mnufc", "soccer:united-states": "united-states" };
 // Teams checked to have no team feed (every candidate 404/500, 2026-11-17): no
 // team feeds are tried; their league feeds still catch stories that name them.
-const ATHLETIC_NO_TEAM_FEED = new Set(["college:minnesota-golden-gophers", "soccer:ajax-amsterdam"]);
+// Minnesota Morris (Division III) isn't covered by The Athletic; its guessed slugs
+// (college-football/minnesota/, …/minnesota-morris-cougars/) 404'd every run (2026-11-18).
+const ATHLETIC_NO_TEAM_FEED = new Set(["college:minnesota-golden-gophers", "soccer:ajax-amsterdam", "college:minnesota-morris-cougars"]);
 const GENERIC = new Set(["fc", "afc", "sc", "cf", "united", "city", "state", "university", "club"]);
 const slugWord = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
