@@ -466,6 +466,18 @@ const EXTRA_TOOLS = [
     }
   },
   {
+    name: "search",
+    description: "Find anything in Liv by name or words in it, across all of Luke's views: recipes (incl. ingredients), tasks, calendar events, trips and trip ideas, Watch lists, saved articles, podcasts, the shopping list and contacts. Returns ranked results with kind, view, date and id. Use it first when Luke names something without saying where it is.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Words to find (partial words work)" },
+        types: { type: "array", items: { type: "string", enum: ["recipe", "task", "event", "trip", "trip_idea", "watch", "article", "podcast", "shop", "contact"] }, description: "Only these kinds (optional)" },
+      },
+      required: ["query"]
+    }
+  },
+  {
     name: "get_weather",
     description: "Current conditions and the next few days' forecast for Luke's active weather location.",
     input_schema: { type: "object", properties: {}, required: [] }
@@ -519,6 +531,7 @@ const TOOL_META = {
   get_calendar_range: { access: "read" },
   list_tasks: { access: "read" },
   find_contact: { access: "read" },
+  search: { access: "read" },
   get_weather: { access: "read" },
   query_transactions: { access: "read", gate: "finance" },
   search_mail: { access: "read", gate: "mail" },

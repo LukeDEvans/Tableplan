@@ -25,7 +25,11 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Live uses the camera to scan receipts, and the codes that link your devices and verify a contact for secure messages.</string>
+	<string>Live uses the camera to take photos and videos, scan receipts and documents, read card barcodes for Wallet, and the codes that link your devices and verify a contact for secure messages.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Live saves the photos and videos you take with its Camera to your photo library.</string>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>Live's Clock rings your alarms and timers, even in silent mode or a Focus.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Live counts and shows the photos and videos in your library. Nothing leaves your phone unless you choose to add it to Live.</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -33,9 +37,9 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Live uses your location to show the weather where you are and to find nearby stores and restaurants.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Live uses the microphone when you practice speaking Dutch, to hear what you say and let you play your recording back. Recordings stay on your iPhone.</string>
+	<string>Live uses the microphone when you talk to Liv, when you ask Shazam what song is playing, and when you practice speaking Dutch. Recordings stay on your iPhone.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Live uses speech recognition to check the Dutch words and sentences you practice saying.</string>
+	<string>Live uses speech recognition to turn what you say to Liv into text, and to check the Dutch words and sentences you practice saying.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Live plays songs from your Apple Music subscription and shows your Apple Music library.</string>
 	<key>NSAppTransportSecurity</key>

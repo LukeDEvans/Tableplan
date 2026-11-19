@@ -390,6 +390,10 @@ export function normalizeNutritionEstimate(estimate) {
 export function createRecipesModule(deps) {
   const recipeCost = deps.recipeCost || (() => null);
   const groceryPace = deps.groceryPace || (() => null);
+  // The recipe timer also rings as a real timer (Clock, AlarmKit) on the iPhone,
+  // so it goes off with the phone locked (UTILITIES_MENU_DESIGN.md §6). null → the
+  // in-page timer only.
+  const systemTimer = deps.systemTimer || (() => null);
   const {
     state, elements, persist, render, trashItemTemplate, showMailToast, getActiveAppArea, getAuthSession, getSupabaseClient, setRowStorageReady, getAmountOptions, getQuantityOptions, getPrepOptions, getPendingMealRecipeSelection, getPendingAutoRuleRecipeSelection, clearPendingMealRecipeSelection, clearPendingAutoRuleRecipeSelection, activateEatShell, allowScreenOff, applyScanImageAction, canUseCloudStorage, canUseLocalBackend, chooseRecipeForPendingAutoRule, chooseRecipeForPendingMeal, closeFloatingMenus, dailyDozenCategoryName, dailyDozenRecipeSuggestions, dateInputToIso, dateInputValue, deleteSupabaseRow, displayMealName, escapeHtml, fileToDataUrl, formatServingsLabel, imageElementFromFile, keepScreenOn, mealEntryValue, mirrorStateToLocalStorage, normalizeIngredientOptions, openDailyDozenPage, plannedServingsForEntry, prepareScanImage, recipeForSlot, recordDeletion, removeRecipeFromMealSlots, renderPlanner, renderScanImagePreviews, retainScanImageEdits, rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders, trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing, updateMealPlannedServingsFromContext, formatGroceryAmount, groceryAmountToNumber, grocerySuggestionItems, renderGroceries,
   } = deps;
@@ -3161,6 +3165,15 @@ function openScanDialog() {
   elements.scanDialog.showModal();
 }
 
+// Scan in the utilities menu → Recipe (UTILITIES_MENU_DESIGN.md §5): the scan dialog
+// opens with the pages already chosen.
+function openRecipeScanWithFiles(files) {
+  openScanDialog();
+  scanRecipeFiles = [...(files || [])].slice(0, 6);
+  scanRecipeImageEdits = new Map();
+  updateScanSelectionStatus();
+}
+
 function replaceScanRecipeFiles() {
   scanRecipeFiles = [...elements.scanImages.files || []].slice(0, 6);
   scanRecipeImageEdits = retainScanImageEdits(scanRecipeFiles, scanRecipeImageEdits);
@@ -3922,7 +3935,10 @@ function stepTimerButtons(rawStep) {
 
 function startRecipeTimer(totalSecs) {
   if (recipeTimer?.intervalId) clearInterval(recipeTimer.intervalId);
-  recipeTimer = { totalSecs, remainingSecs: totalSecs, paused: false, intervalId: null };
+  if (recipeTimer?.systemId) systemTimer()?.cancel(recipeTimer.systemId);
+  recipeTimer = { totalSecs, remainingSecs: totalSecs, paused: false, intervalId: null, systemId: null };
+  const timerRef = recipeTimer;
+  Promise.resolve(systemTimer()?.start(totalSecs, "Recipe timer")).then((id) => { if (id) timerRef.systemId = id; }).catch(() => {});
   const widget = document.getElementById("recipeTimerWidget");
   if (widget) widget.hidden = false;
   updateRecipeTimerWidget();
@@ -3988,6 +4004,7 @@ function fireTimerDone() {
 
 function closeRecipeTimer() {
   if (recipeTimer?.intervalId) clearInterval(recipeTimer.intervalId);
+  if (recipeTimer?.systemId) systemTimer()?.cancel(recipeTimer.systemId);
   recipeTimer = null;
   const widget = document.getElementById("recipeTimerWidget");
   if (widget) { widget.hidden = true; widget.classList.remove("timer-done"); }
@@ -3997,6 +4014,7 @@ function initRecipeTimer() {
   document.getElementById("timerPauseBtn")?.addEventListener("click", () => {
     if (!recipeTimer) return;
     recipeTimer.paused = !recipeTimer.paused;
+    if (recipeTimer.systemId) systemTimer()?.[recipeTimer.paused ? "pause" : "resume"](recipeTimer.systemId);
     if (!recipeTimer.paused && recipeTimer.remainingSecs > 0 && !recipeTimer.intervalId) {
       recipeTimer.intervalId = setInterval(tickRecipeTimer, 1000);
     }
@@ -4045,6 +4063,7 @@ function initRecipeTimer() {
     autoEstimateNutrition,
     clearRecipeSearch,
     clearScanRecipeFiles,
+    openRecipeScanWithFiles,
     closeCookSessionNotesDialog,
     closeFolderMenu,
     closeNutritionEstimateDialog,
