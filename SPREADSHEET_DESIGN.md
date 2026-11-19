@@ -1,0 +1,254 @@
+# Spreadsheet — design & plan
+
+Status: **APPROVED (Luke, 2026-11-09: "Everything here has my approval" — the plan, §14 defaults, the migration and the scratch Google Sheet), being built.** The Netlify deploy still gets its own OK. Branch `claude/spreadsheet`, built on top of the word processor (`claude/word-processor`, PR #223), whose saving, version history, live co-editing and Safe encryption it reuses.
+
+Goal: a Google Sheets replacement inside the **Document** page. New → Spreadsheet opens a full spreadsheet with Sheets' formulas and formatting, live co-editing with Marijane, charts, filters, rules on cells, pivot tables, comments, version history, Excel/CSV/PDF in and out, a one-time move of existing Google Sheets, and the same spreadsheet working inside the **Safe**. Everything is built here: no paid or GPL code.
+
+---
+
+## 0. Decisions
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Ground rules | **Same as the word processor:** live co-editing, works in the Safe (encrypted), works offline, full editing on iPhone and laptop, version history in R2. |
+| 2 | Formula engine | **Built in house, MIT-only** (Luke: "the most complete spreadsheet editor possible… keep the whole thing in house, even if it is more work"). Not HyperFormula (GPL-3.0-only: blocks the App Store and closed source), not Univer (its co-editing needs a paid server). |
+| 3 | Extras in v1 | **Charts, filters & sorting, rules on cells (conditional formatting + data validation), pivot tables.** Plus, always: multiple tabs, freezing, number formats, merged cells, comments. |
+| 4 | In and out | **Excel (.xlsx) in and out, CSV in and out, bring over Google Sheets, PDF export.** |
+| 5 | Libraries | Only MIT (or similar) code we can read and fix: Yjs (already in), fflate (already in, for .xlsx zips), formula.js function bodies **copied in** (MIT, with its notice) so we own and fix them. No HyperFormula, no SheetJS, no Chart.js: the grid, engine, charts and Excel reader/writer are ours. |
+
+---
+
+## 1. How it fits with the word processor
+
+The word processor already does the hard plumbing for "one Y.Doc per file": `session.js` (load from the device copy then R2, merge-then-save, snapshots, closing), `live.js` (Realtime broadcast while two people are in), `cache.js` (device copy), `store-everyday.js` / `store-safe.js` (where the parts live, encrypted in the Safe), version slots in `doc-model.js`. None of it cares what's inside the Y.Doc, so the spreadsheet uses it as is.
+
+- New code lives in **`documents/sheet/`**, loaded lazily the first time a spreadsheet opens (separate from the word processor's bundle).
+- `doc_pfiles.kind = 'sheet'` (already allowed by the table). The Document page lists it with a grid icon and opens it in the spreadsheet.
+- **One small migration is needed** (§13): the version-row guard from the word processor only accepts `kind = 'doc'`. It needs to accept `'sheet'` too. Gated: your OK first.
+- The generic pieces (session, live, cache, stores, version slots) should move from `documents/editor/` to a shared `documents/collab/` so both editors (and slides later) import them from one place. **Done after PR #223 merges**, so its review isn't disturbed.
+- A new **`sheets` agent** in `.claude/agents/` owns `documents/sheet/` (CI coverage check), as the word processor's does.
+
+---
+
+## 2. The spreadsheet's data (Y.Doc layout)
+
+Only what people **type** is synced: inputs, formulas, formats and settings. **Computed values are never stored in the shared document**; each device calculates them. That way two devices can never fight over a result, and the shared file stays small.
+
+```
+"meta"            Map    format version, locale, calculation settings
+"tabs"            Array  tab ids, in order
+"tab:<id>"        Map    name, colour, hidden, frozen rows/cols, gridlines, default sizes
+"rows:<id>"       Array  row ids, in order        ← stable identities, see below
+"cols:<id>"       Array  column ids, in order
+"cells:<id>"      Map    "<rowId>.<colId>" → { i: input, s: style id, n: note }
+"rowmeta:<id>"    Map    rowId → { h: height, hidden, group }
+"colmeta:<id>"    Map    colId → { w: width, hidden, group }
+"merges:<id>"     Map    mergeId → corner row/col ids
+"styles"          Map    style id → style (shared table, so a million bold cells cost one style)
+"names"           Map    named ranges
+"rules:<id>"      Map    conditional formats and data validation
+"filters:<id>"    Map    the tab's filter + filter views
+"charts:<id>"     Map    chart specs (type, ranges, options, position)
+"pivots:<id>"     Map    pivot table specs
+"comments"        Map    threads, as the word processor (anchored to a cell id)
+```
+
+**Why rows and columns have ids.** If rows were just numbers, Marijane inserting a row while you type in row 40 would put your typing in the wrong row after merging. With ids, a cell belongs to its row whatever moves around it, so concurrent inserts, deletes and sorts merge cleanly. Row 7 is simply "the 7th id in the list right now".
+
+**Formulas are stored by identity too.** `=SUM(B2:B10)` is saved as a reference to row/column ids, and shown as A1 text from the current positions. So inserting or deleting rows never has to rewrite anyone's formulas (which would clash under co-editing). A reference to a deleted row shows `#REF!`, as Sheets does. A range grows when rows are inserted inside it.
+
+**Sorting** writes a new order of row ids (one change), so a sort and someone's typing merge without losing either.
+
+**Size:** new tabs start at **1,000 rows × 26 columns** (as Sheets) and only filled cells are stored. A guard warns at 200,000 filled cells and refuses past 1,000,000 (phones run out of memory well before Google's 10 million).
+
+---
+
+## 3. The formula engine (in house)
+
+`documents/sheet/engine/` — no DOM, no network, fully unit-tested. It runs in a **Web Worker** so typing stays smooth while a big sheet recalculates.
+
+**Pieces we write:**
+1. **Parser**: Sheets' formula language — A1 and R1C1 references, `A:A` / `1:1` whole columns and rows, `'Tab name'!A1`, named ranges, array literals `{1,2;3,4}`, all operators (`+ - * / ^ & % = <> < > <= >=`, unary minus, range `:`), strings, booleans, errors. Turns text into a tree with ids (§2).
+2. **Values**: numbers, text, true/false, errors (`#DIV/0!`, `#N/A`, `#REF!`, `#VALUE!`, `#NAME?`, `#NUM!`, `#NULL!`, `#ERROR!`), empty, and arrays — with Sheets' coercion rules (empty is 0 or "", "TRUE" vs TRUE, text numbers in arithmetic but not in SUM). Dates are serial numbers from 1899-12-30, as Sheets and Excel.
+3. **Dependency graph**: which cells read which; ranges are their own nodes so `SUM(A:A)` doesn't make a million edges. An edit marks only what depends on it as dirty, then recalculates in order. Circular references show an error (iterative calculation is a setting, off by default, as Sheets).
+4. **Arrays that spill**: `FILTER`, `SORT`, `UNIQUE`, `SEQUENCE`, `ARRAYFORMULA`, `SPLIT`… fill neighbouring cells; a blocked spill shows `#REF!` with the reason.
+5. **Volatile functions** (`NOW`, `TODAY`, `RAND`, `RANDBETWEEN`) recalculate on open and on each edit, as Sheets.
+6. **Functions**: a catalog, each function a small module with its argument rules.
+
+**Function coverage — all of Sheets' functions except those that need Google's services**, in three passes:
+- **A — everyday (~170):** math & rounding, `SUM/AVERAGE/COUNT/MIN/MAX` and their `IF(S)` forms, logic (`IF`, `IFS`, `SWITCH`, `IFERROR`, `AND/OR/NOT/XOR`), text (`LEFT…`, `TEXT`, `TEXTJOIN`, `SUBSTITUTE`, `TRIM`, `PROPER`…), dates (`DATE`, `EDATE`, `EOMONTH`, `NETWORKDAYS`, `WORKDAY`, `DATEDIF`, `WEEKDAY`, `WEEKNUM`…), lookup (`VLOOKUP`, `HLOOKUP`, `XLOOKUP`, `INDEX`, `MATCH`, `XMATCH`, `CHOOSE`, `OFFSET`, `INDIRECT`), info (`ISBLANK`, `ISNUMBER`…).
+- **B — Sheets' power tools:** `FILTER`, `SORT`, `SORTN`, `UNIQUE`, `QUERY` (its own little query language: select / where / group by / pivot / order by / label / format), `ARRAYFORMULA`, `SPLIT`, `JOIN`, `FLATTEN`, `REGEXMATCH/EXTRACT/REPLACE`, `SEQUENCE`, `LET`, `LAMBDA`, `MAP`, `REDUCE`, `BYROW/BYCOL`, `SPARKLINE` (a small chart in the cell).
+- **C — specialist:** financial (`PMT`, `NPV`, `IRR`, `XIRR`, …), statistics and distributions, engineering, database (`DSUM`…), the rest.
+
+**Not in v1** (they call Google's servers): `GOOGLEFINANCE`, `IMPORTRANGE/XML/HTML/DATA/FEED`, `GOOGLETRANSLATE`, `DETECTLANGUAGE`, `IMAGE` from the web. An imported formula using one keeps its last value with a note. `GOOGLEFINANCE` could later go through a Netlify function (open point).
+
+**Getting the answers right.** A function counts as done only when it passes a **conformance table**: formula → the value Google Sheets gives, including the edge cases (errors, blanks, dates, rounding, text numbers). formula.js's bodies are the starting point but each one has to pass this table; its known gaps get fixed in our copy. The most reliable way to fill the table is to ask Sheets itself: put a few thousand test formulas in a scratch Google Sheet in your Drive, read the computed values back, and save them as fixtures (then delete the sheet). Needs your OK (open point 8).
+
+---
+
+## 4. The grid
+
+- Drawn on a **canvas**, as Sheets does (DOM per cell can't scroll 100,000 rows smoothly on a phone). Only the visible area is drawn; text, borders, fills, merges, overflow into empty neighbours, wrap and clip, checkboxes and dropdown chips are drawn too. Crisp at the device's pixel ratio; pinch to zoom.
+- An **edit box** (a real text field) sits over the active cell while typing, so the system keyboard, spell check, autocorrect and dictation all work.
+- **Frozen** rows and columns, hidden and grouped rows/columns (+/−), resize by dragging, double-click to fit.
+- **Selection**: ranges, whole rows/columns, several ranges (Cmd/Ctrl), the fill handle (drag to copy or continue a series: 1, 2, 3…; Mon, Tue…; dates), keyboard navigation (arrows, Ctrl+arrows to the data edge, Tab/Enter, Shift to extend, Page Up/Down).
+- **Copy and paste**: between our sheets keeps formulas and formats; from Sheets/Excel/web reads their HTML and text; paste special (values only, formats only, transposed). Cut moves formulas and updates references to the moved cells.
+- **Undo/redo per person** (Yjs undo manager), so you never undo Marijane's typing.
+- **Find & replace** (in values or in formulas, match case, whole cell, regex, this tab or all).
+- The other person's selected cell is outlined in their colour with their name (live, §7).
+
+---
+
+## 5. Formatting
+
+- **Text:** font (the word processor's curated list), size, bold, italic, underline, strikethrough, text colour, fill colour.
+- **Cells:** borders (all styles and colours), horizontal and vertical alignment, wrap / overflow / clip, text rotation, merge (all, horizontally, vertically) and unmerge, alternating colours, clear formatting, paint format.
+- **Numbers:** automatic, number, percent, scientific, accounting, financial, currency (and rounded), date, time, date-time, duration, plain text, and **custom formats** using Sheets/Excel format codes (`#,##0.00`, `$#,##0;[Red]-$#,##0`, `yyyy-mm-dd`, `[h]:mm`, …), parsed and drawn by our own formatter, which Excel import and export also use. Increase/decrease decimals.
+- **Typing:** "1/2/2026" becomes a date, "12%" a percent, "$4" currency, as Sheets.
+
+---
+
+## 6. The extras (v1)
+
+**Charts** — our own SVG renderer, following the app's chart look (the dataviz palette, light and dark): column, bar, stacked and 100%-stacked, line, smooth line, area, pie and donut, scatter, combo (columns + line), and `SPARKLINE` in cells. A chart editor panel (data range, series, x-axis, headers, titles, legend, colours, axis ranges), charts that float over the grid and can be moved and resized, or moved to their own tab. They follow their data live. Charts export to PDF and to Excel as pictures in v1 (as real Excel charts later).
+
+**Filters & sorting** — sort a range or a tab by one or more columns (A→Z, Z→A, with or without a header row); a filter on a tab (by values with search, by condition, by colour) visible to both of you, as Sheets; **filter views**, named and saved, that only change what *you* see, so you can filter while Marijane works; "Create a filter" toggles on the toolbar.
+
+**Rules on cells**
+- *Conditional formatting:* single colour (empty/not empty, text contains/starts/ends/is, dates before/after/is, greater/less/between/equal, **custom formula**), colour scales (2 and 3 colours), rules in priority order, applied to ranges, drawn live.
+- *Data validation:* dropdowns (from a list or a range, shown as chips with colours), checkboxes (with custom checked/unchecked values), number/date/text/email/URL rules, custom formula; on bad input either warn (red corner) or refuse. Help text shown on the active cell.
+
+**Pivot tables** — a pivot editor panel (rows, columns, values with SUM/COUNT/COUNTA/COUNTUNIQUE/AVERAGE/MIN/MAX/MEDIAN/PRODUCT/STDEV/VAR, show as % of row/column/total, filters by value or condition, sort by value or name, totals on/off, group dates by year/quarter/month/day, number grouping). The pivot's output fills cells from its anchor and updates when its source changes; the engine treats a pivot as one more node in its graph. "Calculated fields" (a formula as a value) are in v1 too, since Sheets has them and the engine makes them cheap.
+
+**Always in:** multiple tabs (add, rename, colour, reorder, duplicate, hide, copy to another spreadsheet), freezing, number formats, merged cells, named ranges, cell **notes** (the yellow-corner kind) and **comments** (threads, as the word processor: reply, resolve, @mention), links, version history.
+
+---
+
+## 7. Saving, co-editing, version history
+
+All from the word processor, unchanged:
+- **Saving:** the device copy (IndexedDB) first, so it opens instantly and works offline; merged state written to R2 a few seconds after typing stops and on close. The `doc_pfiles` row's `body_text` (for search: tab names and cell text, capped at 200 KB) at most once every few minutes and on close.
+- **Live:** Realtime private broadcast on `livedoc:<scope>:<file>` only while two of you are in; cursors are the outlined cell and selection.
+- **Versions:** the same slots (hourly for a day, daily for a month, weekly for a year, named forever), R2 snapshots plus a tiny row each. The panel previews a version read-only; **Restore** brings it back (itself undoable). Changed cells are highlighted in the preview (the word processor's compare highlighting is still to come; the spreadsheet does it from the start because cell-by-cell is easy).
+
+**Cost:** a spreadsheet of a few thousand cells is tens of KB in R2. Nothing new in Supabase but version rows. No new server, no polling.
+
+---
+
+## 8. Import & export (on the device unless named)
+
+- **Excel (.xlsx) in:** our own reader (fflate unzips; we read the sheet XML): values, formulas (Excel and Sheets names mostly match; `_xlfn.` prefixes and the few differing names mapped), shared formulas, number formats, fonts/fills/borders/alignment, merges, column widths and row heights, hidden rows/columns, frozen panes, tab colours, conditional formats and data validation (the kinds in §6), named ranges, comments and notes, hyperlinks. Pivot tables come in as their definition when it maps, else as values; charts come in when the type maps. Anything unsupported is kept as values and listed in a note after import.
+- **Excel out:** our own writer, the same list, with the **computed values saved alongside formulas** so Excel shows them before recalculating.
+- **CSV in/out:** comma, tab, semicolon (detected), UTF-8 with or without BOM; in: numbers and dates recognised (with a "keep as text" choice); out: the current tab, as displayed or as values.
+- **PDF:** print setup (current tab / workbook / selection, fit to width/height/page, portrait/landscape, Letter/A4/Legal, margins, gridlines, notes, repeat frozen rows on each page, page order). iPhone: the word processor's native PDF plugin; laptop: the browser's print dialog.
+- **Google Sheets:** the same flow as Docs (+ › Bring over Google Sheets, pick sheets or folders), read through the **Sheets API** with full grid data: values, formulas, formats, merges, frozen panes, conditional formats, data validation, filter views, named ranges, charts and pivot tables, which the API describes exactly (more faithful than going through .xlsx). Comments from the Drive API. A one-time move; nothing is deleted in Google. Needs the **Sheets API enabled** in the Google Cloud project (done, 2026-11-11); no new permission — `spreadsheets.get` accepts the read-only Drive scope the Docs import already asks for — and the `gdocs` Netlify function extended (deploy, your OK).
+
+---
+
+## 9. The Safe
+
+Same spreadsheet, same features (as the word processor, §12 there): the Y.Doc, snapshots and live messages are encrypted with the file's key before they leave the device; recalculation happens on the device anyway, so encryption changes nothing about formulas. Search uses the encrypted `text` part. No Google import into the Safe (import as everyday, then Move).
+
+---
+
+## 10. UI
+
+**Opening:** Document page → **+ → Spreadsheet** (or Import an Excel/CSV file, or Bring over Google Sheets). Opens full screen; back returns to the folder. ".xlsx" and ".csv" files already kept get **"Edit as a spreadsheet"**, like "Edit as a document".
+
+**Laptop:** Sheets-style. Title (rename in place) and folder; menu bar (File, Edit, View, Insert, Format, Data, Tools); one-line toolbar; the **formula bar** with the name box (type `B12` or a named range to jump); the grid; **tabs along the bottom** (+, all-tabs menu); side panels on the right for charts, pivots, conditional formatting, validation, comments, versions; people in the spreadsheet at top right. Function help pops up while typing a formula (signature, the argument you're on, a short description), with autocomplete of function and range names.
+
+**iPhone:**
+- Opens to view; tap the pencil (bottom right, for your right hand) to edit. Tapping a cell selects it; tapping again (or typing) edits.
+- While editing, the formula bar sits **above the keyboard** with a key row on the **right**: `=`, `(`, `)`, `:`, `,`, Σ (functions list), ✓. In a formula, **tap cells to insert references** (drag for a range), as the Sheets app.
+- **A** opens the format sheet with **Text / Cell / Number** tabs, like Sheets' mobile app.
+- Long-press a row or column header for its menu (insert, delete, hide, resize, sort, freeze); selection handles to extend; drag the fill handle.
+- Tabs scroll along the bottom. Everything else in ⋯ (charts, pivot, filters, rules, versions, export).
+- Pinch to zoom; frozen rows and columns stay put.
+
+**General:** every text field gets the standard clear "x"; themes and dark mode apply to the chrome and the grid (cell fills you chose stay as chosen).
+
+---
+
+## 11. Build order
+
+Test without Netlify deploys (TestFlight on the phone, `npm run dev:local` on the laptop); one batched deploy at the end (your OK), shipped with the word processor if it hasn't gone out yet.
+
+1. **Engine core:** parser, values, dependency graph, recalculation in a worker, spills; pass A functions; the conformance harness and table.
+2. **Grid & editing:** canvas grid, edit box, selection, keyboard, fill handle, copy/paste, undo, tabs, freeze, merges, resize, hide/group, formatting, number formats; phone editing. New → Spreadsheet in the page.
+3. **Saving, co-editing, the Safe:** reuse the word processor's session/live/stores (after moving them to `documents/collab/`); the version-guard migration (your OK). Independent review of the Safe path.
+4. **Functions B and C**, `QUERY` included, until the catalog is done.
+5. **Filters & sorting**, then **rules on cells**.
+6. **Charts.**
+7. **Pivot tables.**
+8. **Notes, comments, version history** (with changed-cell highlighting).
+9. **Import/export:** CSV, Excel in and out, PDF, Google Sheets (needs the deploy and Google setup).
+10. **Review & QA:** an independent review agent on the engine and on co-editing merges; the full checks below; TestFlight for you and Marijane; the batched deploy.
+
+---
+
+## 12. Tests
+
+- **Unit:** the parser (round trip text ↔ tree for every grammar piece); every function against the conformance table; dependency graph (only dirty cells recalculate; ranges; cycles; spills and blocked spills); references surviving insert/delete/move/sort, including the same edits made concurrently on two devices; number-format codes (formatting and parsing typed input); conditional-format and validation evaluation; pivot output against hand-made results; filter views not changing the other person's view; .xlsx round trips (fixtures made in Excel and exported from Google Sheets); Sheets API mapping from recorded responses; Safe: every part and message is ciphertext.
+- **Browser QA** (Chromium at 390 / 360 px and laptop width, two profiles): typing and formulas, fill handle, copy/paste from a Sheets-style HTML clipboard, two people editing the same tab (insert rows while the other types), sorting while the other types, filters vs filter views, charts updating, pivot editing, restore a version, import/export, a 100,000-row sheet scrolling and recalculating, a Safe spreadsheet stored only as ciphertext.
+- **Planted bugs** in the reference rewriting, merge and recalculation rules, as in the Documents work.
+- **Manual (TestFlight):** the phone keyboard row and tap-to-reference, scrolling a big sheet, PDF export, co-editing between your phone and Marijane's.
+
+---
+
+## 13. Server changes (all gated)
+
+1. **Migration** (your OK): `doc_versions_guard` accepts `kind in ('doc', 'sheet')` for everyday version rows. A `create or replace function`, no DROP, nothing else changes. Realtime policies and `doc-storage` already work for any file kind.
+2. **Google:** enable the Sheets API in the Calendar project; add `…/auth/spreadsheets.readonly` to the consent screen (Testing mode, so no Google review). Then connect again in Document.
+3. **Netlify:** the `gdocs` function learns spreadsheets (same function, new action). A deploy, your OK.
+
+---
+
+## 14. Open points (defaults in bold)
+
+1. **New tabs: 1,000 rows × 26 columns; warn at 200,000 filled cells, refuse past 1,000,000.**
+2. **Locale: US** (M/D/YYYY dates, `$`, `,` thousands, `.` decimals, weeks start Sunday); a per-spreadsheet locale setting later.
+3. **Iterative calculation off**; circular references show an error.
+4. **Google-only functions** (`GOOGLEFINANCE`, `IMPORT*`) **not in v1**; imported formulas keep their last value with a note. Later, `GOOGLEFINANCE` could use a Netlify function.
+5. **Shared code moves to `documents/collab/` after PR #223 merges.**
+6. **Imported Google Sheets go into a folder of the same name in Personal** (as Docs); move to Household after.
+7. **Charts in documents** (a live chart from a spreadsheet inside a word-processor document) **later**, not v1.
+8. **Conformance answers come from Google Sheets itself:** a scratch sheet in your Drive, read back, then deleted. OK to do that when step 1 starts?
+9. **Either of you can delete or restore versions in Household** (as documents).
+
+---
+
+## 15. Progress
+
+- **Migration applied** (2026-11-09, Luke's OK): `migrations/2026-11-09b-documents-sheet-versions.sql`, recorded as `20261109120500 documents_sheet_versions`; checked live (guard accepts `sheet`, both triggers in place). Test: `test/documents-sheet-migration.test.js` (fails without the migration).
+- **Engine core built** (`documents/sheet/engine/`): parser (A1, open ranges, cross-tab, arrays, stored placeholders), values and Sheets' coercion rules, binding between positions and row/column ids (`binding.js`), dependency graph with range nodes, recalculation of only what changed (deep chains finished deepest-first), spills with blocking, cycles, volatile functions, LET/LAMBDA, Sheets' array-mode rule (a range where one value is expected is `#VALUE!` outside ARRAYFORMULA). Number formats (`number-format.js`) for TEXT and display.
+- **Functions:** ~300 so far (math, statistics, logic, information, text incl. regex, dates, lookup incl. XLOOKUP, array functions incl. FILTER/SORT/UNIQUE/SEQUENCE and the LAMBDA helpers).
+- **Conformance with Google Sheets:** 654 formulas computed by Google Sheets itself (two scratch sheets in Luke's Drive, read back, trashed — open point 8), saved as `test/fixtures/sheet-conformance.json`; the engine matches all of them (one display-only difference noted in the test). Pass B/C (finance, distributions, engineering, matrices, database functions, QUERY) is in — 438 functions in the catalog. The second run found 4 real differences (DB's last period, GAMMA of negatives, QUERY label text) and confirmed iterative functions agree to ~1e-9. The first run found 19 differences, each a real Sheets rule now kept in `.claude/agents/sheets.md` (e.g. `^` is right-associative, `0^0` = 1, COUNTIF `"<>"` counts `""`).
+- New `sheets` agent (`.claude/agents/sheets.md`) owns the engine; CI covers its folders.
+- **Shared data built** (`documents/sheet/model.js`, `bridge.js`): tabs, row/column identities, cells (inputs only), content-addressed styles, merges, notes, named ranges, copy/paste with formula shifting, whole-row sorts as one order change; duplicates from concurrent sorts tidied. Two-device tests: inserts vs typing, sort vs typing, two sorts, offline both sides (`test/documents-sheet-model.test.js`).
+- **The screen, first version** (`documents/sheet/ui.js`, `grid.js`, `sheet.css`, `csv.js`, `host.js`): canvas grid (frozen panes, merges, overflow, wrap, borders, fills, other people's cells in their colour), formula bar and name box, typing with Sheets' automatic formats, click/arrow to put references into a formula, function suggestions and argument help, toolbar (formats, decimals, fonts, sizes, bold/italic/strike, colours, borders, merge, align, wrap), menus (File/Edit/View/Insert/Format/Data), context menus, insert/delete/hide/resize rows and columns, fit to data, freeze, gridlines, zoom, tabs (add, rename, duplicate, colour, hide, move, delete), undo/redo of your own edits, copy/cut/paste (internal and plain text), fill handle with series, sort sheet / sort range, notes, named ranges, find and replace, CSV in and out, live co-editing and saving through the word processor's session. iPhone: opens to view, pencil to edit, second tap edits a cell, key row on the right (= ( ) : , $ Σ ✓), tap cells for references, the A sheet with Text / Cell / Number. Document page: + › New spreadsheet, Open a CSV file as a spreadsheet, "Edit as a spreadsheet" on kept CSV files.
+- **Verified:** `npm run qa:sheet` — 46 checks in Chromium (laptop, dark theme, phone at 390 and 360 px, two people live). Full unit suite (3,608), boot check, `qa:documents-ui` (120) green.
+- **The Safe:** a New spreadsheet button in the Safe; a Safe spreadsheet uses the Safe document store (every part, version, live message and device copy encrypted with the file's key), closes when the Safe locks. `application/vnd.live.sheet` added to both file-type lists (`documents/common.js`, `documents/crypto/meta.js`). Test: `test/documents-sheet-safe.test.js` (stored bytes are ciphertext, read back into the same cells and formulas).
+- **Calculation worker:** formulas are computed in a Web Worker (`engine/worker.js` → `engine/host.js`); the page keeps a copy of every answer for the grid to draw from (`worker-client.js`, same methods as the engine, so `bridge.js` drives either). A typed constant shows at once; a formula keeps its old answer until the new one arrives. If the worker can't start or dies, the engine runs on the page instead, replayed from the inputs the page kept. Checked by `test/documents-sheet-worker.test.js` (structured-clone round trips, same answers as the engine run directly, both fallbacks) and in Chromium (`qa:sheet` checks it's really in the worker). Not yet measured: main-thread time on a very large sheet.
+- **Filters & filter views:** "Create a filter" on the toolbar (and Data menu) finds the table around the cell, or takes the selection; each header cell gets a button whose panel sorts the rows under the header, and filters by condition (Sheets' list: empty, text, dates incl. today/tomorrow/yesterday, numbers, between), by values (searchable list with counts, from rows the other columns let through) and by fill/text colour. The tab's filter is shared; **filter views** (Data → Filter views) are named, start from the tab's filter, and change only what the person in them sees (a dark bar names the view; Delete / ✕). Stored by row/column id in `filters:<tab>`, criteria per column so two people filtering different columns merge. Rows re-filter as values change. Logic `filters.js`, screen `filter-ui.js`; tests `test/documents-sheet-filters.test.js` (11) and 14 more Chromium checks in `qa:sheet` (incl. Marijane seeing the shared filter but not Luke's view, phone bottom sheet at 390/360). Not built: "custom formula is" (ISSUES.md).
+- **Rules on cells:** *Conditional formatting* (Format → Conditional formatting…): single-colour rules on Sheets' conditions plus **custom formula** (written for the range's top-left cell, moved along the range like a filled formula), bold / italic / underline / strike / text and fill colour; 2- and 3-point colour scales (min/max, number, percent, percentile); rules in priority order (↑ ↓), the first rule that matches a cell is the one shown, as Sheets. *Data validation* (Data → Data validation…): dropdown from a list or a range (shown as chips, an arrow or plain), checkboxes (custom ticked/unticked values; click or space), number / text (incl. email, URL) / date rules, custom formula; warn (red corner + the help as "Invalid: …" under the cell) or reject (the entry isn't saved, with a message). Help text shows under the active cell. Rules are stored by row/column id in `rules:<tab>` (they follow inserts and sorts); custom formulas run in the calculation worker after each recalculation (`engine.evaluateAt`, `engine/host.js`, up to 100,000 cells per batch) and come back as the cells where they're TRUE. Logic `rules.js`, screen `rules-ui.js`; tests `test/documents-sheet-rules.test.js` (7) and 14 Chromium checks in `qa:sheet`. A rejected formula entry is checked only once it has a value (not refused).
+- **Fixed on the way:** a double-click to edit a cell lost what was typed next (the mouse press moved focus back to the grid); filters now grow only as rows are filled in right below them, as Sheets.
+- **Decision (Luke, 2026-11-10):** sorting inside a filter view will reorder rows only for the person in the view (as Sheets), built later; until then Sort is hidden in a view.
+- **Charts:** Insert → Chart guesses from the selection (or the table around the cell) as Sheets does: a header row names the series, a first column of text labels the axis; a pie for one series of a few parts, a line for many rows, a scatter for two number columns. Types: column, bar, stacked and 100% stacked of both, line, smooth line, area, stacked area, pie, donut, scatter, combo (columns and a line **on one axis** — the house chart rules don't allow a second y axis). Our own SVG renderer (`chart-svg.js`) on the house chart rules: the eight-colour palette in a fixed order with its own dark steps, bars ≤ 24px with 4px rounded ends, 2px gaps between stacked segments, 2px lines, dots with a surface ring, a quiet grid, a legend for two or more series, readable slice labels; hover shows values (a band per category on lines). Charts float over the grid, scroll with it, and can be dragged, resized from the corner, edited in a side panel (type, range, headers / labels / switch rows and columns, titles, axis titles, min/max, legend, data labels, colours per series — a bottom sheet on the phone), downloaded as PNG or SVG, and deleted (⋮ or the Delete key). They follow their data live, sorting keeps their range and place, and on a phone a finger over a chart scrolls the grid until the chart is tapped. Stored by id in `charts:<tab>`. Tests `test/documents-sheet-charts.test.js` (11) and 15 Chromium checks in `qa:sheet`. Not built yet (ISSUES.md): SPARKLINE drawn in cells, a chart on its own tab, a data-table view of a chart.
+- **Pivot tables:** Insert → Pivot table puts one on a new tab ("Pivot table N") from the selection (or the table around the cell) and opens the editor: data range, Rows / Columns (order, sort by itself or by a value, show totals), Values (Sum, Count, CountA, CountUnique, Average, Max, Min, Median, Product, StDev/StDevP, Var/VarP; show as % of row, column or grand total), Filters (tick the values to keep). A pivot **is a formula** in its corner cell — `=PIVOT.TABLE(source, "settings", header cells…)`, hidden from the function list — so it recalculates with its source (on any tab), spills, shows #REF! when blocked, and its fields are header-cell references that follow inserted columns and sorts. The formula bar names it instead of showing the settings; "Edit pivot table" appears over a selected pivot. Grouping folds case as Sheets does; blanks sort last; nested rows get "X Total" subtotals and a Grand Total. Logic `pivot.js` (pure) + `engine/functions/pivot.js`, screen `pivot-ui.js`; tests `test/documents-sheet-pivot.test.js` (8) and 7 Chromium checks in `qa:sheet`. Not yet: bold header/total styling, grouping dates by month/year, calculated fields.
+- **Comments and version history:** comments are the word processor's threads (`comments` map, `editor/doc-model.js`) anchored to a cell by row/column id, so they follow inserts and sorts; a cell with an open comment gets a corner mark. Insert → Comment (on the cell), View → Comments: reply, edit or delete your own, resolve / reopen, show resolved, tap a thread's cell name to go there; a deleted cell's thread says so. File → Version history: name the current version, pick a version to preview it in a read-only grid with **every changed cell highlighted** (it opens at the first change, per tab), and restore it — what's there now is kept as a "Before restoring…" version first, the comments stay as they are, and the restore reaches the other person as an ordinary edit. Logic `history.js`, screen `history-ui.js`; tests `test/documents-sheet-history.test.js` (3) and 9 Chromium checks in `qa:sheet` (incl. Marijane seeing and replying). Not yet: @mention notifications.
+- **Excel in and out:** our own writer (`xlsx-export.js`, fflate) and reader (`xlsx-import.js`, fflate + fast-xml-parser). Out: values with every formula's last answer cached, formulas (newer functions get `_xlfn.`; an array result becomes an array formula over its block; a pivot goes as values), number formats, fonts, fills, borders, alignment, merges, widths, heights, hidden rows/columns/tabs, frozen panes, tab colours, gridlines, named ranges, dropdown validation. In: all of that back, plus shared formulas expanded, theme colours, number/dropdown validation and simple conditional formats (cell value, text contains, colour scales); a formula we can't read comes in as its value; what doesn't come over is listed after the import. Where: File → Download as Excel / Import an Excel file (as new tabs); Document page → Open an Excel file as a spreadsheet, and "Edit as a spreadsheet" on an uploaded .xlsx. **Checked against Google Sheets:** our .xlsx opened in Google Sheets (a scratch file in Luke's Drive, trashed after) computes every formula as we do (XLOOKUP and SEQUENCE via `_xlfn.`, the array formula, TEXT, IFERROR, currency and date formats); Google's own .xlsx export showed the quirks the reader now handles (single-cell formulas written as array formulas, decimal pane splits, a "custom" height on every row and width on every column), covered by a test written the way Google writes. Tests `test/documents-sheet-xlsx.test.js` (6) and 2 Chromium checks in `qa:sheet`. Not yet written out: conditional formats, charts, comments/notes; not read: charts, comments. (Custom-formula rules and dropdowns from a range are read since the Google import shared the writer.)
+- **Print and PDF:** File → Print or save as PDF… (⌘P; "Download as PDF…" in the iPhone app): this tab, all tabs or the selected cells; portrait or landscape; 100% or fit to page width; gridlines on/off. The used range is laid out on letter pages (`print.js`) with cell and conditional formatting, merges, borders, checkboxes, charts on the page holding their top-left corner, and frozen rows repeated on every page; the browser's print dialog saves the PDF on a laptop, and the iPhone's PdfExport plugin makes the PDF from the same pages (its print formatter sees only the print box). Tests `test/documents-sheet-print.test.js` (5) and 3 Chromium checks in `qa:sheet`. Manual check left: the PDF on the iPhone (TestFlight).
+- **Google Sheets in:** Document page → + → Bring over Google Docs and Sheets (the Docs picker, now listing spreadsheets too; a picked folder brings both). The `gdocs` function reads with the caller's own Google connection and the read-only Drive scope already granted for Docs (no new permission): `sheetMeta` (properties, named ranges, each tab's properties, merges, conditional formats, basic filter, charts) and `sheetRows` (one block of rows with values, formats, validation, notes, sizes; 2,000 rows at a time, halved while Google's answer is over 5.5 MB). `gsheets-import.js` turns that into the same workbook shape the Excel reader makes, and one writer (`workbookIntoModel` in `xlsx-import.js`) fills the model for both. Comes over: values and formulas as typed (same formula language; a formula we can't read keeps its last value), number formats, fonts, theme and plain colours, borders, alignment, wrap, rotation, merges, sizes, hidden rows/columns/tabs, frozen rows/columns, tab colours, gridlines, named ranges, **notes as comments**, validation (checkboxes, lists, dropdowns from a range, numbers, text, dates, custom formulas), conditional formats in order (conditions, custom formulas, colour scales), the filter's range, column/bar/line/area/scatter/combo/pie charts over one block of their own tab's columns, and pivot tables as their values. Listed after, not brought over: comments (Drive's anchors for Sheets aren't usable), filter conditions and filter views, banding and slicers, charts on their own tab or over other tabs, relative-date rules like "past week". Tests `test/documents-sheet-gsheets.test.js` (10, against answers shaped as the API documents them) and 3 Chromium checks in `qa:sheet`. **Not checked against a real Google answer yet** — that needs the function deployed (ISSUES.md).
+
+## 16. Where to pick up (2026-11-11)
+
+Branch `claude/spreadsheet`, draft PR #224 (base `claude/word-processor`, PR #223, still open). Everything in §15 is committed, pushed and green in CI (last: `0a77b76` print/PDF). Nothing deployed. Next, in order:
+
+1. ~~Re-run the reviewer~~ — done 2026-11-11: five findings (print XSS, ranges breaking when an edge row is deleted, stack overflow on big imports, Excel tab names over 31 characters, the Google import stopping at a blank stretch), all fixed in `35a6e3a`.
+2. **Google Sheets import** — built (§15). Needs the `gdocs` function deployed (Luke's OK); then bring over one of Luke's real spreadsheets and compare it with Google, and fix what differs.
+3. Open items in ISSUES.md tagged `sheets` (filter custom formula, view-only sorting in filter views, reject rules on paste/fill, sparklines / chart on its own tab / chart data table, pivot styling & date grouping, a byte-exact Google .xlsx fixture + the A10:C34 merge question, Excel import tab-name collisions).
+4. After PR #223 merges: move shared editor code to `documents/collab/` (§11).
+5. Final full QA, a TestFlight build for Luke and Marijane (checks: iPhone PDF, phone editing), then one batched deploy — only with Luke's explicit OK.
+
+How to check: `npx vitest run test/documents-sheet`, `npm run qa:sheet` (Chromium, ~2 min), `npm run qa:documents-ui`, `npm run check:boot`; conformance answers come from Google Sheets via `scripts/sheet-conformance.mjs` (scratch sheet in Luke's Drive, trashed after).
+
