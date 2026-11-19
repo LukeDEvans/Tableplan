@@ -23,6 +23,7 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "live-photos-sync-v1",     // PHOTOS_SYNC_KEY — per device, how far this person's library was synced (a re-sync after sign-in is safe)
   "live-personal-finance-v1", // PERSONAL_FINANCE_KEY — whether this person owns personal finance accounts
   "live-finance-nudge-count", // FINANCE_NUDGE_COUNT_KEY — uncategorized count for the weekly Finance nudge
+  "live-podcast-upcoming-v1", // PODCAST_UPCOMING_STORE_KEY — cached "Coming …" rows for this person's saved shows
   "live-section-scopes-v1",  // SCOPE_PREFS_KEY — per-section personal/household scope
   "eat-calendars-v1",        // CALENDAR_CACHE_KEY — linked-calendar events cache
   "live_plan_ics_cache",     // subscribed ICS/Amion events cache

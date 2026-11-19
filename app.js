@@ -102,6 +102,7 @@ import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-
 import { deriveMediaTierCount, publicationTierFor, collapsePublicationTiers, ALL_PUBLICATIONS_KEY } from './media-tier.js';
 import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId, episodeTapAction } from './media-queue-order.js';
 import { keptEpisodeIds, pruneOldEpisodes, mergeFetchedEpisodes } from './podcast-retention.js';
+import { groupUpcomingByFeed, normalizeFeedUrl, activeUpcoming, heldSeriesForShow, heldEpisodeIds, upcomingLabel } from './podcast-upcoming.js';
 import { normalizeQueueAdded, queueAddedFindRef, withQueueEntry, withoutQueueEntries, episodeRef, articleRef, libraryAlbumRef, catalogAlbumRef, trackRef, slimCatalogItem, libraryAlbumTracks } from './media-queue-added.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -31300,6 +31301,7 @@ function initMediaPage() {
   // Every visit lands on the "All" tab (not wherever the last visit ended)
   switchMediaTab("queue");
   refreshStalePodcastFeeds(); // stale views render immediately, then update in place
+  refreshPodcastUpcomingThenRedraw(); // the "Coming …" list and series hold (at most every 6 h)
 }
 
 // Podcast feeds were historically fetched only when a show was subscribed —
@@ -32778,6 +32780,7 @@ function switchPodcastTab(tabId) {
     expandedPodcastShowId = null;
     renderPodcastShowsGrid();
     refreshStalePodcastFeeds(); // the panels list recent episodes; redraws the grid if any landed
+    refreshPodcastUpcomingThenRedraw(); // the panels' "Coming …" rows
   } else if (tabId === "saved") {
     renderPodcastSavedEpisodes();
   } else if (tabId === "search") {
@@ -33084,6 +33087,7 @@ function podcastShowPanelHtml(show) {
           </button>
         </div>
         ${show.lastError ? `<p class="podcast-feed-error" role="status">Not updating since ${escapeHtml(formatArticleDate(show.lastFetched))}: ${escapeHtml(show.lastError)}</p>` : ""}
+        ${podcastUpcomingHtml(show)}
         ${recent.length
           ? `<div class="listen-detail-episodes">${recent.map((e) => podcastEpisodeRowHtml(e, { showShowTitle: false, hasPlaylists })).join("")}</div>`
           : `<p class="listen-detail-empty">No episodes yet.</p>`}
@@ -33143,7 +33147,10 @@ function renderPodcastShowsGrid() {
   listEl.querySelector("[data-podcast-show-all]")?.addEventListener("click", (e) => openPodcastShow(e.currentTarget.dataset.podcastShowAll));
   listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
   const detail = listEl.querySelector("[data-podcast-show-detail]");
-  if (detail) wirePodcastEpisodeRows(detail);
+  if (detail) {
+    wirePodcastEpisodeRows(detail);
+    wirePodcastReleaseButtons(detail, renderPodcastShowsGrid);
+  }
   placeGridPanelPointer(listEl, "podcasts", detail,
     detail ? listEl.querySelector(`.listen-card[data-show-id="${CSS.escape(detail.dataset.podcastShowDetail)}"]`) : null,
     detail?.dataset.podcastShowDetail);
@@ -33589,82 +33596,152 @@ function showPodcastPriorityModal() {
   });
 }
 
-// ── Multi-part series bundling ────────────────────────────────────────────────
-// Some shows release a story across numbered parts ("… (Part 3)", "Part 3 of
-// 6", "Pt. 3/6"). For shows the user opts into (state.podcastBundleSeries) we
-// hold every part of an unfinished series out of the playlist until the series
-// looks complete — all N parts present when a total is stated, or no new part
-// for 7 days — with a manual "Release now" override (state.podcastReleasedSeries).
-const SERIES_PART_RE = /\b(?:part|pt\.?)\s*(\d{1,3})\b(?:\s*(?:of|\/)\s*(\d{1,3}))?/i;
-const BUNDLE_GAP_MS = 7 * 24 * 60 * 60 * 1000;
+// ── Upcoming episodes + the multi-part series hold ───────────────────────────
+// (PODCAST_UPCOMING_DESIGN.md; Luke, 2026-11-19.) Once a day the server lists the
+// episodes each saved show has announced but not yet released (podcast_upcoming,
+// read from Apple's public catalog by the podcast-upcoming Edge Function). Here:
+// - a show's panel lists them as "Coming …" rows (never in the queue);
+// - in EVERY show, a multi-part series stays out of the automatic queue while
+//   a part of it is still coming, then enters together in part order;
+// - hand-added episodes are never held, and "Release now" lets a series in early
+//   (state.podcastReleasedSeries);
+// - if the list hasn't been refreshed for 3 days nothing is held, so a broken
+//   lookup can never hide episodes.
+// The pure rules live in podcast-upcoming.js. The old opt-in hold
+// (state.podcastBundleSeries + a "no new part for 7 days" guess) is gone; its
+// key stays in the media section so existing rows still load.
+//
+// The rows are cached on the device and re-read at most every 6 hours (when
+// Listen opens), one small request — no polling. `var` on purpose: the queue
+// can be built during boot, before this line of the module has run.
+var podcastUpcomingCache = null; // { at, rows, byFeed }
+var podcastUpcomingInFlight = null;
+const PODCAST_UPCOMING_STORE_KEY = "live-podcast-upcoming-v1";
+const PODCAST_UPCOMING_TTL_MS = 6 * 60 * 60 * 1000;
+const PODCAST_UPCOMING_RETRY_MS = 30 * 60 * 1000;
 
-function parseSeriesPart(title) {
-  if (!title) return null;
-  const s = String(title);
-  const m = s.match(SERIES_PART_RE);
-  if (!m) return null;
-  const part = parseInt(m[1], 10);
-  if (!part) return null;
-  const total = m[2] ? parseInt(m[2], 10) : null;
-  // Series name = the title minus the part clause (and any brackets around it).
-  const seriesName = s
-    .replace(/[([]\s*(?:part|pt\.?)\s*\d{1,3}\s*(?:(?:of|\/)\s*\d{1,3})?\s*[)\]]/i, "")
-    .replace(SERIES_PART_RE, "")
-    .replace(/[\s:–—\-|,]+$/, "")
-    .replace(/^[\s:–—\-|,]+/, "")
-    .trim() || s.trim();
-  return { seriesName, part, total };
+function podcastUpcoming() {
+  if (podcastUpcomingCache) return podcastUpcomingCache;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(PODCAST_UPCOMING_STORE_KEY) || "null"); } catch { /* none */ }
+  const rows = Array.isArray(saved?.rows) ? saved.rows : [];
+  podcastUpcomingCache = { at: Number(saved?.at) || 0, rows, byFeed: groupUpcomingByFeed(rows) };
+  return podcastUpcomingCache;
 }
 
-function bundleSeriesId(showId, seriesName) {
-  return showId + "::" + seriesName.toLowerCase().replace(/\s+/g, " ").trim();
+function podcastUpcomingRowsFor(show) {
+  return podcastUpcoming().byFeed.get(normalizeFeedUrl(show?.url)) || [];
 }
 
-// Group one show's episodes into detected multi-part series, flagging each as
-// complete / released / held. Returned for both the playlist filter and the
-// show-view "waiting" cards.
-function getBundleSeriesGroups(show, released = state.podcastReleasedSeries || {}) {
-  const groups = new Map();
-  for (const ep of (show.episodes || [])) {
-    const info = parseSeriesPart(ep.title);
-    if (!info) continue;
-    const sid = bundleSeriesId(show.id, info.seriesName);
-    let g = groups.get(sid);
-    if (!g) { g = { seriesId: sid, name: info.seriesName, total: null, eps: [] }; groups.set(sid, g); }
-    if (info.total) g.total = Math.max(g.total || 0, info.total);
-    g.eps.push({ id: ep.id, part: info.part, pubDate: ep.pubDate, title: ep.title });
-  }
-  const now = Date.now();
-  const out = [];
-  for (const g of groups.values()) {
-    g.eps.sort((a, b) => a.part - b.part);
-    const parts = new Set(g.eps.map((e) => e.part));
-    let complete = false;
-    if (g.total && Array.from({ length: g.total }, (_, i) => i + 1).every((n) => parts.has(n))) {
-      complete = true; // every stated part is present
-    } else {
-      const newest = Math.max(0, ...g.eps.map((e) => Date.parse(e.pubDate) || 0));
-      if (newest && (now - newest) > BUNDLE_GAP_MS) complete = true; // stalled → assume done
-    }
-    g.released = !!released[g.seriesId];
-    g.complete = complete;
-    g.held = !complete && !g.released;
-    out.push(g);
-  }
-  return out;
+// Episodes the show has announced, soonest first: [{ title, expectedAt|null }].
+function podcastUpcomingFor(show) {
+  return show ? activeUpcoming(podcastUpcomingRowsFor(show), show.episodes) : [];
 }
 
-// Episode ids to withhold from the playlist (unfinished series in opted-in shows).
+// Held series of one show: [{ seriesId, name, eps, coming }].
+function podcastHeldSeriesFor(show, released = state.podcastReleasedSeries || {}) {
+  return heldSeriesForShow(show, podcastUpcomingRowsFor(show), { released });
+}
+
+// Episode ids to keep out of the automatic queue.
 function getBundleHeldEpisodeIds(lib = state) {
-  const held = new Set();
-  const bundleOn = lib.podcastBundleSeries || {};
-  for (const show of (lib.podcasts || [])) {
-    if (!bundleOn[show.id]) continue;
-    for (const g of getBundleSeriesGroups(show, lib.podcastReleasedSeries || {})) {
-      if (g.held) for (const e of g.eps) held.add(e.id);
+  return heldEpisodeIds(lib.podcasts || [], podcastUpcoming().byFeed, { released: lib.podcastReleasedSeries || {} });
+}
+
+// Re-read the upcoming rows for the saved shows (at most every 6 hours).
+// Resolves true when they changed.
+function refreshPodcastUpcoming({ force = false } = {}) {
+  if (podcastUpcomingInFlight) return podcastUpcomingInFlight;
+  const cache = podcastUpcoming();
+  if (!force && Date.now() - cache.at < PODCAST_UPCOMING_TTL_MS) return Promise.resolve(false);
+  if (!authSession?.access_token) return Promise.resolve(false);
+  let lib = state;
+  try { lib = listenLibrary() || state; } catch { /* boot */ }
+  const feeds = [...new Set([...(state.podcasts || []), ...(lib.podcasts || [])].map((p) => p?.url).filter(Boolean))];
+  if (!feeds.length) return Promise.resolve(false);
+  podcastUpcomingInFlight = (async () => {
+    try {
+      const list = feeds.slice(0, 200).map((u) => `"${String(u).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",");
+      const rows = await fetchSupabaseJson(`podcast_upcoming?select=feed_url,title,expected_at,fetched_at,first_seen_at&feed_url=in.(${encodeURIComponent(list)})&limit=1000`);
+      const clean = Array.isArray(rows) ? rows : [];
+      const changed = JSON.stringify(clean) !== JSON.stringify(cache.rows);
+      podcastUpcomingCache = { at: Date.now(), rows: clean, byFeed: groupUpcomingByFeed(clean) };
+      try { localStorage.setItem(PODCAST_UPCOMING_STORE_KEY, JSON.stringify({ at: podcastUpcomingCache.at, rows: clean })); } catch { /* full */ }
+      return changed;
+    } catch {
+      cache.at = Date.now() - PODCAST_UPCOMING_TTL_MS + PODCAST_UPCOMING_RETRY_MS; // try again in 30 min, not on every render
+      return false;
+    } finally {
+      podcastUpcomingInFlight = null;
     }
-  }
-  return held;
+  })();
+  return podcastUpcomingInFlight;
+}
+
+// After the upcoming rows change: the queue order and any podcast view on screen.
+function refreshPodcastUpcomingThenRedraw() {
+  refreshPodcastUpcoming().then((changed) => {
+    if (!changed) return;
+    refreshRunningQueueOrder();
+    if (activeAppArea !== "media") return;
+    if (activeMediaTab === "queue") renderMediaAllList();
+    else if (activeMediaTab === "podcasts") {
+      if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+      else if (activePodcastTab === "shows") {
+        if (activePodcastShowId) renderPodcastShowEpisodes(activePodcastShowId);
+        else renderPodcastShowsGrid();
+      }
+    }
+  });
+}
+
+// "Coming Fri, Nov 21" / "Coming soon".
+function podcastUpcomingWhen(expectedAt) {
+  const t = Date.parse(expectedAt || "");
+  if (!t) return "Coming soon";
+  return "Coming " + new Date(t).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+// The panel's "Coming …" rows and held-series cards for one show.
+function podcastUpcomingHtml(show) {
+  const upcoming = podcastUpcomingFor(show);
+  const held = podcastHeldSeriesFor(show);
+  if (!upcoming.length && !held.length) return "";
+  const heldHtml = held.map((g) => {
+    const out = g.eps.length, known = out + g.coming.length;
+    return `
+      <div class="podcast-bundle-card" data-series-id="${escapeHtml(g.seriesId)}">
+        <div class="podcast-bundle-card-main">
+          <div class="podcast-bundle-card-title">${escapeHtml(g.name)}</div>
+          <div class="podcast-bundle-card-meta">${out} of ${known} parts out · held from your queue</div>
+        </div>
+        <button class="secondary-btn compact-btn podcast-bundle-release" type="button" data-release-series="${escapeHtml(g.seriesId)}">Release now</button>
+      </div>`;
+  }).join("");
+  const rowsHtml = upcoming.map((u) => `
+      <div class="podcast-upcoming-row">
+        <span class="podcast-upcoming-title" title="${escapeHtml(u.title)}">${escapeHtml(upcomingLabel(u.title))}</span>
+        <span class="podcast-upcoming-when">${escapeHtml(podcastUpcomingWhen(u.expectedAt))}</span>
+      </div>`).join("");
+  return `
+    <div class="podcast-upcoming">
+      ${heldHtml ? `<div class="podcast-bundle-waiting">${heldHtml}</div>` : ""}
+      ${rowsHtml ? `<div class="podcast-upcoming-list" aria-label="Coming up">${rowsHtml}</div>` : ""}
+    </div>`;
+}
+
+function wirePodcastReleaseButtons(root, redraw) {
+  root.querySelectorAll("[data-release-series]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!state.podcastReleasedSeries || typeof state.podcastReleasedSeries !== "object") state.podcastReleasedSeries = {};
+      state.podcastReleasedSeries[btn.dataset.releaseSeries] = true;
+      persist();
+      refreshRunningQueueOrder();
+      showMailToast("Series released to your queue");
+      redraw();
+    });
+  });
 }
 
 // The started-but-unfinished episode you most recently listened to. Surfaced at
@@ -35590,30 +35667,6 @@ function renderPodcastShowEpisodes(showId) {
   const episodes = show.episodes.map(e => ({ ...e, showId: show.id, showTitle: show.title, showArt: show.art }));
   const hasPlaylists = (state.podcastPlaylists || []).length > 0;
 
-  const bundleOn = !!(state.podcastBundleSeries || {})[show.id];
-  const waiting = bundleOn ? getBundleSeriesGroups(show).filter(g => g.held) : [];
-
-  const bundleControls = `
-    <div class="podcast-bundle-controls">
-      <label class="podcast-bundle-toggle">
-        <input type="checkbox" class="live-toggle" id="podcastBundleToggle" ${bundleOn ? "checked" : ""}>
-        <span>Bundle multi-part series</span>
-      </label>
-      <p class="podcast-bundle-hint">Hold each numbered series out of your queue until every part is out — or no new part appears for a week.</p>
-    </div>`;
-
-  const waitingHtml = waiting.length ? `
-    <div class="podcast-bundle-waiting">
-      ${waiting.map(g => `
-        <div class="podcast-bundle-card" data-series-id="${escapeHtml(g.seriesId)}">
-          <div class="podcast-bundle-card-main">
-            <div class="podcast-bundle-card-title">${escapeHtml(g.name)}</div>
-            <div class="podcast-bundle-card-meta">${g.eps.length} part${g.eps.length === 1 ? "" : "s"} so far${g.total ? ` of ${g.total}` : ""} · held from queue</div>
-          </div>
-          <button class="secondary-btn podcast-bundle-release" type="button" data-release-series="${escapeHtml(g.seriesId)}">Release now</button>
-        </div>`).join("")}
-    </div>` : "";
-
   listEl.innerHTML = `
     <div class="podcast-show-episodes-header">
       <button class="icon-btn" type="button" id="podcastShowBackBtn" aria-label="Back to shows">
@@ -35625,8 +35678,7 @@ function renderPodcastShowEpisodes(showId) {
       </button>
     </div>
     ${show.lastError ? `<p class="podcast-feed-error" role="status">Not updating since ${escapeHtml(formatArticleDate(show.lastFetched))}: ${escapeHtml(show.lastError)}</p>` : ""}
-    ${bundleControls}
-    ${waitingHtml}
+    ${podcastUpcomingHtml(show)}
     ${episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: false, hasPlaylists })).join("")}`;
 
   listEl.querySelector("#podcastShowBackBtn")?.addEventListener("click", () => {
@@ -35635,23 +35687,7 @@ function renderPodcastShowEpisodes(showId) {
   });
   listEl.querySelector("#podcastShowMenuBtn")?.addEventListener("click", (e) => openMediaShareMenu(e, "show", show.id));
 
-  listEl.querySelector("#podcastBundleToggle")?.addEventListener("change", (e) => {
-    if (!state.podcastBundleSeries || typeof state.podcastBundleSeries !== "object") state.podcastBundleSeries = {};
-    if (e.target.checked) state.podcastBundleSeries[show.id] = true;
-    else delete state.podcastBundleSeries[show.id];
-    persist();
-    renderPodcastShowEpisodes(showId);
-  });
-
-  listEl.querySelectorAll("[data-release-series]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      if (!state.podcastReleasedSeries || typeof state.podcastReleasedSeries !== "object") state.podcastReleasedSeries = {};
-      state.podcastReleasedSeries[btn.dataset.releaseSeries] = true;
-      persist();
-      showMailToast("Series released to your queue");
-      renderPodcastShowEpisodes(showId);
-    });
-  });
+  wirePodcastReleaseButtons(listEl, () => renderPodcastShowEpisodes(showId));
 
   wirePodcastEpisodeRows(listEl);
 }

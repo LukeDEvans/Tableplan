@@ -23,7 +23,7 @@ changes to the Listen page's audio (everything except streaming music) only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `media-queue-*.js`, `listen-queue.js`, `media-tier.js`, `media-progress.js`, `media-history.js`, `media-state.js`, `media-sources.js`, `media-model.js`, `media-search.js`, `media-provider.js`, `media-provider-podcast.js`, `media-provider-radio.js`, `media-content.js`, `radio*.js`, `podcast-retention.js`, `playback-*.js`, `voice-*.js`, `tts-*.js`, `tts-*.mjs`, `kokoro-*.mjs`, `article-body-backfill.mjs`, `netlify/functions/fetch-podcast.js`, `netlify/functions/generate-tts.js`, `netlify/functions/kokoro-tts.mjs`, `netlify/functions/presynth-*.mjs`, `netlify/functions/_presynth-key.mjs`, `netlify/functions/tts-cache-cleanup.js`, `netlify/functions/check-hcl.js`, `media-music-show.js`, `media-music-show-ui.js`, `netlify/functions/_music-show.js`
+- files: `media-queue-*.js`, `listen-queue.js`, `media-tier.js`, `media-progress.js`, `media-history.js`, `media-state.js`, `media-sources.js`, `media-model.js`, `media-search.js`, `media-provider.js`, `media-provider-podcast.js`, `media-provider-radio.js`, `media-content.js`, `radio*.js`, `podcast-retention.js`, `podcast-upcoming.js`, `playback-*.js`, `voice-*.js`, `tts-*.js`, `tts-*.mjs`, `kokoro-*.mjs`, `article-body-backfill.mjs`, `netlify/functions/fetch-podcast.js`, `netlify/functions/generate-tts.js`, `netlify/functions/kokoro-tts.mjs`, `netlify/functions/presynth-*.mjs`, `netlify/functions/_presynth-key.mjs`, `netlify/functions/tts-cache-cleanup.js`, `netlify/functions/check-hcl.js`, `media-music-show.js`, `media-music-show-ui.js`, `netlify/functions/_music-show.js`
 - state: `podcast*`, `media*`, `radio*`, `readingItems`, `readingSettings`, `readingProgress`, `libraryKey`, `publicationTiers`
 
 ## Naming — read this first
@@ -86,9 +86,20 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
   Watch's grid (`.watch-grid`, four a row on a phone); tapping a cover opens a panel under
   its row (`.watch-detail-row`, pointer placed by the shared `placeGridPanelPointer`) and
   the grid stays put — a show's panel lists its 5 most recent episodes with "All episodes"
-  opening the full list (bundle settings live there); a book's panel has author, format,
+  opening the full list; a book's panel has author, format,
   library availability and the library / Libby / Audible links. Don't bring back opening a
   show as its own page on tap. QA: `node scripts/qa-listen-grid.mjs`.
+- **Upcoming episodes and the series hold** (Luke, 2026-11-19; PODCAST_UPCOMING_DESIGN.md):
+  episodes a show has announced but not released (the `podcast_upcoming` table, filled daily
+  by the `podcast-upcoming` Edge Function from Apple's public catalog) show **only** in the
+  show's panel and its full list as "Coming …" rows — never in the queue, no notifications.
+  In **every** show (no per-show switch — the old `podcastBundleSeries` opt-in and its
+  7-day guess are gone), a multi-part series stays out of the automatic queue while a part
+  of it is still coming, then enters together; hand-added episodes are never held;
+  "Release now" stays. If the rows are older than 3 days nothing is held. Every saved show
+  is looked up. Keep Apple behind `supabase/functions/podcast-upcoming/apple.js` — nothing
+  else may know Apple's URLs or page format (Luke wants leaving Apple to stay easy). Pure
+  rules: `podcast-upcoming.js`. QA: `node scripts/qa-podcast-upcoming.mjs`.
 - **Books stays in Listen** for now (mostly audiobooks); how to organize non-audio
   books is undecided — don't move Kindle/Libby out.
 - **Saved articles still join the queue for read-aloud**; tapping one opens the
