@@ -18,7 +18,7 @@ changes to the Health / Nutrition / Exercise domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `food-health*.js`
+- files: `food-health*.js`, `exercise-history.js`
 - state: `dailyDozenCategories`, `dailyDozenEntries`, `dailyChecklistEntries`, `foodLogEntries`, `nutritionIngredientMappings`, `checklistTemplates`, `personChecklistSettings`, `personGoals`, `foodHealthVersion`, `workouts`, `play*`
 
 ## Your scope (edit these)
@@ -37,6 +37,13 @@ changes to the Health / Nutrition / Exercise domain only.
   (`openNewWorkoutDialog(type)`). Hold a card (or right-click) for Edit / Delete
   (`wireWorkoutPoolCards` with `longPress`); the old swipe-to-edit was removed
   2026-10-26 (Luke) — don't bring it back, a sideways swipe scrolls the row.
+- **Workout history is editable** (Luke, 2026-11-19): the recording window's **History**
+  replaces the recording controls (never stacked under the full-height wheels — that drew
+  the wheels over the list). Tapping an entry reopens the recording screen filled with it
+  ("Edit entry": date field, ‹ History, **Save Changes**, **Delete**); saving rewrites the
+  log in place (same id/createdAt). History sorts by Date (default, newest first) or the
+  kind's own measures — Cardio: Time / Distance / Speed; Strength: Sets done / Heaviest;
+  Games: Rating / Event — tap again to flip; pure logic in `exercise-history.js`.
 - **Lift pictograms by muscle group** (Luke, 2026-10-27): a Strength card's picture comes
   from its title (`LIFT_PICTOGRAMS` in app.js) — legs, arms/shoulders, chest/back each have
   their own `activity-lift-*.png`; any other Strength card keeps `activity-weightlifting.png`.
