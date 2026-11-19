@@ -291,7 +291,7 @@ export const EXPORT_TABLES = [
   { name: "podcasts", section: "media", rows: ({ state }) => arr(state.podcasts), preferred: ["id", "title", "author", "feedUrl"], omit: ["episodes"] },
   { name: "podcast_saved_episodes", section: "media", rows: ({ state }) => arr(state.podcastSaved), preferred: LEAD, omit: ["description", "content"] },
   { name: "article_history_recent", section: "media", rows: ({ state }) => arr(state.articleHistory), preferred: ["date", "title", "url", "id"] },
-  { name: "media_history_recent", section: "media", rows: ({ state }) => arr(state.mediaHistory).map((h) => ({ ...h, at: Number.isFinite(h?.at) ? new Date(h.at).toISOString() : h?.at })), preferred: ["at", "kind", "title", "subtitle", "id"] },
+  { name: "media_history_recent", section: "listen", rows: ({ state }) => arr(state.mediaHistory).map((h) => ({ ...h, at: Number.isFinite(h?.at) ? new Date(h.at).toISOString() : h?.at })), preferred: ["at", "kind", "title", "subtitle", "id"] },
   { name: "music_library", section: "media", rows: ({ state }) => (Array.isArray(state.musicLibrary) ? state.musicLibrary : arr(obj(state.musicLibrary).tracks)), preferred: LEAD },
   { name: "radio_favorites", section: "media", rows: ({ state }) => arr(state.radioFavorites), preferred: LEAD },
   // Calendar

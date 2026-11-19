@@ -182,9 +182,11 @@ describe("The Athletic team feeds", () => {
       { key: "nba:minnesota-timberwolves", scope: "nba", name: "Minnesota Timberwolves", league: "nba" },
       { key: "nfl:minnesota-vikings", scope: "nfl", name: "Minnesota Vikings", league: "nfl" },
       { key: "soccer:minnesota-united-fc", scope: "soccer", name: "Minnesota United FC", league: "mls" },
-      { key: "soccer:afc-ajax", scope: "soccer", name: "AFC Ajax", league: "eredivisie" }
+      { key: "soccer:afc-ajax", scope: "soccer", name: "AFC Ajax", league: "eredivisie" },
+      { key: "soccer:ajax-amsterdam", scope: "soccer", name: "Ajax Amsterdam", league: "eredivisie" }, // checked: no team feed
+      { key: "soccer:fc-utrecht", scope: "soccer", name: "FC Utrecht", league: "eredivisie" }
     ]).map((f) => f.url.replace("https://www.nytimes.com/athletic/rss/", ""));
-    expect(urls).toEqual(["nba/timberwolves/", "nfl/vikings/", "football/mnufc/", "football/minnesota-united-fc/", "football/minnesota-utd/", "football/ajax/", "football/afc-ajax/", "news/", "nba/", "nfl/", "football/"]);
+    expect(urls).toEqual(["nba/timberwolves/", "nfl/vikings/", "football/mnufc/", "football/ajax/", "football/utrecht/", "news/", "nba/", "nfl/", "football/"]);
   });
   it("league feeds for everyone unless every Athletic reader has favourites", () => {
     const users = [{ userId: "u1", papers: new Set(["nyt", "athletic"]) }, { userId: "u2", papers: new Set(["athletic"]) }];
@@ -466,11 +468,13 @@ describe("team names with Luke's real favorites (2026-10-28)", () => {
     expect(m("BYU Cougars stun Utah")).toEqual([]);
     expect(m("Morris Cougars win the UMAC")).toEqual(["college:minnesota-morris-cougars"]);
   });
-  it("Athletic feeds: Ajax tried as /football/ajax/ first; no feed for a school The Athletic doesn't cover; checked slugs only", () => {
-    expect(F.athleticSlugCandidates(REAL[4])[0]).toBe("ajax");
-    expect(F.athleticSlugCandidates(REAL[2])).toEqual([]);
+  it("Athletic feeds: checked slugs only; no team feed for the Gophers, Ajax or Minnesota Morris (no more 404s each run)", () => {
+    expect(F.athleticSlugCandidates(REAL[1])).toEqual([]); // Gophers
+    expect(F.athleticSlugCandidates(REAL[2])).toEqual([]); // Minnesota Morris
+    expect(F.athleticSlugCandidates(REAL[4])).toEqual([]); // Ajax
+    expect(F.athleticSlugCandidates(REAL[3])).toEqual(["mnufc"]);
     expect(F.athleticSlugCandidates(REAL[6])).toEqual(["united-states"]);
-    expect(F.athleticSlugCandidates(REAL[1])).not.toContain("minnesota");
-    expect(F.athleticFeedsFor(REAL).filter((f) => f.team).length).toBeLessThanOrEqual(3 * REAL.length);
+    const urls = F.athleticFeedsFor(REAL).filter((f) => f.team).map((f) => f.url);
+    expect(urls.some((u) => /college-football\/minnesota/.test(u))).toBe(false);
   });
 });

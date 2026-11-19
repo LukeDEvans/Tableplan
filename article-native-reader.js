@@ -76,6 +76,16 @@ export function chooseLongerResult(a, b) {
   return la >= lb ? a : b;
 }
 
+// Why the phone's page had no article: "challenge" (a bot check), "paywall"
+// (the paper's sign-in wall), or "" (not known).
+export function nativeExtractBlockReason(res) {
+  if (!res || typeof res.json !== "string") return "";
+  try {
+    const data = JSON.parse(res.json);
+    return data && (data.blocked === "challenge" || data.blocked === "paywall") ? data.blocked : "";
+  } catch { return ""; }
+}
+
 // Parse what the native extract() call returned: { json } holding the
 // extractor's JSON (or "null"), plus finalUrl. Returns { title, author, date,
 // text, finalUrl } or null.
@@ -176,7 +186,14 @@ export function articleDomExtractor() {
     const broad = collectBlocks([broadRoot]);
     if (broad.blocks.length >= 3 && (!best || broad.totalLen > best.totalLen * 1.6)) best = broad;
   }
-  if (!best || best.blocks.length < 3) return "null";
+  if (!best || best.blocks.length < 3) {
+    // No article: say why when the page shows it. A bot check (NYT uses
+    // DataDome; others Cloudflare) or the paper's sign-in wall.
+    const html = String((document.documentElement && document.documentElement.outerHTML) || "").slice(0, 300000);
+    if (/captcha-delivery\.com|geo\.captcha|\/cdn-cgi\/challenge-platform|cf-chl-|id="challenge-/i.test(html)) return JSON.stringify({ blocked: "challenge" });
+    if (document.querySelector('#gateway-content, [data-testid="gateway-content"], [data-testid="paywall"]')) return JSON.stringify({ blocked: "paywall" });
+    return "null";
+  }
   return JSON.stringify({ title: title.trim(), author: author.trim(), date: date.trim(), text: best.blocks.join("\n") });
 }
 

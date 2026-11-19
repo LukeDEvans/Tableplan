@@ -1,3 +1,4 @@
+const { authUserFetch } = require("./_auth-user.js");
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
@@ -35,6 +36,11 @@ exports.handler = async (event) => {
     } else {
       extra = {
         totalSeasons: detailData.number_of_seasons || null,
+        // Where a never-started show opens (Luke, 2026-11-01): talk / reality /
+        // news shows open on the latest season that's aired, not Season 1.
+        showType: typeof detailData.type === "string" ? detailData.type : null,
+        genreIds: Array.isArray(detailData.genres) ? detailData.genres.map((g) => g.id).filter(Number.isFinite) : [],
+        lastAiredSeason: Number.isFinite(detailData.last_episode_to_air?.season_number) ? detailData.last_episode_to_air.season_number : null,
         totalEpisodes: detailData.number_of_episodes || null,
         avgEpisodeRuntime: detailData.episode_run_time?.[0] || null
       };
@@ -72,7 +78,7 @@ function jsonResponse(statusCode, body) {
 
 async function verifySession(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     return res.ok;

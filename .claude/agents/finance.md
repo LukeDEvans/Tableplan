@@ -21,7 +21,7 @@ all your work is there. Make focused changes to the Finance domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`
+- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
 - state: `finance*`
 
 ## Your scope (edit these)
@@ -153,3 +153,13 @@ say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/`
 other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
 the client, and native `ios/` changes only ship this way), or both. Log anything real
 you notice but don't fix to `ISSUES.md`.
+- **Moving accounts between Household and Personal** (step 3 of FINANCE_SPLIT_DESIGN.md, server
+  half built 2026-11-12, §8): the plan is `finance-move.js` (pure; add any new per-transaction
+  or per-account finance key to it AND to the trigger in
+  `migrations/2026-11-11-finance-move-guard.sql`, or a move leaves it behind); the server is
+  `netlify/functions/_finance-move.js` behind `simplefin` action `moveAccounts` (dry run unless
+  `confirm`, real moves only with `FINANCE_MOVE_ENABLED=1`); the screen is Finance › Accounts ›
+  "Personal accounts" (`financeMoveBlock` in `finance-ui.js`, admin only; QA `npm run
+  qa:finance-move`). The app carries `financeMovedOut` and strips what it lists on every merge;
+  only the server's move changes it. Luke, 2026-11-11: the budget
+  categories the moved transactions use are copied to Personal with amounts blank.

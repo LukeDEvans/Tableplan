@@ -1,4 +1,5 @@
 const { scanReceiptFromImages } = require("../../receipt-scan");
+const { authUserFetch } = require("./_auth-user.js");
 const { getGroupIdForUser, loadFinanceCategories } = require("./_finance-categories.js");
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
@@ -50,7 +51,7 @@ function jsonResponse(statusCode, body) {
 
 async function verifySession(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     if (!res.ok) return null;

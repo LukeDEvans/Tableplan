@@ -10,7 +10,10 @@ Decisions (Luke, 2026-10-14):
   person's choice never changes what anyone else in the household sees. The old
   household-wide `config.themeMode` is only the fallback mode until a person picks one.
 - **Seasonal is opt-in.** The default theme is Classic. Seasonal means Halloween for all of
-  October and Classic the rest of the year (`SEASONS` in `theme.js`; add more seasons there).
+  October, Thanksgiving for all of November (Luke, 2026-11-03) and Classic the rest of the
+  year (`SEASONS` in `theme.js`; add more seasons there). Its line on the Display screen comes
+  from `seasonalSummary()` — what it is now and what comes next ("Halloween now, Thanksgiving
+  from Nov 1") — so a new season needs no copy change.
 - **Visibility first.** Every text/fill pair a theme defines must reach WCAG AA (4.5:1).
   `test/theme-contrast.test.js` enforces this for every theme in its `CHECKED` list, and
   every new theme goes in that list. Danger red must also differ from the accent hue by at
@@ -32,10 +35,15 @@ Decisions (Luke, 2026-10-14):
     and fills so it reaches 4.5:1 on white; dark mode uses the logo green itself. Window
     outlines are black (light) / gray (dark). Dock: black with a logo-green edge.
   - No alternate iPhone icon or favicon for either yet.
+- **Thanksgiving** (Luke, 2026-11-03), in the Holiday row, from the "Feast" palette: brown
+  `#4e2d0a`, pumpkin `#dd5705`, gold `#ecb206`, olive `#5b540e`, cranberry `#ac2411`. Light:
+  brown buttons, olive window outlines, pumpkin secondary, harvest-cream backdrop. Dark: gold
+  accent, pumpkin outlines, olive secondary. Warnings use a deeper cranberry (`#b01c2e`) because
+  `#ac2411` sits within 25° of the brown accent's hue. Dock: brown with a pumpkin edge. No app icon.
 - **Display rows** (Luke, 2026-10-25). Settings › Display lists themes like the Leisure
   page: a heading over a sideways-scrolling row of cards for each group in `THEME_GROUPS`
-  (`theme.js`) — **General** (Classic, Household), **Holiday** (Halloween, Seasonal — more
-  holidays coming), **Business** (Urban Greens), **Sports**. Every theme is in exactly one
+  (`theme.js`) — **General** (Classic, Household), **Holiday** (Halloween, Thanksgiving,
+  Seasonal — more holidays coming), **Business** (Urban Greens), **Sports**. Every theme is in exactly one
   group (`test/theme.test.js`). A new theme goes in `THEMES` and in one group. Picking a card
   keeps every row where it was; on opening, each row shows its chosen card.
 - **Sports** (Luke, 2026-10-25): his favorite teams, in their official colors — Vikings

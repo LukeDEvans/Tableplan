@@ -146,6 +146,59 @@ export function nativeLanguage() {
   return _language;
 }
 
+// Encrypted messaging's store key (MessagingKeysPlugin.swift): a 32-byte key kept in
+// this phone's Keychain that encrypts messaging's IndexedDB store
+// (messaging/keystore.js). null in a browser/PWA → a non-extractable WebCrypto key
+// kept in IndexedDB instead; null in an app build from before the plugin → same.
+let _messagingKeys;
+export function nativeMessagingKeys() {
+  if (_messagingKeys !== undefined) return _messagingKeys;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _messagingKeys = null;
+      return _messagingKeys;
+    }
+    const p = registerPlugin("MessagingKeys");
+    _messagingKeys = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("MessagingKeys")) ? p : null;
+  } catch { _messagingKeys = null; }
+  return _messagingKeys;
+}
+
+// The Documents lock (DocumentsLockPlugin.swift): a Keychain key only Face ID or the
+// passcode releases; it encrypts Documents' store on the phone. null in a
+// browser/PWA or a build from before the plugin (Documents then uses the messaging
+// store key and has no lock).
+let _documentsLock;
+export function nativeDocumentsLock() {
+  if (_documentsLock !== undefined) return _documentsLock;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _documentsLock = null;
+      return _documentsLock;
+    }
+    const p = registerPlugin("DocumentsLock");
+    _documentsLock = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("DocumentsLock")) ? p : null;
+  } catch { _documentsLock = null; }
+  return _documentsLock;
+}
+
+// One-shot QR scanner (QrScanPlugin.swift) for linking devices and verifying a
+// contact's security code. null in a browser/PWA or an older build → the
+// messaging UI offers paste instead.
+let _qrScan;
+export function nativeQrScan() {
+  if (_qrScan !== undefined) return _qrScan;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _qrScan = null;
+      return _qrScan;
+    }
+    const p = registerPlugin("QrScan");
+    _qrScan = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("QrScan")) ? p : null;
+  } catch { _qrScan = null; }
+  return _qrScan;
+}
+
 // Base64 JPEG pages from the native scanner → File objects the scan pipeline
 // takes. Decoded by hand: fetch(data:) can be intercepted by CapacitorHttp.
 export function scannedPagesToFiles(pages, stamp = Date.now()) {
@@ -226,6 +279,23 @@ export function nativeAttachmentPreview() {
     _attachmentPreview = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("AttachmentPreview")) ? p : null;
   } catch { _attachmentPreview = null; }
   return _attachmentPreview;
+}
+
+// The word processor's PDF (PdfExport plugin, WORD_PROCESSOR_DESIGN.md §9):
+// render({ widthPt, heightPt }) → { pdf: base64, pages } from the page's print
+// layout. null in a browser or an app build from before the plugin → print dialog.
+let _pdfExport;
+export function nativePdfExport() {
+  if (_pdfExport !== undefined) return _pdfExport;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _pdfExport = null;
+      return _pdfExport;
+    }
+    const p = registerPlugin("PdfExport");
+    _pdfExport = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("PdfExport")) ? p : null;
+  } catch { _pdfExport = null; }
+  return _pdfExport;
 }
 
 // The iPhone app runs at capacitor://localhost, so app.js's canUseLocalBackend()
@@ -318,4 +388,28 @@ export function nativeLinkOut() {
     _linkOut = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("LinkOut")) ? p : null;
   } catch { _linkOut = null; }
   return _linkOut;
+}
+
+// The phone's photo library (PhotoLibrary plugin, PHOTOS_DESIGN.md §2): status(),
+// probe() → counts and sizes (nothing leaves the phone), cancel(), and
+// addListener("photoProbeProgress"). null in a browser or an app build from before
+// the plugin → the Photos check says to update the app.
+let _photoLibrary;
+export function nativePhotoLibrary() {
+  if (_photoLibrary !== undefined) return _photoLibrary;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _photoLibrary = null;
+      return _photoLibrary;
+    }
+    const p = registerPlugin("PhotoLibrary");
+    _photoLibrary = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("PhotoLibrary")) ? p : null;
+  } catch { _photoLibrary = null; }
+  return _photoLibrary;
+}
+
+// A file on the phone (a file:// URL or path from a plugin) as a URL the web view can
+// load (Photos' full-size images).
+export function nativeFileSrc(path) {
+  try { return CapCore && typeof CapCore.convertFileSrc === "function" ? CapCore.convertFileSrc(path) : path; } catch { return path; }
 }

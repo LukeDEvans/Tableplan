@@ -7,6 +7,9 @@
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const GCAL_SCOPE = "https://www.googleapis.com/auth/calendar";
+// Read-only Drive + Docs, asked for only when someone brings Google Docs into Document
+// (gcal-auth ?docs=1; gdocs.js checks the stored scopes before using them).
+const DOCS_SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents.readonly"];
 
 function serviceKey() {
   return (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -43,7 +46,7 @@ async function userIdFromRequest(event) {
   const key = serviceKey();
   if (!token || !key) return null;
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${token}` } });
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${token}` } });
     if (!res.ok) return null;
     const user = await res.json();
     return user?.id || null;
@@ -51,6 +54,7 @@ async function userIdFromRequest(event) {
 }
 
 const { userGroupQuery } = require("./_group-lookup.js");
+const { authUserFetch } = require("./_auth-user.js");
 
 // ── Signed OAuth state ───────────────────────────────────────────────────────
 // Same signed, expiring state as the Gmail flow (_oauth-state.js, SRV-1), under
@@ -268,7 +272,7 @@ async function listGoogleEvents(token, googleCalendarId, { mode = "live", timeMi
 }
 
 module.exports = {
-  SUPABASE_URL, GCAL_SCOPE, json, sb, userIdFromRequest, signState, verifyState, redirectUri, appBase,
+  SUPABASE_URL, GCAL_SCOPE, DOCS_SCOPES, json, sb, userIdFromRequest, signState, verifyState, redirectUri, appBase,
   loadAccount, saveAccount, deleteAccount, getAccessToken,
   listLinks, insertLinks, relink, disableLink, linksForAppIds, groupIdFor, chooseLinks, validLinkInput,
   gApi, listGoogleCalendars, listGoogleEvents

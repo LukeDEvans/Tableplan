@@ -17,6 +17,7 @@
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const crypto = require("crypto");
+const { authUserFetch } = require("./_auth-user.js");
 const { XMLParser } = require("fast-xml-parser");
 const { safeFetch } = require("./_import-fetch.js");
 const { extractArticleFromHtml } = require("./_article-extract.js");
@@ -233,7 +234,7 @@ exports.handler = async (event) => {
 
 async function getUserId(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
     if (!res.ok) return null;
     const user = await res.json();
     return user.id || null;

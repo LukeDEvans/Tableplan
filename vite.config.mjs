@@ -41,6 +41,7 @@ function copyRootFilesPlugin() {
       copyFileSync('./activity-soccer.png', './dist/activity-soccer.png');
       copyFileSync('./activity-sailing.png', './dist/activity-sailing.png');
       copyFileSync('./activity-piano.png', './dist/activity-piano.png');
+      copyFileSync('./activity-dutch.png', './dist/activity-dutch.png');
       copyFileSync('./activity-travel.png', './dist/activity-travel.png');
       copyFileSync('./explore-local.png', './dist/explore-local.png');
       copyFileSync('./explore-regional.png', './dist/explore-regional.png');

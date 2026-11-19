@@ -69,6 +69,14 @@
         <button class="secondary-btn" id="lockDevSignInBtn" type="button" hidden>Continue in local dev mode</button>
       </div>
     </div>
+    <!-- iPhone app: Face ID to open (auth-second-step.js) -->
+    <div id="faceIdLock" hidden>
+      <div class="lock-card">
+        <img class="lock-logo" src="./lock-logo.png" alt="Live" width="280" height="280" />
+        <p id="faceIdLockMessage"></p>
+        <button class="primary-btn" id="faceIdUnlockBtn" type="button">Unlock</button>
+      </div>
+    </div>
     <div id="hydrationOverlay" hidden>
       <div class="hydration-card">
         <div class="hydration-spinner" aria-hidden="true"></div>
@@ -149,6 +157,7 @@
                   <div class="page-group-pages" id="titleGroupResource" hidden>
                     <button type="button" id="titleFinanceBtn">Finance</button>
                     <button type="button" id="titleShopBtn">Shop</button>
+                    <button type="button" id="titleDocumentsBtn">Document</button>
                   </div>
                 </div>
                 <div class="page-group" data-page-group="media">
@@ -156,12 +165,13 @@
                   <div class="page-group-pages" id="titleGroupMedia" hidden>
                     <button type="button" id="titleWatchBtn">Watch</button>
                     <button type="button" id="titleListenBtn">Listen</button>
+                    <button type="button" id="titlePhotosBtn">Photos</button>
                   </div>
                 </div>
                 <div class="page-group" data-page-group="message">
                   <button type="button" class="page-group-head" aria-expanded="false" aria-controls="titleGroupMessage"><span>Message</span></button>
                   <div class="page-group-pages" id="titleGroupMessage" hidden>
-                    <button type="button" id="titleMailBtn">Mail</button>
+                    <button type="button" id="titleMailBtn">Message</button>
                   </div>
                 </div>
                 <div class="page-group" data-page-group="recreate">
@@ -300,6 +310,7 @@
                   <div class="page-group-pages" id="homeGroupResource" hidden>
                     <button type="button" id="homeFinanceBtn">Finance</button>
                     <button type="button" id="homeShopBtn">Shop</button>
+                    <button type="button" id="homeDocumentsBtn">Document</button>
                   </div>
                 </div>
                 <div class="page-group" data-page-group="media">
@@ -307,12 +318,13 @@
                   <div class="page-group-pages" id="homeGroupMedia" hidden>
                     <button type="button" id="homeWatchBtn">Watch</button>
                     <button type="button" id="homeListenBtn">Listen</button>
+                    <button type="button" id="homePhotosBtn">Photos</button>
                   </div>
                 </div>
                 <div class="page-group" data-page-group="message">
                   <button type="button" class="page-group-head" aria-expanded="false" aria-controls="homeGroupMessage"><span>Message</span></button>
                   <div class="page-group-pages" id="homeGroupMessage" hidden>
-                    <button type="button" id="homeMailBtn">Mail</button>
+                    <button type="button" id="homeMailBtn">Message</button>
                   </div>
                 </div>
                 <div class="page-group" data-page-group="recreate">
@@ -471,6 +483,9 @@
               <button class="article-sidebar-tab is-active" type="button" data-watch-side="list" aria-current="true">
                 <svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span>Watch list</span>
               </button>
+              <button class="article-sidebar-tab" type="button" data-watch-side="youtube">
+                <svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="4"/><path d="m10 9.2 5 2.8-5 2.8z"/></svg><span>YouTube</span>
+              </button>
               <div class="watch-sidebar-spacer"></div>
               <div class="article-sidebar-divider"></div>
               <button class="article-sidebar-tab" type="button" data-watch-side="archive">
@@ -493,6 +508,12 @@
             </div>
             </div>
           </div>
+        </section>
+        <section class="planner-column do-column documents-page" id="documentsMainPage" aria-label="Document" hidden>
+          <div class="article-page-inner" id="documentsRoot"></div>
+        </section>
+        <section class="planner-column do-column photos-main" id="photosMainPage" aria-label="Photos" hidden>
+          <div class="article-page-inner" id="photosRoot"></div>
         </section>
         <section class="planner-column do-column" id="shopMainPage" aria-label="Shop" hidden>
           <div class="shop-layout">
@@ -782,7 +803,13 @@
         <section class="planner-column do-column weather-page" id="weatherMainPage" aria-label="Weather" hidden>
           <div class="weather-page-inner" id="weatherPageInner"></div>
         </section>
-        <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
+        <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Message" hidden>
+          <!-- Messages | Mail (MESSAGING_DESIGN.md §11). Messages is messaging/ui.js, loaded on first open. -->
+          <div class="message-tabs" role="tablist" aria-label="Message">
+            <button type="button" role="tab" class="message-tab" id="messageTabMessages" data-message-tab="messages" aria-controls="messagesPane" aria-selected="true">Messages</button>
+            <button type="button" role="tab" class="message-tab" id="messageTabMail" data-message-tab="mail" aria-selected="false">Mail</button>
+          </div>
+          <div class="messages-pane" id="messagesPane" role="tabpanel" aria-labelledby="messageTabMessages" hidden></div>
           <div class="mail-page-inner">
             <!-- Not connected -->
             <div class="mail-connect-view" id="mailConnectView">
@@ -1103,10 +1130,26 @@
         </div>
       </dialog>
 
+      <dialog class="recipe-dialog watch-other-services-dialog" id="watchOtherServicesDialog" aria-labelledby="watchOtherServicesHeading">
+        <div class="recipe-form">
+          <div class="dialog-head">
+            <div class="watch-other-services-head">
+              <h2 id="watchOtherServicesHeading">Other services</h2>
+              <span class="watch-other-services-title" id="watchOtherServicesTitle"></span>
+            </div>
+            <button class="icon-btn" id="closeWatchOtherServicesBtn" type="button" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <p class="watch-other-services-note">Also on these services, which aren't in your Streaming Services:</p>
+          <div class="discover-svc-group watch-other-services-list" id="watchOtherServicesBody"></div>
+        </div>
+      </dialog>
+
       <dialog class="recipe-dialog watch-search-dialog" id="watchSearchDialog">
         <div class="recipe-form watch-search-form">
           <div class="dialog-head">
-            <h2>Add to Watch List</h2>
+            <h2>Find the right title</h2>
             <button class="icon-btn" id="closeWatchSearchBtn" type="button" aria-label="Close">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
             </button>
@@ -1345,6 +1388,7 @@
           </div>
           <p class="watch-theater-settings-hint">These rooms are always available. Toggle any you don't need.</p>
           <div id="inventoryRoomsSettingsList"></div>
+          <label class="receipt-personal-toggle"><input type="checkbox" id="inventoryFromReceiptsToggle" /> Add groceries from scanned receipts <span class="hint">to the Pantry, Refrigerator and Freezer</span></label>
           <div class="dialog-actions">
             <button class="primary-btn" type="button" id="doneInventoryRoomsBtn">Done</button>
           </div>
@@ -2681,6 +2725,12 @@
               <label>Tax <input id="editReceiptTax" type="number" min="0" step="0.01" /></label>
               <label>Fees <input id="editReceiptFees" type="number" min="0" step="0.01" /></label>
               <label>Total <input id="editReceiptTotal" type="number" min="0" step="0.01" /></label>
+              <label>Tip <input id="editReceiptTip" type="number" min="0" step="0.01" /></label>
+              <label>Card (last 4) <input id="editReceiptLast4" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" /></label>
+              <label>Return by <input id="editReceiptReturnBy" type="date" /> <button class="secondary-btn compact-btn" id="editReceiptReturnSuggest" type="button" hidden></button></label>
+              <label>Warranty until <input id="editReceiptWarranty" type="date" /></label>
+              <button class="secondary-btn compact-btn" id="editReceiptPantryBtn" type="button" hidden>Add items to Inventory</button>
+              <label class="receipt-personal-toggle" id="editReceiptPersonalRow" hidden><input id="editReceiptPersonal" type="checkbox" /> Personal purchase <span class="hint">only in your Personal view</span></label>
             </div>
             <div class="receipt-line-heading">
               <strong>Items</strong>
@@ -2932,6 +2982,31 @@
           <div>
             <button class="secondary-btn" type="button" id="cancelAuthBtn">Cancel</button>
             <button class="primary-btn" id="sendLoginBtn" type="button">Send code</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Second sign-in step: authenticator code (auth-second-step.js) -->
+    <dialog class="recipe-dialog auth-dialog" id="secondStepDialog">
+      <form class="recipe-form" id="secondStepForm">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">One more step</p>
+            <h2>Enter your code</h2>
+          </div>
+        </div>
+        <p class="settings-hint">Open the Passwords app, find Live, and enter the 6-digit code it shows.</p>
+        <label>
+          Code
+          <input id="secondStepCode" type="text" inputmode="numeric" placeholder="123456" autocomplete="one-time-code" data-no-clear />
+        </label>
+        <p class="import-status" id="secondStepMessage"></p>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="secondStepSignOutBtn">Sign out</button>
+            <button class="primary-btn" type="button" id="secondStepVerifyBtn">Verify</button>
           </div>
         </div>
       </form>

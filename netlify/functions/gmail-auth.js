@@ -1,4 +1,5 @@
 const { createOAuthState } = require("./_oauth-state");
+const { authUserFetch } = require("./_auth-user.js");
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
@@ -49,7 +50,7 @@ exports.handler = async (event) => {
 
 async function getUserId(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     if (!res.ok) return null;

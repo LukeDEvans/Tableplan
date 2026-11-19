@@ -19,7 +19,10 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "live-shadow-sections-v1", // SHADOW_KEY — scope-inactive section rows
   "live-shadow-sections-v2", // SHADOW_KEY_V2 — the same, keyed by scope (views.js)
   "live-business-space-v1",  // BUSINESS_SPACE_KEY — the admin's business space id (views.js)
+  "live-photos-probe-v1",    // PHOTOS_PROBE_KEY — the last Photos Check: counts and sizes of this person's photo library
+  "live-photos-sync-v1",     // PHOTOS_SYNC_KEY — per device, how far this person's library was synced (a re-sync after sign-in is safe)
   "live-personal-finance-v1", // PERSONAL_FINANCE_KEY — whether this person owns personal finance accounts
+  "live-finance-nudge-count", // FINANCE_NUDGE_COUNT_KEY — uncategorized count for the weekly Finance nudge
   "live-section-scopes-v1",  // SCOPE_PREFS_KEY — per-section personal/household scope
   "eat-calendars-v1",        // CALENDAR_CACHE_KEY — linked-calendar events cache
   "live_plan_ics_cache",     // subscribed ICS/Amion events cache
@@ -34,6 +37,8 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "live-display-v1",         // DISPLAY_CACHE_KEY — this person's last theme, applied before first paint
   "live-view-v1",            // the last view used and this person's view list (views.js)
   "live-receipt-scans-v1",   // RECEIPT_QUEUE_KEY (receipt-scan-queue.js) — receipts sent to be read, with photo refs
+  "live-music-show-pos-v1",  // POS_KEY (media-music-show-ui.js) — where each Listen-bell show was left
+  "live-music-show-import-v1", // IMPORT_KEY (media-music-show-ui.js) — the mailbox's recent shows were fetched
 ];
 
 // Some account-scoped keys are DYNAMIC (a stable prefix + a variable suffix), so
@@ -101,4 +106,20 @@ export function clearLocalAccountState(storage) {
       }
     }
   }
+}
+
+// Was this sign-out the person's own (the Sign out button, in this tab or another)?
+// The explicit sign-out stamps SIGN_OUT_INTENT_KEY just before it signs out; a
+// sign-out without a recent stamp came from elsewhere: another device ended this
+// session (removing a device signs out the others, Luke 2026-11-03) or it expired.
+// Only the person's own sign-out deletes this device's secure messages and
+// Documents keys; a remote one keeps them, so signing in again picks up where it
+// was (those stores still wipe themselves if a DIFFERENT account signs in).
+export const SIGN_OUT_INTENT_KEY = "live_signed_out_explicitly";
+export const SIGN_OUT_INTENT_WINDOW_MS = 2 * 60 * 1000;
+export function signOutWasExplicit(storage, now = Date.now()) {
+  let stamp = null;
+  try { stamp = storage?.getItem?.(SIGN_OUT_INTENT_KEY) ?? null; } catch { return false; }
+  const t = Date.parse(stamp || "");
+  return Number.isFinite(t) && now - t >= -5000 && now - t <= SIGN_OUT_INTENT_WINDOW_MS;
 }

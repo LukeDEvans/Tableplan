@@ -40,8 +40,9 @@ scoping**, so it is still shared infrastructure: every change here is flagged to
   (`viewDisplayPrefs`) belong to the settings agent.
 
 ## Decisions (Luke) — keep these true
-- Three views: **Personal** (Calendar, News, Finance, Watch, Listen, Mail, Exercise,
-  Leisure), **Household** (Calendar, Meal Plan, Finance, Shop, Watch, Listen, Explore),
+- Three views: **Personal** (Calendar, News, Finance, Document, Watch, Listen, Photos,
+  Mail, Exercise, Leisure; Photos is Personal only until it can share into Household,
+  Luke 2026-11-16), **Household** (Calendar, Meal Plan, Finance, Shop, Watch, Listen, Explore),
   **Business** (Calendar). Only the admin has more than one; everyone else has Household
   only, with the band and no chevrons. Multi-view is gated by the server's role, not
   hidden UI.
@@ -76,15 +77,27 @@ scoping**, so it is still shared infrastructure: every change here is flagged to
 - A merge or save must only ever touch the row on screen. Never write a household shadow
   wholesale from Personal; the one cross-view write (ticking a household task from
   Personal) is a fresh read plus a conditional PATCH on `updated_at`.
-- **Tombstones are one list for every row** (`config.tombstones`): deleting an id in one
-  view removes it from any other row holding the same id. Don't reuse ids across rows,
-  and don't "fix" this by changing `mergeStates` tombstone semantics — that's gated on Luke.
+- **Delete lists are per view** (Luke, 2026-11-11): a key whose section has a row per view
+  records its deletes for the row they were made in, so removing an id from the household's
+  list never removes it from a person's own (`state-sync.js` "Per-view delete lists";
+  `tombstoneOwner` / `recordDeletion` / `mergeStates`' `dead` in `app.js`). A delete is
+  stored under the plain key (older builds read it; older deletes stay in force) and under
+  `key@owner` — `u-<userId>`, `household` or the business space's id. A merge of a row that
+  is not on screen names that row's scope (`writeInactiveSection`). Read deletes with
+  `deletedIdsFor(key)`, never `state.tombstones[key]`, in a per-view section. QA:
+  `npm run qa:view-deletes`.
+- **Emptying a row on the server doesn't stick** — merges are unions, so any device's old
+  copy puts it back. Use a one-time row reset (`views.js` `applyRowReset`, 2026-10-28,
+  Household Listen and Watch): write the row with a new `<section>RowReset` id and every
+  key spelled out; a device whose copy lacks that id takes the row as it is. Only sections
+  in `ROW_RESET_SECTIONS` carry the key (it's in their `STATE_SECTIONS`). Write the reset
+  only after the code is deployed and old tabs reloaded.
 - No new hot keys in existing `tableplan_states` rows, no `STATE_SCHEMA_VERSION` bump,
   no new polling; a view switch costs a stamp check, not a re-download.
 
 ## Verify
 `npx vitest run test/views.test.js test/architecture-view-scopes.test.js
-test/architecture-page-groups.test.js`, `npm run qa:views` (delete
+test/architecture-page-groups.test.js`, `npm run qa:views` and `npm run qa:view-deletes` (delete
 data/tableplan-state.json first), `npm run qa:page-groups`, `npm run check:boot`. Changes
 that matter on the phone (touch, the band beside the header buttons) also need a
 TestFlight build — say so in `UNDEPLOYED.md`.

@@ -10,7 +10,8 @@ import Capacitor
 // Why native: the server fetch reads pages anonymously from a cloud IP, so the
 // papers return a teaser or block it. Here the page loads on the phone itself,
 // signed in as Luke, in a real WebKit view:
-//   • login({ url, title }) — shows the paper's site in an in-app browser sheet.
+//   • login({ url, title, hint }) — shows the paper's site in an in-app browser
+//     sheet, with `hint` (optional) as one line over the page.
 //     Luke signs in once; the cookies stay in the app's default website data
 //     store (on the phone only — nothing is sent to our server). Resolves when the
 //     sheet closes, with `trail`: the pages the sheet went through (host + path
@@ -48,12 +49,13 @@ public class ArticleReaderPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let title = call.getString("title") ?? ""
+        let hint = call.getString("hint") ?? ""
         DispatchQueue.main.async { [weak self] in
             guard let presenter = self?.bridge?.viewController else {
                 call.reject("No view to present from.")
                 return
             }
-            let browser = ArticleLoginViewController(url: url, titleText: title) { trail in
+            let browser = ArticleLoginViewController(url: url, titleText: title, hintText: hint) { trail in
                 call.resolve(["closed": true, "trail": trail])
             }
             let nav = UINavigationController(rootViewController: browser)
@@ -138,6 +140,14 @@ public class ArticleReaderPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 }
 
+// How both web views identify themselves: as Safari. A bare WKWebView user agent
+// has no "Version/… Safari/…"; sign-in pages treat it as an embedded browser, and
+// bot checks (NYT's) block a page whose user agent differs from the one the
+// session was made with — so the hidden reader must match the sign-in sheet.
+enum ArticleWebIdentity {
+    static let applicationName = "Version/18.0 Mobile/15E148 Safari/604.1"
+}
+
 // One invisible page load + extraction. Main thread only.
 final class ArticleExtractJob: NSObject, WKNavigationDelegate {
     private let script: String
@@ -162,6 +172,7 @@ final class ArticleExtractJob: NSObject, WKNavigationDelegate {
         config.websiteDataStore = .default() // shares the login sheet's cookies
         config.mediaTypesRequiringUserActionForPlayback = .all
         config.allowsInlineMediaPlayback = false
+        config.applicationNameForUserAgent = ArticleWebIdentity.applicationName
         // A phone-sized frame so the site renders its normal mobile layout.
         let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: config)
         wv.navigationDelegate = self
@@ -250,6 +261,8 @@ final class ArticleExtractJob: NSObject, WKNavigationDelegate {
 final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     private let startUrl: URL
     private let titleText: String
+    // One line over the page, e.g. how to sign in ("Google sign-in doesn't work here").
+    private let hintText: String
     private let onClose: ([String]) -> Void
     private var reported = false
     // Steps the sheet went through ("main"/"popup" + event + host/path), capped.
@@ -261,9 +274,10 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
     private let progress = UIProgressView(progressViewStyle: .bar)
     private var progressObservation: NSKeyValueObservation?
 
-    init(url: URL, titleText: String, onClose: @escaping ([String]) -> Void) {
+    init(url: URL, titleText: String, hintText: String = "", onClose: @escaping ([String]) -> Void) {
         self.startUrl = url
         self.titleText = titleText
+        self.hintText = hintText
         self.onClose = onClose
         super.init(nibName: nil, bundle: nil)
     }
@@ -274,6 +288,7 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         title = titleText.isEmpty ? "Sign in" : titleText
+        if !hintText.isEmpty { navigationItem.prompt = hintText }
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(done))
         navigationItem.leftBarButtonItems = [
             UIBarButtonItem(image: UIImage(systemName: "chevron.backward"), style: .plain, target: self, action: #selector(goBack)),
@@ -288,7 +303,7 @@ final class ArticleLoginViewController: UIViewController, WKNavigationDelegate, 
         // Identify as Safari. A bare WKWebView user agent has no "Version/… Safari/…",
         // and sign-in pages (Apple's included) treat it as an embedded browser and
         // can take a path that never finishes.
-        config.applicationNameForUserAgent = "Version/18.0 Mobile/15E148 Safari/604.1"
+        config.applicationNameForUserAgent = ArticleWebIdentity.applicationName
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self

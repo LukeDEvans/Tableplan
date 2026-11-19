@@ -6,6 +6,7 @@ import {
   looksLikeTeaser,
   chooseLongerResult,
   parseNativeExtractResult,
+  nativeExtractBlockReason,
   articleDomExtractor,
   ARTICLE_DOM_EXTRACTOR_SOURCE,
   TEASER_MAX_CHARS
@@ -66,7 +67,7 @@ describe("parseNativeExtractResult", () => {
 
 // A minimal DOM stand-in: enough of querySelector/querySelectorAll/closest for
 // the extractor, so it can run without a browser.
-function fakeDocument({ meta = {}, title = "", nodes = [] }) {
+function fakeDocument({ meta = {}, title = "", nodes = [], html = "", gateway = false }) {
   const mk = (tag, text, cls = "", attrs = {}) => ({
     tagName: tag.toUpperCase(), textContent: text, attrs: { class: cls, ...attrs }, children: [], parentElement: null,
     getAttribute(n) { return this.attrs[n] ?? null; },
@@ -77,7 +78,9 @@ function fakeDocument({ meta = {}, title = "", nodes = [] }) {
   body.children = nodes.map(([tag, text, cls]) => { const n = mk(tag, text, cls); n.parentElement = body; return n; });
   return {
     title,
+    documentElement: { outerHTML: html },
     querySelector(sel) {
+      if (sel.includes("gateway-content")) return gateway ? {} : null;
       const m = sel.match(/^meta\[(?:property|name)="([^"]+)"\]$/);
       if (m) return meta[m[1]] ? { getAttribute: () => meta[m[1]] } : null;
       return null;
@@ -106,5 +109,31 @@ describe("articleDomExtractor", () => {
   it("returns \"null\" when there isn't an article", () => {
     globalThis.document = fakeDocument({ nodes: [["p", "Only one paragraph of text here."]] });
     try { expect(articleDomExtractor()).toBe("null"); } finally { delete globalThis.document; }
+  });
+});
+
+describe("why the phone's page had no article", () => {
+  it("reports a bot check (NYT's DataDome, or Cloudflare)", () => {
+    globalThis.document = fakeDocument({ html: '<html><body><iframe src="https://geo.captcha-delivery.com/captcha/?initialCid=x"></iframe></body></html>' });
+    try { expect(JSON.parse(articleDomExtractor())).toEqual({ blocked: "challenge" }); } finally { delete globalThis.document; }
+    globalThis.document = fakeDocument({ html: '<script src="/cdn-cgi/challenge-platform/h/b/orchestrate"></script>' });
+    try { expect(JSON.parse(articleDomExtractor())).toEqual({ blocked: "challenge" }); } finally { delete globalThis.document; }
+  });
+  it("reports the paper's sign-in wall", () => {
+    globalThis.document = fakeDocument({ gateway: true, nodes: [["p", "Only one paragraph of text here."]] });
+    try { expect(JSON.parse(articleDomExtractor())).toEqual({ blocked: "paywall" }); } finally { delete globalThis.document; }
+  });
+  it("an article wins over a bot-check script left on the page", () => {
+    const long = "A paragraph of real article text that is comfortably long enough.";
+    globalThis.document = fakeDocument({ html: "captcha-delivery.com", nodes: [["p", long + " 1"], ["p", long + " 2"], ["p", long + " 3"]] });
+    try { expect(JSON.parse(articleDomExtractor()).text).toContain(long); } finally { delete globalThis.document; }
+  });
+  it("nativeExtractBlockReason reads the reason, and only a known one", () => {
+    expect(nativeExtractBlockReason({ json: JSON.stringify({ blocked: "challenge" }) })).toBe("challenge");
+    expect(nativeExtractBlockReason({ json: JSON.stringify({ blocked: "paywall" }) })).toBe("paywall");
+    expect(nativeExtractBlockReason({ json: JSON.stringify({ blocked: "other" }) })).toBe("");
+    expect(nativeExtractBlockReason({ json: "null" })).toBe("");
+    expect(nativeExtractBlockReason(null)).toBe("");
+    expect(parseNativeExtractResult({ json: JSON.stringify({ blocked: "challenge" }) })).toBeNull();
   });
 });

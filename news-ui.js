@@ -54,6 +54,8 @@ export const NEWS_PAPERS = [
   { key: "nyt", label: "New York Times", mark: "T" },
   { key: "economist", label: "The Economist", mark: "E" },
   { key: "startribune", label: "Star Tribune", mark: "S" },
+  // Free to read: no sign-in, so no "Not signed in" note (Luke, 2026-11-14).
+  { key: "npr", label: "NPR", mark: "N", free: true },
   { key: "athletic", label: "The Athletic", mark: "A" }
 ];
 const SECTION_LABEL = Object.fromEntries(NEWS_SECTIONS.map((s) => [s.key, s.label]));
@@ -190,9 +192,10 @@ export function unreadCounts(articles) {
 
 // A newsletter briefing (The Morning, The world in brief…): a saved article the
 // mail sweep converted from a paper's newsletter, id "news-<gmail id>". Briefings
-// live only in Listen (Luke, 2026-10-16), so News's Saved list leaves them out.
+// live only in Listen (Luke, 2026-10-16), so News's Saved list leaves them out —
+// and so are music shows (id "show-<gmail id>"), which live under the Listen bell.
 export function isNewsletterBriefing(a) {
-  return !!a && String(a.id || "").startsWith("news-");
+  return !!a && /^(news|show)-/.test(String(a.id || ""));
 }
 
 // Does the sign-in status need a fresh check (any paper never checked, or over 24 h)?
@@ -733,7 +736,7 @@ export function createNewsModule(deps) {
     if (!present.size) h += `<div class="news-side-empty">Sections appear as articles arrive.</div>`;
     h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Papers</div>`;
     for (const p of NEWS_PAPERS) {
-      const st = paperStatus(signIns, p.key);
+      const st = p.free ? "signed-in" : paperStatus(signIns, p.key);
       const note = st === "expired" ? "Sign in again" : (st === "none" || (st === "unknown" && signInsLoaded && !verifying)) ? "Not signed in" : "";
       h += sideTab("paper", p.key, `<i class="news-side-mark article-sidebar-icon" aria-hidden="true">${p.mark}</i><span class="news-side-paper"><span>${esc(p.label)}</span>${note ? `<small class="news-side-warn">${note}</small>` : ""}</span>`, c.paper[p.key]);
     }

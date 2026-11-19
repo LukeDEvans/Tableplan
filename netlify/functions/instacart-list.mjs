@@ -17,6 +17,8 @@ import {
   normalizeInstacartResponse,
   INSTACART_MAX_LINE_ITEMS
 } from "../../instacart.js";
+import { createRequire } from "node:module";
+const { authUserFetch } = createRequire(import.meta.url)("./_auth-user.js");
 
 const DEFAULT_SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const DEV_BASE_URL = "https://connect.dev.instacart.tools";
@@ -129,9 +131,9 @@ async function authorizeRequest(event, env, fetchImpl) {
   if (!serviceRoleKey) return { ok: false, statusCode: 503, error: "Instacart authentication is not configured." };
   const supabaseUrl = String(env.SUPABASE_URL || DEFAULT_SUPABASE_URL).replace(/\/$/, "");
   try {
-    const response = await fetchImpl(`${supabaseUrl}/auth/v1/user`, {
+    const response = await authUserFetch(`${supabaseUrl}/auth/v1/user`, {
       headers: { apikey: serviceRoleKey, authorization: `Bearer ${token}` }
-    });
+    }, fetchImpl);
     if (!response.ok) return { ok: false, statusCode: 401, error: "Your sign-in session could not be verified." };
     return { ok: true, user: await response.json() };
   } catch {

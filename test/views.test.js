@@ -60,16 +60,16 @@ describe("views: cyclical swipe", () => {
 });
 
 describe("views: pages", () => {
-  const menuPages = ["plan", "eat", "do", "news", "weather", "finance", "shop", "watch", "read", "mail", "explore", "play", "recreate", "scores"];
+  const menuPages = ["plan", "eat", "do", "news", "weather", "finance", "shop", "documents", "watch", "read", "mail", "explore", "play", "recreate", "scores"];
   it("Personal: no Meal Plan or Shop (Household's), no Tasks / Weather / Scores entries (Luke, 2026-10-20)", () => {
-    expect(menuPages.filter((p) => viewHasPage("personal", p))).toEqual(["plan", "news", "finance", "watch", "read", "mail", "play", "recreate"]);
+    expect(menuPages.filter((p) => viewHasPage("personal", p))).toEqual(["plan", "news", "finance", "documents", "watch", "read", "mail", "play", "recreate"]);
   });
   it("a page in no view's list stays where it is when opened (Weather from the dock)", () => {
     expect(viewForPage("weather", "household", ALL)).toBe(null);
     expect(viewForPage("eat", "personal", ALL)).toBe("household");
   });
   it("Household holds Calendar, Meal Plan, Finance, Shop, Watch, Listen", () => {
-    expect(menuPages.filter((p) => viewHasPage("household", p))).toEqual(["plan", "eat", "finance", "shop", "watch", "read", "explore"]);
+    expect(menuPages.filter((p) => viewHasPage("household", p))).toEqual(["plan", "eat", "finance", "shop", "documents", "watch", "read", "explore"]);
   });
   it("Business holds the Calendar only", () => {
     expect(menuPages.filter((p) => viewHasPage("business", p))).toEqual(["plan"]);
@@ -120,12 +120,12 @@ describe("views: display per view", () => {
     expect(displayPrefsForView("household", { base, available: ["household"] })).toEqual(base);
   });
   it("other views default to their own theme and the person's mode, never the icon", () => {
-    expect(displayPrefsForView("household", { base, available: ALL })).toEqual({ mode: "dark", theme: "household", icon: false });
-    expect(displayPrefsForView("business", { base, available: ALL })).toEqual({ mode: "dark", theme: "urbangreens", icon: false });
+    expect(displayPrefsForView("household", { base, available: ALL })).toEqual({ mode: "dark", theme: "household", icon: false, name: "", holidays: false, gameday: false, gamedayTeams: [] });
+    expect(displayPrefsForView("business", { base, available: ALL })).toEqual({ mode: "dark", theme: "urbangreens", icon: false, name: "", holidays: false, gameday: false, gamedayTeams: [] });
   });
   it("a view's own choice wins", () => {
     const viewPrefs = { business: { mode: "light", theme: "classic" } };
-    expect(displayPrefsForView("business", { base, viewPrefs, available: ALL })).toEqual({ mode: "light", theme: "classic", icon: false });
+    expect(displayPrefsForView("business", { base, viewPrefs, available: ALL })).toEqual({ mode: "light", theme: "classic", icon: false, name: "", holidays: false, gameday: false, gamedayTeams: [] });
   });
   it("cleanViewDisplayPrefs keeps only valid choices for secondary views", () => {
     const out = cleanViewDisplayPrefs({

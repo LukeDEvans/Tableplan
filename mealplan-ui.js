@@ -114,6 +114,7 @@ export function groceryMealSlotId(item, servings = 1) {
 
 // ══════════════════════════════════════════════════════════════════════════
 export function createMealplanModule(deps) {
+  const groceryPace = deps.groceryPace || (() => null);
   const {
     state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getMealPlanCalendarEvents, getMealPlanMemberLabel, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, escapeHtml, focusGroceryLibraryInput, folderName, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog, openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount, getHomeLocation,
   } = deps;
@@ -1321,6 +1322,12 @@ function renderPlanner() {
     </div>
     ${mealPlanNotifBellHtml()}
     </div>
+    ${(() => {
+      // Grocery spending ahead of budget (Finance): say so where meals are planned.
+      const pace = groceryPace();
+      if (!pace?.ahead) return "";
+      return `<div class="meal-budget-note" role="note">Groceries: $${Math.round(pace.spent)} of $${Math.round(pace.budget)} this month${pace.left < 0 ? " (over budget)" : " — ahead of pace"}. Budget-friendly recipes come first when you add a meal.</div>`;
+    })()}
     <section class="day-column planner-day-panel" role="tabpanel" id="panel-${activeDay.id}" aria-labelledby="tab-${activeDay.id}">
       ${activeDayEventsTemplate(activeDay)}
       <div class="day-slots-carousel" style="--meal-column-count: ${mealPlanColumnCount};" aria-label="${escapeHtml(activeDay.name)} meals">

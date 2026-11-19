@@ -14,7 +14,7 @@ const app = readFileSync(`${root}/app.js`, "utf8");
 
 const PAGE_LABEL = {
   calendar: "Calendar", "meal-plan": "Meal Plan", tasks: "Tasks", news: "News", weather: "Weather",
-  finance: "Finance", shop: "Shop", watch: "Watch", listen: "Listen", mail: "Mail",
+  finance: "Finance", shop: "Shop", documents: "Document", watch: "Watch", listen: "Listen", photos: "Photos", mail: "Message",
   explore: "Explore", exercise: "Exercise", leisure: "Leisure", scores: "Scores",
 };
 
@@ -43,7 +43,8 @@ describe("page groups", () => {
     expect(PAGE_GROUPS.find((g) => g.key === "recreate").pages).toEqual(["explore", "exercise", "leisure"]);
     expect(PAGE_GROUPS.flatMap((g) => g.pages)).not.toContain("tasks");
     expect(PAGE_GROUPS.flatMap((g) => g.pages)).not.toContain("weather");
-    expect(PAGE_GROUPS.find((g) => g.key === "media").pages).toEqual(["watch", "listen"]);
+    // Photos (Luke, 2026-11-16) sits with Watch and Listen; Personal only for now.
+    expect(PAGE_GROUPS.find((g) => g.key === "media").pages).toEqual(["watch", "listen", "photos"]);
   });
 
   for (const menu of ["homePageGroups", "pageTitleMenu"]) {
@@ -59,8 +60,17 @@ describe("page groups", () => {
 
   it("app.js wires every menu button (pageNavButtons)", () => {
     const ids = [...menuGroups("homePageGroups"), ...menuGroups("pageTitleMenu")].flatMap((g) => g.pages.map((p) => p.id));
-    expect(ids.length).toBe(22);
+    expect(ids.length).toBe(26);
     for (const id of ids) expect(app).toContain(`"${id}"`);
+  });
+
+  // pageNavButtons() reaches each button through `elements[id]`, so naming the id
+  // there isn't enough: without an `elements` entry the button shows but does
+  // nothing when tapped (Photos, 2026-11-17).
+  it("every menu button is in the elements map", () => {
+    const ids = [...menuGroups("homePageGroups"), ...menuGroups("pageTitleMenu")].flatMap((g) => g.pages.map((p) => p.id));
+    const missing = ids.filter((id) => !app.includes(`${id}: document.querySelector("#${id}")`));
+    expect(missing).toEqual([]);
   });
 
   it("knows which group each page's area is in", () => {
@@ -68,6 +78,7 @@ describe("page groups", () => {
     expect(groupForArea("inventory")).toBe("resource");
     expect(groupForArea("contacts")).toBe("message");
     expect(groupForArea("media")).toBe("media");
+    expect(groupForArea("photos")).toBe("media");
     expect(groupForArea("scores")).toBe("recreate");
     expect(groupForArea("home")).toBeNull();
   });

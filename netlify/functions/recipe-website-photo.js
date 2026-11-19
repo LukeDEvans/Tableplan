@@ -10,6 +10,7 @@
 // size + time limits); a page that fails just maps to "".
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const { safeFetch: defaultSafeFetch } = require("./_import-fetch.js");
+const { authUserFetch } = require("./_auth-user.js");
 const { websitePhotoFromHtml } = require("./_recipe-photo.js");
 
 const MAX_URLS = 6;          // all fetched in parallel, so a call stays well under 10 s
@@ -67,7 +68,7 @@ async function lookupWebsitePhotos(urls, deps = {}) {
 
 async function verifySession(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     return res.ok;

@@ -24,6 +24,8 @@ Scores. Scores has no menu entry of its own.
 
 **App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** ⋯ → **Open in <paper> app** opens the story's own link (the paper's app claims it) and counts as reading it; offered only when the link is on the paper's own domain (`out-catalog.js` `paperHandoff`), never for a newsletter's click tracker. `handOff` is injected from app.js.
 
+**Star Tribune sections come from each item's `<category domain>` tags** (2026-11-17, `stribSection` in `_news-feeds.js`): the new site only offers top-level feeds (`/rss/` and local, business, sports, opinion, variety, outdoors, things-to-do); politics, nation, world and health have no feed of their own.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
@@ -67,7 +69,8 @@ Scores. Scores has no menu entry of its own.
   `_news-links.js` (links from newspaper emails, shared redirect cache),
   `_news-feeds.js` + `news-feeds.js` (hourly RSS intake, The Athletic's team feeds),
   `_news-rank.js` (pure For you ranking: features, weights, scoring, arrangement),
-  `_news-tags.js` (Haiku 5.5 topic tags for new stories), `_news-articles.js`
+  `_news-tags.js` (Haiku 5.5 topic tags for new stories), `_news-titles.js` (telling
+  real headlines from newsletter link fragments; the hourly title repair), `_news-articles.js`
   (newsletter → listenable article), and the article intake/fetch functions
   `fetch-article.js`, `save-article.js`, `save-page-articles.js`, `scan-article.js`,
   `save-sync-cookie.js`, `sync-saved-articles.js`.
@@ -82,10 +85,32 @@ Scores. Scores has no menu entry of its own.
   Scores themselves are never stored.
 
 ## Luke's decisions (keep them)
+- **Titles are real headlines (Luke, 2026-10-28; NEWS_TITLES_DESIGN.md):** a story's
+  title is never the bit of newsletter text that happened to be linked ("your most
+  pressing questions"). Email intake uses the page's headline, else headline-like link
+  text, else the URL slug; the hourly job (`news-feeds`) then upgrades weak titles from
+  the feeds, the live blog's own headline, or the article page (8 page reads a run at
+  most). NYT live-blog "Here’s the latest." items read "Live: <blog>".
 - **Newsletter briefings run on Claude Haiku 5.5 (2026-10-28):** `_news-articles.js`
   `NEWSLETTER_MODEL`, one pass, effort low, 16k token cap. Haiku 5.5 rejects prefill and
   sampling parameters (`_claude.js` skips continuation for it) and can refuse; a refusal
   fails the conversion so the mail-jobs attempt cap bounds retries.
+- **Front page top stories (Luke, 2026-11-13; NEWS_FRONT_PAGE_DESIGN.md):** the Front
+  page leads with the biggest events of the last day, not with newsletter leads.
+  `_news-front.js` (pure) groups the pool into events by shared headline words and
+  scores them (stories, recency, papers, live blog, breaking, section);
+  `_news-store.js` `loadFeedPage` sends the top stories first with a `lead` time that
+  encodes their order and strips `lead` from every other Front page card, because
+  installed apps and the dock ticker show `lead` cards first. Don't put `lead` back
+  on other Front cards. Kill switch: `NEWS_FRONT_RANK_DISABLED=1`.
+- **NPR is a paper; the BBC and AP are signals only (Luke, 2026-11-14; NEWS_FRONT_PAGE_DESIGN.md
+  §9–§11):** NPR needs no sign-in and goes to every News user (`FEED_SOURCES` / `FREE_PAPERS`
+  in `_news-feeds.js`; `free: true` in `NEWS_PAPERS`). BBC and AP headlines are read by
+  `_news-signals.js` into the `news_signals` row and only shape the Front page ranking:
+  **never store or show them as stories.** Opening the Front page runs `runOpenCheck` (five
+  feeds, at most once in 10 minutes for everyone, claimed in the row before any fetch); it
+  stores stories without topics and the hourly job tags them (`untaggedRecentIds`). Kill
+  switches: `NEWS_NPR_DISABLED`, `NEWS_OPEN_CHECK_DISABLED`.
 - **For you (Luke, 2026-10-27; NEWS_RANKING_DESIGN.md):** a view ranked per person by
   content (paper, section, AI topics, entities, teams, keywords), learning from Open,
   Listen, Save, Hide and the ⋯ menu's More / Less like this and Mute topic; weights
@@ -226,3 +251,6 @@ say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/`
 other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
 the client, and native `ios/` changes only ship this way), or both. Log anything real
 you notice but don't fix to `ISSUES.md`.
+- Newspaper sign-in in the app is email and password only (Luke tried Apple with a passkey,
+  2026-11-11: Apple's page never finishes inside the sheet). The hints say so; don't suggest
+  Apple or Google there.

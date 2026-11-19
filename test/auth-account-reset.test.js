@@ -31,6 +31,7 @@ const DEVICE_NEUTRAL_KEYS = new Set([
   "live_push_subscribed", "live-playback-speed-v1", "live_signed_out_explicitly",
   "live_migrated_personal", "live-dock-slide-v2",
   "live-link-test-v1", // admin Link Test results — which streaming apps open on this phone; no account data
+  "liveMessageTab", // Message page: last tab picked (Messages / Mail) on this device; no account data
 ]);
 
 describe("clearLocalAccountState — account-transition boundary", () => {
@@ -193,5 +194,29 @@ describe("localStorage key completeness (app.js)", () => {
     // ACCOUNT_SCOPED_STORAGE_KEYS / _PREFIXES (auth-account-reset.js) so sign-out
     // clears it, or to DEVICE_NEUTRAL_KEYS above if it is genuinely per-device.
     expect(unclassified).toEqual([]);
+  });
+});
+
+import { signOutWasExplicit, SIGN_OUT_INTENT_KEY } from "../auth-account-reset.js";
+import { readFileSync as readAppForSignOut } from "node:fs";
+
+describe("a sign-out from elsewhere keeps this device's secure stores (Luke, 2026-11-03)", () => {
+  const store = (v) => ({ getItem: (k) => (k === SIGN_OUT_INTENT_KEY ? v : null) });
+  const now = Date.parse("2026-11-04T06:00:00Z");
+  it("only a recent Sign out stamp counts as the person's own sign-out", () => {
+    expect(signOutWasExplicit(store("2026-11-04T05:59:30Z"), now)).toBe(true);
+    expect(signOutWasExplicit(store(null), now)).toBe(false);
+    expect(signOutWasExplicit(store("2026-11-04T05:50:00Z"), now)).toBe(false); // an old stamp: not this sign-out
+    expect(signOutWasExplicit(store("garbage"), now)).toBe(false);
+    expect(signOutWasExplicit({ getItem: () => { throw new Error("blocked"); } }, now)).toBe(false);
+  });
+  it("app.js skips the messaging/Documents wipe for a remote sign-out, and stamps before signing out", () => {
+    const app = readAppForSignOut(new URL("../app.js", import.meta.url), "utf8");
+    expect(app).toMatch(/const keepSecureStores = kind === "signout" && !signOutWasExplicit\(localStorage\);/);
+    expect(app).toMatch(/keepSecureStores \? Promise\.resolve\(\) : purgeLocalMessaging\(\)/);
+    const stampAt = app.indexOf('localStorage.setItem("live_signed_out_explicitly"');
+    const signOutAt = app.indexOf("await supabaseClient.auth.signOut();", stampAt);
+    expect(stampAt).toBeGreaterThan(0);
+    expect(signOutAt).toBeGreaterThan(stampAt);
   });
 });

@@ -57,6 +57,7 @@ describe("isNewsletterBriefing", () => {
   it("newsletter articles (news-*) are briefings; other saved articles are not", () => {
     expect(isNewsletterBriefing({ id: "news-m1", title: "The Morning" })).toBe(true);
     expect(isNewsletterBriefing({ id: "nl-x", title: "A saved story" })).toBe(false);
+    expect(isNewsletterBriefing({ id: "show-m2", title: "The Amplifier" })).toBe(true);
     expect(isNewsletterBriefing({ id: "article-1" })).toBe(false);
     expect(isNewsletterBriefing(null)).toBe(false);
   });

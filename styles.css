@@ -135,6 +135,9 @@ body[data-palette="halloween"][data-theme="dark"] { background: #0e0c0b; }
    stays the accent for fills, links and highlights. */
 body[data-palette="halloween"] .home-logo { content: url("./home-logo-halloween-light.png"); }
 body[data-palette="halloween"][data-theme="dark"] .home-logo { content: url("./home-logo-halloween-dark.png"); }
+/* A view's own logo (view-logo.js) stays itself in every theme. */
+body[data-palette] .home-logo.is-custom,
+body[data-palette][data-theme] .home-logo.is-custom { content: normal; }
 body[data-palette="halloween"] .bottom-dock {
   --dock-bg1: #2d2140;
   --dock-bg2: #141210;
@@ -144,6 +147,73 @@ body[data-palette="halloween"] .bottom-dock {
 body[data-palette="halloween"][data-theme="dark"] .bottom-dock {
   --dock-bg1: #2a1d3d;
   --dock-bg2: #0e0c0b;
+}
+
+/* Thanksgiving (Luke, 2026-11-03): the "Feast" palette — brown #4e2d0a, pumpkin #dd5705,
+   gold #ecb206, olive #5b540e, cranberry #ac2411 (warnings use a deeper #b01c2e, so they stand apart from the brown). Light leads with brown (buttons), olive
+   outlines, cranberry as danger; dark leads with gold, pumpkin outlines. */
+/* theme:thanksgiving:light */
+body[data-palette="thanksgiving"] {
+  --bg: #faf3e6;
+  --surface: #fffbf3;
+  --surface-strong: #ffffff;
+  --ink: #2a1a08;
+  --muted: #5f4f3c;
+  --line: #e4d3b8;
+  --accent: #4e2d0a;
+  --accent-dark: #3a2107;
+  --accent-soft: #f6e6cf;
+  --on-accent: #ffffff;
+  --tomato: #b01c2e;
+  --tomato-soft: #f9dde1;
+  --on-tomato: #ffffff;
+  --sun: #ecb206;
+  --sun-soft: #f8ebcf;
+  --sun-pale: #fcf5e6;
+  --blue: #a84304;
+  --window-bg: #ffffff;
+  --window-border: #5b540e;
+  --purple: #a84304;
+  --paper: #ffffff;
+  --card: #fffcf5;
+  --text-muted: #5f4f3c;
+}
+
+/* theme:thanksgiving:dark */
+body[data-palette="thanksgiving"][data-theme="dark"] {
+  --bg: #1a1208;
+  --surface: #241a0e;
+  --surface-strong: #2e2214;
+  --ink: #f7efe2;
+  --muted: #c8b9a2;
+  --line: #4a3a24;
+  --accent: #ecb206;
+  --accent-dark: #f5cc55;
+  --accent-soft: #3a2c08;
+  --on-accent: #1a1208;
+  --tomato: #ff7a63;
+  --tomato-soft: #4a1f18;
+  --on-tomato: #1a1208;
+  --sun: #dd5705;
+  --sun-soft: #2c1d10;
+  --sun-pale: #140d06;
+  --blue: #ecb206;
+  --window-bg: #241a0e;
+  --window-border: #f08a3c;
+  --purple: #c2ba64;
+  --paper: #241a0e;
+  --card: #2e2214;
+  --text-muted: #c8b9a2;
+}
+body[data-palette="thanksgiving"] .bottom-dock {
+  --dock-bg1: #6b3f10;
+  --dock-bg2: #4e2d0a;
+  --dock-ink: #ffffff;
+  border-top-color: #dd5705;
+}
+body[data-palette="thanksgiving"][data-theme="dark"] .bottom-dock {
+  --dock-bg1: #4e2d0a;
+  --dock-bg2: #140d06;
 }
 
 /* theme:household:light */
@@ -1693,8 +1763,32 @@ body {
 .home-page {
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 8px 24px;
 }
+/* Centred when it fits; when it doesn't, the auto margins drop to zero and the
+   logo starts at the top rather than being cut off above the scroll. */
+.home-page > .home-center {
+  margin: auto;
+}
+
+/* Landing page: the settings and scan buttons float over the page instead of
+   taking a row of their own, so the logo can rise into the gap between them
+   and the page list gets that height back (Luke, 2026-11-17 — with Photos added
+   the list no longer fit and the landing page scrolled). The header collapses to
+   zero height but still paints its buttons (and their menus) above the page;
+   only those controls take taps, so a swipe across the logo still reaches the
+   landing page's view switcher. */
+body:has(#homeMainPage:not([hidden])) .topbar {
+  position: relative;
+  z-index: 5;
+  height: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+body:has(#homeMainPage:not([hidden])) .topbar :is(button, input, .app-menu) {
+  pointer-events: auto;
+}
+
 
 .home-center {
   display: grid;
@@ -1717,6 +1811,14 @@ body {
   display: block;
   width: clamp(100px, 18vw, 160px);
   height: auto;
+}
+/* Someone's own logo keeps its shape: as wide as a wordmark needs, never taller
+   than the sailboat's box. */
+.home-logo.is-custom {
+  width: auto;
+  max-width: min(78vw, 320px);
+  max-height: clamp(82px, 15vw, 132px);
+  object-fit: contain;
 }
 
 /* ── Alternate "hero" layout (saved for later) ────────────────────────────────
@@ -2577,6 +2679,47 @@ select:focus {
 .dialog-head-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .dialog-head-title-row h2 { margin: 0; }
 .context-settings-back-btn { flex-shrink: 0; }
+/* Keep the Settings sheet clear of the status bar and home indicator on the phone
+   (Luke, 2026-11-16: a long panel scrolled under the clock). The dialog is centred
+   within the safe area instead of the whole screen. */
+.context-settings-dialog {
+  top: var(--safe-top);
+  bottom: var(--safe-bottom);
+  max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 28px);
+}
+.context-settings-dialog > .recipe-form {
+  max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 28px);
+}
+/* Photos Check: the newest synced thumbnails. */
+.photos-sync-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.photos-sync-grid figure {
+  position: relative;
+  margin: 0;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--line);
+}
+.photos-sync-grid img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.photos-sync-grid figcaption {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  color: var(--surface);
+  background: color-mix(in srgb, var(--ink) 72%, transparent);
+}
 
 /* Settings › Household (Luke, 2026-10-14): read-only list + Edit; names always
    fit (ellipsis), roles are small pills, nothing scrolls sideways. */
@@ -9869,29 +10012,6 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   gap: 6px;
   margin-bottom: 4px;
 }
-/* Subtle corner actions (Archive + Add), matching the Discover/Podcasts corner
-   icons instead of the old prominent bottom footer. */
-.watch-category-actions {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding-bottom: 3px;
-}
-.watch-corner-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  border-radius: 8px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.watch-corner-btn:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 
 /* Shop store bar: span the full panel width edge-to-edge (its underline was
    stopping short inside the list panel's 16px padding). Tabs stay inset. */
@@ -10035,18 +10155,43 @@ body.touch-drag-active * {
 #watchPagePanel #watchPlannerGrid .watch-list-panel {
   flex: 1;
   min-height: 0;
+  /* The list fills the screen; pack its rows at the top. Without this the grid
+     shared the spare height out between rows, so a short list started in the
+     middle of the screen and Movies / TV Shows drifted apart (Luke, 2026-10-29). */
+  align-content: start;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding-bottom: 24px;
 }
+/* The open poster's ring sits 4px outside the poster. The list's left and right
+   edges lined up with the posters and clipped it, so the list reaches 6px into
+   the page's side padding and pads back by the same 6px: posters keep their
+   size and the ring shows in full (Luke, 2026-10-29). */
+#watchPagePanel #watchPlannerGrid:not([hidden]) { margin-inline: -6px; }
+#watchPagePanel #watchPlannerGrid > .watch-category-bar,
+#watchPagePanel #watchPlannerGrid .watch-list-panel { padding-inline: 6px; }
+/* Watch › YouTube page (Luke, 2026-10-29): saved videos, or YouTube search. */
+.watch-yt-head { margin: 4px 0 8px; font-size: .78rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.watch-yt-empty { display: grid; justify-items: center; gap: 6px; padding: 40px 16px; text-align: center; color: var(--muted); font-size: .9rem; }
+.watch-yt-empty p { margin: 0; }
+.watch-yt-empty-title { font-weight: 700; color: var(--ink); font-size: 1rem; }
+.discover-card--tap { cursor: pointer; }
+#discoverResults.is-youtube .discover-svc-label { display: none; } /* "Other services" means nothing here */
+/* No scroll bars on the Watch list or its tab strip (Luke, 2026-10-29). */
+#watchPagePanel #watchPlannerGrid .watch-list-panel,
+#watchPagePanel .watch-category-tabs { scrollbar-width: none; -ms-overflow-style: none; }
+#watchPagePanel #watchPlannerGrid .watch-list-panel::-webkit-scrollbar,
+#watchPagePanel .watch-category-tabs::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 .watch-sections {
   display: grid;
+  align-content: start;
   gap: 20px;
 }
 
 .watch-section {
   display: grid;
+  align-content: start;
   gap: 8px;
 }
 
@@ -10340,6 +10485,345 @@ body.touch-drag-active * {
 .discover-sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 4px; }
 .watch-providers--hub { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .discover-svc-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+/* In a show's panel the services are plain links in the theme's link colour, no
+   bubbles, left-aligned with "Other services" first, right under the year and
+   season count (Luke, 2026-10-31). */
+.watch-detail-head .watch-providers { margin: 1px 0 0; gap: 2px 14px; font-size: .84rem; }
+.watch-detail-head .watch-providers--hub { align-items: stretch; }
+.watch-detail-head .discover-svc-group { margin: 0; gap: 2px 14px; }
+.watch-detail-head .discover-svc,
+.watch-detail-head .watch-provider-link {
+  padding: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--accent-dark, var(--accent));
+  font-size: .84rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+.watch-detail-head .discover-svc:hover,
+.watch-detail-head .watch-provider-link:hover { text-decoration: underline; }
+.watch-detail-head .discover-svc:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.watch-detail-head .watch-other-svc { order: -1; }
+.discover-svc-label { display: none; } /* "Other services" means nothing here */
+/* No scroll bars on the Watch list or its tab strip (Luke, 2026-10-29). */
+#watchPagePanel #watchPlannerGrid .watch-list-panel,
+#watchPagePanel .watch-category-tabs { scrollbar-width: none; -ms-overflow-style: none; }
+#watchPagePanel #watchPlannerGrid .watch-list-panel::-webkit-scrollbar,
+#watchPagePanel .watch-category-tabs::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+.watch-sections {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+}
+
+.watch-section {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.watch-section-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  font-weight: 850;
+  font-size: 1rem;
+  color: var(--ink);
+  padding: 4px 0 2px;
+  border: none;
+  border-bottom: 2px solid color-mix(in srgb, var(--sun) 50%, #fff);
+  background: transparent;
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+  text-align: left;
+}
+
+.watch-section-head:hover {
+  color: var(--accent-dark);
+}
+
+.watch-section-chevron {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.18s ease;
+}
+
+.watch-section.is-collapsed .watch-section-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Same rotation, driven by aria-expanded instead of an ancestor's
+   is-collapsed class — for uses (e.g. grocery store sections) where the
+   collapse state doesn't have a wrapping .watch-section to key off of. */
+.watch-section-head[aria-expanded="false"] .watch-section-chevron {
+  transform: rotate(-90deg);
+}
+
+.watch-empty {
+  padding: 8px 0;
+}
+
+.watch-status-group {
+  display: grid;
+  gap: 6px;
+}
+
+.watch-status-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding: 2px 0;
+}
+
+.watch-item-list {
+  display: grid;
+  gap: 6px;
+}
+
+.watch-item {
+  cursor: default;
+}
+
+.watch-item[draggable="true"] {
+  cursor: grab;
+}
+
+.watch-item.is-dragging {
+  opacity: 0.5;
+}
+
+.watch-drop-over {
+  outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 14px;
+}
+
+.watch-item-layout {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.watch-item-poster {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 69px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--sun) 20%, #fff);
+}
+
+.watch-item-poster-placeholder {
+  background: color-mix(in srgb, var(--sun) 22%, #fff);
+  border: 1px solid color-mix(in srgb, var(--sun) 40%, #fff);
+  display: none;
+}
+
+.watch-item-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.watch-item-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.watch-type-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.watch-type-movie {
+  background: color-mix(in srgb, var(--accent) 20%, #fff);
+  color: var(--accent-dark);
+}
+
+.watch-type-tv {
+  background: color-mix(in srgb, #7b5ea7 20%, #fff);
+  color: #4a3068;
+}
+
+.watch-item-title-group {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.watch-item-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 850;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-item-year {
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.watch-item-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.watch-status-select {
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--ink);
+  cursor: pointer;
+  max-width: 120px;
+}
+
+.watch-schedule-btn,
+.watch-delete-btn {
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  flex: 0 0 auto;
+}
+
+.watch-schedule-btn svg,
+.watch-delete-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.watch-delete-btn:hover {
+  color: var(--danger, #c0392b);
+}
+
+/* ── Discover (universal media search) ── */
+.discover-head { flex: 0 0 auto; display: flex; gap: 8px; align-items: center; padding: 4px 2px 12px; }
+.discover-services-btn { flex: 0 0 auto; }
+.discover-filter { position: relative; flex: 0 0 auto; }
+.discover-filter-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+  min-width: 210px; max-width: min(240px, calc(100vw - 24px)); padding: 8px;
+  background: var(--window-bg, #fff); color: var(--ink);
+  border: 1px solid var(--line, #e4e0d8); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.discover-filter-head { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted, #8a8378); padding: 4px 6px 2px; }
+.discover-filter-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px; border-radius: 8px; font-size: 0.92rem; cursor: pointer; }
+.discover-filter-row:hover { background: rgba(127, 127, 127, 0.1); }
+.discover-filter-sep { height: 1px; background: var(--line, #e4e0d8); margin: 6px 2px; }
+.discover-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 10px 14px;
+  border: 1px solid var(--line, #e4e0d8);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  color: var(--ink);
+}
+/* Watch tab = search head (fixed) + watchlist grid OR search results (each a
+   direct scroll-child of the overflow:hidden panel, toggled by [hidden]). */
+#watchPagePanel > .planner-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start; }
+.media-search-discover-row { display: flex; align-items: center; gap: 10px; width: 100%; font: inherit; font-size: 0.9rem; font-weight: 600; text-align: left; padding: 12px 14px; margin: 2px 0 8px; border: 1px solid var(--line, #e4e0d8); border-radius: 12px; background: var(--surface-2, #f0ece3); color: var(--ink); cursor: pointer; }
+.media-search-discover-row:hover { border-color: var(--ink); }
+/* Listen's own online search (podcasts, music, radio) opens in place under the row. */
+.listen-discover-results { flex: none; overflow: visible; margin: 0 0 12px; }
+.media-search-discover-row svg { flex: 0 0 auto; color: var(--muted); }
+.discover-services-list { display: flex; flex-direction: column; }
+.discover-service-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 2px; border-bottom: 1px solid var(--line, #e4e0d8); font-size: 0.9rem; }
+.video-surface-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.86); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.video-surface { width: min(960px, 100%); display: flex; flex-direction: column; gap: 8px; }
+.video-surface-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #fff; }
+.video-surface-title { font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-surface-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.video-surface-close, .video-surface-min, .video-surface-max { color: #fff; }
+.video-surface-video, .video-surface-frame { width: 100%; aspect-ratio: 16 / 9; background: #000; border: 0; border-radius: 10px; }
+/* Minimized: a persistent corner player; no backdrop, page stays interactive. */
+.video-surface-overlay.is-mini { inset: auto; right: 16px; bottom: 16px; background: transparent; padding: 0; display: block; pointer-events: none; }
+.video-surface-overlay.is-mini .video-surface { width: min(340px, 80vw); pointer-events: auto; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); border-radius: 12px; background: #000; padding: 6px; }
+.video-surface-overlay.is-mini .video-surface-title { font-size: 0.8rem; }
+@media (max-width: 420px) { .video-surface-overlay.is-mini .video-surface { width: min(240px, 70vw); } }
+.discover-hint { color: var(--muted); font-size: 0.85rem; padding: 10px 2px; }
+.discover-hint--warn { color: var(--accent-dark, #a6772e); }
+/* The panel (.podcast-panel) is overflow:hidden, so results is the scroll region. */
+.discover-results { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px; }
+.discover-card {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  padding-right: 40px;
+  border: 1px solid var(--line, #e4e0d8);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+}
+.discover-card--pick { padding-right: 10px; cursor: pointer; }
+.discover-card--pick:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.discover-card--pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.discover-save { position: absolute; top: 8px; right: 8px; background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 3px; border-radius: 8px; line-height: 0; }
+.discover-save:hover { color: var(--ink); }
+.discover-save.is-saved { color: var(--accent, #5b5bd6); }
+.discover-save.is-saved svg { fill: currentColor; }
+.discover-section { margin-bottom: 18px; }
+.discover-section-title { font-size: 0.85rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px; }
+.discover-section .discover-card { margin-bottom: 8px; }
+.discover-art { width: 60px; height: 90px; flex: 0 0 auto; object-fit: cover; border-radius: 8px; background: var(--surface-2, #f0f0f6); }
+.discover-art--ph { background: var(--surface-2, #f0f0f6); }
+.discover-meta { min-width: 0; display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; }
+.discover-title { font-weight: 700; font-size: 0.95rem; }
+.discover-year { color: var(--muted); font-weight: 500; }
+.discover-sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 4px; }
+.watch-providers--hub { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.discover-svc-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+/* In a show's panel the services start at the right edge, where a right thumb
+   reaches, with "Other services" last (furthest left); and less space above and
+   below them (Luke, 2026-10-30). */
+.watch-detail-inner > .watch-providers { margin-top: -5px; }
+.watch-detail-inner > .watch-providers:not(:last-child) { margin-bottom: -5px; }
+.watch-detail-inner > .watch-providers--hub { align-items: stretch; }
+.watch-detail-inner > .watch-providers--hub .discover-svc-group { flex-direction: row-reverse; margin-top: 0; }
+.watch-detail-inner > .watch-providers:not(.watch-providers--hub) { justify-content: flex-end; }
 .discover-svc-label { flex: 0 0 100%; font-size: 0.72rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .discover-svc {
   font: inherit;
@@ -10444,6 +10928,9 @@ body[data-theme="dark"] .watch-type-badge.watch-type-tv {
 .watch-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* dense: the posters after an open one fill the rest of its row, so the
+     full-width panel opens under the whole row (Luke, 2026-10-29). */
+  grid-auto-flow: row dense;
   gap: 14px 10px;
   align-items: start;
 }
@@ -10493,15 +10980,6 @@ body[data-theme="dark"] .watch-type-badge.watch-type-tv {
 .watch-poster--ph svg { width: 38%; height: 38%; }
 
 /* Type badge (top-right) + availability chip (bottom-left), both on the poster. */
-.watch-badge {
-  position: absolute; top: 6px; right: 6px; z-index: 2;
-  min-width: 20px; height: 17px; padding: 0 5px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 5px; font-size: .58rem; font-weight: 900; letter-spacing: .03em; color: #fff;
-  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
-}
-.watch-badge--movie { background: color-mix(in srgb, var(--accent) 80%, transparent); }
-.watch-badge--tv { background: color-mix(in srgb, #7b5ea7 82%, transparent); }
 .watch-avail {
   position: absolute; left: 6px; bottom: 6px; z-index: 2; max-width: calc(100% - 12px);
   font-size: .6rem; font-weight: 800; padding: 3px 7px; border-radius: 999px; color: #fff;
@@ -10528,22 +11006,120 @@ body[data-theme="dark"] .watch-type-badge.watch-type-tv {
   .watch-poster { border-radius: 8px; }
   .watch-card-title { font-size: .72rem; }
   .watch-card-sub { font-size: .64rem; }
-  .watch-badge { top: 4px; right: 4px; min-width: 16px; height: 14px; padding: 0 3px; font-size: .5rem; }
   .watch-avail { left: 4px; bottom: 4px; max-width: calc(100% - 8px); font-size: .5rem; padding: 2px 5px; }
 }
 
-/* Full-width detail row revealed under a tapped poster. */
+/* The show's panel, under the open poster's row (Luke, 2026-10-29). Its pointer
+   sits on the top edge at --watch-ptr-x (the poster's centre, set by
+   placeWatchPanelPointer) and slides when another poster in the row opens. */
 .watch-detail-row {
+  /* The panel is the lighter surface the season menu uses (Luke, 2026-10-31). */
+  --watch-panel-bg: var(--surface);
+  position: relative;
   grid-column: 1 / -1;
-  background: color-mix(in srgb, var(--ink) 5%, var(--surface));
+  background: var(--watch-panel-bg);
   border: 1px solid var(--line);
   border-radius: 12px;
-  margin: 0 0 4px;
+  margin: 4px 0 4px;
   animation: watchDetailIn .16s ease;
 }
-.watch-detail-inner { display: grid; gap: 10px; padding: 12px 14px; }
+.watch-detail-row.is-steady { animation: none; }
+.watch-detail-pointer {
+  position: absolute;
+  top: -8px;
+  left: var(--watch-ptr-x, 50%);
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  background: var(--watch-panel-bg);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-top-left-radius: 3px;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.watch-detail-row.is-sliding .watch-detail-pointer { transition: left .22s cubic-bezier(.3, .7, .2, 1); }
+.watch-detail-inner { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px 14px 14px; min-width: 0; }
 @keyframes watchDetailIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .watch-detail-row { animation: none; } }
+
+.watch-detail-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.watch-detail-title { font-weight: 800; font-size: 1rem; line-height: 1.25; color: var(--ink); overflow-wrap: anywhere; }
+.watch-detail-sub { font-size: .8rem; color: var(--muted); }
+.watch-detail-unlinked { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: .84rem; color: var(--muted); }
+
+/* Title row: the ⋯ menu (Watched · Tabs · Remove) sits top-right (Luke, 2026-10-29). */
+.watch-detail-top { display: flex; align-items: flex-start; gap: 8px; }
+.watch-detail-top .watch-detail-head { flex: 1; }
+.watch-detail-more {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  min-height: 0;
+  margin: -6px -6px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink);
+}
+.watch-detail-more svg { width: 22px; height: 22px; fill: currentColor; }
+.watch-detail-more:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.watch-detail-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Next episode line (TV) */
+.watch-next {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  min-width: 0;
+}
+.watch-next-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.watch-next-label { font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+/* S1 E1 sits beside NEXT, leaving the line below to the title (Luke, 2026-10-30). */
+.watch-next-code { margin-left: 6px; color: var(--ink); letter-spacing: .02em; }
+.watch-next-ep { font-size: .9rem; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Just a check mark on a round button, no "Watched" text (Luke, 2026-10-30). */
+.watch-next-tick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-size: .82rem;
+  font-weight: 800;
+}
+.watch-next-tick svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.watch-next--done { justify-content: center; font-size: .85rem; font-weight: 700; color: var(--muted); padding: 8px 12px; }
+
+/* Tabs popover */
+.watch-tabs-menu { min-width: 180px; max-height: 50vh; overflow-y: auto; }
+.watch-tabs-check { display: inline-block; width: 1.2em; color: var(--accent); font-weight: 800; }
+.watch-tabs-empty { padding: 8px 12px; font-size: .84rem; color: var(--muted); }
+
+/* "+" window: a result already on the list */
+.watch-result-tag {
+  flex: 0 0 auto;
+  font-size: .7rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: var(--ink);
+}
+#watchSearchDialogResults:empty { display: none; }
 .watch-status-select {
   border: 1px solid var(--line, #e4e0d8);
   background: var(--surface, #fff);
@@ -10779,83 +11355,103 @@ body[data-theme="dark"] .watch-provider-link:hover {
   min-height: unset;
 }
 
+/* The season menu and its episodes are one box: the menu is the box's header,
+   a hairline under it, the episodes below (Luke, 2026-10-31). */
 .watch-seasons {
   display: grid;
-  gap: 6px;
-  padding-top: 4px;
-}
-
-.watch-season {
-  border: 1px solid color-mix(in srgb, var(--sun) 30%, #fff);
-  border-radius: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
   overflow: hidden;
 }
-
-.watch-season-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: color-mix(in srgb, var(--sun) 12%, #fff);
+.watch-seasons .watch-season-pick {
+  padding: 2px 4px;
+  border-bottom: 1px solid var(--line);
 }
-
-.watch-season-label {
+.watch-seasons .watch-season-select {
+  border: 0;
+  border-radius: 7px;
+  background-color: transparent;
+}
+.watch-seasons .watch-season-select:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.watch-seasons .watch-episodes { border: 0; border-radius: 0; }
+/* One season at a time, picked from a menu (Luke, 2026-10-29). */
+.watch-season-pick {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+}
+.watch-season-select {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background-color: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: .84rem;
   font-weight: 700;
-  font-size: 0.85rem;
-  cursor: pointer;
-  flex: 1;
-}
-
-.watch-season-check {
-  accent-color: var(--accent);
-}
-
-.watch-season-progress {
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-
-.watch-season-expand-btn {
-  width: 24px;
-  height: 24px;
-  padding: 2px;
-  flex: 0 0 auto;
-}
-
-.watch-season-expand-btn svg {
-  width: 16px;
-  height: 16px;
-  transition: transform 0.18s ease;
-}
-
-.watch-season-expand-btn svg.is-expanded {
-  transform: rotate(180deg);
 }
 
 .watch-episodes {
   display: grid;
-  gap: 2px;
-  padding: 6px 10px 8px;
-  max-height: 240px;
-  overflow-y: auto;
+  /* minmax(0,…): one-line titles mustn't widen the column past the panel. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
 }
 
+/* A row is a button: tap to cross the episode off or back on; watched ones are
+   struck through (Luke, 2026-10-30 — no check boxes). */
 .watch-episode {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+  margin: 0;
   padding: 4px 0;
-  font-size: 0.83rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.25;
+  text-align: left;
   cursor: pointer;
 }
-
-.watch-episode input {
-  accent-color: var(--accent);
-  flex: 0 0 auto;
+/* The whole season shows (no scroll box inside the list), ~30px rows, one line
+   each; the next episode to watch is marked; ones not out yet show their date
+   and can't be ticked (Luke, 2026-10-31). */
+.watch-episode.is-next .watch-episode-num { color: var(--accent-dark, var(--accent)); font-weight: 800; }
+.watch-episode.is-next .watch-episode-name { font-weight: 700; }
+.watch-episode.is-next {
+  width: calc(100% + 12px);
+  margin: 0 -6px;
+  padding-inline: 6px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+.watch-episode.is-upcoming { cursor: default; color: var(--muted); }
+.watch-episode:disabled { opacity: 1; }
+.watch-episode-date { font-style: italic; }
+.watch-episodes-error { display: block; margin-bottom: 6px; font-size: .82rem; color: var(--muted); }
+.watch-episode:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.watch-episode.is-watched .watch-episode-name { text-decoration: line-through; color: var(--muted); }
+.watch-episode.is-watched .watch-episode-len { text-decoration: line-through; }
+.watch-episode-num { flex: 0 0 1.6em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: .8rem; }
+.watch-episode-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+.watch-episode-len { flex: 0 0 auto; margin-left: 6px; color: var(--muted); font-size: .76rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 
 .watch-episode-manual {
   display: flex;
@@ -11082,6 +11678,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
 
 .watch-archive-item {
   opacity: 0.85;
+  cursor: pointer; /* a tap opens Edit · Back to Watch list · Delete (2026-11-01) */
 }
 
 .watch-scheduled-badge {
@@ -15234,6 +15831,16 @@ body[data-palette="halloween"][data-theme="dark"] .mail-thread-panel {
   --window-border: #6a35a0;
   --line: #e2cdb3;
 }
+body[data-palette="thanksgiving"][data-theme="dark"] .mail-thread-panel {
+  --accent: #4e2d0a;
+  --accent-dark: #3a2107;
+  --accent-soft: #f6e6cf;
+  --on-accent: #ffffff;
+  --tomato: #b01c2e;
+  --tomato-soft: #f9dde1;
+  --window-border: #5b540e;
+  --line: #e4d3b8;
+}
 body[data-palette="household"][data-theme="dark"] .mail-thread-panel {
   --accent: #24395e;
   --accent-dark: #1a2a47;
@@ -15893,6 +16500,34 @@ body.mail-menu-open .mail-thread-panel iframe { pointer-events: none; }
   flex: 1; margin: 0; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere;
   font: 0.85rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.mail-att-viewer-audio { margin: auto; width: min(560px, calc(100% - 32px)); }
+.mail-att-viewer-video { margin: auto; max-width: 100%; max-height: 100%; background: var(--surface-strong); }
+/* Invite and contact cards */
+.mail-att-cards {
+  margin: 0 auto; padding: 16px; width: 100%; max-width: 640px; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 12px; align-self: flex-start;
+}
+.mail-att-card {
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.mail-att-card-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mail-att-card-photo { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.mail-att-card-title { margin: 0; font-size: 1.05rem; overflow-wrap: anywhere; }
+.mail-att-field { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; font-size: 0.9rem; }
+.mail-att-field-label { color: var(--muted); }
+.mail-att-field-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-att-card-action, .mail-att-cards-action { align-self: flex-end; min-height: 38px; }
+.mail-att-note { margin: 0; padding: 4px 2px; color: var(--muted); font-size: 0.85rem; }
+/* CSV table */
+.mail-att-table-wrap { flex: 1; min-width: 0; overflow: auto; }
+.mail-att-table { border-collapse: collapse; font-size: 0.85rem; }
+.mail-att-table th, .mail-att-table td {
+  padding: 6px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top;
+  white-space: pre-wrap; overflow-wrap: anywhere; min-width: 72px; max-width: 320px;
+}
+.mail-att-table th { position: sticky; top: 0; background: var(--surface); font-weight: 700; z-index: 1; }
+.mail-att-table-wrap .mail-att-note { padding: 10px 12px; }
 .mail-att-viewer-empty { margin: auto; padding: 24px 16px; text-align: center; }
 .mail-att-viewer-empty p { margin: 0 0 14px; }
 .mail-att-viewer-download[hidden] { display: none; }
@@ -16066,16 +16701,18 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
   fill: none;
   flex-shrink: 0;
 }
-/* Media's menu: larger text and taller rows, so each tab is an easy target
+/* Listen's and Watch's menus (Watch matched to Listen, Luke 2026-10-29): larger text and taller rows, so each tab is an easy target
    (17px text in a 48px row; the shared rule above is 14px in about 34px). */
-#mediaSidebar .article-sidebar-tab {
+#mediaSidebar .article-sidebar-tab,
+#watchSidebar .article-sidebar-tab {
   font-size: 1.0625rem;
   padding-top: 12px;
   padding-bottom: 12px;
   gap: 14px;
   min-height: 48px;
 }
-#mediaSidebar .article-sidebar-icon { width: 22px; height: 22px; }
+#mediaSidebar .article-sidebar-icon,
+#watchSidebar .article-sidebar-icon { width: 22px; height: 22px; }
 .article-sidebar-divider {
   height: 1px;
   background: color-mix(in srgb, var(--ink) 8%, transparent);
@@ -16417,24 +17054,24 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
    app-wide — it matches the Mail folder rail — and covers the Media tabs and
    Explore's trip list. */
 @media (min-width: 681px) {
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-layout { position: relative; padding-left: 60px; transition: padding-left 0.18s ease; }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-layout:has(.article-sidebar.is-collapsed) { padding-left: 0; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-layout { position: relative; padding-left: 60px; transition: padding-left 0.18s ease; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-layout:has(.article-sidebar.is-collapsed) { padding-left: 0; }
 
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar {
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar {
     position: absolute; left: 0; top: 0; bottom: 0;
     width: 60px; z-index: 15;
     background: var(--paper, #fff);
     overflow-y: auto; overflow-x: hidden;
     transition: width 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
   }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar.is-collapsed { transform: translateX(-100%); }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:hover { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar.is-collapsed { transform: translateX(-100%); }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:hover { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
 
   /* Rail state (not hovered): icons only, centered; hide text and headers. */
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
-  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
+  :is(#mediaMainPage, #exploreMainPage, #newsMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
     padding-left: 0; padding-right: 0; margin-right: 0; width: 100%; justify-content: center; gap: 0; border-radius: 0;
   }
   /* Explore rail: keep each category's folder ICON visible (like Mail); hide the
@@ -16684,65 +17321,35 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
   object-fit: cover;
   flex-shrink: 0;
 }
-.podcast-shows-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 12px;
-  padding: 16px;
-}
-.podcast-show-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+/* ── Listen: Podcasts' Shows and Books match the Watch page (Luke, 2026-11-11) ──
+   Both reuse Watch's grid (.watch-grid: four covers a row on a phone), its cards
+   (.watch-card / .watch-poster) and its open panel (.watch-detail-row + pointer,
+   placed by placeGridPanelPointer). Only the differences live here. */
+.podcast-shows-grid { padding: 14px 14px 24px; }
+#readingPlannerGrid .watch-list-panel { padding: 0 14px 24px; }
+.watch-poster--square { aspect-ratio: 1 / 1; }
+.listen-card { min-width: 0; text-align: left; color: var(--ink); font: inherit; -webkit-tap-highlight-color: transparent; }
+button.listen-card { appearance: none; -webkit-appearance: none; min-height: 0; }
+.listen-card-add .watch-poster {
   background: none;
-  border: none;
-  cursor: pointer;
-  border-radius: 8px;
-  padding: 8px;
-  text-align: center;
-  color: var(--ink);
-  transition: background .15s;
-}
-.podcast-show-card:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
-.podcast-show-card-art {
-  width: 88px;
-  height: 88px;
-  border-radius: 10px;
-  object-fit: cover;
-  box-shadow: 0 2px 8px rgba(0,0,0,.15);
-}
-.podcast-show-card-art--placeholder {
-  width: 88px;
-  height: 88px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: color-mix(in srgb, var(--ink) 40%, transparent);
-  box-shadow: 0 2px 8px rgba(0,0,0,.08);
-}
-.podcast-show-card-title {
-  font-size: .8rem;
-  font-weight: 500;
-  line-height: 1.3;
-  max-width: 100%;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-.podcast-show-card-meta {
-  font-size: .72rem;
+  box-shadow: none;
+  border: 2px dashed color-mix(in srgb, var(--ink) 22%, transparent);
   color: color-mix(in srgb, var(--ink) 50%, transparent);
 }
-.podcast-show-card-add {
-  border: 2px dashed color-mix(in srgb, var(--ink) 20%, transparent);
-  color: color-mix(in srgb, var(--ink) 50%, transparent);
-  font-size: .8rem;
-}
-.podcast-show-card-add:hover { border-color: color-mix(in srgb, var(--ink) 40%, transparent); background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.listen-card-add .watch-poster svg { width: 30%; height: 30%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.listen-card-add .watch-card-title { color: var(--muted); font-weight: 600; }
+.listen-card-add:hover .watch-poster { border-color: color-mix(in srgb, var(--ink) 42%, transparent); box-shadow: none; }
+/* The panel's episodes are the Listen page's usual rows, edge to edge. */
+.listen-detail-row .watch-detail-inner { gap: 10px; }
+.listen-detail-episodes { display: flex; flex-direction: column; margin: 0 -14px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); min-width: 0; }
+.listen-detail-episodes .podcast-episode-row { min-width: 0; }
+.listen-detail-episodes .podcast-episode-row:last-child { border-bottom: 0; }
+.listen-detail-empty { margin: 0; font-size: .84rem; color: var(--muted); }
+.listen-detail-all { justify-self: start; }
+.listen-detail-row .podcast-feed-error { margin: 0; }
+.listen-detail-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.listen-detail-row .reading-item-avail:empty { display: none; }
+.listen-detail-links { display: flex; flex-wrap: wrap; gap: 8px; }
 .recent-window-bar {
   display: flex;
   align-items: center;
@@ -18669,6 +19276,38 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   background: var(--sun-soft, #f7f5ef);
 }
 body.app-authed #appLockScreen { display: none; }
+
+/* iPhone app: Face ID cover (auth-second-step.js) — above the app, same look as the gate */
+#faceIdLock {
+  position: fixed;
+  inset: 0;
+  z-index: 3001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sun-soft, #f7f5ef);
+}
+#faceIdLock[hidden] { display: none; }
+#faceIdLockMessage:empty { display: none; }
+
+/* Settings › Sign-in */
+.second-step-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line, color-mix(in srgb, var(--ink) 12%, transparent));
+}
+.second-step-row > div,
+.second-step-switch > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.second-step-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.second-step-enroll { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 8px 0; }
+.second-step-add { text-decoration: none; display: inline-block; }
+.second-step-qr { background: #fff; /* a QR code needs white behind it to scan, in every theme */ padding: 8px; border-radius: 8px; max-width: 100%; height: auto; }
+.second-step-secret { word-break: break-all; user-select: all; }
+.second-step-code-label { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.second-step-code-label input { max-width: 160px; letter-spacing: 0.2em; }
 
 /* Shown when a signed-in device has no locally-cached data yet and the cloud
    sync hasn't landed — so pages never render empty and look "wiped" during a
@@ -21637,7 +22276,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-tbar.is-current .fin-tbar-col > i { background: var(--accent); }
 .fin-tbar-label { flex: 0 0 auto; font-size: 0.66rem; font-weight: 700; color: var(--muted); }
 .fin-tbar.is-current .fin-tbar-label { color: var(--ink); }
-.fin-mover-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
+.fin-mover-row { display: flex; align-items: center; gap: 10px; padding: 5px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
 .fin-mover-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fin-mover-cur { font-weight: 750; font-variant-numeric: tabular-nums; }
 .fin-mover-delta { flex: 0 0 auto; font-size: 0.76rem; font-weight: 800; }
@@ -21922,6 +22561,81 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-budget-pace.is-over { color: #b3261e; }
 .fin-pace-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
 .fin-pace-row:first-of-type { border-top: none; }
+.fin-truth-card { padding-block: 6px; }
+.fin-truth-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 2px; border: 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); background: none; color: inherit; font: inherit; font-size: 0.9rem; text-align: left; }
+.fin-truth-row:first-child { border-top: none; }
+.fin-truth-btn { cursor: pointer; }
+.fin-truth-name { flex: 1; min-width: 0; font-weight: 700; }
+.fin-truth-name .fin-of { font-weight: 500; }
+.fin-truth-amt { font-weight: 800; white-space: nowrap; }
+.fin-truth-go { color: var(--muted); font-size: 1.1rem; }
+.fin-truth-amt.is-over { color: #b3261e; }
+.fin-close-checks { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 4px; font-size: 0.8rem; font-weight: 500; color: var(--muted); }
+.fin-close-check.is-ok { color: #17603a; }
+.fin-txn-tags { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; }
+.fin-tag-field { display: flex; flex-direction: column; gap: 4px; min-width: 140px; flex: 1; }
+.fin-tax-row { padding: 6px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.88rem; }
+.travel-bank-candidates { margin-top: 8px; }
+.fin-ret-row { width: 100%; border: 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.fin-sub-amt.is-soon { color: #b3261e; }
+.grocery-price-strip { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0 0 10px; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--ink) 5%, transparent); font-size: 0.84rem; }
+.grocery-price-strip-total { font-weight: 800; font-size: 0.95rem; }
+.grocery-price-strip-meta { color: var(--muted); }
+.recipe-cost-pill { font-variant-numeric: tabular-nums; }
+.recipe-budget-strip h3 { margin: 6px 0 4px; font-size: 0.95rem; }
+.recipe-budget-strip .hint { margin: 0 0 8px; color: var(--muted); font-size: 0.82rem; }
+.recipe-cost-badge { display: block; margin-top: 4px; font-size: 0.74rem; font-weight: 700; color: #17603a; }
+.meal-budget-note { margin: 4px 0 8px; padding: 7px 12px; border-radius: 12px; background: color-mix(in srgb, #eda100 16%, transparent); font-size: 0.84rem; font-weight: 600; }
+.travel-expense-row.is-candidate { opacity: 0.85; }
+.fin-sub-item { padding: 8px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
+.fin-sub-top { display: flex; gap: 10px; align-items: baseline; }
+.fin-sub-top .fin-sub-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-sub-top .fin-sub-amt { font-weight: 750; font-variant-numeric: tabular-nums; }
+.fin-sub-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 3px; font-size: 0.76rem; color: var(--muted); }
+.fin-sub-meta .fin-sub-flag { margin-left: 0; }
+.fin-sub-actions { display: inline-flex; gap: 8px; align-items: center; margin-left: auto; }
+.fin-sub-not { border: 0; background: none; padding: 4px 2px; color: var(--muted); font: inherit; text-decoration: underline; cursor: pointer; }
+.fin-sub-flag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 0.7rem; font-weight: 700; background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.fin-sub-flag.is-up { background: color-mix(in srgb, #b3261e 12%, transparent); color: #8c1d18; }
+.fin-forecast { display: block; width: 100%; height: 90px; margin: 6px 0 2px; overflow: visible; }
+.fin-forecast path { fill: none; stroke: var(--fin-s1); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.fin-forecast circle { fill: var(--fin-s1); stroke: var(--card, #fff); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.fin-forecast circle.is-low { fill: #b3261e; }
+.fin-forecast-zero { stroke: color-mix(in srgb, var(--ink) 30%, transparent); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.fin-forecast-warn { color: #8c1d18; font-weight: 700; }
+.fin-forecast rect { fill: transparent; stroke: none; }
+.receipt-line-mine { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.receipt-personal-toggle { display: flex; align-items: center; gap: 8px; }
+.receipt-personal-toggle .hint { color: var(--muted); font-size: 0.8rem; }
+/* Where it went: one whole split by budget group. Validated categorical slots
+   (dataviz palette, light vs #fffdf8, dark vs #20221f); 0 = neutral. */
+.fin-card { --fin-s1: #2a78d6; --fin-s2: #eb6834; --fin-s3: #1baf7a; --fin-s4: #eda100; --fin-s5: #e87ba4; --fin-s6: #008300; --fin-s7: #6250d6; --fin-s8: #e34948; --fin-s0: color-mix(in srgb, var(--ink) 28%, transparent); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .fin-card { --fin-s1: #3987e5; --fin-s2: #d95926; --fin-s3: #199e70; --fin-s4: #c98500; --fin-s5: #d55181; --fin-s6: #008300; --fin-s7: #9085e9; --fin-s8: #e66767; } }
+:root[data-theme="dark"] .fin-card { --fin-s1: #3987e5; --fin-s2: #d95926; --fin-s3: #199e70; --fin-s4: #c98500; --fin-s5: #d55181; --fin-s6: #008300; --fin-s7: #9085e9; --fin-s8: #e66767; }
+.fin-share { margin: 4px 0 12px; }
+.fin-share-bar { display: flex; gap: 2px; height: 8px; }
+.fin-share-seg { display: block; min-width: 3px; border-radius: 999px; }
+.fin-share-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 0.8rem; color: var(--muted); }
+.fin-share-key { display: inline-flex; align-items: center; gap: 6px; }
+.fin-share-key b { color: var(--ink); font-weight: 700; }
+.fin-share-dot { width: 8px; height: 8px; border-radius: 999px; }
+.fin-card .s0 { background: var(--fin-s0); } .fin-card .s1 { background: var(--fin-s1); } .fin-card .s2 { background: var(--fin-s2); } .fin-card .s3 { background: var(--fin-s3); } .fin-card .s4 { background: var(--fin-s4); }
+.fin-card .s5 { background: var(--fin-s5); } .fin-card .s6 { background: var(--fin-s6); } .fin-card .s7 { background: var(--fin-s7); } .fin-card .s8 { background: var(--fin-s8); }
+.fin-spark { flex: none; width: 52px; height: 20px; margin-left: auto; }
+.fin-mover-row .fin-mover-cur { min-width: 4.8em; text-align: right; }
+.fin-mover-row .fin-mover-delta { min-width: 3.9em; text-align: right; }
+.fin-spark path { fill: none; stroke: var(--fin-s1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.fin-spark circle { fill: var(--fin-s1); }
+.fin-month-line + .fin-budget-bar { margin: 0 2px 8px; }
+.fin-month-line + .fin-budget-bar + .fin-truth-row { border-top: none; }
+/* Laptop: Insights' cards flow into two columns instead of one long stack. */
+@media (min-width: 1000px) {
+  .fin-tab-body[data-fin-tab-body="insights"] { display: block; columns: 2; column-gap: 16px; }
+  .fin-tab-body[data-fin-tab-body="insights"] > * { break-inside: avoid; margin: 0 0 16px; }
+}
+.fin-truth-row .fin-add-btn { flex: none; margin: 0; }
+.fin-stale-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, #b3261e 10%, transparent); color: #8c1d18; font-size: 0.88rem; font-weight: 700; }
+.fin-stale-banner .fin-add-btn { flex: none; margin: 0; }
 .fin-pace-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fin-pace-amt { flex: 0 0 auto; font-size: 0.76rem; font-weight: 800; white-space: nowrap; }
 .fin-pace-amt.is-over { color: #b3261e; }
@@ -22433,6 +23147,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 /* SimpleFIN reconnect merge rows (Accounts › Bank link). */
 .fin-remap-row { display: grid; gap: 4px; margin: 6px 0 12px; }
 .fin-remap-row .fin-hint { margin: 0; }
+.fin-move-list { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.fin-move-problem { color: var(--tomato); }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
 .fin-rec-link-row { padding-bottom: 6px; }
 .fin-recap-row { min-height: 24px; }
@@ -24231,6 +24947,70 @@ button.scores-idle:hover { background: color-mix(in srgb, var(--ink) 5%, transpa
 .display-theme-name { color: var(--ink); font-size: 0.92rem; font-weight: 850; line-height: 1.2; }
 .display-theme-desc { color: var(--muted); font-size: 0.76rem; line-height: 1.3; }
 
+/* Display › Logo & name (view-logo.js) — like the profile photo's row. */
+.display-logo-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.display-logo-preview {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-strong);
+  overflow: hidden;
+}
+.display-logo-preview img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.display-logo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.display-logo-actions [data-display-logo-remove] { color: var(--muted); }
+#displayLogoStatus:empty { display: none; }
+.display-name-field { display: grid; gap: 4px; margin-top: 4px; }
+.display-name-label { color: var(--ink); font-size: 0.9rem; font-weight: 800; }
+.display-name-field input { width: 100%; min-width: 0; box-sizing: border-box; }
+
+/* Display › Automatic: holidays, game days and the ranked team list. */
+.display-dynamic { gap: 12px; }
+.display-now { color: var(--accent-dark); font-weight: 700; }
+.display-teams-block { display: grid; gap: 6px; transition: opacity 0.15s; }
+.display-teams-block.is-off { opacity: 0.6; }
+.display-teams { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.display-team {
+  display: grid;
+  grid-template-columns: 14px 26px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-strong);
+}
+.display-team-rank { color: var(--muted); font-size: 0.82rem; font-weight: 900; text-align: center; }
+.display-team-swatch { display: grid; grid-auto-flow: column; width: 26px; height: 22px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+.display-team-swatch i { display: block; }
+.display-team-swatch.is-empty { background: repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 6px); }
+.display-team-text { display: grid; min-width: 0; }
+.display-team-name { display: -webkit-box; overflow: hidden; color: var(--ink); font-size: 0.9rem; font-weight: 800; line-height: 1.2; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.display-team-note { color: var(--muted); font-size: 0.74rem; }
+.display-team.is-unthemed .display-team-name { color: var(--muted); }
+.display-team-move { display: flex; gap: 2px; }
+.display-team-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.display-team-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.display-team-btn:disabled { opacity: 0.25; cursor: default; }
+.display-team-btn:not(:disabled):hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+
 /* App-wide text-box clear button (input-clear.js; CLAUDE.md "Text-box clear
    button"). Shown at the right of any single-line text box the user has typed
    into; positioned by the module. The invisible ::before widens the tap target
@@ -24916,3 +25696,345 @@ body[data-theme="dark"] .contact-phone-act { color: var(--accent); background: c
 .grocery-store-app { flex: 0 0 auto; color: var(--accent-dark); }
 .grocery-store-app .out-link-arrow { width: 18px; height: 18px; }
 body[data-theme="dark"] .grocery-store-app { color: var(--accent); }
+
+/* ── Listen bell: music shows (media-music-show-ui.js, AMPLIFIER_DESIGN.md) ── */
+.music-show-list { display: flex; flex-direction: column; gap: 10px; max-height: 64vh; overflow-y: auto; }
+.music-show-row {
+  display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: start;
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 12px; padding: 10px;
+}
+.music-show-art { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; display: block; background: var(--accent-soft); }
+.music-show-art--blank { background: var(--accent-soft); }
+.music-show-body { min-width: 0; }
+.music-show-kicker { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+.music-show-title { font-size: 0.95rem; font-weight: 700; color: var(--ink); margin-top: 2px; overflow-wrap: anywhere; }
+.music-show-sub { font-size: 0.78rem; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.music-show-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.music-show-actions .music-show-dismiss { margin-left: auto; }
+.music-show-dismiss svg { width: 18px; height: 18px; }
+.music-show-actions .music-show-dismiss { width: 34px; height: 34px; min-width: 34px; }
+
+/* Watch › a show's panel › "Other services" window (Luke, 2026-10-29). */
+.watch-other-services-dialog { max-width: 420px; }
+.watch-other-services-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.watch-other-services-title { font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; }
+.watch-other-services-note { margin: 0; font-size: .86rem; color: var(--muted); }
+.watch-other-services-list { margin-top: 0; padding-bottom: 6px; }
+
+/* ─── Message page: Messages | Mail tabs + secure messages (MESSAGING_DESIGN.md §11) ─── */
+.mail-page { display: flex; flex-direction: column; }
+.message-tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.message-tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; font-weight: 600; padding: 8px 12px; cursor: pointer; }
+.message-tab.is-active { color: var(--ink); border-bottom-color: var(--accent); }
+.mail-page.is-contacts-mode .message-tabs { display: flex; }
+.messages-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.msg-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 12px 16px; gap: 10px; overflow-y: auto; max-width: 720px; width: 100%; margin: 0 auto; box-sizing: border-box; color: var(--ink); }
+.msg-head { display: flex; align-items: center; gap: 8px; }
+.msg-title { flex: 1; font-size: 1.15rem; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-head-actions { display: flex; gap: 6px; align-items: center; }
+.msg-icon-btn { appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; min-width: 36px; height: 36px; font-size: 1.1rem; cursor: pointer; }
+.msg-muted { color: var(--text-muted, var(--muted)); font-size: 0.9rem; }
+.msg-error { color: var(--tomato); }
+.msg-intro { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.msg-conv-list, .msg-members, .msg-card-pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.msg-conv, .msg-pick { appearance: none; width: 100%; text-align: left; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 2px; cursor: pointer; font: inherit; }
+.msg-conv-title { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.msg-conv-preview { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-conv-meta { color: var(--muted); font-size: 0.8rem; }
+.msg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; }
+.msg-banner { background: var(--sun-soft, var(--surface)); color: var(--ink); border-radius: 10px; padding: 8px 12px; font-size: 0.9rem; }
+.msg-banner-warn { background: var(--tomato-soft); }
+.msg-thread-list { list-style: none; margin: 0; padding: 4px 0; display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 120px; overflow-y: auto; }
+.msg-bubble { position: relative; max-width: 80%; align-self: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 16px 16px 16px 4px; padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.msg-bubble.is-mine { align-self: flex-end; background: var(--accent); color: var(--on-accent); border-color: transparent; border-radius: 16px 16px 4px 16px; }
+.msg-bubble.is-mine .msg-muted, .msg-bubble.is-mine .msg-time, .msg-bubble.is-mine .msg-read { color: var(--on-accent); opacity: 0.85; }
+.msg-text { white-space: pre-wrap; }
+.msg-from { font-size: 0.75rem; font-weight: 600; color: var(--muted); }
+.msg-time, .msg-read { font-size: 0.7rem; color: var(--muted); }
+.msg-more { position: absolute; top: 2px; right: 4px; appearance: none; background: none; border: 0; color: inherit; opacity: 0.5; cursor: pointer; font-size: 0.9rem; }
+.msg-system { align-self: center; color: var(--muted); font-size: 0.8rem; text-align: center; padding: 2px 8px; }
+.msg-card { appearance: none; text-align: left; background: var(--card, var(--surface)); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 2px; cursor: pointer; font: inherit; min-width: 180px; }
+.msg-card-kind { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.msg-card-title { font-weight: 600; }
+.msg-compose { display: flex; gap: 8px; align-items: flex-end; padding-top: 6px; border-top: 1px solid var(--line); }
+.msg-compose textarea { flex: 1; min-width: 0; resize: none; height: 40px; min-height: 40px; max-height: 140px; box-sizing: border-box; line-height: 1.35; font: inherit; padding: 8px 10px; border-radius: 18px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.msg-form { display: flex; flex-direction: column; gap: 8px; }
+.msg-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; }
+.msg-field input, .msg-field select { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.msg-check { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+.msg-sub { font-size: 0.95rem; margin: 8px 0 0; }
+.msg-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.msg-toggle-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; }
+/* QR codes need dark-on-white to scan in every theme: the one literal color here, on purpose. */
+.msg-qr { background: #fff; padding: 8px; border-radius: 12px; width: min(280px, 100%); align-self: center; line-height: 0; }
+.msg-qr svg { width: 100%; height: auto; }
+.msg-safety { font-family: ui-monospace, Menlo, monospace; font-size: 1.05rem; letter-spacing: 0.05em; word-spacing: 0.4em; text-align: center; line-height: 1.8; }
+.msg-code { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.msg-link { display: flex; flex-direction: column; gap: 10px; }
+.msg-details summary { cursor: pointer; color: var(--link, var(--accent)); }
+
+/* ─── Document page (documents/page.js + the Safe, documents/ui.js; DOCUMENTS_DESIGN.md §9, §25) ─
+   Watch's shell: the shared sidebar of folders, a search head, files as a list. */
+body:has(#documentsMainPage:not([hidden])) { overflow: hidden; height: 100dvh; }
+body:has(#documentsMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#documentsMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+#documentsMainPage .article-page-inner { min-height: 0; }
+#documentsMainPage .docs-layout { flex: 1; min-height: 0; }
+/* The Document page (documents/page.js, §25): everyday documents, and the Safe in its
+   own box with a bar back to them. */
+#documentsMainPage .docs-everyday, #documentsMainPage .docs-safe-wrap, #documentsMainPage .docs-safe-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#documentsMainPage .docs-everyday[hidden], #documentsMainPage .docs-safe-wrap[hidden] { display: none; }
+.docs-safe-bar { padding: 4px 12px 2px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.docs-safe-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); }
+.docs-safe-name .article-sidebar-icon { width: 18px; height: 18px; }
+.docs-safe-tab { color: var(--ink); font-weight: 600; }
+#documentsMainPage .docs-panel { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; overflow-y: auto; padding-bottom: 24px; }
+#documentsMainPage .discover-head { display: flex; align-items: center; gap: 6px; }
+#documentsMainPage .discover-head .discover-search-input { flex: 1; min-width: 0; }
+#documentsMainPage .discover-head .icon-btn { flex: 0 0 auto; }
+.docs-panel.is-drop-target { outline: 2px dashed var(--accent); outline-offset: -6px; border-radius: 12px; }
+.docs-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.docs-heading { margin: 4px 0 0; font-size: 1.05rem; color: var(--ink); }
+.docs-folder-tools { gap: 12px; }
+.docs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.docs-file { appearance: none; width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; font: inherit; cursor: pointer; min-width: 0; }
+.docs-file:hover { border-color: var(--accent); }
+.docs-thumb { flex: 0 0 auto; width: 44px; height: 56px; border-radius: 6px; background: var(--surface-strong); color: var(--muted); display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; overflow: hidden; }
+.docs-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.docs-file-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.docs-file-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-file-meta { font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-chip { flex: none; align-self: center; margin-left: 8px; padding: 2px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.docs-chip.is-matched, .docs-chip.is-itemized { background: color-mix(in srgb, #1e7a46 14%, transparent); color: #17603a; }
+.docs-chip.is-needs-look { background: color-mix(in srgb, #b3261e 12%, transparent); color: #8c1d18; }
+.docs-receipt { flex: none; max-height: 40%; overflow: auto; padding: 10px 14px; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); font-size: 0.88rem; }
+.docs-receipt-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.docs-receipt-total { margin-left: auto; font-weight: 800; }
+.docs-receipt-lines { list-style: none; margin: 8px 0; padding: 0; }
+.docs-receipt-lines li { display: flex; gap: 10px; padding: 4px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.docs-receipt-item { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-receipt-cat { color: var(--muted); white-space: nowrap; }
+.docs-receipt-price { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.docs-empty { padding: 24px 4px; text-align: center; }
+.docs-viewer { position: absolute; inset: 0; z-index: 30; background: var(--bg); color: var(--ink); display: flex; flex-direction: column; min-height: 0; }
+.docs-viewer-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.docs-viewer-body { flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 12px; }
+.docs-view-img { max-width: 100%; height: auto; border-radius: 6px; }
+.docs-view-pdf { width: 100%; height: 100%; min-height: 60vh; border: 0; background: var(--surface); }
+.docs-view-text { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem; margin: 0; }
+.docs-viewer-foot { border-top: 1px solid var(--line); padding: 10px 14px; max-height: 45%; overflow-y: auto; }
+.docs-edit { max-width: 520px; }
+.docs-settings .msg-pane { flex: 1; }
+.docs-code { font-family: ui-monospace, Menlo, monospace; font-size: 1.15rem; font-weight: 600; letter-spacing: 0.06em; overflow-wrap: anywhere; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 4px 0; user-select: all; }
+#documentsMainPage .article-layout { position: relative; }
+/* The word processor's entry points on the Document page (WORD_PROCESSOR_DESIGN.md §13). */
+.docs-add-menu { position: fixed; z-index: 1500; display: flex; flex-direction: column; min-width: 240px; padding: 6px 0; background: var(--window-bg, var(--bg)); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow, 0 8px 24px rgba(0,0,0,.18)); }
+.docs-add-menu button { border: 0; background: transparent; color: var(--ink); text-align: left; padding: 10px 16px; font: inherit; cursor: pointer; }
+.docs-add-menu button:hover, .docs-add-menu button:focus-visible { background: var(--surface); }
+.docs-thumb.is-doc { background: var(--accent-soft); color: var(--accent-dark, var(--accent)); font-family: Georgia, serif; font-weight: 700; }
+.docs-gdocs-box { width: min(560px, 100%); }
+.docs-gdocs-path { font-size: 0.85rem; margin-bottom: 6px; }
+.docs-gdocs-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }
+.docs-gdocs-list li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.docs-gdocs-list li:last-child { border-bottom: 0; }
+.docs-gdocs-list label { flex: 1; display: flex; gap: 8px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+
+/* Photos page (PHOTOS_DESIGN.md §7, step 3). The timeline draws only the rows on
+   screen, absolutely placed in a canvas as tall as the whole library. */
+.photos-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.photos-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.photos-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.photos-tabs button {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.photos-tabs button[aria-selected="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent, var(--surface-strong));
+}
+.photos-count {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.photos-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.photos-scroll {
+  position: relative;
+  min-width: 0;
+}
+.photos-canvas {
+  position: relative;
+  width: 100%;
+}
+.photos-empty {
+  color: var(--muted);
+  padding: 32px 4px;
+  text-align: center;
+}
+.photos-month {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 2px 8px;
+  font-weight: 650;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+.photos-cell {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  overflow: hidden;
+  background: var(--line);
+  cursor: pointer;
+}
+.photos-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.photos-cell img:not([src]) {
+  visibility: hidden;
+}
+.photos-badge,
+.photos-fav {
+  position: absolute;
+  bottom: 3px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: var(--surface-strong);
+  background: color-mix(in srgb, var(--ink) 70%, transparent);
+}
+.photos-badge { right: 3px; }
+.photos-fav { left: 3px; }
+
+.photos-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--ink);
+  padding: calc(var(--safe-top, 0px) + 6px) 10px calc(var(--safe-bottom, 0px) + 10px);
+}
+.photos-viewer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+}
+.photos-viewer-when {
+  font-size: 0.9rem;
+  color: var(--muted);
+  min-width: 0;
+}
+.photos-viewer-top button,
+.photos-viewer-actions button {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: inherit;
+  min-height: 40px;
+}
+.photos-viewer-close {
+  font-weight: 650;
+}
+.photos-viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.photos-viewer-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* a thumbnail (laptop) fills the screen too */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.photos-play {
+  position: absolute;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  border: 0;
+  font-size: 1.6rem;
+  color: var(--surface-strong);
+  background: color-mix(in srgb, var(--ink) 65%, transparent);
+}
+.photos-viewer-note {
+  margin: 6px 0 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+/* Actions on the right, where a right thumb reaches (Luke holds the phone right-handed). */
+.photos-viewer-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+}
+.photos-viewer-actions [aria-pressed="true"] {
+  color: var(--tomato);
+}
+.photos-viewer-actions .is-danger {
+  color: var(--tomato);
+}
+.photos-viewer-left {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Settings › Beta › Connected Assistants (assistant-connectors-ui.js) */
+.assistant-small { margin: 2px 0 0; font-size: 0.78rem; color: var(--muted); }
+.assistant-key-row, .assistant-change-row { align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line, var(--border-subtle)); }
+.assistant-change-row span { overflow-wrap: anywhere; }
+.assistant-new-key { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 6px; }
+.assistant-new-key input[type="text"] { flex: 1 1 180px; min-width: 0; }
+.assistant-write-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; }
+.assistant-fresh-key { display: grid; gap: 6px; margin-top: 12px; padding: 10px; border-radius: 10px; background: var(--surface-2, var(--surface)); border: 1px solid var(--accent); }
+.assistant-key-text { display: block; font-size: 0.75rem; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.assistant-message { color: var(--accent); }

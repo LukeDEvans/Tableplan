@@ -17,13 +17,17 @@ import { ocrRowsFromObservations } from './receipt-reconcile.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { DIET_OPTIONS, ALLERGEN_OPTIONS, normalizeMemberDiets, normalizeDietEntry, mergeMemberDiets, isEmptyDiet, describeDiets, describeAllergies, foodRestrictionsContext } from './food-restrictions.js';
+import { logoVersion, readCachedLogo, writeCachedLogo, loadLogo, resizeImageToLogo, uploadLogo, removeLogo } from './view-logo.js';
 import { profileInitials, birthdaySummary, readCachedAvatar, writeCachedAvatar, loadAvatar, resizeImageToAvatar, uploadAvatar, removeAvatar } from './profile.js';
 import { createWeatherModule } from './weather-ui.js';
 import { createNewsModule, isNewsletterBriefing } from './news-ui.js';
+import { createMusicShowsModule } from './media-music-show-ui.js';
+import { isMusicShow } from './media-music-show.js';
 import { createScoresModule, gameCardHtml } from './scores-ui.js';
 import { OUT_TARGETS, openOutLink, titleHandoff, targetHandoff, linkOutAttrs, linkOutFromElement } from './link-out.js';
 import { PLACES, placeHandoff, billerForBill, mapsHandoffs, travelPlaceFor, storeSearchHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 import { matchProviderId } from './media-availability.js';
+import { mergeLibraries as mergeMusicLibraries, normalizeLibrary as normalizeMusicLibrary } from './music-library-model.js';
 import { createStreamLinksCache, linksForProvider } from './media-stream-links.js';
 import { createLanguageModule } from './language-ui.js';
 import { createSpeech } from './language-speech.js';
@@ -31,21 +35,26 @@ import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions, n
 import { normalizeCards as normalizeLanguageCards, mergeCards as mergeLanguageCards } from './language-srs.js';
 import { normalizeUserLessons, normalizeUserWords, mergeUserLessons, mergeUserWords } from './language-words.js';
 import { createNewsTickerModule } from './news-ticker.js';
-import { normalizeSportsPrefs } from './sports-model.js';
-import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonEnds } from './theme.js';
+import { normalizeSportsPrefs, dateKeyOf, shiftDateKey } from './sports-model.js';
+import { dynamicTheme, rankedGamedayTeams, nextGamedayCheckMs, teamTheme, nextHoliday } from './theme-dynamic.js';
+import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanViewName, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
-import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
+import { createFinanceModule, financeNudgeInstance, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
 import { normalizeContacts, normalizeContactGroups, createContactsModule, buildContactsVcf } from './contacts.js';
 import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { SPEED_MIN, SPEED_MAX, snapPlaybackSpeed, stepPlaybackSpeed, formatSpeedLabel, speedStepperHtml } from './playback-speed.js';
-import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
+import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, effectiveTombstones, tombstoneIdsFor, addTombstone, removeTombstone, computeDirtySections, settledSectionsAfterLoad, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { wirePageGroups, syncPageGroups, openPageGroup, groupForArea, setFlatPageGroups } from './page-groups.js';
-import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes } from './views.js';
+import { VIEW_TOGGLE_SECTIONS, scopeForView, scopesForSection, rowIdForScope, upgradeShadowStore, layerViewsFor, VIEW_LABELS, availableViews, startingView, stepView, swipeStep, viewHasPage, viewForPage, isFlatView, splitViewHash, viewHash, primaryView, cleanViewDisplayPrefs, displayPrefsForView, MIRROR_SCOPES_FIELD, mirrorScopeStamp, resolveBootScopes, ROW_RESET_SECTIONS, applyRowReset, listenHomeScope } from './views.js';
+import { LISTEN_PERSON_KEYS, mergeListenSeed, listenKeysSelect, listenKeysFromRow } from './listen-queue.js';
+import { mergeWatchItems, stampTick, stampTab, touchItem as touchWatchItem } from './watch-merge.js';
+import { watchEpisodes } from './watch-episodes.js';
+import { watchNextFrom, watchOpenSeason, watchSeasonPct } from './watch-place.js';
 import * as ExploreScope from './explore-scope.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
@@ -57,21 +66,25 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, nativePdfExport, nativePhotoLibrary, nativeFileSrc, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
 import { createReminderPrefsStore } from './calendar/reminder-prefs.js';
 import { createNativeReminderScheduler } from './calendar/reminders-native.js';
-import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
+import { SUBSCRIBER_PAPERS, subscriberPaperFor, looksLikeTeaser, bodyTextLength, chooseLongerResult, parseNativeExtractResult, nativeExtractBlockReason, ARTICLE_DOM_EXTRACTOR_SOURCE, TEASER_MAX_CHARS } from './article-native-reader.js';
 import { checkDeviceSignIns, deviceSignInsNeedCheck } from './news-device-signin.js';
 import { saveFile } from './save-file.js';
-import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, ATTACHMENT_TEXT_PREVIEW_MAX, attachmentViewKind, attachmentBlobType, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
+import { ATTACHMENT_ENDPOINT, ATTACHMENT_LEGACY_MAX_BYTES, chooseAttachmentRoute, gmailThreadUrl, base64UrlToBytes, fetchAttachmentBytes } from './mail-attachment-view.js';
+import { showMailAttachmentViewer } from './mail-attachment-viewers.js';
+import { listSnapshot, stampListChanges, mergeListStamps, mergeStampedList, normalizeListStamps, pruneListStamps } from './stamped-lists.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
+import { normalizeMovedOut, mergeMovedOut, stripMovedOut } from './finance-move.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { SETTING_STAMP_KEYS, settingsSnapshot, stampSettingChanges, mergeTrackedSettings, localSettingsAhead } from './settings-sync.js';
-import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
+import { clearLocalAccountState, accountTransitionKind, signOutWasExplicit } from './auth-account-reset.js';
+import { createSecondStepModule, secondStepNeeded, oauthReturnError, stripOauthReturnError, oauthErrorMessage } from './auth-second-step.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
 import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnostics.js';
 import { describeCapabilities } from './platform-capabilities.js';
@@ -86,7 +99,7 @@ import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
 import { deriveMediaTierCount, publicationTierFor, collapsePublicationTiers, ALL_PUBLICATIONS_KEY } from './media-tier.js';
-import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId } from './media-queue-order.js';
+import { upNextOrder, withSkippedLast, previousFromTrail, heldQueueId, episodeTapAction } from './media-queue-order.js';
 import { keptEpisodeIds, pruneOldEpisodes, mergeFetchedEpisodes } from './podcast-retention.js';
 import { normalizeQueueAdded, queueAddedFindRef, withQueueEntry, withoutQueueEntries, episodeRef, articleRef, libraryAlbumRef, catalogAlbumRef, trackRef, slimCatalogItem, libraryAlbumTracks } from './media-queue-added.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
@@ -109,6 +122,7 @@ import * as TravelIngest from './travel-ingest.js';
 import { usableViewportBottom } from './dock-space.js';
 import { installStatusTapScroll } from './status-tap-scroll.js';
 import { installInputClear } from './input-clear.js';
+import { createAssistantConnectorsPanel } from './assistant-connectors-ui.js';
 import { makeReaderOrigin, readerReturnTarget, captureScroll, restoreScroll } from './reader-return.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
@@ -312,6 +326,8 @@ const state = loadState();
 // stamps whatever differs from this (see settings-sync.js). Re-adopted after any
 // change that did NOT come from the user (a cloud load or merge).
 let settingsBaseline = settingsSnapshot(state);
+// Ids in the stamped lists (stamped-lists.js) at the last persist() / cloud load.
+let listBaseline = listSnapshot(state);
 // What this member's shared meal-plan snapshot looked like when it was last known
 // not to have been changed HERE (see syncOwnMealPlanShare). null until first taken.
 let mealPlanShareBaseline = null;
@@ -346,11 +362,14 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "memberDiets", "activeCooking", "mealPlanSharedEvents"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders", "grocerySettingStamps"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "groceryNextStopStamps", "instacartOrders", "grocerySettingStamps"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
-  watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "mediaQueueAdded", "mediaQueueRemoved", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaSettingStamps"],
+  watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData", "watchRowReset"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastSkipAds", "publicationTiers", "libraryKey", "podcastBundleSeries", "podcastReleasedSeries", "mediaQueueFallback", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations", "mediaListStamps", "mediaSettingStamps", "mediaRowReset"],
+  // The person's own Listen queue and positions, the same in every view
+  // (listen-queue.js, LISTEN_QUEUE_DESIGN.md). Never swapped by a view switch.
+  listen:    ["podcastProgress", "mediaProgress", "readingProgress", "mediaQueueAdded", "mediaQueueRemoved", "podcastAutoSkipped", "mediaAllPinnedOrder", "mediaHistory"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides", "planMealPlanCalendars", "planSettingStamps"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -360,7 +379,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt", "financeMovedOut", "financeClosedMonths", "financeSettlements", "financeTxnTax", "financeTxnTrip"],
   config:    ["mailAiSettings", "mailMoveMemory", "themeMode", "collapsedSections", "travelHome", "tombstones", "apiUsage", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs", "configSettingStamps"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -379,7 +398,9 @@ const STATE_SECTIONS = {
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
 // 7 (2026-09-30): financeTxnSourceSetAt added (financeTxnSource is latest-choice-wins).
-const STATE_SCHEMA_VERSION = 7;
+// 8 (2026-11-12 deploy): financeMovedOut (account moves, FINANCE_SPLIT_DESIGN.md §8.6),
+//   financeClosedMonths, financeSettlements, financeTxnTax, financeTxnTrip.
+const STATE_SCHEMA_VERSION = 8;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -391,6 +412,7 @@ const SECTION_SCOPE = {
   do: "toggle",
   watch: "toggle",
   media: "toggle",
+  listen: "personal",     // one queue and player per person, every view (LISTEN_QUEUE_DESIGN.md)
   plan: "toggle",
   // health holds familyMembers, which the shared Meal Plan depends on — it is
   // not a standalone page, so it stays household.
@@ -545,7 +567,16 @@ async function setSectionScope(section, scope, { quick = false } = {}) {
   for (const key of keys) { if (key in incoming) draft[key] = incoming[key]; }
   sectionScopes[section] = scope;
   try { localStorage.setItem(SCOPE_PREFS_KEY, JSON.stringify(sectionScopes)); } catch { /* full */ }
+  // applyStoredState forgets what's been written (it's built for whole-state
+  // replacements), which made the next save re-send EVERY section row after a
+  // view switch — ~15 writes, Household rows included (WATCH_AUDIT D2, Luke
+  // 2026-10-31). Only this section changed, so keep the record: its entry still
+  // holds the old scope's bytes, so the swapped-in data stays dirty and gets its
+  // merge-protected write (step 3 below), and every other section is written
+  // only if its data actually differs.
+  const writtenBeforeSwap = lastWrittenSections;
   applyStoredState(draft);
+  if (writtenBeforeSwap) lastWrittenSections = writtenBeforeSwap;
   adoptSettingsBaseline(); // the other scope's settings swapped in — not a user change
   mirrorStateToLocalStorage();
 
@@ -599,6 +630,37 @@ async function refreshActiveSectionFromServer(stateId, section, keys, { ifChange
   render();
 }
 
+// After the server moved accounts between Household and Personal
+// (FINANCE_SPLIT_DESIGN.md §8) both finance rows were rewritten. Take this view's
+// row exactly as it now is — never merge: this device's copy still holds what
+// moved — forget the other view's off-screen copy, and re-check whether this
+// person now has personal finance (which decides what Personal's Finance reads).
+async function reloadFinanceAfterMove() {
+  const keys = STATE_SECTIONS.finance;
+  const stateId = supabaseConfig().stateId;
+  const rowId = sectionRowId(stateId, "finance");
+  const res = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
+    { headers: supabaseHeaders(), cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`Couldn't reload finance (${res.status}).`);
+  const row = (await res.json())[0];
+  if (sectionRowId(stateId, "finance") !== rowId) return; // the view changed meanwhile; its own load covers it
+  const draft = { ...state };
+  for (const key of keys) delete draft[key];
+  for (const key of keys) if (row?.state && key in row.state) draft[key] = row.state[key];
+  const written = lastWrittenSections;
+  applyStoredState(draft);
+  if (written) {
+    lastWrittenSections = written;
+    lastWrittenSections.finance = JSON.stringify(extractSectionData(keys)); // equals the server: nothing to send back
+  }
+  if (row) lastSeenSectionStamp[rowId] = row.updated_at;
+  if (shadowSections.finance) { delete shadowSections.finance; persistShadowSections(); }
+  await loadPersonalFinanceFlag();
+  render();
+}
+
 // A fetched section row whose scope is no longer on screen: keep it as that
 // scope's shadow (or drop it if it isn't one of this person's rows).
 function keepRowAsShadow(stateId, section, row) {
@@ -620,7 +682,8 @@ function mergeRemoteSectionRow(section, keys, row) {
     && lastWrittenSections[section] !== JSON.stringify(extractSectionData(keys));
   lastSeenSectionStamp[row.id] = row.updated_at;
   const { stateUpdatedAt: remoteTs, ...remoteData } = row.state || {};
-  const localFrag = { ...extractSectionData(keys), tombstones: state.tombstones, stateUpdatedAt: state.stateUpdatedAt || "" };
+  // A reset row (views.js applyRowReset) replaces this device's stale copy.
+  const localFrag = { ...applyRowReset(section, keys, extractSectionData(keys), remoteData), tombstones: state.tombstones, stateUpdatedAt: state.stateUpdatedAt || "" };
   const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
   const merged = (state.stateUpdatedAt || "") >= (remoteTs || "")
     ? mergeStates(localFrag, remoteFrag)
@@ -726,12 +789,13 @@ const PAGE_ACCESS_GROUPS = [
   { key: "plan",     label: "Calendar",  keys: ["plan", "do"],                  note: "Includes Tasks" },
   { key: "finance",  label: "Finance",   keys: ["finance"] },
   { key: "read",     label: "Listen",    keys: ["read"] },
-  { key: "mail",     label: "Mail",      keys: ["mail", "contacts"],            note: "Includes Contacts" },
+  { key: "mail",     label: "Message",   keys: ["mail", "contacts"],            note: "Messages, Mail and Contacts" },
   { key: "eat",      label: "Meal Plan", keys: ["eat"] },
   { key: "news",     label: "News",      keys: ["news"],                         note: "Includes Scores" },
   { key: "recreate", label: "Recreate",  keys: ["recreate", "play", "explore"], note: "Explore, Exercise and Leisure" },
   { key: "shop",     label: "Shop",      keys: ["shop"] },
   { key: "watch",    label: "Watch",     keys: ["watch"] },
+  { key: "photos",   label: "Photos",    keys: ["photos"] },
 ];
 const pageGroupKeys = (value) => String(value || "").split(",").filter(Boolean);
 
@@ -763,6 +827,15 @@ let localDevMode = false;
 // during boot (auto-entered via the live_local_dev flag) before the gate code's
 // line executes — a later `let` would be in its TDZ then. See updateAppLockState.
 let authCheckCompleted = false;
+// Authenticator-code step + iPhone Face ID lock (auth-second-step.js). Created up
+// here so boot can use it; every dep is an import or deferred, so no TDZ.
+const secondStep = createSecondStepModule({
+  getClient: () => supabaseClient,
+  escapeHtml: (...a) => escapeHtml(...a),
+  nativeDocumentsLock,
+  isNativeApp,
+  storage: localStorage,
+});
 // Memoized getPlanEventsForRange results, keyed by range; a small LRU so paging
 // months/weeks and the zoom ladder can reuse recent ranges. Cleared on persist,
 // iCal fetch, and full state replacement so it can never go stale.
@@ -831,6 +904,7 @@ let watchCategoryInputActive = false;
 // Poster-grid: which card is tapped-open into its full-width detail row (providers,
 // episode tracking). One at a time; null = grid is all clean posters.
 let expandedWatchItemId = null;
+let watchListScrollReset = false; // next Watch redraw starts the list at the top (tab switch)
 let watchLogPendingId = null;
 let watchLogRating = null;
 let watchLogEditMode = false;
@@ -1216,6 +1290,10 @@ const elements = {
   deleteReceiptBtn: document.querySelector("#deleteReceiptBtn"),
   homeShopBtn: document.querySelector("#homeShopBtn"),
   titleShopBtn: document.querySelector("#titleShopBtn"),
+  homeDocumentsBtn: document.querySelector("#homeDocumentsBtn"),
+  titleDocumentsBtn: document.querySelector("#titleDocumentsBtn"),
+  homePhotosBtn: document.querySelector("#homePhotosBtn"),
+  titlePhotosBtn: document.querySelector("#titlePhotosBtn"),
   inventoryMainPage: document.querySelector("#inventoryMainPage"),
   inventoryPlannerGrid: document.querySelector("#inventoryPlannerGrid"),
   inventoryBoxDialog: document.querySelector("#inventoryBoxDialog"),
@@ -1330,6 +1408,8 @@ const elements = {
   miniPlayerInfoBtn: document.querySelector("#miniPlayerInfoBtn"),
   mediaMainPage: document.querySelector("#mediaMainPage"),
   watchMainPage: document.querySelector("#watchMainPage"),
+  documentsMainPage: document.querySelector("#documentsMainPage"),
+  photosMainPage: document.querySelector("#photosMainPage"),
   readingPlannerGrid: document.querySelector("#readingPlannerGrid"),
   readingSearchDialog: document.querySelector("#readingSearchDialog"),
   readingSearchDialogInput: document.querySelector("#readingSearchDialogInput"),
@@ -1703,6 +1783,7 @@ let mealPlanNotifOpen = false;
 // title, show it as a dot (styles.css).
 const PAGE_NOTIF_BUTTONS = {
   mail: ["homeMailBtn", "titleMailBtn"],
+  messages: ["homeMailBtn", "titleMailBtn"], // secure messages waiting (messaging/peek.js)
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
   do: ["planTasksBtn"], // Tasks notif dot now lives on the Calendar page's bell
   eat: ["homeEatBtn", "titleMealPlanBtn"],
@@ -1745,10 +1826,21 @@ function readerArticle(id) {
 }
 
 const pageNotifCounts = {};
+// The Messages tab's module once loaded (messaging/ui.js; see "Message page" below).
+// Declared this early because hideAllPages reads it.
+const MESSAGE_TAB_KEY = "liveMessageTab";
+let messagesUi = null;
+let messagesUiLoading = null;
+// The Documents pages' module once loaded (documents/ui.js; see "Documents page").
+let documentsUi = null;
+let documentsUiLoading = null;
 function setPageNotifCount(page, count) {
   pageNotifCounts[page] = count;
+  // A button marks if ANY page sharing it has something (Message: Mail suggestions
+  // or secure messages waiting).
   (PAGE_NOTIF_BUTTONS[page] || []).forEach((key) => {
-    elements[key]?.classList.toggle("has-notif-dot", count > 0);
+    const on = Object.entries(PAGE_NOTIF_BUTTONS).some(([p, keys]) => keys.includes(key) && (pageNotifCounts[p] || 0) > 0);
+    elements[key]?.classList.toggle("has-notif-dot", on);
   });
   // A group heading carries the mark of any page inside it (page-groups.js).
   syncPageGroups(elements.homePageGroups);
@@ -1781,6 +1873,31 @@ const {
   exportContactsVcf, importContactsVcf, editViewedContact, deleteViewedContact,
 } = _contacts;
 
+// ── Music shows (media-music-show-ui.js, AMPLIFIER_DESIGN.md) ─────────
+// The Listen bell's playlist shows (NYT's The Amplifier): the native player reads
+// the write-ups and plays each song from Apple Music. Above render() (it updates
+// the bell's badge); every dep is a thunk, so nothing runs at instantiation.
+const _musicShows = createMusicShowsModule({
+  getState: () => state,
+  persist: (...a) => persist(...a),
+  markArticleRead: (...a) => markArticleRead(...a),
+  openArticle: (id) => openArticleFrom(id),
+  escapeHtml: (...a) => escapeHtml(...a),
+  showToast: (...a) => showVoiceToast(...a),
+  nativeTts: () => nativeTts(),
+  nativeAppleMusic: () => nativeAppleMusic(),
+  nativeVoiceId: () => nativeVoiceIdPref(),
+  voiceSpeed: () => articleVoiceSpeed(),
+  playbackRate: () => mediaPlaybackSpeed || 1,
+  stopOtherPlayback: () => { stopPodcastAudio(); stopListen(); stopMusicPlayback(); stopRadio(); },
+  setMiniPlayer: (...a) => { clearWebMediaSession(); setMiniPlayer(...a); },
+  onPlaybackChange: () => { updateMiniPlayerPlayBtn(); if (!nowPlayingKind()) hideMiniPlayer(); },
+  setPageNotifCount: (...a) => setPageNotifCount(...a),
+  showListen: () => showMediaApp(),
+  callGmailApi: (...a) => callGmailApi(...a),
+});
+const musicShows = _musicShows;
+
 // ── Weather domain (extracted to weather-ui.js) ────────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showWeatherApp stays
 // in app.js. getActiveAppArea lets the module gate loads/refresh on the active page;
@@ -1809,6 +1926,9 @@ const _scores = createScoresModule({
   getActiveAppArea: () => activeAppArea,
 });
 const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed: seedScores, getBoard: getScoresBoard, showGame: showScoresGame } = _scores;
+// The game-day theme reads today's board through here (theme-dynamic.js); set
+// now, because applyThemeMode first runs at module load, before this factory.
+refreshGamedayTheme.getBoard = (...a) => getScoresBoard(...a);
 
 // ── News domain (news-ui.js, NEWS_PAGE_DESIGN.md) ──────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showNewsApp stays in
@@ -1913,16 +2033,23 @@ const _finance = createFinanceModule({
   // member's own (`u-<id>`) for their personal accounts (FINANCE_SPLIT_DESIGN.md).
   getFinanceStoreGroupId: () => (sectionScope("finance") === "personal" ? (authSession?.user?.id ? `u-${authSession.user.id}` : null) : (userGroup?.id || null)),
   getFinanceScope: () => sectionScope("finance"),
+  canMoveFinanceAccounts: () => Boolean(userGroup?.role === "admin" && authSession?.user?.id && !localDevMode) || Boolean(localDevMode && window.__financeMoveQa),
+  reloadFinanceAfterMove: (...a) => reloadFinanceAfterMove(...a),
   openHouseholdFinance: () => { if (currentViewList().includes("household")) { currentViewKey.chosen = true; applyView("household", { keepPage: true }); } },
   canUseFinanceStore: () => !localDevMode && canUseCloudStorage() && !!authSession?.access_token,
   fetchSupabaseJson: (...a) => fetchSupabaseJson(...a),
   writeSupabaseJson: (...a) => writeSupabaseJson(...a),
   // The one receipts list (state.receipts) is Shop-owned; Finance reads and
   // links through this interface (RECEIPTS.md). Thunks: groceries is created below.
-  receiptsForFinance: (...a) => receiptsForFinance(...a),
+  receiptsForFinance: (...a) => receiptsForFinance(...a).filter((r) => r.view !== "personal" || currentViewKey() === "personal"),
   importFinanceInboxReceipts: (...a) => importFinanceInboxReceipts(...a),
   linkReceiptToFinanceTxn: (...a) => linkReceiptToFinanceTxn(...a),
   openReceiptDetail: (...a) => openReceiptDetail(...a),
+  // A receipt scanned in Finance's split editor is filed in Document like any scan.
+  queueReceiptFile: (files, opts) => queueReceiptForDocuments(files, opts),
+  memberName: (userId) => (userId === authSession?.user?.id ? "You" : groupMembers.find((gm) => gm.user_id === userId)?.display_name || "A household member"),
+  currentViewKey: () => currentViewKey(),
+  onFinanceCountChanged: () => { scheduleReminderSync(); },
 });
 const {
   financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions,
@@ -1943,6 +2070,10 @@ const {
 // record (Decision #2b) — the live list is state.persistentManualGroceries.
 const _groceries = createGroceriesModule({
   state, elements, persist, meals, prepDays,
+  // Personal receipts (FINANCE_AUDIT §8): only people with a Personal view can mark
+  // one, and the Household view never lists them.
+  canMarkPersonal: () => currentViewList().includes("personal"),
+  showPersonalReceipts: () => currentViewKey() === "personal",
   handOff: (...a) => handOff(...a),
   getHomeLocation: () => homeLocation(),
   getActiveAppArea: () => activeAppArea,
@@ -2083,6 +2214,10 @@ const {
 // recipe-view close handler via the exposed onRecipeViewDialogClose.
 const _recipes = createRecipesModule({
   state, elements, persist, render, trashItemTemplate,
+  // What a recipe costs, from past receipt prices (Shop's price history).
+  recipeCost: (recipe, scale) => { try { return _groceries.estimateRecipeCost(recipe, scale); } catch { return null; } },
+  // Grocery spending vs budget this month (Finance), for budget-friendly picks.
+  groceryPace: () => { try { return isPageEnabled("finance") ? _finance.financeGroceryPace() : null; } catch { return null; } },
   showMailToast: (...a) => showMailToast(...a),
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
@@ -2186,6 +2321,7 @@ const {
 // infra + calendar readers + eat shell stay in app.js and are injected. Dual calendar list
 // preserved (Decision #1 not applied). Legacy week.manualGroceries untouched (Decision #2b).
 const _mealplan = createMealplanModule({
+  groceryPace: () => { try { return isPageEnabled("finance") ? _finance.financeGroceryPace() : null; } catch { return null; } },
   getHomeLocation: () => homeLocation(),
   state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys,
   getActiveAppArea: () => activeAppArea,
@@ -2519,7 +2655,11 @@ function bindEvents() {
   }
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
-  document.getElementById("lockSignInBtn")?.addEventListener("click", () => elements.authDialog.showModal());
+  document.getElementById("lockSignInBtn")?.addEventListener("click", (e) => {
+    if (e.currentTarget.dataset.secondStep) secondStep.waitForCode();
+    else elements.authDialog.showModal();
+  });
+  secondStep.bind();
   // Local-dev escape hatch on the gate — only shown on localhost.
   const lockDevBtn = document.getElementById("lockDevSignInBtn");
   if (lockDevBtn && isLocalDevHost()) {
@@ -2634,7 +2774,20 @@ function bindEvents() {
     if (e.target.closest("#mailSuggestions, #mailSuggCheckNow")) return;
     setMailNotifPanelOpen(false);
   }, { capture: true });
-  elements.mailSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") loadMailList(currentMailbox, e.target.value); });
+  // Enter searches. Emptying the box (the clear "x" or deleting the text) after a
+  // search puts the folder's list back, so a cleared box never leaves the old
+  // results (or "Inbox empty") showing.
+  let mailSearchShown = "";
+  elements.mailSearchInput?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    mailSearchShown = e.target.value.trim();
+    loadMailList(currentMailbox, e.target.value);
+  });
+  elements.mailSearchInput?.addEventListener("input", (e) => {
+    if (e.target.value.trim() || !mailSearchShown) return;
+    mailSearchShown = "";
+    loadMailList(currentMailbox, "");
+  });
   document.getElementById("mailSelectAll")?.addEventListener("click", toggleMailSelectAll);
   document.getElementById("mailRefreshBtn")?.addEventListener("click", refreshMailList);
   document.getElementById("mailPagePrev")?.addEventListener("click", () => mailGoToPage(-1));
@@ -2754,9 +2907,7 @@ function bindEvents() {
     if (!tab) return;
     if (window.innerWidth <= 680) document.getElementById("watchSidebar")?.classList.remove("is-expanded");
     if (tab.dataset.watchSide === "archive") { openWatchArchive(); return; }
-    const input = document.getElementById("discoverSearchInput");
-    if (input?.value) { input.value = ""; runDiscoverSearch(""); }
-    renderWatchPlanner();
+    setWatchSideView(tab.dataset.watchSide === "youtube" ? "youtube" : "list");
   });
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
@@ -2787,7 +2938,13 @@ function bindEvents() {
   elements.openTasksPageBtn?.addEventListener("click", openTasksPage);
   elements.closeWatchSearchBtn.addEventListener("click", () => elements.watchSearchDialog.close());
   elements.watchSearchDialog.addEventListener("click", closeDialogOnBackdropClick);
+  {
+    const other = document.getElementById("watchOtherServicesDialog");
+    other?.addEventListener("click", closeDialogOnBackdropClick);
+    other?.querySelector("#closeWatchOtherServicesBtn")?.addEventListener("click", () => other.close());
+  }
   elements.watchSearchDialog.addEventListener("close", () => {
+    watchSearchLinkId = null;
     elements.watchSearchDialogInput.value = "";
     elements.watchSearchDialogResults.innerHTML = "";
   });
@@ -3117,6 +3274,17 @@ function bindEvents() {
   elements.addEditReceiptLineBtn.addEventListener("click", () => addEditReceiptLine());
   elements.deleteReceiptBtn.addEventListener("click", deleteReceipt);
   elements.receiptEditForm.addEventListener("submit", saveReceiptEdit);
+  // Inventory › rooms: whether scanned grocery receipts fill Inventory (receipt-pantry.js).
+  const fromReceipts = document.getElementById("inventoryFromReceiptsToggle");
+  if (fromReceipts) {
+    const syncToggle = () => { fromReceipts.checked = state.groceryPricingSettings?.pantryFromReceipts !== false; };
+    syncToggle();
+    document.getElementById("inventoryRoomsDialog")?.addEventListener("focusin", syncToggle);
+    fromReceipts.addEventListener("change", () => {
+      state.groceryPricingSettings = normalizeGroceryPricingSettings({ ...(state.groceryPricingSettings || {}), pantryFromReceipts: fromReceipts.checked });
+      persist();
+    });
+  }
   elements.inventoryBoxDialog.addEventListener("click", closeDialogOnBackdropClick);
   document.querySelector("#closeInventoryBoxDialogBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
   document.querySelector("#cancelInventoryBoxBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
@@ -3222,6 +3390,7 @@ async function initializeApp() {
   }
   refreshAvailableViews(); // the group role is known now (views.js)
   await alignScopesToView(); // each page's data row follows the view, now that state has loaded
+  seedListenRowOnce(); // one-time: queue state and positions from the old per-view rows (LISTEN_QUEUE_DESIGN.md §5)
   await hydrateRecipeRowsFromSupabase();
   resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
@@ -3258,6 +3427,8 @@ function handleHashNavigation() {
     sweat: showPlayApp,
     shop: showShopApp,
     watch: showWatchApp,
+    documents: showDocumentsApp,
+    photos: showPhotosApp,
     recreate: showRecreateApp, // Recreate is a menu group now; its old hash opens Leisure
     leisure: showRecreateApp,
     exercise: showPlayApp,
@@ -3304,16 +3475,26 @@ async function initializeSupabaseAuth() {
     return;
   }
 
+  // A Google/Apple sign-in that failed comes back with the reason on the URL.
+  // Read it before Supabase sees the URL, then show it on the gate (auth-second-step.js).
+  const oauthFailure = oauthReturnError(window.location.href);
+  if (oauthFailure) history.replaceState(null, "", stripOauthReturnError(window.location.href));
+
   supabaseClient = window.supabase.createClient(supabaseBaseUrl(), supabaseConfig().anonKey);
   const { data, error } = await supabaseClient.auth.getSession();
   if (error) {
     authCheckCompleted = true;
     updateAppLockState(); // reveal the sign-in button rather than sticking on "Checking…"
-    updateAuthUi("Could not check sign-in.");
+    updateAuthUi(oauthFailure ? oauthErrorMessage(oauthFailure) : "Could not check sign-in.");
     return;
   }
 
-  authSession = data.session;
+  let bootSession = data.session;
+  // Signed in, but this account has an authenticator code and this session
+  // hasn't given it yet: hold the boot at "One more step" (the gate stays shut,
+  // nothing loads) until the code is entered or the person signs out.
+  if (secondStepNeeded(bootSession)) bootSession = await secondStep.waitForCode();
+  authSession = bootSession;
   authCheckCompleted = true;
   // Record the booting account BEFORE registering the listener so Supabase's
   // INITIAL_SESSION event reads as a same-account 'refresh' (no-op) — the boot
@@ -3321,6 +3502,8 @@ async function initializeSupabaseAuth() {
   // and a subsequent sign-in is a clean 'first'.
   stateAccountId = authSession?.user?.id || authSession?.user?.email || null;
   updateAppLockState();
+  if (oauthFailure && !authSession?.access_token) updateAuthUi(oauthErrorMessage(oauthFailure));
+  secondStep.startFaceIdLock(() => !!authSession?.access_token);
   if (authSession?.access_token) { warmMailStatus(); warmMailList(); warmPageNotifs(); syncShareTokenForSession(true); refreshNewsTicker(); }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     // Multi-tab account isolation: classify the change against the account whose
@@ -3328,6 +3511,11 @@ async function initializeSupabaseAuth() {
     // auth changes to every tab via localStorage), so a stale tab left on account A
     // reacts here when another tab signs out or signs in as a different account.
     const kind = accountTransitionKind(stateAccountId, session);
+    // A fresh sign-in on an account with an authenticator code: stop at the code
+    // step and keep the app shut. Verifying fires this listener again with the
+    // upgraded session, which then loads as a normal first sign-in. Read from the
+    // session itself — awaiting auth calls in here can deadlock supabase-js.
+    if (kind === "first" && secondStepNeeded(session)) { secondStep.waitForCode(); return; }
     authSession = session;
     updateAppLockState();
     updateAuthUi();
@@ -3351,12 +3539,19 @@ async function initializeSupabaseAuth() {
       window.clearTimeout(sharedStorageRetryTimer);
       sharedStorageReady = false;
       activeSharedStorageProvider = null;
+      // Only the person's own sign-out (or a different account) deletes this device's
+      // secure messages and Documents keys. A session ended from another device (a
+      // device removal signs out the others) keeps them (auth-account-reset.js).
+      const keepSecureStores = kind === "signout" && !signOutWasExplicit(localStorage);
       clearLocalAccountState(localStorage);
       await Promise.allSettled([
         purgeLocalArticleContent(),
         purgeLocalCadenceContent(),
         purgeLocalMusicContent(),
         purgeLocalFinanceTxnStore(),
+        purgeLocalPhotos(),
+        keepSecureStores ? Promise.resolve() : purgeLocalMessaging(), // the old session is already gone here, so only the local wipe happens
+        keepSecureStores ? Promise.resolve() : forgetPhotoSyncDevice(),
         syncShareTokenForSession(false),
       ]);
       window.location.reload();
@@ -3995,7 +4190,34 @@ function setupDiagnostics() {
     planScope: () => (localDevMode ? sectionScope("plan") : null),
     scopes: () => (localDevMode ? Object.fromEntries(VIEW_TOGGLE_SECTIONS.map((s) => [s, sectionScope(s)])) : null),
     businessSpaceForQa: (space) => { if (!localDevMode) return null; saveBusinessSpace(space); renderViewBands(0); return true; },
-    watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); persist(); return true; },
+    // Seed Listen's podcasts / books for the grid + panel QA. Local dev only.
+    listenSeedForQa: ({ podcasts, books } = {}) => {
+      if (!localDevMode) return null;
+      if (Array.isArray(podcasts)) state.podcasts = podcasts;
+      if (Array.isArray(books)) state.readingItems = books;
+      persist();
+      return true;
+    },
+    // One Listen queue per person (scripts/qa-listen-queue.mjs, LISTEN_QUEUE_DESIGN.md):
+    // the queue as listed, finish an episode, add one by hand, read the person's
+    // played marks. Local dev only.
+    listenQueueForQa: () => (localDevMode ? getAllListenList({ hoist: false }).map((i) => i.id) : null),
+    listenPlayedForQa: (id) => { if (!localDevMode) return null; setPodcastEpisodePlayed(id, true); return true; },
+    listenAddForQa: (id) => (localDevMode ? addEpisodeToMediaQueue(id) : null),
+    listenProgressForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.podcastProgress || {})) : null),
+    listenScopeForQa: () => (localDevMode ? { media: sectionScope("media"), listen: sectionScope("listen"), home: listenHomeScope(currentViewList()) } : null),
+    watchSeedForQa: (items) => { if (!localDevMode) return null; state.watchItems = normalizeWatchItems(items); (items || []).forEach((i) => i?.id && unrecordDeletion("watchItems", i.id)); persist(); if (activeAppArea === "watch") { activeWatchCategory = "all"; expandedWatchItemId = null; renderWatchPlanner(); } return true; },
+    // The Watch list and its removals as saved (scripts/qa-watch-panel.mjs). Local dev only.
+    watchItemsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.watchItems || [])) : null),
+    watchTombstonesForQa: () => (localDevMode ? [...deletedIdsFor("watchItems")] : null),
+    // Per-view delete lists (scripts/qa-view-deletes.mjs). Local dev only.
+    setViewForQa: (view) => { if (!localDevMode) return null; applyView(view); return currentViewKey(); },
+    watchDeleteForQa: (id) => { if (!localDevMode) return null; deleteWatchItem(id); return true; },
+    tombstonesForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.tombstones || {})) : null),
+    mergeForQa: (newer, older) => (localDevMode ? JSON.parse(JSON.stringify(mergeStates(newer, older))) : null),
+    // Listen bell music shows (scripts/qa-music-shows.mjs): saved articles carrying a
+    // musicShow, as the inbox sweep writes them. Local dev only.
+    musicShowsSeedForQa: (articles) => { if (!localDevMode) return null; state.savedArticles = [...(state.savedArticles || []).filter((a) => !articles.some((b) => b.id === a.id)), ...articles]; persist(); musicShows.updateBadge(); return true; },
     showScoresForQa: () => { if (!localDevMode) return null; showScoresApp(); return true; },
     mediaServicesForQa: (ids) => { if (!localDevMode) return null; state.mediaServices = ids.map(String); resetMediaHub(); return true; },
     settingsForQa: (kind) => { if (!localDevMode) return null; openContextSettingsDialog(kind); return true; },
@@ -4070,7 +4292,12 @@ function setupDiagnostics() {
     itemDetailHtmlForQa: (type, item) => (localDevMode ? itemDetailContent(type, item).bodyHtml : null),
     openPlanEventForQa: (id, dateKey) => { if (!localDevMode) return null; showPlanApp(); openPlanEventDetail(id, dateKey); return true; },
     openTripForQa: (id) => { if (!localDevMode) return null; openExploreTrip(id); return true; },
-    openPageForQa: (name) => { if (!localDevMode) return null; ({ finance: showFinanceApp, shop: showShopApp, contacts: showContactsApp, news: showNewsApp })[name]?.(); return activeAppArea; },
+    openPageForQa: (name) => { if (!localDevMode) return null; ({ finance: showFinanceApp, shop: showShopApp, contacts: showContactsApp, news: showNewsApp, media: showMediaApp })[name]?.(); return activeAppArea; },
+    // The account move screen (scripts/qa-finance-move.mjs). Local dev only.
+    financeMoveSeedForQa: (accounts) => { if (!localDevMode) return null; state.financeAccounts = normalizeFinanceAccounts(accounts, createId); return true; },
+    financeAccountsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.financeAccounts || [])) : null),
+    personalFinanceFlagForQa: () => (localDevMode ? hasPersonalFinance : null),
+    financeRecheckLinkForQa: () => (localDevMode ? checkFinanceLinkStatus() : null),
     financeSeedAccount: () => {
       if (!localDevMode) return null;
       state.financeAccounts = normalizeFinanceAccounts([{ id: "qa-acct", owner: "Joint", name: "QA Savings", kind: "cash", manualBalance: 5000 }], createId);
@@ -4293,6 +4520,14 @@ function setupDiagnostics() {
     tickerNext: () => { if (!localDevMode) return null; _newsTicker.next(); return _newsTicker.current(); },
     // Favorite teams for the Scores view and the ticker (state.sportsPrefs).
     sportsSetPrefs: (prefs) => { if (!localDevMode) return null; state.sportsPrefs = prefs; return true; },
+    // Dynamic display (theme-dynamic.js): look at today's board again now, and
+    // report what's showing.
+    gamedayRecheck: async () => {
+      if (!localDevMode) return null;
+      clearTimeout(refreshGamedayTheme.timer); refreshGamedayTheme.timer = null; refreshGamedayTheme.at = 0;
+      await refreshGamedayTheme();
+      return { shown: applyThemeMode.shown, palette: document.body.dataset.palette || "classic", timer: refreshGamedayTheme.timerKind || "" };
+    },
     mpSetSuggestions: (recipes) => {
       if (!localDevMode) return null;
       mealPlanRecipes = recipes;
@@ -4542,6 +4777,7 @@ async function toggleAuth() {
       Promise.allSettled([pendingFlush, removePushSubscriptionForSignOut()]),
       new Promise((resolve) => window.setTimeout(resolve, SIGN_OUT_FLUSH_TIMEOUT_MS)),
     ]);
+    const messagingHeaders = supabaseHeaders(); // still this account's token: lets the device removal through
     authSession = null;
     sharedStorageReady = false;
     activeSharedStorageProvider = null;
@@ -4561,6 +4797,9 @@ async function toggleAuth() {
     purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
     purgeLocalMusicContent();   // same: drop local uploaded-music blobs (live-music IDB)
     purgeLocalFinanceTxnStore(); // same: drop the durable-transaction mirror (live-finance-txns IDB)
+    purgeLocalPhotos();          // same: drop the device copy of Photos' records and thumbnails (live-photos IDB)
+    await purgeLocalMessaging(messagingHeaders); // secure messages: remove this device from the account, delete its store and key
+    await forgetPhotoSyncDevice(); // background photo sync stops on this iPhone
     await syncShareTokenForSession(false); // the iPhone Share Extension stops sending receipts for this account
     try {
       await supabaseClient.auth.signOut();
@@ -5053,7 +5292,7 @@ function saveTripBackup() {
     localStorage.setItem(TRIP_BACKUP_KEY, JSON.stringify({
       trips: state.trips || [],
       travelIdeas: state.travelIdeas || [],
-      tombstones: (state.tombstones?.trips || []),
+      tombstones: deletedIdsFor("trips"),
       savedAt: state.stateUpdatedAt
     }));
   } catch {}
@@ -5126,6 +5365,10 @@ function stampChangedSettings() {
   if (bootedWithEmptyStorage && !sharedStorageReady) { adoptSettingsBaseline(); return []; }
   const { baseline, changed } = stampSettingChanges(state, settingsBaseline, state.stateUpdatedAt);
   settingsBaseline = baseline;
+  // Same for the small lists that merge by union with add/remove stamps
+  // (radio favourites, followed programs, Next Stop items — stamped-lists.js).
+  const lists = stampListChanges(state, listBaseline, state.stateUpdatedAt);
+  listBaseline = lists.baseline;
   if (changed.length && !settingsFlushDueAt) {
     settingsFlushDueAt = Date.now() + Math.max(SETTINGS_FLUSH_DEBOUNCE_MS, SETTINGS_FLUSH_MIN_INTERVAL_MS - (Date.now() - lastSharedStorageWriteAt));
   }
@@ -5136,6 +5379,7 @@ function stampChangedSettings() {
 // take them as the new baseline so the next persist() doesn't stamp them.
 function adoptSettingsBaseline() {
   settingsBaseline = settingsSnapshot(state);
+  listBaseline = listSnapshot(state);
   adoptMealPlanShareBaseline();
 }
 
@@ -5198,7 +5442,49 @@ function syncOwnMealPlanShare() {
   };
 }
 
+// Receipts live in their own table (receipts-sync.js, FINANCE_AUDIT §10). Read at
+// start-up and on returning to the app; this device's changes are sent a few
+// seconds after a save. Household receipts also stay in the grocery row until
+// every device has this build (then they come out of it).
+let receiptsSync = null;
+let receiptsSyncTimer = null;
+async function receiptsSyncer() {
+  if (receiptsSync) return receiptsSync;
+  const [{ createReceiptsSync }, { createRestTransport }] = await Promise.all([import("./receipts-sync.js"), import("./messaging/server.js")]);
+  receiptsSync ||= createReceiptsSync({
+    transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+    store: { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) },
+    getReceipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
+    setReceipts: (list, { removed = [] } = {}) => {
+      recordDeletions("receipts", removed);
+      state.receipts = normalizeReceipts(list);
+      persist();
+      renderAfterReceiptsSync();
+    },
+    scopes: () => ({ groupId: userGroup?.id || "", userId: authSession?.user?.id || "" }),
+    isRemoved: (id) => deletedIdsFor("receipts").includes(String(id)),
+    normalize: (r) => normalizeReceipts([r])[0] || r,
+  });
+  return receiptsSync;
+}
+function syncReceiptsTable({ pull = true } = {}) {
+  if (localDevMode || !sharedStorageReady || !userGroup?.id || !authSession?.user?.id) return;
+  receiptsSyncer().then((s) => s.sync({ pull })).then(() => movePersonalReceiptFilesSoon()).catch((e) => console.warn("[receipts] sync:", e?.message || e));
+}
+function scheduleReceiptsPush() {
+  clearTimeout(receiptsSyncTimer);
+  receiptsSyncTimer = setTimeout(() => syncReceiptsTable({ pull: false }), 4000);
+}
+function renderAfterReceiptsSync() {
+  try {
+    const area = getActiveAppArea();
+    if (area === "finance") _finance.renderFinancePage();
+    else if (area === "documents") { /* Document re-reads receipt info on its next draw */ }
+  } catch { /* best-effort */ }
+}
+
 function persist() {
+  if (sharedStorageReady) scheduleReceiptsPush();
   state.stateUpdatedAt = new Date().toISOString();
   stampChangedSettings();
   syncOwnMealPlanShare();
@@ -5449,6 +5735,8 @@ function defaultState() {
     groceryCleared: {},
     groceryChecklist: { config: [], provisional: {}, submissions: {} },
     nextStopItems: [],
+    groceryNextStopStamps: {},
+    mediaListStamps: {},
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
     groceryCatalogVersion: 1,
@@ -5458,7 +5746,7 @@ function defaultState() {
     groceryItemLocations: {},
     groceryStoreItemSections: {},
     groceryPriceObservations: [],
-    groceryPricingSettings: { enabled: false, extraStoreCost: 5 },
+    groceryPricingSettings: { enabled: false, extraStoreCost: 5, pantryFromReceipts: true },
     receipts: [],
     receiptItemMappings: {},
     priceHistory: [],
@@ -5497,6 +5785,7 @@ function defaultState() {
     financeGoals: [],
     financeTxnSource: "feed", // "feed" (SimpleFIN 45-day window) | "store" (durable finance_transactions) — FINANCE_TRANSACTIONS_DESIGN.md §5.5
     financeTxnSourceSetAt: "", // when financeTxnSource was last chosen; merge keeps the latest choice
+    financeMovedOut: { epoch: 0, accounts: [], linked: [], txns: [] }, // what a move took out of this finance row (finance-move.js); only the server's move changes it
     financeAccountLabels: [],
     financeAccountSubLabels: {},
     financePersonal: [],
@@ -5526,6 +5815,10 @@ function defaultState() {
     // unlabeled charges drop out of the "to label" notifications.
     financeLabelSkips: {},
     financeLabelSnoozes: {},
+    financeClosedMonths: {},
+    financeSettlements: [],
+    financeTxnTax: {},
+    financeTxnTrip: {},
     // Notifications swipe-deck: transactions swiped LEFT are removed from the
     // deck (id -> true) but keep a red "needs confirming" dot on the txn list;
     // the dot clears only when the id is explicitly confirmed (financeTxnConfirmed).
@@ -5587,9 +5880,7 @@ function normalizeState(parsed) {
     mediaHistory: Array.isArray(parsed?.mediaHistory) ? parsed.mediaHistory : [],
     // App-owned unified Saved store (Watch-Later / Listen-Later / Favourites).
     mediaSaved: Array.isArray(parsed?.mediaSaved) ? parsed.mediaSaved : [],
-    musicLibrary: (parsed?.musicLibrary && typeof parsed.musicLibrary === "object")
-      ? { favorites: Array.isArray(parsed.musicLibrary.favorites) ? parsed.musicLibrary.favorites : [], playlists: Array.isArray(parsed.musicLibrary.playlists) ? parsed.musicLibrary.playlists : [] }
-      : { favorites: [], playlists: [] },
+    musicLibrary: normalizeMusicLibrary(parsed?.musicLibrary),
     radioFavorites: Array.isArray(parsed?.radioFavorites) ? parsed.radioFavorites : [],
     radioFollowedPrograms: Array.isArray(parsed?.radioFollowedPrograms) ? parsed.radioFollowedPrograms : [],
     radioUserStations: Array.isArray(parsed?.radioUserStations) ? parsed.radioUserStations : [],
@@ -5642,6 +5933,8 @@ function normalizeState(parsed) {
     groceryCleared: parsed?.groceryCleared && typeof parsed.groceryCleared === "object" ? parsed.groceryCleared : {},
     groceryChecklist: normalizeGroceryChecklist(parsed?.groceryChecklist),
     nextStopItems: LiveGrocerySources.normalizeNextStopItems(parsed?.nextStopItems),
+    groceryNextStopStamps: pruneListStamps(parsed?.groceryNextStopStamps, parsed, new Date().toISOString()),
+    mediaListStamps: pruneListStamps(parsed?.mediaListStamps, parsed, new Date().toISOString()),
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
     groceryCatalogVersion: Number(parsed?.groceryCatalogVersion) || 0,
@@ -5695,6 +5988,7 @@ function normalizeState(parsed) {
     financeGoals: normalizeFinanceGoals(parsed?.financeGoals),
     financeTxnSource: parsed?.financeTxnSource === "store" ? "store" : "feed",
     financeTxnSourceSetAt: typeof parsed?.financeTxnSourceSetAt === "string" && !Number.isNaN(Date.parse(parsed.financeTxnSourceSetAt)) ? parsed.financeTxnSourceSetAt : "",
+    financeMovedOut: normalizeMovedOut(parsed?.financeMovedOut),
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
@@ -5735,6 +6029,14 @@ function normalizeState(parsed) {
     financeDismissedAlerts: (parsed?.financeDismissedAlerts && typeof parsed.financeDismissedAlerts === "object") ? parsed.financeDismissedAlerts : {},
     financeLabelSkips: (parsed?.financeLabelSkips && typeof parsed.financeLabelSkips === "object") ? parsed.financeLabelSkips : {},
     financeLabelSnoozes: (parsed?.financeLabelSnoozes && typeof parsed.financeLabelSnoozes === "object") ? parsed.financeLabelSnoozes : {},
+    // Months closed in Finance: { "YYYY-MM": { at } } or false once reopened (a
+    // union-merged map, so reopening writes false rather than deleting).
+    financeClosedMonths: (parsed?.financeClosedMonths && typeof parsed.financeClosedMonths === "object") ? parsed.financeClosedMonths : {},
+    // "Paid the household back" records: { id, by, amount, at } (finance-settle.js).
+    financeSettlements: Array.isArray(parsed?.financeSettlements) ? parsed.financeSettlements.filter((s) => s && s.id) : [],
+    // Tax-time tags ({ txnId: kind | "none" }) and trip tags ({ txnId: tripId | "" }); finance-tags.js.
+    financeTxnTax: (parsed?.financeTxnTax && typeof parsed.financeTxnTax === "object") ? parsed.financeTxnTax : {},
+    financeTxnTrip: (parsed?.financeTxnTrip && typeof parsed.financeTxnTrip === "object") ? parsed.financeTxnTrip : {},
     financeNotifDismissed: (parsed?.financeNotifDismissed && typeof parsed.financeNotifDismissed === "object") ? parsed.financeNotifDismissed : {},
     financeTxnConfirmed: (parsed?.financeTxnConfirmed && typeof parsed.financeTxnConfirmed === "object") ? parsed.financeTxnConfirmed : {},
     financeTxnReceipts: normalizeFinanceTxnReceipts(parsed?.financeTxnReceipts),
@@ -5833,17 +6135,48 @@ function normalizeTombstones(raw) {
   return result;
 }
 
+// Per-view delete lists (state-sync.js): a key whose section has a row per view
+// records its deletes for the row they were made in, so removing something from
+// the household's list never removes the same id from a person's own.
+// → the owner of the row `key` is in right now: the person ("u-<id>"),
+// "household" or the business space's id; null for a key with one row for
+// everyone, or when the row can't be named yet. `scopeOf` lets a caller merging a row that is NOT
+// on screen (writeInactiveSection) name that row's scope.
+const TOMBSTONE_EXTRA_SECTIONS = { doPlanTasks: "do", financeCategories: "finance", financeLineItems: "finance", financeScenarios: "finance" };
+let stateKeySections = null;
+function tombstoneOwner(key, scopeOf = sectionScope) {
+  if (!stateKeySections) {
+    stateKeySections = {};
+    for (const [section, keys] of Object.entries(STATE_SECTIONS)) for (const k of keys) stateKeySections[k] = section;
+  }
+  const base = String(key || "").split(".")[0]; // "watchSettings.theaters" → watchSettings
+  const section = stateKeySections[base] || TOMBSTONE_EXTRA_SECTIONS[base];
+  // The person's own Listen row (queue entries removed): their own delete list.
+  if (section === "listen") {
+    const uid = authSession?.user?.id;
+    return uid ? `u-${uid}` : (localDevMode ? "u-local" : null);
+  }
+  if (!section || SECTION_SCOPE[section] !== "toggle") return null;
+  const scope = scopeOf(section);
+  if (scope === "personal") {
+    const uid = authSession?.user?.id;
+    return uid ? `u-${uid}` : (localDevMode ? "u-local" : null);
+  }
+  if (scope === "business") return businessSpace?.id || null;
+  // The delete lists live in the household's own row, so "household" needs no id
+  // (and doesn't depend on the group having loaded yet).
+  return "household";
+}
+
+// The deleted ids that apply to `key` in the view on screen.
+function deletedIdsFor(key) {
+  return tombstoneIdsFor(state.tombstones, key, tombstoneOwner(key));
+}
+
 function recordDeletion(arrayKey, id) {
   if (!id) return;
-  const idStr = String(id);
   if (!state.tombstones) state.tombstones = {};
-  if (!Array.isArray(state.tombstones[arrayKey])) state.tombstones[arrayKey] = [];
-  if (!state.tombstones[arrayKey].includes(idStr)) {
-    state.tombstones[arrayKey].push(idStr);
-    if (state.tombstones[arrayKey].length > MAX_TOMBSTONES_PER_KEY) {
-      state.tombstones[arrayKey] = state.tombstones[arrayKey].slice(-MAX_TOMBSTONES_PER_KEY);
-    }
-  }
+  addTombstone(state.tombstones, arrayKey, id, tombstoneOwner(arrayKey), MAX_TOMBSTONES_PER_KEY);
 }
 
 function recordDeletions(arrayKey, ids) {
@@ -5851,9 +6184,8 @@ function recordDeletions(arrayKey, ids) {
 }
 
 function unrecordDeletion(arrayKey, id) {
-  const idStr = String(id);
-  if (!state.tombstones?.[arrayKey]) return;
-  state.tombstones[arrayKey] = state.tombstones[arrayKey].filter(t => t !== idStr);
+  if (!state.tombstones) return;
+  removeTombstone(state.tombstones, arrayKey, id, tombstoneOwner(arrayKey));
 }
 
 function normalizeBirthdayCalendarSettings(settings) {
@@ -6292,6 +6624,11 @@ function normalizePlayAutoRules(rules) {
 }
 
 function normalizeWatchItems(items) {
+  // Episode lists are device data now (watch-episodes.js): an older copy's
+  // lists move into this device's store and are left off the synced show.
+  for (const item of Array.isArray(items) ? items : []) {
+    if (item?.tmdbId && item.episodeData && typeof item.episodeData === "object") watchEpisodes.adopt(item.tmdbId, item.episodeData);
+  }
   return (Array.isArray(items) ? items : [])
     .map((item) => ({
       id: item?.id || createId("watch"),
@@ -6311,14 +6648,32 @@ function normalizeWatchItems(items) {
       watchedDate: item?.watchedDate || null,
       rating: item?.rating != null ? Number(item.rating) : null,
       watchNotes: item?.watchNotes || null,
-      seasonProgress: item?.seasonProgress && typeof item.seasonProgress === "object" ? item.seasonProgress : {},
-      episodeData: item?.episodeData && typeof item.episodeData === "object" ? item.episodeData : {},
+      seasonProgress: watchSeasonProgressWithoutViewState(item?.seasonProgress),
+      ...(item?.tickAt && typeof item.tickAt === "object" ? { tickAt: item.tickAt } : {}),
+      ...(item?.tabsAt && typeof item.tabsAt === "object" ? { tabsAt: item.tabsAt } : {}),
+      ...(item?.updatedAt ? { updatedAt: String(item.updatedAt) } : {}),
+      ...(item && "showType" in item ? { showType: item.showType ? String(item.showType) : null } : {}),
+      ...(Array.isArray(item?.genreIds) ? { genreIds: item.genreIds.map(Number).filter(Number.isFinite) } : {}),
+      ...(Number(item?.lastAiredSeason) > 0 ? { lastAiredSeason: Number(item.lastAiredSeason) } : {}),
       inTheaters: item?.inTheaters === true,
       theatricalReleaseDate: item?.theatricalReleaseDate || null,
       categories: Array.isArray(item?.categories) ? item.categories.filter((id) => typeof id === "string") : [],
       createdAt: item?.createdAt || new Date().toISOString()
     }))
     .filter((item) => item.title);
+}
+
+// Season open/closed used to be stored as seasonProgress[n].__expanded; it's
+// device view state now (watchSelectedSeason), so drop the old flag on load.
+function watchSeasonProgressWithoutViewState(progress) {
+  if (!progress || typeof progress !== "object") return {};
+  const out = {};
+  for (const [season, sd] of Object.entries(progress)) {
+    if (!sd || typeof sd !== "object") continue;
+    const { __expanded: _open, ...rest } = sd;
+    out[season] = rest;
+  }
+  return out;
 }
 
 function normalizeWatchSettings(raw) {
@@ -6629,11 +6984,21 @@ function applyThemeMode() {
   const prefs = currentViewDisplayPrefs();
   const systemDark = Boolean(window.matchMedia?.("(prefers-color-scheme: dark)")?.matches);
   const now = new Date();
-  const resolved = resolveTheme(prefs, { systemDark, now });
+  // Dynamic display (theme-dynamic.js): a chosen team's colors while it plays,
+  // a holiday's theme on the day, otherwise the view's own theme.
+  const games = applyThemeMode.games || [];
+  const ranked = gamedayRankedTeams(base);
+  const shown = dynamicTheme(prefs, { now, games, ranked });
+  applyThemeMode.shown = shown;
+  const resolved = resolveTheme({ ...prefs, theme: shown.theme }, { systemDark, now });
   applyResolvedTheme(resolved, document);
+  // What a cold start should open in: today's look without a game (a game
+  // that's over by the next launch mustn't flash its colors first).
+  const calm = shown.reason === "game" ? resolveTheme({ ...prefs, theme: dynamicTheme({ ...prefs, gameday: false }, { now }).theme }, { systemDark, now }) : resolved;
   // The iPhone icon follows the primary view only, so switching views never
-  // makes iOS announce an icon change.
-  const iconTheme = resolveTheme(base, { systemDark, now });
+  // makes iOS announce an icon change — and it follows a holiday, never a game
+  // (two icon notices a game would be too many).
+  const iconTheme = resolveTheme({ ...base, theme: dynamicTheme({ ...base, gameday: false }, { now }).theme }, { systemDark, now });
   elements.themeModeInputs?.forEach((input) => {
     input.checked = input.value === prefs.mode;
   });
@@ -6644,9 +7009,72 @@ function applyThemeMode() {
     try { window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => applyThemeMode()); } catch { /* old WebKit */ }
     document.addEventListener("visibilitychange", () => { if (!document.hidden) applyThemeMode(); });
   }
-  if (syncAppIcon.ready) writeDisplayCache(base, resolved);
+  if (syncAppIcon.ready) writeDisplayCache(base, calm);
   syncAppIcon(iconTheme.icon);
+  // Look at today's games again when they're due (game days on, a chosen team).
+  // Deferred: this also runs at module load, before the Scores module exists.
+  // (A midnight-only timer — set before sign-in, say — doesn't hold this back.)
+  if (wantsGamedayCheck(prefs, ranked) && !(refreshGamedayTheme.timer && refreshGamedayTheme.timerKind === "game") && !refreshGamedayTheme.running && !refreshGamedayTheme.queued
+    && Date.now() - (refreshGamedayTheme.at || 0) > 55_000) {
+    refreshGamedayTheme.queued = true;
+    setTimeout(() => { refreshGamedayTheme.queued = false; refreshGamedayTheme(); }, 0);
+  } else if ((prefs.holidays || prefs.gameday) && !refreshGamedayTheme.timer && !refreshGamedayTheme.running && !refreshGamedayTheme.queued) {
+    // Holidays only: just turn over at midnight if the app is left open.
+    scheduleGamedayCheck(null);
+  }
   return resolved;
+}
+
+// The person's switched-on favorites with a theme, in their favorites' order.
+function gamedayRankedTeams(base = currentDisplayPrefs()) {
+  return rankedGamedayTeams(normalizeSportsPrefs(state?.sportsPrefs).teams, base.gamedayTeams);
+}
+function wantsGamedayCheck(prefs, ranked) {
+  return !!prefs?.gameday && ranked.length > 0 && !document.hidden && (!!authSession?.access_token || localDevMode);
+}
+
+// Today's games for the game-day theme, from the Scores board — the same
+// CDN-cached request the dock ticker makes (never the database). Foreground
+// only: every minute while a chosen team plays, else at its next start, else
+// at midnight. Nothing runs unless game days are on with a team chosen.
+async function refreshGamedayTheme() {
+  const self = refreshGamedayTheme;
+  clearTimeout(self.timer); self.timer = null;
+  const ranked = gamedayRankedTeams();
+  if (!wantsGamedayCheck(currentViewDisplayPrefs(), ranked)) {
+    if (applyThemeMode.games?.length) { applyThemeMode.games = []; applyThemeMode(); }
+    return;
+  }
+  if (self.running) return;
+  self.running = true;
+  let games = applyThemeMode.games || [];
+  try {
+    const now = new Date();
+    const today = dateKeyOf(now);
+    // A late game runs past midnight: until 4am, yesterday's board too.
+    const keys = now.getHours() < 4 ? [shiftDateKey(today, -1), today] : [today];
+    const boards = await Promise.all(keys.map((k) => Promise.resolve(self.getBoard?.(k, { maxAgeMs: 55_000 })).catch(() => null)));
+    if (boards.some(Array.isArray)) games = boards.filter(Array.isArray).flat();
+  } finally {
+    self.running = false;
+    self.at = Date.now();
+  }
+  applyThemeMode.games = games;
+  applyThemeMode();
+  scheduleGamedayCheck(nextGamedayCheckMs(games, ranked, Date.now()));
+}
+function scheduleGamedayCheck(delay) {
+  const self = refreshGamedayTheme;
+  clearTimeout(self.timer);
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 30) - now;
+  self.timerKind = delay == null || delay >= midnight ? "midnight" : "game";
+  self.timer = setTimeout(() => {
+    self.timer = null;
+    if (document.hidden) return; // coming back to the front checks again
+    self.at = 0;
+    applyThemeMode();
+  }, Math.min(delay ?? midnight, midnight));
 }
 
 // iPhone only: point the home-screen icon at the active theme's icon. iOS shows
@@ -6669,7 +7097,9 @@ function syncAppIcon(name) {
 function setDisplayPref(key, value) {
   syncAppIcon.ready = true; // a choice made here is this person's
   const view = currentViewKey();
-  if ((key === "mode" || key === "theme") && view !== primaryView(currentViewList())) {
+  // mode · theme · name · holidays · gameday are each view's own; the icon and
+  // the game-day teams are the person's.
+  if (["mode", "theme", "name", "holidays", "gameday"].includes(key) && view !== primaryView(currentViewList())) {
     // The admin's Household / Business look (views.js).
     const own = { ...((state.viewDisplayPrefs || {})[view] || {}), [key]: value };
     state.viewDisplayPrefs = cleanViewDisplayPrefs({ ...(state.viewDisplayPrefs || {}), [view]: own }, { modes: ["light", "dark", "auto"], themes: THEME_CHOICES });
@@ -6677,7 +7107,17 @@ function setDisplayPref(key, value) {
     state.displayPrefs = cleanDisplayPrefs({ ...(state.displayPrefs || {}), [key]: value });
   }
   applyThemeMode();
+  if (key === "name") renderViewBands();
   persist();
+}
+
+// The view's name: the person's own ("The Evanses") or the default.
+// Read straight from state (it's called per event when the calendar draws
+// layers): the primary view's name is in displayPrefs, the others' in
+// viewDisplayPrefs — the same split as displayPrefsForView (views.js).
+function viewLabel(view) {
+  const own = view === primaryView(currentViewList()) ? state.displayPrefs?.name : state.viewDisplayPrefs?.[view]?.name;
+  return cleanViewName(own) || VIEW_LABELS[view] || "";
 }
 
 function setThemeMode(mode) {
@@ -6996,18 +7436,22 @@ function priceObservationAgeDays(observation) {
 // an empty just-booted record can never erase populated cloud data; genuine
 // deletes propagate via tombstones. See that module's header for the WHY.
 
-function mergeStates(newer, older) {
+function mergeStates(newer, older, { ownerOf = tombstoneOwner } = {}) {
   const merged = { ...newer };
 
   // Merge tombstones first so unionById can filter against the combined set
   merged.tombstones = mergeTombstones(newer.tombstones, older.tombstones);
+  // The deletes that apply to the rows being merged: each key resolved for the
+  // view its section is in (state-sync.js "Per-view delete lists"). Everything
+  // below filters against `dead`; `merged.tombstones` is the stored record.
+  const dead = effectiveTombstones(merged.tombstones, ownerOf);
 
   // Core merge primitives live in ./state-sync.js (extracted + unit-tested). The
   // unionById wrapper resolves this merge's per-key tombstone set (from the
   // combined tombstones above) and delegates; string/key unions alias directly.
   function unionById(a, b, tombstoneKey = null) {
-    const tombstoned = tombstoneKey && merged.tombstones?.[tombstoneKey]?.length
-      ? new Set(merged.tombstones[tombstoneKey])
+    const tombstoned = tombstoneKey && dead[tombstoneKey]?.length
+      ? new Set(dead[tombstoneKey])
       : null;
     return syncUnionById(a, b, tombstoned);
   }
@@ -7026,8 +7470,8 @@ function mergeStates(newer, older) {
     "calendarSources",
     "doTasks", "doBacklog", "doArchive", "playBacklog",
     "recurringTasks", "playAutoRules",
-    // Watch / Read / Recreate
-    "watchItems", "readingItems",
+    // Read / Recreate (Watch items merge tick by tick below — watch-merge.js)
+    "readingItems",
     "pianoSongs", "sailingLog", "sailingBoats", "pianoLog",
     // Cadence: Works, blob catalog, sessions, annotations (all carry an `id`;
     // blob records use id = blobId). Union so neither device loses a score.
@@ -7036,6 +7480,7 @@ function mergeStates(newer, older) {
     "inventoryBoxes", "inventoryItems",
     "groceryStores", "groceryPriceObservations", "priceHistory",
     "receipts",
+    "financeSettlements",
     // Fitness
     "workouts",
     // Health & food
@@ -7067,8 +7512,8 @@ function mergeStates(newer, older) {
     // Radio user-added stations: each gets a fresh random `user_…` id and is
     // never re-added under the same id, so tombstones (deleteRadioUserStation)
     // are exact. Previously newer-wins — a station added on one device vanished
-    // when another device synced. (radioFavorites / radioFollowedPrograms stay
-    // newer-wins: see MERGE_NEWER_WINS_KEYS in test/architecture-state-merge-coverage.test.js.)
+    // when another device synced. (radioFavorites / radioFollowedPrograms merge
+    // with add/remove stamps further down — stamped-lists.js.)
     "radioUserStations",
     // Manual "Add to queue" entries (media-queue-added.js): each add gets a fresh
     // random id, so a removal's tombstone is exact and re-adding still works.
@@ -7076,6 +7521,19 @@ function mergeStates(newer, older) {
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
+
+  // Music favourites and playlists: union, each playlist from the side that
+  // changed it last, deletions kept in the library's own `removed` stamps
+  // (music-library-model.js). Was whole-object newer-wins, which let a device
+  // with an older copy erase a new playlist (Luke's "Bike", 2026-11-16).
+  merged.musicLibrary = mergeMusicLibraries(newer.musicLibrary, older.musicLibrary);
+
+  // Watch items: a show on both sides is merged episode by episode and tab by
+  // tab, each by its own time, so two people's ticks both stick (watch-merge.js,
+  // WATCH_AUDIT.md decision 5). Membership is unionById's: either side's ids,
+  // minus tombstones.
+  merged.watchItems = mergeWatchItems(newer.watchItems, older.watchItems,
+    dead.watchItems?.length ? new Set(dead.watchItems) : null);
 
   // Recurring charges are unique per MERCHANT, not per id — unioning by id let
   // each device's independently-created entry survive, piling up hundreds of
@@ -7107,9 +7565,9 @@ function mergeStates(newer, older) {
   // Finance records with nested child arrays: deep-merged so a just-booted
   // client's empty groups/people/personal budgets can never wipe the cloud's
   // categories, line items, or scenarios (see the merge helpers above).
-  merged.financeBudgetGroups = mergeFinanceBudgetGroups(newer.financeBudgetGroups, older.financeBudgetGroups, merged.tombstones);
-  merged.financePeople = mergeFinancePeople(newer.financePeople, older.financePeople, merged.tombstones);
-  merged.financePersonal = mergeFinancePersonal(newer.financePersonal, older.financePersonal, merged.tombstones);
+  merged.financeBudgetGroups = mergeFinanceBudgetGroups(newer.financeBudgetGroups, older.financeBudgetGroups, dead);
+  merged.financePeople = mergeFinancePeople(newer.financePeople, older.financePeople, dead);
+  merged.financePersonal = mergeFinancePersonal(newer.financePersonal, older.financePersonal, dead);
 
   // Publications are keyed by "key", not "id"
   {
@@ -7154,7 +7612,7 @@ function mergeStates(newer, older) {
     // labels, splits, renames, sign-flips, return links, or month history.
     "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
-    "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes",
+    "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeClosedMonths", "financeTxnTax", "financeTxnTrip",
     "financeNotifDismissed", "financeTxnConfirmed", "financeTxnReceipts",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
@@ -7186,7 +7644,7 @@ function mergeStates(newer, older) {
     merged.groceryChecklist = {
       ...oCl,
       ...nCl,
-      config: LiveGrocerySources.mergeChecklistConfig(nCl.config, oCl.config, merged.tombstones?.[LiveGrocerySources.CHECKLIST_CONFIG_TOMBSTONES]),
+      config: LiveGrocerySources.mergeChecklistConfig(nCl.config, oCl.config, dead[LiveGrocerySources.CHECKLIST_CONFIG_TOMBSTONES]),
       provisional: unionByKey(nCl.provisional, oCl.provisional),
       submissions: unionByKey(nCl.submissions, oCl.submissions),
       seeded: Boolean(nCl.seeded || oCl.seeded),
@@ -7233,9 +7691,9 @@ function mergeStates(newer, older) {
   merged.groceryStoreItemSections = mergeGroceryStoreItemSections(newer.groceryStoreItemSections, older.groceryStoreItemSections);
 
   // ── Week/day plan structures: deep day-level merge ────────────────────────
-  merged.doPlans = mergeDoPlans(newer.doPlans, older.doPlans, merged.tombstones);
+  merged.doPlans = mergeDoPlans(newer.doPlans, older.doPlans, dead);
   merged.watchPlans = mergeWatchPlans(newer.watchPlans, older.watchPlans);
-  merged.playPlans = mergePlayPlans(newer.playPlans, older.playPlans, merged.tombstones);
+  merged.playPlans = mergePlayPlans(newer.playPlans, older.playPlans, dead);
 
   // ── Meal plans: deep slot-level merge ────────────────────────────────────
   merged.plans = mergePlanWeeks(newer.plans, older.plans);
@@ -7262,6 +7720,28 @@ function mergeStates(newer, older) {
   // the rules above only where a stamp exists. Also merges the per-section
   // stamp maps ("configSettingStamps", "mediaSettingStamps",
   // "grocerySettingStamps", "recreateSettingStamps", "planSettingStamps") — see settings-sync.js.
+  // Finance: what a move between Household and Personal took out of this row
+  // (FINANCE_SPLIT_DESIGN.md §8). The record from the later move wins; the side
+  // that hadn't seen that move contributes no month totals (they still count
+  // what moved, and the app rebuilds them); and whatever the record lists is
+  // removed from the merged copy, so this device can't show or re-send it.
+  {
+    const { movedOut, stale } = mergeMovedOut(newer.financeMovedOut, older.financeMovedOut);
+    merged.financeMovedOut = movedOut;
+    if (stale) merged.financeMonthActuals = normalizeFinanceMonthActuals((stale === "newer" ? older : newer).financeMonthActuals);
+    const stripped = stripMovedOut(merged);
+    if (stripped !== merged) for (const key of STATE_SECTIONS.finance) if (key in stripped) merged[key] = stripped[key];
+  }
+
+  // Radio favourites, followed programs, Next Stop items: union, minus what was
+  // removed after it was (last) added (stamped-lists.js). They used to be
+  // newer-copy-wins, so an empty copy on a fresh device could erase them.
+  merged.mediaListStamps = mergeListStamps(newer.mediaListStamps, older.mediaListStamps);
+  merged.groceryNextStopStamps = mergeListStamps(newer.groceryNextStopStamps, older.groceryNextStopStamps);
+  merged.radioFavorites = mergeStampedList("radioFavorites", newer.radioFavorites, older.radioFavorites, merged.mediaListStamps);
+  merged.radioFollowedPrograms = mergeStampedList("radioFollowedPrograms", newer.radioFollowedPrograms, older.radioFollowedPrograms, merged.mediaListStamps);
+  merged.nextStopItems = mergeStampedList("nextStopItems", newer.nextStopItems, older.nextStopItems, merged.groceryNextStopStamps);
+
   mergeTrackedSettings(merged, newer, older);
 
   // Preserve the actual data timestamp — only persist() (user-initiated changes) should advance it.
@@ -7502,9 +7982,16 @@ async function runHydrateStateFromSharedStorage() {
         // locally (not in the cloud state) so they don't merge in.
         const signedOutAt = localStorage.getItem("live_signed_out_explicitly") || "";
         const hasAnonymousChanges = !!(signedOutAt && localTs && localTs > signedOutAt);
-        const stateForMerge = (hasAnonymousChanges)
+        let stateForMerge = (hasAnonymousChanges)
           ? stripAnonymousChanges(state, sharedState)
           : state;
+        // A reset row (views.js applyRowReset) replaces this device's stale copy
+        // of it instead of being merged with it. sharedState holds the rows on
+        // screen, so only the scope this device shows is checked here; the
+        // other scopes' copies were just replaced from the server (shadows).
+        for (const section of ROW_RESET_SECTIONS) {
+          stateForMerge = applyRowReset(section, STATE_SECTIONS[section], stateForMerge, sharedState);
+        }
         if (hasAnonymousChanges) {
           console.info("[sync] Stripping anonymous changes made after explicit sign-out.");
           localStorage.removeItem("live_signed_out_explicitly");
@@ -7523,7 +8010,7 @@ async function runHydrateStateFromSharedStorage() {
           }
           applyStoredState(merged);
           adoptSettingsBaseline(); // cloud-merged values are not user changes
-          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
+          seedLastWrittenFromLoad(sharedState); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           await provider.write();
         } else {
@@ -7533,7 +8020,7 @@ async function runHydrateStateFromSharedStorage() {
           guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated);
           applyStoredState(merged);
           adoptSettingsBaseline(); // cloud-merged values are not user changes
-          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
+          seedLastWrittenFromLoad(sharedState); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           // Only write back if local actually contributed something new (tombstones, additions).
           // Comparing signatures detects whether the merge changed anything vs the remote state —
@@ -7550,6 +8037,7 @@ async function runHydrateStateFromSharedStorage() {
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
+      syncReceiptsTable();
       markDisplayPrefsKnown(); // theme copy + iPhone icon follow the loaded prefs from here
       hideHydrationOverlay(); // data is in — never leave the "Syncing…" cover up
       backfillHistoryLog();
@@ -7647,7 +8135,7 @@ function wireNewerBuildCheck() {
   if (isNativeApp() || !/^https?:$/.test(window.location.protocol)) return;
   setTimeout(checkForNewerBuild, 15000);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") checkForNewerBuild();
+    if (document.visibilityState === "visible") { checkForNewerBuild(); syncReceiptsTable(); }
   });
 }
 
@@ -7950,7 +8438,7 @@ function applyStoredState(storedState) {
     const tripBackup = loadTripBackup();
     if (tripBackup?.trips?.length) {
       const tombstonedIds = new Set([
-        ...(state.tombstones?.trips || []).map(String),
+        ...deletedIdsFor("trips").map(String),
         ...(tripBackup.tombstones || []).map(String)
       ]);
       const survivingTrips = tripBackup.trips.filter(t => t?.id != null && !tombstonedIds.has(String(t.id)));
@@ -8008,6 +8496,9 @@ function extractSectionData(keys, source = state) {
   // full text stays in memory during a session and is re-fetched via
   // ensureEpisodeDescription() when a user actually opens the notes.
   if (Array.isArray(obj.podcasts)) obj.podcasts = storedPodcasts(obj.podcasts, source);
+  // A Personal purchase's receipt lives only in the receipts table under the
+  // person's own scope; it never rides the shared grocery row.
+  if (Array.isArray(obj.receipts) && obj.receipts.some((r) => r?.view === "personal")) obj.receipts = obj.receipts.filter((r) => r?.view !== "personal");
   // Article bodies whose bytes are safely in the content-store backstop no longer
   // ride the synced media section (the Disk-IO win — the section was rewritten
   // with full article text on every media interaction). The reader re-reads them
@@ -8041,9 +8532,39 @@ function storedPodcasts(podcasts, source) {
 // rewrites the sections the merge really changed instead of every section.
 let lastLoadedSectionJson = null;
 
-function seedLastWrittenFromLoad() {
-  lastWrittenSections = lastLoadedSectionJson ? { ...lastLoadedSectionJson } : null;
+// `sharedState` = what the server held (the load's assembled active rows). A
+// section counts as written when the live copy equals the server's after the
+// same normalizeState pass, so a boot doesn't re-send untouched rows
+// (state-sync.js settledSectionsAfterLoad).
+function seedLastWrittenFromLoad(sharedState = null) {
+  const loaded = lastLoadedSectionJson;
   lastLoadedSectionJson = null;
+  lastWrittenSections = settledSectionsAfterLoad(
+    STATE_SECTIONS,
+    loaded,
+    (keys) => JSON.stringify(extractSectionData(keys)),
+    () => {
+      if (!sharedState) return null;
+      try {
+        const tidied = normalizeState(structuredClone(sharedState));
+        cleanupAutoAppliedFutureMealDefaults(tidied);
+        return (keys) => JSON.stringify(extractSectionData(keys, tidied));
+      } catch (e) {
+        console.warn("[sync] couldn't compare the loaded state (rewriting changed sections):", e.message);
+        return null;
+      } finally {
+        // normalizeState sets two module-level things from the copy it's given:
+        // the meal-plan layout and the ingredient pickers' options. Put the live
+        // state's back.
+        recomputeMealPlanLayout(normalizeMealPlanConfig(state.mealPlanConfig));
+        syncIngredientOptionGlobals(state);
+      }
+    },
+  );
+  if (lastWrittenSections && loaded) {
+    const resend = Object.keys(STATE_SECTIONS).filter((s) => s in loaded && lastWrittenSections[s] !== JSON.stringify(extractSectionData(STATE_SECTIONS[s])));
+    if (resend.length) console.info(`[sync] after load, rewriting changed sections: ${resend.join(", ")}`);
+  }
 }
 
 function assembleSectionRows(rows) {
@@ -8263,7 +8784,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
   if (curRows.length) {
     const { stateUpdatedAt: remoteTs, schemaVersion: _rv, ...remoteData } = curRows[0].state || {};
     const localTs = state.stateUpdatedAt || "";
-    const localFrag  = { ...extractSectionData(keys), tombstones: state.tombstones, stateUpdatedAt: localTs };
+    const localFrag  = { ...applyRowReset(section, keys, extractSectionData(keys), remoteData), tombstones: state.tombstones, stateUpdatedAt: localTs };
     const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
     const merged = localTs >= (remoteTs || "")
       ? mergeStates(localFrag, remoteFrag)
@@ -8535,14 +9056,98 @@ function migrateLegacyAutoRuleTarget(rule) {
 
 
 
+// ── View logos (view-logo.js, Luke 2026-11-04) ──────────────────────────────
+// Each view's landing logo: the person's own picture, or the sailboat. Kept on
+// functions (not module lets) — render() can run early in boot.
+function viewLogoUrl(view = currentViewKey()) {
+  const known = paintHomeLogo.urls || {};
+  if (view in known) return known[view];
+  const userId = authSession?.user?.id;
+  return userId ? readCachedLogo(userId, view)?.dataUrl || "" : "";
+}
+
+function paintHomeLogo() {
+  const img = elements.homeMainPage?.querySelector(".home-logo");
+  if (!img) return;
+  const url = viewLogoUrl();
+  const src = url || "./home-logo.png";
+  if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+  img.classList.toggle("is-custom", !!url);
+  img.alt = url ? viewLabel(currentViewKey()) || getAppName() : getAppName();
+}
+
+// Bring each view's logo up to date with the versions in the person's auth
+// metadata — a download only when a version changed (one per device per
+// change). Deduped on the versions, so calling it from render() is cheap.
+function ensureViewLogos() {
+  const userId = authSession?.user?.id;
+  if (!userId) return;
+  const versions = authSession.user.user_metadata?.logo_v || {};
+  const views = currentViewList();
+  const key = `${userId}|${views.join(",")}|${localDevMode ? "local" : JSON.stringify(versions)}`;
+  if (ensureViewLogos.key === key) return;
+  ensureViewLogos.key = key;
+  if (localDevMode) { // no Storage locally: the device copy is the logo
+    paintHomeLogo.urls = Object.fromEntries(views.map((v) => [v, readCachedLogo(userId, v)?.dataUrl || ""]));
+    paintHomeLogo();
+    return;
+  }
+  Promise.all(views.map((v) => loadLogo({ baseUrl: supabaseBaseUrl(), userId, view: v, version: logoVersion(authSession.user.user_metadata, v) }).then((url) => [v, url])))
+    .then((pairs) => {
+      if (authSession?.user?.id !== userId) return;
+      paintHomeLogo.urls = Object.fromEntries(pairs);
+      paintHomeLogo();
+      if (elements.contextSettingsDialog?.open && contextSettingsKind === "display") renderContextSettingsDialog("display");
+    })
+    .catch(() => { ensureViewLogos.key = ""; });
+}
+
+// Settings › Display: replace or remove this view's logo. Saved straight away
+// (Display has no Save button); the status line says what's happening.
+async function setViewLogo(file) {
+  const view = currentViewKey();
+  const userId = authSession?.user?.id;
+  const status = (text) => { const el = document.getElementById("displayLogoStatus"); if (el) el.textContent = text; };
+  if (!userId) { status("Sign in to add a logo."); return; }
+  try {
+    let url = "";
+    if (file) {
+      status("Preparing logo…");
+      const picked = await resizeImageToLogo(file);
+      url = picked.dataUrl;
+      if (localDevMode) writeCachedLogo(userId, view, "local", url);
+      else {
+        status("Uploading logo…");
+        const { version, logo_v } = await uploadLogo({ supabaseClient, userId, view, blob: picked.blob, metadata: authSession.user.user_metadata });
+        authSession.user.user_metadata = { ...(authSession.user.user_metadata || {}), logo_v };
+        writeCachedLogo(userId, view, version, url);
+      }
+    } else {
+      status("Removing logo…");
+      if (localDevMode) writeCachedLogo(userId, view, "", "");
+      else {
+        const { logo_v } = await removeLogo({ supabaseClient, userId, view, metadata: authSession.user.user_metadata });
+        authSession.user.user_metadata = { ...(authSession.user.user_metadata || {}), logo_v };
+        writeCachedLogo(userId, view, "", "");
+      }
+    }
+    paintHomeLogo.urls = { ...(paintHomeLogo.urls || {}), [view]: url };
+    ensureViewLogos.key = `${userId}|${currentViewList().join(",")}|${localDevMode ? "local" : JSON.stringify(authSession.user.user_metadata?.logo_v || {})}`;
+    paintHomeLogo();
+    if (contextSettingsKind === "display") renderContextSettingsDialog("display");
+  } catch (err) {
+    status(err?.message || "Couldn't save the logo.");
+  }
+}
+
 function render() {
-  const name = getAppName();
-  // The home title is the logo image now; a custom app name shows in the tab
-  // title and the logo's alt text (there is no h2 to update anymore).
-  const homeLogo = elements.homeMainPage.querySelector(".home-logo");
-  if (homeLogo) homeLogo.alt = name;
-  document.title = name;
+  // The home title is the logo image (the view's own logo, or the sailboat); a
+  // custom app name shows in the tab title and the logo's alt text.
+  ensureViewLogos();
+  paintHomeLogo();
+  document.title = getAppName();
   updatePageVisibility();
+  musicShows.updateBadge(); // the Listen bell (synced shows arrive through here)
   const week = weekState();
   const weekTools = elements.weekLabel.closest(".week-tools");
   // Finance shows the viewed month here (set by setWeekToolsMode("finance")) and
@@ -8568,7 +9173,9 @@ function render() {
   if (activeAppArea === "media") renderActiveMediaView();
   // Watch reads the view's row: redraw its list when that row swaps in (a view
   // switch) or merges (another device) — it used to keep the old view's list.
-  if (activeAppArea === "watch" && !document.getElementById("discoverSearchInput")?.value.trim()) renderWatchPlanner();
+  if (activeAppArea === "watch" && !document.getElementById("discoverSearchInput")?.value.trim()) {
+    if (watchSideView === "youtube") renderYouTubeSaved(); else renderWatchPlanner();
+  }
   if (activeAppArea === "news") refreshSavedArticlesIfShown(); // News → Saved articles
   if (activeAppArea === "explore") refreshExploreTrips();
   if (activeAppArea === "finance") renderFinancePage();
@@ -8680,6 +9287,14 @@ function hideAllPages() {
   elements.playMainPage.hidden = true;
   elements.mediaMainPage.hidden = true;
   if (elements.watchMainPage) elements.watchMainPage.hidden = true;
+  if (elements.documentsMainPage && !elements.documentsMainPage.hidden) {
+    elements.documentsMainPage.hidden = true;
+    documentsUi?.hide(); // closes an open document and stops drawing
+  }
+  if (elements.photosMainPage && !elements.photosMainPage.hidden) {
+    elements.photosMainPage.hidden = true;
+    photosUi?.hide(); // closes an open photo and stops drawing
+  }
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -8697,6 +9312,7 @@ function hideAllPages() {
     elements.newsMainPage.hidden = true;
   }
   elements.mailMainPage.hidden = true;
+  messagesUi?.hide(); // stops its fetching while the page isn't showing
   document.getElementById("exploreMainPage").hidden = true;
 }
 
@@ -8758,6 +9374,189 @@ function showWatchApp(event) {
   closePageTitleMenu();
   closeAppMenu();
   renderWatchTab();
+}
+
+// Document (DOCUMENTS_DESIGN.md §25; Luke 2026-11-04, was "Documents"): everyday
+// documents, kept like the rest of Live (documents/page.js), with the Safe inside it —
+// the end-to-end encrypted papers with Face ID on every open (documents/ui.js, loaded
+// only when the Safe is opened, so libsodium stays off the page's path). Household's
+// are shared with the household; Personal's are the person's own.
+function documentsScopeForView(view = currentViewKey()) {
+  const uid = authSession?.user?.id;
+  if (view === "personal") return uid ? `u-${uid}` : null;
+  return userGroup?.id || null;
+}
+
+function documentsDeps() {
+  return {
+    userId: authSession?.user?.id || "",
+    baseUrl: () => supabaseBaseUrl(),
+    headers: () => supabaseHeaders(),
+    functionsUrl: () => `${supabaseBaseUrl()}/functions/v1`,
+    getToken: async () => authSession?.access_token || "",
+    isNative: isNativeApp(),
+    nativeMessagingKeys,
+    nativeDocumentsLock,
+    nativeDocumentScanner,
+    nativeAttachmentPreview,
+    userName: authSession?.user?.email || "Live",
+    signOutOtherSessions,
+    receipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
+    household: () => (userGroup?.id ? { scope: userGroup.id, members: groupMembers.map((m) => ({ user_id: m.user_id, display_name: m.display_name })) } : null),
+    personalScope: () => (currentViewList().includes("personal") && authSession?.user?.id ? `u-${authSession.user.id}` : null),
+    toast: (text) => showMailToast(text),
+    openMessages: () => { localStorage.setItem(MESSAGE_TAB_KEY, "messages"); showMailApp(); },
+    fileReceipts: (scope) => fileWaitingReceipts(scope),
+    // The word processor (WORD_PROCESSOR_DESIGN.md): live co-editing channel, @ chips, PDF.
+    liveDocChannel: (topic, handlers) => openLiveDocChannel(topic, handlers),
+    docChipSource: (q) => docChipSource(q),
+    openDocChip: (kind, id) => openDocChip(kind, id),
+    nativePdfExport,
+    myDisplayName: () => groupMembers.find((m) => m.user_id === authSession?.user?.id)?.display_name || String(authSession?.user?.email || "Me").split("@")[0],
+    // Google consent for bringing Google Docs over: Apple's sign-in sheet in the app (as Calendar), else this tab.
+    openAuthUrl: async (url) => {
+      if (isNativeApp() && nativeWebAuth()) { await nativeWebAuth().start({ url, callbackScheme: APP_CALLBACK_SCHEME }).catch(() => null); return; }
+      window.location.href = url;
+    },
+    movePersonalReceipts: () => movePersonalReceiptFilesSoon(),
+    // A receipt file shows what was read from it and whether it's matched to a charge.
+    receiptInfo: (receiptId) => _finance.financeReceiptInfo(receiptId),
+    openReceipt: (receiptId) => openReceiptDetail(receiptId),
+  };
+}
+
+// A Supabase Realtime private broadcast channel for one open document (§4). Joined
+// only while the document is open; presence tells each device who else is in.
+// Access is checked by realtime.messages policies (doc_can_access on the topic's scope).
+function openLiveDocChannel(topic, handlers) {
+  if (!supabaseClient?.channel || !authSession?.access_token) return null;
+  try { supabaseClient.realtime?.setAuth?.(authSession.access_token); } catch { /* the client keeps its own */ }
+  const ch = supabaseClient.channel(topic, { config: { private: true, broadcast: { self: false, ack: false }, presence: { key: Math.random().toString(36).slice(2, 10) } } });
+  ch.on("broadcast", { event: "m" }, ({ payload }) => handlers.message(payload));
+  ch.on("presence", { event: "sync" }, () => {
+    const st = ch.presenceState();
+    handlers.presence(Object.values(st).flat());
+  });
+  let meta = null;
+  ch.subscribe((status) => {
+    handlers.status?.(status);
+    if (status === "SUBSCRIBED" && meta) ch.track(meta).catch(() => {});
+  });
+  return {
+    send: (msg) => { ch.send({ type: "broadcast", event: "m", payload: msg }).catch?.(() => {}); },
+    track: (m) => { meta = m; if (ch.state === "joined") ch.track(m).catch(() => {}); },
+    close: () => { try { supabaseClient.removeChannel(ch); } catch { /* gone */ } },
+  };
+}
+
+// @ in a document: Live items matching what's typed (people and dates come from the editor).
+function docChipSource(q) {
+  const needle = String(q || "").trim().toLowerCase();
+  const hit = (s) => !needle || String(s || "").toLowerCase().includes(needle);
+  const out = [];
+  try { for (const r of activeRecipes()) if (hit(r.title || r.name)) { out.push({ kind: "recipe", refId: String(r.id), label: r.title || r.name || "Recipe", sub: "Recipe" }); if (out.length > 30) break; } } catch { /* recipes not loaded */ }
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const evs = (state.planEvents || []).filter((e) => e?.title && hit(e.title)).sort((a, b) => (Math.abs(Date.parse(a.date || today) - Date.now()) - Math.abs(Date.parse(b.date || today) - Date.now())));
+    for (const e of evs.slice(0, 8)) out.push({ kind: "event", refId: `${e.id}|${e.date || ""}`, label: e.title, sub: e.date ? new Date(`${e.date}T12:00:00`).toLocaleDateString([], { month: "short", day: "numeric" }) : "Event" });
+  } catch { /* no calendar */ }
+  try { for (const t of (state.trips || []).filter((x) => hit(x.name || x.destination)).slice(0, 6)) out.push({ kind: "trip", refId: String(t.id), label: t.name || t.destination || "Trip", sub: "Trip" }); } catch { /* no trips */ }
+  try { for (const c of (state.contacts || []).filter((x) => hit(`${x.firstName || ""} ${x.lastName || ""} ${x.name || ""}`)).slice(0, 6)) out.push({ kind: "contact", refId: String(c.id), label: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.name || "Contact", sub: "Contact" }); } catch { /* no contacts */ }
+  const order = { recipe: 2, event: 1, trip: 3, contact: 0 };
+  return out.sort((a, b) => (needle ? 0 : order[a.kind] - order[b.kind])).slice(0, 16);
+}
+
+function openDocChip(kind, id) {
+  const ref = String(id || "");
+  if (kind === "recipe") { showEatApp(); setTimeout(() => { try { openRecipeView(ref); } catch { /* gone */ } }, 50); return; }
+  if (kind === "event") { const [eid, date] = ref.split("|"); showPlanApp(); setTimeout(() => { try { openPlanEventDetail(eid, date || undefined); } catch { /* gone */ } }, 50); return; }
+  if (kind === "trip") { openExploreTrip(ref); return; }
+  if (kind === "contact" || kind === "person") { showContactsApp(); return; }
+  if (kind === "date") { showPlanApp(); }
+}
+
+async function showDocumentsApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("documents") || !elements.documentsMainPage) { showHomeApp(); return; }
+  activeAppArea = "documents";
+  hideAllPages();
+  elements.documentsMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  const view = currentViewKey();
+  const title = view === "personal" ? "Personal documents" : "Household documents";
+  setPageTitle("Document");
+  setPageHash("documents");
+  closePageTitleMenu();
+  closeAppMenu();
+  const root = document.getElementById("documentsRoot");
+  if (localDevMode || !authSession?.user?.id) {
+    root.innerHTML = `<div class="msg-pane"><p class="msg-muted">Sign in to use Document.</p></div>`;
+    return;
+  }
+  if (!groupMembers.length) await loadGroupMembers();
+  try {
+    if (!documentsUi) {
+      documentsUiLoading ||= import("./documents/page.js").then((m) => m.mountDocumentPage(root, documentsDeps()));
+      documentsUi = await documentsUiLoading;
+    }
+    if (activeAppArea === "documents") await documentsUi.show(documentsScopeForView(view), { kind: view === "personal" ? "personal" : "household", title });
+  } catch (e) {
+    documentsUiLoading = null;
+    root.innerHTML = `<div class="msg-pane"><p class="msg-error">Document couldn't open: ${escapeHtml(e?.message || String(e))}</p></div>`;
+  }
+}
+
+// Photos (PHOTOS_DESIGN.md §7, step 3): the person's Personal library — Personal only
+// until step 4 lets photos be shared into Household (Luke, 2026-11-16). The page
+// itself is photos/page.js; records and thumbnails are cached on the device.
+let photosUi = null;
+let photosUiLoading = null;
+async function showPhotosApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("photos") || !elements.photosMainPage || currentViewKey() !== "personal") { showHomeApp(); return; }
+  activeAppArea = "photos";
+  hideAllPages();
+  elements.photosMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Photos");
+  setPageHash("photos");
+  closePageTitleMenu();
+  closeAppMenu();
+  const root = document.getElementById("photosRoot");
+  const scope = photosPersonalScope();
+  if (!scope) {
+    root.innerHTML = `<div class="msg-pane"><p class="msg-muted">Sign in to see your photos.</p></div>`;
+    photosUi = null;
+    photosUiLoading = null;
+    return;
+  }
+  try {
+    if (!photosUi) {
+      photosUiLoading ||= Promise.all([import("./photos/page.js"), import("./documents/storage.js"), photosPresigner()]).then(([m, storage, presign]) => m.mountPhotosPage(root, {
+        rest: photosRest,
+        presign,
+        plugin: nativePhotoLibrary(),
+        convertFileSrc: nativeFileSrc,
+        putFetch: storage.bytesUploadFetch(),
+        toast: (text) => showMailToast(text),
+        confirm: (text) => window.confirm(text),
+      }));
+      photosUi = await photosUiLoading;
+    }
+    if (activeAppArea === "photos") await photosUi.show(scope);
+  } catch (e) {
+    photosUiLoading = null;
+    photosUi = null;
+    root.innerHTML = `<div class="msg-pane"><p class="msg-error">Photos couldn't open: ${escapeHtml(e?.message || String(e))}</p></div>`;
+  }
+}
+async function purgeLocalPhotos() {
+  try { photosUi?.destroy?.(); } catch { /* already gone */ }
+  photosUi = null;
+  photosUiLoading = null;
+  try { await (await import("./photos/cache.js")).deletePhotosCache(); } catch { /* nothing kept */ }
 }
 
 // Recreate is a menu group (page-groups.js) of four pages: Explore, Exercise,
@@ -8908,8 +9707,9 @@ function showContactsApp(event) {
   elements.contactsMainPage.hidden = false;
   elements.weekLabel.closest(".week-tools").hidden = true; // no date bar on Contacts
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Mail");
+  setPageTitle("Message");
   setPageHash("contacts");
+  showMessagePanes("mail"); // Contacts lives under the Mail tab
   renderContactsPage();
   closePageTitleMenu();
   closeAppMenu();
@@ -8954,6 +9754,8 @@ function showMediaApp(event, { keepView = false } = {}) {
   setPageHash("media");
   if (keepView && mediaTabsWired) renderActiveMediaView();
   else initMediaPage();
+  musicShows.updateBadge();
+  musicShows.importRecentOnce(); // once per device: issues from before the Listen bell had shows
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -9023,11 +9825,202 @@ function showMailApp(event, hashParams) {
   // previous visit (removing is-expanded closes the mobile drawer; harmless on
   // desktop, which uses is-collapsed instead).
   document.getElementById("mailSidebar")?.classList.remove("is-expanded");
-  setPageTitle("Mail");
+  setPageTitle("Message");
   setPageHash("mail");
   closePageTitleMenu();
   closeAppMenu();
   initMailPage(hashParams);
+  applyMessageTab();
+}
+
+// ─── Message page: Messages | Mail tabs (MESSAGING_DESIGN.md §11) ─────────────
+// The Messages tab is messaging/ui.js, imported the first time it opens, so the
+// crypto library (~350 KB) never loads at boot. The tab chosen last is remembered
+// per device. Everything else about messaging lives in messaging/.
+// (messagesUi / messagesUiLoading are declared up with pageNotifCounts: hideAllPages
+// reads messagesUi and can run before this point in the file.)
+
+function currentMessageTab() {
+  try { return localStorage.getItem(MESSAGE_TAB_KEY) === "mail" ? "mail" : "messages"; } catch { return "messages"; }
+}
+
+function setMessageTab(tab) {
+  try { localStorage.setItem(MESSAGE_TAB_KEY, tab === "mail" ? "mail" : "messages"); } catch { /* private mode */ }
+  applyMessageTab();
+}
+
+function showMessagePanes(tab) {
+  const page = elements.mailMainPage;
+  if (!page) return;
+  page.classList.toggle("is-messages-tab", tab === "messages");
+  document.querySelectorAll("[data-message-tab]").forEach((b) => {
+    const on = b.dataset.messageTab === tab;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  const pane = document.getElementById("messagesPane");
+  if (pane) pane.hidden = tab !== "messages";
+  const inner = page.querySelector(".mail-page-inner");
+  if (inner) inner.hidden = tab === "messages";
+}
+
+// Removing a device (Messages, Documents) also ends every other Live sign-in, so a
+// lost or removed device can't keep reading app data until its session expires
+// (Luke, 2026-11-03). Supabase revokes the other sessions' refresh tokens; this one
+// stays signed in, the others sign in again once. Best-effort: never blocks removal.
+async function signOutOtherSessions() {
+  if (!supabaseClient || localDevMode) return false;
+  try { const { error } = await supabaseClient.auth.signOut({ scope: "others" }); return !error; } catch { return false; }
+}
+
+function messagingDeps() {
+  return {
+    signOutOtherSessions,
+    userId: authSession?.user?.id || "",
+    baseUrl: () => supabaseBaseUrl(),
+    headers: () => supabaseHeaders(),
+    isNative: isNativeApp(),
+    nativeMessagingKeys,
+    nativeQrScan,
+    toast: (text) => showMailToast(text),
+    cardSources: messagingCardSources,
+    openCard: openMessagingCard,
+    onUnreadChange: (unread) => setMessagesUnread(unread),
+  };
+}
+
+async function applyMessageTab() {
+  const tab = elements.mailMainPage?.classList.contains("is-contacts-mode") ? "mail" : currentMessageTab();
+  showMessagePanes(tab);
+  if (tab !== "messages" || activeAppArea !== "mail") { messagesUi?.hide(); return; }
+  const pane = document.getElementById("messagesPane");
+  if (localDevMode || !authSession?.user?.id) {
+    pane.innerHTML = `<div class="msg-pane"><p class="msg-muted">Sign in to use secure messages.</p></div>`;
+    return;
+  }
+  try {
+    if (!messagesUi) {
+      messagesUiLoading ||= import("./messaging/ui.js").then((m) => m.mountMessages(pane, messagingDeps()));
+      messagesUi = await messagesUiLoading;
+    }
+    if (activeAppArea === "mail" && currentMessageTab() === "messages") await messagesUi.show();
+  } catch (e) {
+    messagesUiLoading = null;
+    console.warn("Messages failed to load:", e);
+    pane.innerHTML = `<div class="msg-pane"><p class="msg-error">Secure messages couldn't load. Check your connection and open the tab again.</p></div>`;
+  }
+}
+
+// What a message card can point to (§5). A card carries only a snapshot; tapping it
+// opens the real item only if this person can see it (openMessagingCard).
+const cardRef = (v) => String(v ?? "").replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 64);
+function messagingCardSources() {
+  const today = dateKeyFromDate(new Date());
+  return {
+    recipe: (typeof activeRecipes === "function" ? activeRecipes() : []).map((r) => ({ ref: cardRef(r.id), title: r.title || r.name || "Recipe", subtitle: r.time || "" })).filter((x) => x.ref),
+    event: (state.planEvents || []).filter((e) => e?.id && (e.date || "") >= today).sort((a, b) => String(a.date).localeCompare(String(b.date))).slice(0, 50)
+      .map((e) => ({ ref: cardRef(e.id), title: e.title || "Event", date: e.date || "", subtitle: e.time || e.startTime || "" })),
+    trip: travelTrips().map((t) => ({ ref: cardRef(t.id), title: t.name || t.destination || "Trip" })).filter((x) => x.ref),
+    shop: (state.persistentManualGroceries || []).map((g) => {
+      const name = typeof g === "string" ? g : g?.name || g?.item || "";
+      return { ref: cardRef(typeof g === "string" ? name.toLowerCase() : g?.id || name.toLowerCase()), title: name };
+    }).filter((x) => x.ref && x.title),
+  };
+}
+
+function openMessagingCard(kind, ref) {
+  if (kind === "recipe") {
+    const r = (typeof activeRecipes === "function" ? activeRecipes() : []).find((x) => cardRef(x.id) === ref);
+    if (!r) return false;
+    openRecipeView(r.id);
+    return true;
+  }
+  if (kind === "event") {
+    const e = (state.planEvents || []).find((x) => cardRef(x.id) === ref);
+    if (!e) return false;
+    openPlanEventDetail(e.id, e.date || null);
+    return true;
+  }
+  if (kind === "trip") {
+    const t = travelTrips().find((x) => cardRef(x.id) === ref);
+    if (!t) return false;
+    showExploreTrips(t.id);
+    return true;
+  }
+  if (kind === "shop") { showShopApp(); return true; }
+  return false;
+}
+
+// Unread mark on Message in the menus: on app focus and every 2 minutes while the
+// app is visible (one id from the inbox; no crypto loaded). Never while hidden.
+let messagesUnread = false;
+function setMessagesUnread(on) {
+  messagesUnread = Boolean(on);
+  setPageNotifCount("messages", messagesUnread ? 1 : 0);
+}
+// Sign-out / account switch (MESSAGING_DESIGN.md §18 finding 2): remove this device
+// from secure messages (when a token is still at hand), close the Messages tab and the
+// badge's connections, delete the local store, and on iPhone the Keychain key.
+async function purgeLocalMessaging(headersSnapshot = null) {
+  try {
+    const { forgetMessagingOnThisDevice } = await import("./messaging/signout.js");
+    const keys = nativeMessagingKeys();
+    await forgetMessagingOnThisDevice({
+      baseUrl: () => supabaseBaseUrl(),
+      headers: () => headersSnapshot || supabaseHeaders(),
+      getRawWrapKey: keys ? async () => { const { key } = await keys.wrapKey(); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); } : async () => null,
+      destroyKey: async () => { await keys?.destroy?.(); },
+      beforeDelete: async () => {
+        messagesUi?.destroy?.();
+        messagesUi = null;
+        messagesUiLoading = null;
+        // Documents keeps its own store (keys, cached names and thumbnails): it goes too.
+        documentsUi?.destroy?.();
+        documentsUi = null;
+        documentsUiLoading = null;
+        try {
+          const { deleteMessagingStore } = await import("./messaging/keystore.js");
+          await deleteMessagingStore("live-documents");
+          // The receipts waiting to be filed go too.
+          if (receiptOutboxPromise) { try { (await receiptOutboxPromise).backend.close(); } catch { /* not open */ } receiptOutboxPromise = null; }
+          await deleteMessagingStore("live-documents-outbox");
+          // The browser's passkey-locked store, and the passkey's (non-secret) id and salt.
+          await deleteMessagingStore("live-documents-pk");
+          // The word processor's device copies of documents (documents/editor/cache.js).
+          try { await (await import("./documents/editor/cache.js")).deleteDocCaches(); } catch { /* none */ }
+          try { for (const k of Object.keys(localStorage)) if (k.startsWith("liveDocumentsPasskey:")) localStorage.removeItem(k); } catch { /* storage blocked */ }
+        } catch { /* nothing stored */ }
+        try { await (await import("./messaging/peek.js")).closePeek(); } catch { /* not loaded */ }
+      },
+    });
+  } catch (e) {
+    console.warn("Messaging purge skipped:", e);
+  }
+}
+
+async function peekMessages() {
+  if (localDevMode || !authSession?.user?.id || document.visibilityState !== "visible") return;
+  if (activeAppArea === "mail" && currentMessageTab() === "messages") return; // the tab itself is fetching
+  try {
+    const { messagingWaiting } = await import("./messaging/peek.js");
+    const keys = nativeMessagingKeys();
+    const waiting = await messagingWaiting({
+      baseUrl: () => supabaseBaseUrl(),
+      headers: () => supabaseHeaders(),
+      getRawWrapKey: keys ? async () => { const { key } = await keys.wrapKey(); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); } : async () => null,
+    });
+    if (waiting) setMessagesUnread(true);
+  } catch { /* the badge is best-effort */ }
+}
+if (typeof window !== "undefined") {
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest?.("[data-message-tab]");
+    if (!b) return;
+    if (b.dataset.messageTab === "messages" && elements.mailMainPage?.classList.contains("is-contacts-mode")) leaveMailContactsMode();
+    setMessageTab(b.dataset.messageTab);
+  });
+  window.addEventListener("focus", () => { peekMessages(); });
+  setInterval(() => { peekMessages(); }, 2 * 60 * 1000);
 }
 
 // ─── Mail / Gmail ─────────────────────────────────────────────────────────────
@@ -9393,6 +10386,42 @@ const mailThreadCache = new Map(); // threadId → { thread, at }
 const mailRowSummary = new Map(); // threadId → { subject, from }
 let mailPrefetchGen = 0;
 const MAIL_LIST_PRELOAD_TTL = 2 * 60 * 1000;
+// Always-fresh folder cache: the first page of each plain folder, keyed by
+// label, with the mailbox history id Gmail had when it was read. Returning to a
+// folder asks the server "anything changed since?" (one 2-unit history.list
+// call instead of a ~266-unit full load); unchanged → show the cached page.
+// Two guards keep it honest against Gmail's brief search-index lag (a list read
+// right after a change can still show the old state while the history id has
+// already moved on): a load made within MAIL_CACHE_MUTATION_GUARD of our own
+// move/snooze/read/send isn't cached, and every entry expires after
+// MAIL_FOLDER_CACHE_TTL whatever the check says.
+const mailFolderCache = new Map(); // labelId → { data, historyId, at }
+const MAIL_FOLDER_CACHE_TTL = 5 * 60 * 1000;
+const MAIL_FOLDER_CACHE_MAX = 12;
+const MAIL_CACHE_MUTATION_GUARD = 15 * 1000;
+let mailLastMutationAt = 0;
+
+function mailFolderCacheGet(labelId) {
+  const c = mailFolderCache.get(labelId);
+  if (!c) return null;
+  if (Date.now() - c.at > MAIL_FOLDER_CACHE_TTL) { mailFolderCache.delete(labelId); return null; }
+  return c;
+}
+
+function mailFolderCacheStore(labelId, data, startedAt) {
+  if (!labelId || !data?.historyId || data.partial) return;
+  if (startedAt - mailLastMutationAt < MAIL_CACHE_MUTATION_GUARD) return;
+  mailFolderCache.delete(labelId); // re-insert so the newest is last
+  mailFolderCache.set(labelId, { data, historyId: data.historyId, at: Date.now() });
+  while (mailFolderCache.size > MAIL_FOLDER_CACHE_MAX) mailFolderCache.delete(mailFolderCache.keys().next().value);
+}
+
+// Our own change to the mailbox: forget every cached folder (the history check
+// would catch it too, but this also covers the index-lag window above).
+function noteMailMutation() {
+  mailLastMutationAt = Date.now();
+  mailFolderCache.clear();
+}
 const MAIL_THREAD_CACHE_TTL = 5 * 60 * 1000;
 const MAIL_PREFETCH_COUNT = 15;
 
@@ -9715,6 +10744,7 @@ async function disconnectGmail() {
   await callGmailApi({ action: "disconnect" });
   mailGmailConnected = false;
   mailStatusPromise = null;
+  mailFolderCache.clear();
   renderMailConnectState();
 }
 
@@ -9722,6 +10752,10 @@ async function disconnectGmail() {
 // (prev/next) goes through mailGoToPage → fetchAndRenderMailPage.
 async function loadMailList(labelId, q = "") {
   const gen = ++mailListLoadGen;
+  // Stop the previous folder's read-ahead now rather than when the new list
+  // lands: it was for a folder we're leaving, and overlapping it with the new
+  // load is what makes fast folder switching burst past Gmail's rate limit.
+  mailPrefetchGen++;
   currentMailbox = labelId;
   // Snoozed folder: pull the wake-time metadata so rows can show "until when"
   // and offer unsnooze/reschedule instead of the normal quick actions.
@@ -9759,15 +10793,28 @@ async function fetchAndRenderMailPage({ fresh = false } = {}) {
     mailListPreload.labelId === currentMailbox &&
     Date.now() - mailListPreload.at < MAIL_LIST_PRELOAD_TTL) ? mailListPreload.promise : null;
   if (preload) mailListPreload = null; // one-shot
+  const loadedAt = Date.now();
+  const labelId = currentMailbox;
+  const cacheable = mailPageIndex === 0 && !mailCurrentQuery;
+  const cached = cacheable && !preload ? mailFolderCacheGet(labelId) : null;
   let data = preload ? await preload : null;
   if (!data) {
     data = await callGmailApi({
       action: "list",
-      labelIds: [currentMailbox],
+      // A search covers all the person's mail, like Gmail's (Luke, 2026-11-17);
+      // spam and trash stay out, as in Gmail. A plain folder view lists that folder.
+      labelIds: mailCurrentQuery ? [] : [labelId],
       q: mailCurrentQuery || undefined,
       pageToken: token || undefined,
-      maxResults: MAIL_PAGE_SIZE
+      maxResults: MAIL_PAGE_SIZE,
+      ifUnchangedSince: cached?.historyId || undefined
     });
+  }
+  if (data?.unchanged) {
+    // Nothing in the mailbox changed since the cached copy was read.
+    data = cached ? cached.data : null;
+  } else if (data && cacheable) {
+    mailFolderCacheStore(labelId, data, loadedAt);
   }
   if (gen !== mailListLoadGen) return; // stale: a newer load owns the list (and mailPageBusy)
   mailPageBusy = false;
@@ -9909,6 +10956,7 @@ function toggleMailSelectAll() {
 
 function refreshMailList() {
   if (mailPageBusy) return;
+  mailFolderCache.delete(currentMailbox); // Refresh always does a full load
   loadMailList(currentMailbox, mailCurrentQuery);
 }
 
@@ -12012,83 +13060,55 @@ async function openMailAttachment(chip) {
     const got = await loadMailAttachmentBytes({ messageId: attMessage, attachmentId: attId, filename, size: attSize });
     if (got.tooLarge) { window.open(gmailUrl, "_blank"); return; }
     if (!got.bytes) { offerMailAttachmentInGmail(got.error, gmailUrl); return; }
-    showMailAttachmentViewer({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
+    showMailAttachment({ bytes: got.bytes, filename, mimeType: attMime, gmailUrl });
   } finally {
     chip.disabled = false;
     chip.classList.remove("is-loading");
   }
 }
 
-// The web viewer: a full-window dialog over the Mail page. PDFs, bitmap images
-// and plain text show inline; other files get Download (and Open in Gmail).
-// SECURITY: see mail-attachment-view.js — only inert types are ever rendered,
-// and the blob never carries the sender's declared type.
-function showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }) {
-  document.getElementById("mailAttachmentViewer")?.remove();
-  const kind = attachmentViewKind(mimeType, filename);
-  const blob = new Blob([bytes], { type: attachmentBlobType(kind, mimeType, filename) });
-  const url = kind === "pdf" || kind === "image" ? URL.createObjectURL(blob) : "";
-
-  const dlg = document.createElement("dialog");
-  dlg.id = "mailAttachmentViewer";
-  dlg.className = "mail-att-viewer";
-  dlg.setAttribute("aria-label", filename);
-  dlg.innerHTML = `
-    <div class="mail-att-viewer-bar">
-      <button class="icon-btn mail-att-viewer-close" type="button" aria-label="Close">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
-      <span class="mail-att-viewer-name"></span>
-      <button class="secondary-btn mail-att-viewer-download" type="button">Download</button>
-    </div>
-    <div class="mail-att-viewer-body"></div>`;
-  dlg.querySelector(".mail-att-viewer-name").textContent = filename;
-  const body = dlg.querySelector(".mail-att-viewer-body");
-  const downloadMailAttachment = () => {
-    saveFile(new Blob([bytes], { type: "application/octet-stream" }), filename).catch((e) => console.warn("attachment save failed", e));
-  };
-
-  if (kind === "pdf") {
-    const frame = document.createElement("iframe");
-    frame.className = "mail-att-viewer-pdf";
-    frame.title = filename;
-    frame.src = url;
-    body.appendChild(frame);
-  } else if (kind === "image") {
-    const img = document.createElement("img");
-    img.className = "mail-att-viewer-img";
-    img.alt = filename;
-    img.src = url;
-    body.appendChild(img);
-  } else if (kind === "text") {
-    const pre = document.createElement("pre");
-    pre.className = "mail-att-viewer-text";
-    let text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    if (text.length > ATTACHMENT_TEXT_PREVIEW_MAX) text = text.slice(0, ATTACHMENT_TEXT_PREVIEW_MAX) + "\n\n… (preview cut short — download for the whole file)";
-    pre.textContent = text;
-    body.appendChild(pre);
-  } else {
-    const empty = document.createElement("div");
-    empty.className = "mail-att-viewer-empty";
-    empty.innerHTML = `<p>This kind of file can't be previewed here.</p>
-      <div class="mail-att-viewer-actions">
-        <button class="primary-btn" type="button" data-att-download>Download</button>
-        <a class="secondary-btn" target="_blank" rel="noopener noreferrer">Open in Gmail</a>
-      </div>`;
-    empty.querySelector("a").href = gmailUrl;
-    empty.querySelector("[data-att-download]").addEventListener("click", () => downloadMailAttachment());
-    dlg.querySelector(".mail-att-viewer-download").hidden = true;
-    body.appendChild(empty);
-  }
-
-  dlg.querySelector(".mail-att-viewer-download").addEventListener("click", downloadMailAttachment);
-  dlg.querySelector(".mail-att-viewer-close").addEventListener("click", () => dlg.close());
-  dlg.addEventListener("close", () => {
-    if (url) URL.revokeObjectURL(url);
-    dlg.remove();
+// The web viewer lives in mail-attachment-viewers.js; this is what it may reach
+// outside Mail: saving the file, the event editor and the contacts import.
+function showMailAttachment({ bytes, filename, mimeType, gmailUrl }) {
+  let timeZone = "";
+  try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { /* no Intl zone */ }
+  return showMailAttachmentViewer({ bytes, filename, mimeType, gmailUrl }, {
+    saveFile,
+    timeZone,
+    addInviteEvent: (prefill) => openPlanEventDialog(prefill.date, null, prefill),
+    addContacts: (vcfText) => importContactsVcf(vcfText),
+    openWordDocument: openMailWordAttachment
   });
-  document.body.appendChild(dlg);
-  dlg.showModal();
+}
+
+// A Word attachment opens in the Document page's word processor, view only and from
+// memory: nothing is stored or sent. "Save to Document" (signed in, Document enabled)
+// makes it a document in this view's Document page and opens it there.
+async function openMailWordAttachment({ bytes, filename }) {
+  const name = String(filename || "Document").replace(/\.docx$/i, "") || "Document";
+  const { openDocxPreview } = await import("./documents/editor/host.js");
+  const canKeep = !localDevMode && !!authSession?.user?.id && isPageEnabled("documents") && !!elements.documentsMainPage;
+  let preview = null;
+  let keeping = false;
+  preview = await openDocxPreview({
+    bytes, name,
+    me: { id: authSession?.user?.id || "preview", name: "" },
+    deps: { toast: (m) => showMailToast(m), isNative: isNativeApp() },
+    note: "From email · view only",
+    onKeep: canKeep ? async (converted) => {
+      if (keeping) return;
+      keeping = true;
+      try {
+        await preview?.close();
+        await showDocumentsApp();
+        if (!documentsUi?.addConverted) throw new Error("Document isn't ready.");
+        await documentsUi.addConverted(converted, name);
+      } catch (e) {
+        showMailToast(e?.message || "Couldn't save it to Document.");
+      }
+    } : null
+  });
+  if (preview.warnings.length) showMailToast(`Opened. Not everything carried over: ${preview.warnings.slice(0, 3).join(", ")}.`);
 }
 
 // Renders each message body the way Gmail does: HTML mail goes into a
@@ -12464,6 +13484,12 @@ async function callGmailApi(body) {
   if (body && (body.action === "move" || body.action === "snooze" || body.action === "unsnooze")) {
     invalidateMailListPreload();
   }
+  // Anything that changes what a folder list shows (membership, read state, a
+  // sent message) also retires the folder cache.
+  if (body && (body.action === "move" || body.action === "snooze" || body.action === "unsnooze" ||
+    body.action === "send" || (body.action === "get" && !body.peek))) {
+    noteMailMutation();
+  }
   const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
   const token = session?.data?.session?.access_token;
   if (!token) { lastGmailApiError = "Not signed in."; return null; }
@@ -12505,6 +13531,8 @@ function currentMainPageTitle() {
   if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Shop"; // a space of the Shop page
   if (activeAppArea === "watch") return "Watch";
+  if (activeAppArea === "documents") return "Document";
+  if (activeAppArea === "photos") return "Photos";
   if (activeAppArea === "media") return "Listen";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Leisure";
@@ -12512,7 +13540,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "news") return "News";
   if (activeAppArea === "weather") return "Weather";
   if (activeAppArea === "finance") return "Finance";
-  if (activeAppArea === "mail") return "Mail";
+  if (activeAppArea === "mail") return "Message";
   if (activeAppArea === "explore") return "Explore";
   return "Meal Plan";
 }
@@ -12989,7 +14017,7 @@ function householdLayerTaskGroupHtml(dayId) {
   if (!tasks.length) return "";
   return `
     <div class="do-layer-group" aria-label="Household tasks">
-      <div class="do-layer-head">${escapeHtml(VIEW_LABELS.household || "Household")}</div>
+      <div class="do-layer-head">${escapeHtml(viewLabel("household"))}</div>
       ${tasks.map((task) => {
         const timeLabel = formatTaskTime(task.time);
         return `
@@ -17028,7 +18056,7 @@ function openTasksInView(view) {
 }
 
 function openEventInItsView(view, eventId, dateKey) {
-  if (!currentViewList().includes(view)) { showMailToast(`That event is in the ${VIEW_LABELS[view] || view} view.`); return; }
+  if (!currentViewList().includes(view)) { showMailToast(`That event is in the ${viewLabel(view) || view} view.`); return; }
   currentViewKey.chosen = true;
   applyView(view, { keepPage: true });
   alignScopesToView().then(() => {
@@ -17084,6 +18112,8 @@ function applyView(view, { direction = 0, quiet = false, keepPage = false } = {}
     showHomeApp();
     return;
   }
+  // Documents holds a different vault in each view (Household / Personal).
+  if (changed && activeAppArea === "documents") { showDocumentsApp(); return; }
   if (activeAppArea === "home") setPageHash(""); else refreshViewHash();
 }
 
@@ -17174,10 +18204,11 @@ function scrollsSideways(el, stop) {
 // header band the view the open menu shows; chevrons (header only) for someone
 // who can switch. The name slides out the way the finger went and the next slides in.
 function renderViewBands(direction = 0) {
+  paintHomeLogo(); // each view has its own logo
   const switchable = viewIsSwitchable();
   for (const band of [elements.homeViewBand, elements.headerViewBand]) {
     if (!band) continue;
-    const name = VIEW_LABELS[band === elements.headerViewBand ? menuViewKey() : currentViewKey()] || "";
+    const name = viewLabel(band === elements.headerViewBand ? menuViewKey() : currentViewKey());
     band.classList.toggle("is-switchable", switchable);
     band.setAttribute("aria-label", switchable ? `View: ${name}. ${band === elements.homeViewBand ? "Swipe the page" : "Swipe or use the arrows"} to switch.` : `View: ${name}`);
     const label = band.querySelector(".view-band-name");
@@ -17300,8 +18331,10 @@ function pageNavButtons() {
     { home: "homeNewsBtn",     title: "titleNewsBtn",      page: "news",     areas: ["news"],               open: showNewsApp },
     { home: "homeFinanceBtn",  title: "titleFinanceBtn",   page: "finance",  areas: ["finance"],            open: showFinanceApp },
     { home: "homeShopBtn",     title: "titleShopBtn",      page: "shop",     areas: ["shop", "inventory"],  open: showShopApp },
+    { home: "homeDocumentsBtn", title: "titleDocumentsBtn", page: "documents", areas: ["documents"],        open: showDocumentsApp },
     { home: "homeWatchBtn",    title: "titleWatchBtn",     page: "watch",    areas: ["watch"],              open: showWatchApp },
     { home: "homeListenBtn",   title: "titleListenBtn",    page: "read",     areas: ["media"],              open: showListenApp },
+    { home: "homePhotosBtn",   title: "titlePhotosBtn",    page: "photos",   areas: ["photos"],             open: showPhotosApp },
     { home: "homeMailBtn",     title: "titleMailBtn",      page: "mail",     areas: ["mail", "contacts"],   open: showMailApp },
     { home: "homeExploreBtn",  title: "titleExploreBtn",   page: "explore",  areas: ["explore"],            open: showExploreApp },
     { home: "homeExerciseBtn", title: "titleExerciseBtn",  page: "play",     areas: ["play"],               open: showPlayApp },
@@ -17396,7 +18429,7 @@ async function openReceiptCamera() {
     // older builds ignore it and the read goes ahead without it).
     const result = await scanner.scan({ maxPages: 4, maxDimension: 1600, quality: 0.82, ocr: true });
     if (result?.cancelled) return;
-    scanReceiptFromHeader(scannedPagesToFiles(result?.pages), { ocrPages: ocrPagesFromNative(result?.text) });
+    scanReceiptFromHeader(scannedPagesToFiles(result?.pages), { ocrPages: ocrPagesFromNative(result?.text), camera: true });
   } catch (e) {
     // No fallback click here: iOS only opens a file picker from a direct tap.
     showMailToast(`Couldn't open the camera: ${e?.message || "unknown error"} — try Photo instead`);
@@ -17406,7 +18439,95 @@ async function openReceiptCamera() {
 function scanReceiptFromHeader(files, options = {}) {
   const images = files.filter((f) => /^image\//.test(f.type || ""));
   if (!images.length) return;
-  openReceiptScanWithFiles(images, options);
+  const { camera = false, ...scanOptions } = options;
+  const receiptId = openReceiptScanWithFiles(images, scanOptions);
+  queueReceiptForDocuments(images, { camera, receiptId });
+}
+
+// Every scanned receipt is also kept in Household's Document › Receipts, an everyday
+// folder since 2026-11-04 (DOCUMENTS_DESIGN.md §25: no Face ID, so it's filed right
+// after the scan). The pages go into this device's receipts outbox first
+// (documents/outbox.js), so a scan with no signal is filed on a later try or the next
+// time Document opens. Only for someone in a household with Document on; best-effort,
+// never in the scan's way.
+let receiptOutboxPromise = null;
+function receiptOutbox() {
+  receiptOutboxPromise ||= (async () => {
+    const [{ createReceiptOutbox, OUTBOX_DB }, { createKeystore, idbBackend }] = await Promise.all([import("./documents/outbox.js"), import("./messaging/keystore.js")]);
+    const keys = nativeMessagingKeys();
+    const getRawWrapKey = keys ? async () => { const { key } = await keys.wrapKey(); return Uint8Array.from(atob(key), (c) => c.charCodeAt(0)); } : async () => null;
+    const backend = await idbBackend({ dbName: OUTBOX_DB, getRawWrapKey });
+    return { outbox: createReceiptOutbox(createKeystore(backend)), backend };
+  })().catch((e) => { receiptOutboxPromise = null; throw e; });
+  return receiptOutboxPromise.then((o) => o.outbox);
+}
+async function queueReceiptForDocuments(files, { camera = false, receiptId = "" } = {}) {
+  if (localDevMode || !authSession?.user?.id || !userGroup?.id || !isPageEnabled("documents")) return;
+  const scope = userGroup.id; // filed only into the household it was scanned in
+  try {
+    const pages = await Promise.all(files.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), type: f.type })));
+    await (await receiptOutbox()).queue(pages, { scope, camera, receiptId });
+  } catch { return; /* best-effort: the receipt itself is unaffected */ }
+  fileWaitingReceipts(scope).catch(() => {}); // now; whatever fails waits for the next try
+}
+
+// Files this device's waiting receipts into the household's everyday Receipts folder.
+// One run at a time (Web Locks keep a second tab out too). Returns { filed, failed, dropped }.
+let receiptFiling = null;
+function fileWaitingReceipts(scope) {
+  receiptFiling ||= (async () => {
+    if (!scope || scope !== userGroup?.id || !authSession?.user?.id) return { filed: 0, failed: 0, dropped: 0 };
+    const [{ fileReceipts, OUTBOX_LOCK }, { createEverydayLibrary }, { createDocumentsStorage, edgePresigner }, { createRestTransport }, { withLock }, { MIME_TYPES, makeThumb }] = await Promise.all([
+      import("./documents/outbox.js"), import("./documents/everyday.js"), import("./documents/storage.js"),
+      import("./messaging/server.js"), import("./messaging/keystore.js"), import("./documents/common.js"),
+    ]);
+    const outbox = await receiptOutbox();
+    if (!(await outbox.entries()).some((e) => e.scope === scope)) return { filed: 0, failed: 0, dropped: 0 };
+    const library = createEverydayLibrary({
+      transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+      storage: createDocumentsStorage({ presign: edgePresigner({ functionsUrl: `${supabaseBaseUrl()}/functions/v1`, getToken: async () => authSession?.access_token || "" }), tier: "everyday" }),
+    });
+    const folders = await library.ensureStartingFolders(scope, { receipts: true, names: [] });
+    const folderId = folders.find((f) => f.kind === "receipts")?.id;
+    if (!folderId) return { filed: 0, failed: 0, dropped: 0 };
+    return fileReceipts({
+      outbox, library, scope, folderId,
+      receipts: () => (Array.isArray(state.receipts) ? state.receipts : []),
+      makeThumb: (page) => makeThumb(new Blob([page.bytes], { type: page.type })),
+      mimeOk: (mime) => MIME_TYPES.includes(mime),
+      lock: (fn) => withLock(OUTBOX_LOCK, fn),
+    });
+  })().finally(() => { receiptFiling = null; });
+  return receiptFiling;
+}
+
+// Personal receipts folder (Luke, 2026-11-12): a receipt marked Personal has its
+// Document file moved from Household › Receipts to the owner's Personal › Receipts.
+// Runs after the receipts table sync (the database checks the receipt is this
+// person's Personal one there), only for Personal receipts not yet handled this session.
+const personalReceiptFilesHandled = new Set();
+let personalReceiptMove = null;
+function movePersonalReceiptFilesSoon() {
+  const uid = authSession?.user?.id;
+  if (localDevMode || !uid || !userGroup?.id || !isPageEnabled("documents")) return null;
+  const ids = (Array.isArray(state.receipts) ? state.receipts : [])
+    .filter((r) => r?.view === "personal" && !personalReceiptFilesHandled.has(r.id)).map((r) => r.id);
+  if (!ids.length) return null;
+  personalReceiptMove ||= (async () => {
+    const [{ movePersonalReceiptFiles, OUTBOX_LOCK }, { createEverydayLibrary }, { createDocumentsStorage, edgePresigner }, { createRestTransport }, { withLock }] = await Promise.all([
+      import("./documents/outbox.js"), import("./documents/everyday.js"), import("./documents/storage.js"),
+      import("./messaging/server.js"), import("./messaging/keystore.js"),
+    ]);
+    const library = createEverydayLibrary({
+      transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+      storage: createDocumentsStorage({ presign: edgePresigner({ functionsUrl: `${supabaseBaseUrl()}/functions/v1`, getToken: async () => authSession?.access_token || "" }), tier: "everyday" }),
+    });
+    const out = await movePersonalReceiptFiles({ library, from: userGroup.id, to: `u-${uid}`, personalIds: ids, lock: (fn) => withLock(OUTBOX_LOCK, fn) });
+    if (!out.failed) ids.forEach((id) => personalReceiptFilesHandled.add(id));
+    if (out.moved && activeAppArea === "documents") documentsUi?.reload?.();
+    return out;
+  })().catch((e) => { console.warn("[receipts] personal files:", e?.message || e); return null; }).finally(() => { personalReceiptMove = null; });
+  return personalReceiptMove;
 }
 
 // The iPhone's text recognition → printed rows per page (receipt-reconcile.js).
@@ -17497,7 +18618,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "watch", "watch-services", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "link-test", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "watch-services", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "link-test", "photos-check", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -17564,6 +18685,13 @@ const MAIL_AI_FEATURES = [
     defaultOn: true,
     label: "“The world in brief” → article",
     desc: "Same for The Economist's daily briefing — saved as an article in Listen, email filed away."
+  },
+  {
+    // Checked server-side by netlify/functions/_music-show.js (sweep + importMusicShows).
+    key: "amplifierToListen",
+    defaultOn: true,
+    label: "“The Amplifier” → Listen bell",
+    desc: "Turns NYT's playlist newsletter into a show under the Listen bell: the intro and each song's write-up are read aloud, and each song plays from Apple Music after its write-up (iPhone app). No AI is used. Off, it's converted like any other NYT newsletter."
   },
   {
     key: "nytNewsLinks",
@@ -17699,32 +18827,19 @@ async function previewVoice(voiceId, btn) {
 
 function displaySettingsTemplate() {
   // The view on screen (views.js): each of the admin's views keeps its own look.
+  const view = currentViewKey();
   const prefs = currentViewDisplayPrefs();
-  const viewName = VIEW_LABELS[currentViewKey()] || "";
+  const viewName = viewLabel(view);
+  const defaultName = VIEW_LABELS[view] || "";
   const viewNote = viewIsSwitchable()
     ? `<p class="display-hint">This is the look for your <strong>${escapeHtml(viewName)}</strong> view. Each view keeps its own; switch views to set another.</p>`
     : "";
   const now = new Date();
   const seasonNow = seasonalTheme(now);
-  const ends = seasonEnds(now);
-  const endsLabel = ends ? ends.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
   const modes = [["light", "Light"], ["dark", "Dark"], ["auto", "Auto"]];
-  const themeDesc = {
-    classic: "The everyday look.",
-    halloween: "Orange, black and purple.",
-    household: "Navy, dusty blue, blush and sage.",
-    urbangreens: "Urban Greens green and gray, with black and white.",
-    vikings: "Purple and gold.",
-    wolves: "Midnight, lake blue, aurora green and grey.",
-    wild: "Forest green, red, harvest gold and wheat.",
-    twins: "Navy, scarlet and Kasota gold.",
-    gophers: "Maroon and gold.",
-    ajax: "Red, white and black.",
-    mnufc: "Black, sky blue and gray.",
-    seasonal: seasonNow === "classic"
-      ? "Halloween every October, Classic the rest of the year."
-      : `${THEMES[seasonNow].label} now, Classic from ${escapeHtml(endsLabel)}.`,
-  };
+  // The swatch and the name say enough (Luke, 2026-11-04); only Seasonal, which
+  // changes by itself, says what it's showing.
+  const seasonalLine = escapeHtml(seasonalSummary(now, (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" })));
   const swatch = (key) => {
     const colors = THEMES[key === "seasonal" ? (seasonNow === "classic" ? "halloween" : seasonNow) : key].swatch;
     return `<span class="display-swatch" aria-hidden="true">${colors.map((c) => `<i style="background:${c}"></i>`).join("")}</span>`;
@@ -17737,9 +18852,84 @@ function displaySettingsTemplate() {
         </div>
         <input type="checkbox" class="live-toggle" aria-label="Change the app icon with the theme" data-display-icon ${prefs.icon ? "checked" : ""}>
       </div>` : "";
+
+  // This view's logo and name.
+  const logo = viewLogoUrl(view);
+  const identity = `
+      <section class="display-group display-identity">
+        <h3 class="display-group-title">Logo &amp; name</h3>
+        <div class="display-logo-row">
+          <span class="display-logo-preview${logo ? " is-custom" : ""}"><img src="${logo ? escapeHtml(logo) : "./home-logo.png"}" alt="" /></span>
+          <div class="display-logo-actions">
+            <button type="button" class="secondary-btn compact-btn" data-display-logo-pick>${logo ? "Change logo" : "Upload a logo"}</button>
+            ${logo ? `<button type="button" class="secondary-btn compact-btn" data-display-logo-remove>Use the sailboat</button>` : ""}
+            <input type="file" accept="image/*" hidden data-display-logo-input />
+          </div>
+        </div>
+        <p class="display-hint" id="displayLogoStatus" aria-live="polite"></p>
+        <label class="display-name-field">
+          <span class="display-name-label">Name</span>
+          <input type="text" maxlength="40" autocomplete="off" data-display-name value="${escapeHtml(prefs.name || "")}" placeholder="${escapeHtml(defaultName)}" />
+        </label>
+        <p class="display-hint">Shown under the logo and wherever the app names this view. Leave it empty for “${escapeHtml(defaultName)}”.</p>
+      </section>`;
+
+  // Automatic changes: holidays, and game days for the teams switched on below.
+  const sports = normalizeSportsPrefs(state.sportsPrefs);
+  const onTeams = new Set(prefs.gamedayTeams || []);
+  const next = nextHoliday(now);
+  const shown = applyThemeMode.shown;
+  const nowLine = shown?.reason === "game" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} colors — ${escapeHtml(shown.team?.short || shown.team?.name || "")} are playing.`
+    : shown?.reason === "holiday" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} today.` : "";
+  const teamRows = sports.teams.map((t, i) => {
+    const theme = teamTheme(t);
+    const label = escapeHtml(t.name || t.short);
+    return `
+          <li class="display-team${theme ? "" : " is-unthemed"}" data-display-team="${escapeHtml(t.key)}">
+            <span class="display-team-rank">${i + 1}</span>
+            ${theme ? `<span class="display-team-swatch" aria-hidden="true">${THEMES[theme].swatch.slice(0, 3).map((c) => `<i style="background:${c}"></i>`).join("")}</span>` : `<span class="display-team-swatch is-empty" aria-hidden="true"></span>`}
+            <span class="display-team-text">
+              <span class="display-team-name">${label}</span>
+              ${theme ? "" : `<span class="display-team-note">No team colors yet</span>`}
+            </span>
+            <span class="display-team-move">
+              <button type="button" class="display-team-btn" data-display-team-move="-1" aria-label="Rank ${label} higher" ${i === 0 ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>
+              <button type="button" class="display-team-btn" data-display-team-move="1" aria-label="Rank ${label} lower" ${i === sports.teams.length - 1 ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6"/></svg></button>
+            </span>
+            <input type="checkbox" class="live-toggle" aria-label="Show ${label} colors while they play" data-display-team-on ${theme && onTeams.has(t.key) ? "checked" : ""} ${theme ? "" : "disabled"}>
+          </li>`;
+  }).join("");
+  const dynamicGroup = `
+      <section class="display-group display-dynamic">
+        <h3 class="display-group-title">Automatic</h3>
+        <div class="mail-ai-feature-row">
+          <div class="mail-ai-feature-text">
+            <span class="mail-ai-feature-label">Holidays</span>
+            <span class="mail-ai-feature-desc">On a holiday, its theme shows all day.${next ? ` Next: ${escapeHtml(next.label)}, ${escapeHtml(next.date.toLocaleDateString(undefined, { month: "short", day: "numeric" }))}.` : ""}</span>
+          </div>
+          <input type="checkbox" class="live-toggle" aria-label="Holiday themes" data-display-holidays ${prefs.holidays ? "checked" : ""}>
+        </div>
+        <div class="mail-ai-feature-row">
+          <div class="mail-ai-feature-text">
+            <span class="mail-ai-feature-label">Game days</span>
+            <span class="mail-ai-feature-desc">While a team switched on below is playing, its colors show. If two play at once, the higher one wins.</span>
+          </div>
+          <input type="checkbox" class="live-toggle" aria-label="Team colors on game days" data-display-gameday ${prefs.gameday ? "checked" : ""}>
+        </div>
+        ${nowLine ? `<p class="display-hint display-now">${nowLine}</p>` : ""}
+        <div class="display-teams-block${prefs.gameday ? "" : " is-off"}">
+          <h4 class="display-theme-group-title">Your teams</h4>
+          ${sports.teams.length ? `
+          <ol class="display-teams">${teamRows}</ol>
+          <p class="display-hint">Ranked top to bottom. The order is your favorites' order everywhere, and the teams you switch on are the same in every view.</p>`
+          : `<p class="display-hint">Star teams in News › Sports to choose them here.</p>`}
+        </div>
+      </section>`;
+
   return `
     <div class="display-settings">
       ${viewNote}
+      ${identity}
       <section class="display-group">
         <h3 class="display-group-title">Mode</h3>
         <div class="display-seg" role="radiogroup" aria-label="Mode">
@@ -17763,15 +18953,59 @@ function displaySettingsTemplate() {
                   ${swatch(key)}
                   <span class="display-theme-text">
                     <span class="display-theme-name">${key === "seasonal" ? "Seasonal" : escapeHtml(THEMES[key].label)}</span>
-                    <span class="display-theme-desc">${themeDesc[key] || ""}</span>
+                    ${key === "seasonal" ? `<span class="display-theme-desc">${seasonalLine}</span>` : ""}
                   </span>
                 </label>`).join("")}
             </div>
           </div>`).join("")}
       </section>
-      ${currentViewKey() === primaryView(currentViewList()) ? iconRow : ""}
-      <p class="display-hint">Your mode and theme are just yours. They don't change what anyone else in the household sees.</p>
+      ${dynamicGroup}
+      ${view === primaryView(currentViewList()) ? iconRow : ""}
+      <p class="display-hint">Your logos, names, mode and theme are just yours. They don't change what anyone else in the household sees.</p>
     </div>`;
+}
+
+// Settings › Display: the controls the change handler doesn't cover (logo
+// buttons, the name box, team ranking). Wired after each render.
+function wireDisplaySettings(body) {
+  const fileInput = body.querySelector("[data-display-logo-input]");
+  body.querySelector("[data-display-logo-pick]")?.addEventListener("click", () => fileInput?.click());
+  fileInput?.addEventListener("change", (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // the same picture can be picked again
+    if (file) setViewLogo(file);
+  });
+  body.querySelector("[data-display-logo-remove]")?.addEventListener("click", () => setViewLogo(null));
+  const nameInput = body.querySelector("[data-display-name]");
+  nameInput?.addEventListener("change", () => setDisplayPref("name", cleanViewName(nameInput.value)));
+  nameInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); } });
+  body.querySelectorAll("[data-display-team-move]").forEach((btn) => btn.addEventListener("click", () => {
+    const key = btn.closest("[data-display-team]")?.dataset.displayTeam;
+    moveFavoriteTeam(key, Number(btn.dataset.displayTeamMove));
+  }));
+}
+
+// Move a favorite up or down; the order is the favorites' rank everywhere.
+function moveFavoriteTeam(key, delta) {
+  const prefs = normalizeSportsPrefs(state.sportsPrefs);
+  const i = prefs.teams.findIndex((t) => t.key === key);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= prefs.teams.length) return;
+  const teams = [...prefs.teams];
+  [teams[i], teams[j]] = [teams[j], teams[i]];
+  state.sportsPrefs = { ...prefs, teams };
+  persist();
+  applyThemeMode();
+  renderContextSettingsDialog("display");
+  const moved = elements.contextSettingsBody?.querySelector(`[data-display-team="${CSS.escape(key)}"] [data-display-team-move="${delta}"]:not([disabled])`)
+    || elements.contextSettingsBody?.querySelector(`[data-display-team="${CSS.escape(key)}"] [data-display-team-move]:not([disabled])`);
+  moved?.focus();
+}
+
+function setGamedayTeam(key, on) {
+  const now = new Set(currentDisplayPrefs().gamedayTeams || []);
+  if (on) now.add(key); else now.delete(key);
+  setDisplayPref("gamedayTeams", [...now]);
 }
 
 const LINK_TEST_KEY = "live-link-test-v1";
@@ -17844,8 +19078,382 @@ function renderLinkTestPanel() {
   });
 }
 
+// Photos Check (Settings › Beta, admin; PHOTOS_DESIGN.md §12 step 1). The iPhone's
+// PhotoLibrary plugin counts the library (photos, videos, screenshots, sizes, how many
+// originals are on the phone vs only in iCloud); photos/probe.js turns that into the
+// report. The last result stays on this device only; "Copy results" puts it on the
+// clipboard to paste into a chat. Nothing is uploaded and no photo is read.
+const PHOTOS_PROBE_KEY = "live-photos-probe-v1";
+let photosProbeRun = null; // { done, total } while a count is running
+function readPhotosProbe() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PHOTOS_PROBE_KEY) || "null");
+    return saved && typeof saved === "object" && saved.result ? saved : null;
+  } catch { return null; }
+}
+async function renderPhotosCheckPanel() {
+  const body = elements.contextSettingsBody;
+  const plugin = nativePhotoLibrary();
+  if (!plugin && !readPhotosProbe()) {
+    body.innerHTML = `<p class="settings-panel-note">${isNativeApp()
+      ? "This build of the app can't count photos yet. Install the newest TestFlight build, then come back."
+      : "This is a check for the iPhone app: it counts the photo library on the phone. Open Settings › Beta › Photos Check there."}</p>`;
+    return;
+  }
+  const { summarizeProbe, probeReportText, formatCount } = await import("./photos/probe.js");
+  if (contextSettingsKind !== "photos-check") return;
+  const saved = readPhotosProbe();
+  const when = saved?.at ? new Date(saved.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const report = saved ? summarizeProbe(saved.result) : null;
+  const running = photosProbeRun;
+  body.innerHTML = `
+    <p class="settings-panel-note">Counts the photos and videos on this iPhone (with iCloud Photos on, that's your iCloud library). Nothing leaves the phone and no photo is opened. A large library can take a minute or two; keep this screen open.</p>
+    ${running ? `<p class="settings-panel-note" data-photos-progress>${running.total ? `Counting… ${escapeHtml(formatCount(running.done))} of ${escapeHtml(formatCount(running.total))}` : "Counting…"}</p>` : ""}
+    <div class="settings-action-grid">
+      ${plugin ? (running
+        ? `<button type="button" data-photos-cancel>Stop</button>`
+        : `<button type="button" data-photos-count ${photosSyncRun ? "disabled" : ""}>${saved ? "Count again" : "Count my library"}</button>`) : ""}
+      ${saved ? `<button type="button" data-photos-copy>Copy results</button><button type="button" data-photos-clear>Clear</button>` : ""}
+    </div>
+    ${plugin ? photosSyncSectionHtml(formatCount) : ""}
+    ${report ? `
+      ${when ? `<p class="settings-panel-note">Counted ${escapeHtml(when)}.</p>` : ""}
+      ${report.groups.map((g) => `
+        <div class="fin-subhead">${escapeHtml(g.title)}</div>
+        <div class="link-test-list">
+          ${g.rows.map((r) => `
+            <div class="link-test-row">
+              <span class="link-test-name">${escapeHtml(r.label)}</span>
+              <span class="link-test-result">${escapeHtml(r.value)}</span>
+            </div>`).join("")}
+        </div>`).join("")}
+      ${report.notes.map((n) => `<p class="settings-panel-note">${escapeHtml(n)}</p>`).join("")}` : ""}`;
+  body.querySelector("[data-photos-count]")?.addEventListener("click", () => runPhotosProbe());
+  body.querySelector("[data-photos-sync]")?.addEventListener("click", () => runPhotosSync());
+  body.querySelector("[data-photos-sync-stop]")?.addEventListener("click", () => {
+    if (photosNative?.running) { try { nativePhotoLibrary()?.syncStop(); } catch { /* it ends by itself */ } }
+    else photosSyncRun?.controller.abort();
+  });
+  body.querySelector("[data-photos-auto]")?.addEventListener("change", async (e) => {
+    try { photosNative = await nativePhotoLibrary().syncOptions({ auto: e.target.checked }); } catch { showMailToast("Couldn't change that."); }
+  });
+  body.querySelector("[data-photos-cellular]")?.addEventListener("change", async (e) => {
+    try { photosNative = await nativePhotoLibrary().syncOptions({ cellular: e.target.checked }); } catch { showMailToast("Couldn't change that."); }
+  });
+  body.querySelector("[data-photos-forget]")?.addEventListener("click", () => turnOffPhotosSyncHere());
+  if (plugin && photosHasNativeSync(plugin) && !photosNative && !photosNativeSub) refreshPhotosNative().then(() => { if (photosNative && contextSettingsKind === "photos-check") renderPhotosCheckPanel(); });
+  // Thumbnail links last 10 minutes; refresh the totals and links after 5.
+  if (plugin && !photosSyncRun && !photosSyncSummaryLoading && (!photosSyncSummary || Date.now() - (photosSyncSummary.at || 0) > 5 * 60 * 1000)) loadPhotosSyncSummary();
+  body.querySelector("[data-photos-cancel]")?.addEventListener("click", () => { try { nativePhotoLibrary()?.cancel(); } catch { /* the count ends by itself */ } });
+  body.querySelector("[data-photos-copy]")?.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(probeReportText(saved.result, { when })); showMailToast("Copied."); } catch { showMailToast("Couldn't copy."); }
+  });
+  body.querySelector("[data-photos-clear]")?.addEventListener("click", () => {
+    try { localStorage.removeItem(PHOTOS_PROBE_KEY); } catch { /* noop */ }
+    renderPhotosCheckPanel();
+  });
+}
+async function runPhotosProbe() {
+  const plugin = nativePhotoLibrary();
+  if (!plugin || photosProbeRun || photosSyncRun) return;
+  photosProbeRun = { done: 0, total: 0 };
+  const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open !== false) renderPhotosCheckPanel(); };
+  redraw();
+  let sub = null;
+  try {
+    try {
+      sub = await plugin.addListener("photoProbeProgress", (e) => {
+        if (!photosProbeRun) return;
+        photosProbeRun = { done: Number(e?.done) || 0, total: Number(e?.total) || 0 };
+        const line = contextSettingsKind === "photos-check" ? elements.contextSettingsBody.querySelector("[data-photos-progress]") : null;
+        if (line) line.textContent = `Counting… ${photosProbeRun.done.toLocaleString("en-US")} of ${photosProbeRun.total.toLocaleString("en-US")}`;
+      });
+    } catch { /* no progress line; the count still runs */ }
+    const result = await plugin.probe();
+    try { localStorage.setItem(PHOTOS_PROBE_KEY, JSON.stringify({ at: new Date().toISOString(), result })); } catch { /* shown this once only */ }
+  } catch (error) {
+    const code = String(error?.code || "");
+    if (code === "DENIED") showMailToast("Photo access is off. Turn it on for Live in iPhone Settings › Privacy › Photos.");
+    else if (code !== "CANCELLED") showMailToast("Couldn't count the library.");
+  } finally {
+    try { await sub?.remove?.(); } catch { /* already gone */ }
+    photosProbeRun = null;
+    redraw();
+  }
+}
+
+// Photos sync (PHOTOS_DESIGN.md §12 step 2): the phone's library into Personal Photos —
+// a record and a small thumbnail per photo, originals stay on the phone / in iCloud.
+// photos/sync.js does the work and is safe to stop and re-run. Admin only (this panel),
+// and only into the person's own Personal library (decision 5). The sync stops when
+// the app goes to the background; the next run carries on.
+const PHOTOS_SYNC_KEY = "live-photos-sync-v1";
+let photosSyncRun = null;        // { controller, phase, done, total, added } while running
+let photosSyncSummary = null;    // { count, thumbBytes, recent, error? } for this panel
+let photosSyncSummaryLoading = false;
+let photosSyncLast = null;       // the last run's stats, shown until the panel closes
+function photosPersonalScope() {
+  const id = authSession?.user?.id;
+  return !localDevMode && id ? `u-${id}` : null;
+}
+async function photosRest(path, { method = "GET", body, prefer } = {}) {
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${path}`, {
+    method,
+    cache: "no-store",
+    headers: { ...supabaseHeaders(), ...(prefer ? { prefer } : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) { const err = new Error(`photos: ${res.status}`); err.status = res.status; throw err; }
+  const text = method === "HEAD" ? "" : await res.text();
+  return { data: text ? JSON.parse(text) : null, headers: res.headers };
+}
+async function photosPresigner() {
+  const { edgePresigner } = await import("./documents/storage.js");
+  return edgePresigner({ functionsUrl: `${supabaseBaseUrl()}/functions/v1`, getToken: async () => authSession?.access_token || "" });
+}
+function readPhotosSince(deviceKey) {
+  try { return Number(JSON.parse(localStorage.getItem(PHOTOS_SYNC_KEY) || "{}")[deviceKey]) || null; } catch { return null; }
+}
+function writePhotosSince(deviceKey, ms) {
+  try {
+    const all = JSON.parse(localStorage.getItem(PHOTOS_SYNC_KEY) || "{}");
+    all[deviceKey] = ms;
+    localStorage.setItem(PHOTOS_SYNC_KEY, JSON.stringify(all));
+  } catch { /* the next run lists everything again, which is safe */ }
+}
+// A build with the native engine (PHOTOS_DESIGN.md §17) syncs with the screen closed,
+// on open and in the background; older builds fall back to the web view sync below.
+let photosNative = null;          // the engine's syncStatus(), or null on an older build
+let photosNativeSub = null;       // progress / done listeners, added once
+let photosNativeBusy = false;     // setup or turning off in progress
+const photosHasNativeSync = (plugin) => typeof plugin?.syncStatus === "function";
+async function refreshPhotosNative() {
+  const plugin = nativePhotoLibrary();
+  if (!photosHasNativeSync(plugin)) { photosNative = null; return; }
+  try { photosNative = await plugin.syncStatus(); } catch { photosNative = null; }
+  if (!photosNativeSub) {
+    photosNativeSub = true;
+    const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel(); };
+    let lastPaint = 0;
+    try {
+      await plugin.addListener("photoSyncProgress", (p) => {
+        photosNative = { ...(photosNative || {}), running: true, trigger: p?.trigger, progress: p };
+        const t = Date.now();
+        if (t - lastPaint > 400) { lastPaint = t; redraw(); }
+      });
+      await plugin.addListener("photoSyncDone", (r) => {
+        photosNative = { ...(photosNative || {}), running: false, progress: null, ...(r && (r.trigger === "user" || r.added || r.error) ? { last: r } : {}) };
+        photosSyncSummary = null;
+        refreshPhotosNative().then(redraw);
+      });
+    } catch { /* the panel still reads status when it opens */ }
+  }
+}
+function photosNativeLastText(last, formatCount) {
+  if (!last) return "";
+  const when = last.at ? new Date(last.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const how = { user: "you started", open: "on opening Liv", refresh: "in the background", processing: "in the background" }[last.trigger] || "";
+  const head = `Last sync${how ? ` (${how})` : ""}${when ? `, ${when}` : ""}`;
+  if (last.error) return `${head}: stopped, ${last.error}.`;
+  return `${head}: ${last.stopped ? "stopped part way, " : ""}${formatCount(last.added || 0)} added, ${formatCount(last.skipped || 0)} already there${last.thumbsFailed ? `, ${formatCount(last.thumbsFailed)} thumbnails to retry (${last.uploadError || "no reason given"})` : ""}.`;
+}
+function photosNativeSectionHtml(formatCount) {
+  const n = photosNative;
+  const sum = photosSyncSummary;
+  const mb = (b) => `${(Number(b || 0) / (1024 * 1024)).toFixed(b > 100 * 1024 * 1024 ? 0 : 1)} MB`;
+  const p = n.running ? (n.progress || {}) : null;
+  const line = p ? (p.total ? `Syncing… ${formatCount(p.done || 0)} of ${formatCount(p.total)} (${formatCount(p.added || 0)} added)` : "Syncing…") : "";
+  return `
+    <div class="fin-subhead">Sync to Personal</div>
+    <p class="settings-panel-note">Adds each photo and video to your Personal Photos with a small thumbnail (about 30 KB). Originals stay on this phone and in iCloud. ${n.continuedTasks ? "A sync you start keeps going with the screen locked; iOS shows its progress." : "Keep Liv open for a big first sync."}</p>
+    ${sum && !sum.error ? `<p class="settings-panel-note">In Personal now: ${escapeHtml(formatCount(sum.count))} photos and videos, ${escapeHtml(mb(sum.thumbBytes))} of thumbnails.</p>` : ""}
+    ${sum?.error ? `<p class="settings-panel-note">Couldn't read Personal Photos (${escapeHtml(sum.error)}).</p>` : ""}
+    ${line ? `<p class="settings-panel-note" data-photos-sync-progress>${escapeHtml(line)}</p>` : ""}
+    ${!n.running && n.last ? `<p class="settings-panel-note">${escapeHtml(photosNativeLastText(n.last, formatCount))}</p>` : ""}
+    <div class="settings-action-grid">
+      ${n.running ? `<button type="button" data-photos-sync-stop>Stop</button>` : `<button type="button" data-photos-sync ${photosProbeRun || photosNativeBusy ? "disabled" : ""}>${sum?.count ? "Sync now" : "Sync to Personal"}</button>`}
+    </div>
+    ${n.registered ? `
+    <label class="page-access-row">
+      <span class="page-access-text"><span class="page-access-name">Sync automatically</span><span class="page-access-note">New photos go up when Liv opens, and in the background a few times a day (iOS picks when, usually while charging on Wi-Fi).</span></span>
+      <input type="checkbox" class="live-toggle" data-photos-auto aria-label="Sync automatically" ${n.auto ? "checked" : ""} />
+    </label>
+    <label class="page-access-row">
+      <span class="page-access-text"><span class="page-access-name">Use cellular for automatic syncs</span><span class="page-access-note">On by default. Off: automatic syncs wait for Wi-Fi.</span></span>
+      <input type="checkbox" class="live-toggle" data-photos-cellular aria-label="Use cellular for automatic syncs" ${n.cellular ? "checked" : ""} />
+    </label>
+    <div class="settings-action-grid"><button type="button" data-photos-forget ${n.running || photosNativeBusy ? "disabled" : ""}>Turn off syncing on this iPhone</button></div>` : ""}
+    ${sum?.recent?.length ? `<div class="photos-sync-grid" aria-label="Newest in Personal">${sum.recent.map((r) => `
+      <figure>${r.url ? `<img src="${escapeHtml(r.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}${r.kind === "video" && r.duration ? `<figcaption>${escapeHtml(`${Math.floor(r.duration / 60)}:${String(Math.round(r.duration % 60)).padStart(2, "0")}`)}</figcaption>` : ""}</figure>`).join("")}</div>` : ""}`;
+}
+function photosSyncSectionHtml(formatCount) {
+  const scope = photosPersonalScope();
+  if (scope && photosNative) return photosNativeSectionHtml(formatCount);
+  const run = photosSyncRun;
+  const sum = photosSyncSummary;
+  const mb = (b) => `${(Number(b || 0) / (1024 * 1024)).toFixed(b > 100 * 1024 * 1024 ? 0 : 1)} MB`;
+  const line = run
+    ? (run.phase === "listing"
+      ? `Reading your library… ${formatCount(run.done)}${run.total ? ` of ${formatCount(run.total)}` : ""}`
+      : `Syncing… ${formatCount(run.done)} of ${formatCount(run.total)} (${formatCount(run.added)} added)`)
+    : "";
+  const last = photosSyncLast
+    ? (photosSyncLast.error
+      ? `The sync stopped: ${photosSyncLast.error}`
+      : `${photosSyncLast.stopped ? "Stopped" : "Done"}: ${formatCount(photosSyncLast.added)} added, ${formatCount(photosSyncLast.skipped)} already there${photosSyncLast.thumbsFailed ? `, ${formatCount(photosSyncLast.thumbsFailed)} thumbnails to retry (${photosSyncLast.uploadError || "no reason given"})` : ""}.`)
+    : "";
+  return `
+    <div class="fin-subhead">Sync to Personal</div>
+    <p class="settings-panel-note">Adds each photo and video to your Personal Photos with a small thumbnail (about 30 KB). Originals stay on this phone and in iCloud. Use Wi-Fi and keep this screen open; if it stops, tap Sync again and it carries on where it left off.</p>
+    ${!scope ? `<p class="settings-panel-note">Sign in to sync.</p>` : `
+    ${sum && !sum.error ? `<p class="settings-panel-note">In Personal now: ${escapeHtml(formatCount(sum.count))} photos and videos, ${escapeHtml(mb(sum.thumbBytes))} of thumbnails.</p>` : ""}
+    ${sum?.error ? `<p class="settings-panel-note">Couldn't read Personal Photos (${escapeHtml(sum.error)}).</p>` : ""}
+    ${line ? `<p class="settings-panel-note" data-photos-sync-progress>${escapeHtml(line)}</p>` : ""}
+    ${last && !run ? `<p class="settings-panel-note">${escapeHtml(last)}</p>` : ""}
+    <div class="settings-action-grid">
+      ${run ? `<button type="button" data-photos-sync-stop>Stop</button>` : `<button type="button" data-photos-sync ${photosProbeRun ? "disabled" : ""}>${sum?.count ? "Sync again" : "Sync to Personal"}</button>`}
+    </div>
+    ${sum?.recent?.length ? `<div class="photos-sync-grid" aria-label="Newest in Personal">${sum.recent.map((r) => `
+      <figure>${r.url ? `<img src="${escapeHtml(r.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}${r.kind === "video" && r.duration ? `<figcaption>${escapeHtml(`${Math.floor(r.duration / 60)}:${String(Math.round(r.duration % 60)).padStart(2, "0")}`)}</figcaption>` : ""}</figure>`).join("")}</div>` : ""}`}`;
+}
+async function loadPhotosSyncSummary() {
+  const scope = photosPersonalScope();
+  if (!scope || photosSyncSummaryLoading) return;
+  photosSyncSummaryLoading = true;
+  try {
+    const { photosSummary } = await import("./photos/sync.js");
+    photosSyncSummary = { ...(await photosSummary({ rest: photosRest, presign: await photosPresigner(), scope })), at: Date.now() };
+  } catch (error) {
+    photosSyncSummary = { error: String(error?.status || error?.code || "offline"), count: 0, recent: [], at: Date.now() };
+  } finally {
+    photosSyncSummaryLoading = false;
+    if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel();
+  }
+}
+async function runPhotosSync() {
+  const plugin = nativePhotoLibrary();
+  const scope = photosPersonalScope();
+  if (!plugin || !scope || photosSyncRun || photosProbeRun) return;
+  if (photosHasNativeSync(plugin)) return runPhotosNativeSync(plugin);
+  try {
+    const status = await plugin.status();
+    if (status?.access !== "authorized" && status?.access !== "limited") {
+      showMailToast("Photo access is off. Turn it on for Live in iPhone Settings › Privacy › Photos.");
+      return;
+    }
+    if (status?.expensive && !window.confirm("You're on cellular data. The first sync uploads about 30 KB per photo (roughly 0.5 GB for 17,000 photos). Sync anyway?")) return;
+  } catch { /* an older build without status: carry on */ }
+  const controller = new AbortController();
+  photosSyncRun = { controller, phase: "listing", done: 0, total: 0, added: 0 };
+  photosSyncLast = null;
+  const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel(); };
+  const onHide = () => { if (document.visibilityState === "hidden") controller.abort(); };
+  document.addEventListener("visibilitychange", onHide);
+  redraw();
+  let lastPaint = 0;
+  try {
+    const { createPhotoSync } = await import("./photos/sync.js");
+    const sync = createPhotoSync({
+      plugin, rest: photosRest, presign: await photosPresigner(), scope,
+      getSince: readPhotosSince, setSince: writePhotosSince,
+      onProgress: (p) => {
+        if (!photosSyncRun) return;
+        Object.assign(photosSyncRun, p);
+        const t = Date.now();
+        if (t - lastPaint > 400 || p.done === p.total) { lastPaint = t; redraw(); }
+      },
+    });
+    photosSyncLast = await sync.run({ signal: controller.signal });
+  } catch (error) {
+    const code = String(error?.code || "");
+    const detail = String(error?.message || error || "").slice(0, 120);
+    console.error("[photos] sync stopped", error?.step || "", error);
+    photosSyncLast = { error: code === "DENIED" ? "photo access is off"
+      : (error?.status === 401 ? "signed out"
+        : `${error?.step ? `while ${error.step}` : "unexpectedly"}${detail ? ` (${detail})` : ""}. Tap Sync to carry on.`) };
+  } finally {
+    document.removeEventListener("visibilitychange", onHide);
+    photosSyncRun = null;
+    photosSyncSummary = null;
+    redraw();
+  }
+}
+
+async function runPhotosNativeSync(plugin) {
+  if (photosNativeBusy || photosNative?.running) return;
+  const redraw = () => { if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel(); };
+  // A sync you start uses cellular when that's what there is (Luke, 2026-11-16: unlimited
+  // data); the switch below only governs automatic syncs.
+  const cellular = true;
+  try {
+    const status = await plugin.status();
+    if (status?.access !== "authorized" && status?.access !== "limited") {
+      showMailToast("Photo access is off. Turn it on for Live in iPhone Settings › Privacy › Photos.");
+      return;
+    }
+  } catch { /* carry on; the engine checks again */ }
+  photosNativeBusy = true;
+  redraw();
+  try {
+    await refreshPhotosNative();
+    if (!photosNative?.registered) {
+      // Once per iPhone: trade this sign-in for a photo-only key (kept in the Keychain).
+      const token = authSession?.access_token;
+      if (!token) { showMailToast("Sign in to sync."); return; }
+      photosNative = await plugin.syncSetup({
+        endpoint: `${supabaseBaseUrl()}/functions/v1/photo-sync`,
+        apiKey: supabaseConfig().anonKey,
+        token,
+        name: "iPhone",
+      });
+    }
+    await plugin.syncStart({ cellular });
+    photosNative = { ...(photosNative || {}), running: true, progress: null };
+  } catch (error) {
+    const code = String(error?.code || "");
+    showMailToast(code === "DENIED" ? "Photo access is off. Turn it on for Live in iPhone Settings › Privacy › Photos."
+      : code === "SIGNED_OUT" ? "Sign in again, then tap Sync."
+        : code === "BUSY" ? "A sync is already running."
+          : `Couldn't start the sync (${String(error?.message || error).slice(0, 80)}).`);
+  } finally {
+    photosNativeBusy = false;
+    redraw();
+  }
+}
+// Revokes this iPhone's photo key on the server (the owner may; final) and forgets it here.
+async function turnOffPhotosSyncHere() {
+  const plugin = nativePhotoLibrary();
+  if (!photosHasNativeSync(plugin) || photosNativeBusy) return;
+  if (!window.confirm("Turn off photo syncing on this iPhone? Photos already in Liv stay. Tap Sync later to turn it back on.")) return;
+  photosNativeBusy = true;
+  try {
+    const id = photosNative?.deviceId;
+    if (id && /^[0-9a-f-]{36}$/i.test(id)) {
+      try { await photosRest(`photo_sync_devices?id=eq.${id}&revoked_at=is.null`, { method: "PATCH", prefer: "return=minimal", body: { revoked_at: new Date().toISOString() } }); }
+      catch { /* forgotten here anyway: without the secret the key is useless */ }
+    }
+    await plugin.syncForget();
+    await refreshPhotosNative();
+  } finally {
+    photosNativeBusy = false;
+    if (contextSettingsKind === "photos-check" && elements.contextSettingsDialog?.open) renderPhotosCheckPanel();
+  }
+}
+// Sign-out: this iPhone stops syncing the account's photos (the key stays useless without its secret).
+async function forgetPhotoSyncDevice() {
+  try { const plugin = nativePhotoLibrary(); if (photosHasNativeSync(plugin)) await plugin.syncForget(); } catch { /* nothing to forget */ }
+}
+
 // Where a Settings panel's back arrow goes (anything not listed → the main list).
-const SETTINGS_PANEL_PARENT = { assistant: "beta", "ai-log": "beta", "link-test": "beta" };
+const SETTINGS_PANEL_PARENT = { assistant: "beta", "ai-log": "beta", "link-test": "beta", "photos-check": "beta", "assistant-keys": "beta" };
+// Settings › Beta › Connected Assistants (assistant-connectors-ui.js).
+const assistantConnectorsPanel = createAssistantConnectorsPanel({
+  baseUrl: () => supabaseBaseUrl(),
+  headers: () => supabaseHeaders(),
+  accessToken: () => authSession?.access_token || "",
+  escapeHtml: (v) => escapeHtml(v),
+  stillShowing: () => contextSettingsKind === "assistant-keys" && elements.contextSettingsDialog?.open,
+});
 
 // A small (i) button beside a setting; tapping it opens that setting's write-up
 // in a little window under the row (Luke, 2026-10-14), so long explanations
@@ -17917,8 +19525,11 @@ function renderContextSettingsDialog(kind) {
     "voice": "Voice",
     "podcasts": "Podcasts",
     "display": "Display",
+    "sign-in": "Sign-in",
     "beta": "Beta",
     "link-test": "Link Test",
+    "photos-check": "Photos Check",
+    "assistant-keys": "Connected Assistants",
     "ai-log": "AI Action Log"
   };
   const isSubPanel = !["general", "watch", "watch-services", "radio", "recreate", "read-sync", "mail-ai"].includes(kind);
@@ -17935,6 +19546,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="pages">Pages</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
+        <button type="button" data-context-settings-action="sign-in">Sign-in</button>
         <button type="button" data-context-settings-action="export-data">Export My Data</button>
       </div>
       ${isAdmin ? `
@@ -17955,6 +19567,12 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
+  // Sign-in: authenticator code + Face ID (auth-second-step.js).
+  if (kind === "sign-in") {
+    secondStep.renderSettings(elements.contextSettingsBody);
+    return;
+  }
+
   // Beta (admin): things still in development.
   if (kind === "beta") {
     elements.contextSettingsBody.innerHTML = `
@@ -17963,6 +19581,8 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="assistant">Assistant</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
         <button type="button" data-context-settings-action="link-test">Link Test</button>
+        <button type="button" data-context-settings-action="photos-check">Photos Check</button>
+        <button type="button" data-context-settings-action="assistant-keys">Connected Assistants</button>
       </div>
     `;
     return;
@@ -17976,6 +19596,18 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
+  // Photos Check (admin, PHOTOS_DESIGN.md build step 1): count the iPhone's photo
+  // library to settle the Photos page's storage plan. Nothing leaves the phone.
+  if (kind === "photos-check") {
+    renderPhotosCheckPanel();
+    return;
+  }
+
+  if (kind === "assistant-keys") {
+    assistantConnectorsPanel.render(elements.contextSettingsBody);
+    return;
+  }
+
   // Display mode + theme (THEMES_DESIGN.md). Per person; saves as you tap.
   if (kind === "display") {
     // Theme rows scroll sideways (like Leisure). Re-rendering after a pick keeps
@@ -17983,7 +19615,12 @@ function renderContextSettingsDialog(kind) {
     const body = elements.contextSettingsBody;
     const kept = {};
     body.querySelectorAll("[data-theme-group]").forEach((row) => { kept[row.dataset.themeGroup] = row.scrollLeft; });
+    // Keep the page where it was (a team moved, a switch flipped).
+    const scroller = body.closest(".settings-scroll, dialog") || body;
+    const top = scroller.scrollTop;
     body.innerHTML = displaySettingsTemplate();
+    wireDisplaySettings(body);
+    scroller.scrollTop = top;
     body.querySelectorAll("[data-theme-group]").forEach((row) => {
       if (row.dataset.themeGroup in kept) { row.scrollLeft = kept[row.dataset.themeGroup]; return; }
       const card = row.querySelector("input:checked")?.closest(".display-theme-card");
@@ -18789,6 +20426,13 @@ function handleContextSettingsChange(event) {
   }
   const displayIconInput = event.target.closest?.("[data-display-icon]");
   if (displayIconInput) setDisplayPref("icon", displayIconInput.checked);
+  const displayAuto = event.target.closest?.("[data-display-holidays], [data-display-gameday]");
+  if (displayAuto) {
+    setDisplayPref(displayAuto.hasAttribute("data-display-holidays") ? "holidays" : "gameday", displayAuto.checked);
+    renderContextSettingsDialog("display");
+  }
+  const displayTeamInput = event.target.closest?.("[data-display-team-on]");
+  if (displayTeamInput) setGamedayTeam(displayTeamInput.closest("[data-display-team]")?.dataset.displayTeam, displayTeamInput.checked);
   const pageVisibilityInput = event.target.closest?.("[data-page-visibility]");
   if (pageVisibilityInput) setPageVisibility(pageVisibilityInput.dataset.pageVisibility, pageVisibilityInput.checked);
   const adminPageInput = event.target.closest?.("[data-admin-page-visibility]");
@@ -18824,6 +20468,7 @@ function handleContextSettingsAction(event) {
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
     "display": () => renderContextSettingsDialog("display"),
     "voice": () => renderContextSettingsDialog("voice"),
+    "sign-in": () => renderContextSettingsDialog("sign-in"),
     "restore-backup": () => openFromSettingsWithBack(elements.restoreDialog, openRestoreDialog),
     "export-data": () => closeAndRun(exportMyData),
     "reload-app": () => reloadForNewerBuild(),
@@ -18850,6 +20495,8 @@ function handleContextSettingsAction(event) {
     "api-usage": () => renderContextSettingsDialog("api-usage"),
     "beta": () => renderContextSettingsDialog("beta"),
     "link-test": () => renderContextSettingsDialog("link-test"),
+    "photos-check": () => renderContextSettingsDialog("photos-check"),
+    "assistant-keys": () => renderContextSettingsDialog("assistant-keys"),
     "paper-signin": () => signInToArticlePaper(SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper)),
     "paper-signout": async () => {
       const paper = SUBSCRIBER_PAPERS.find((p) => p.key === button.dataset.paper);
@@ -18950,8 +20597,16 @@ function togglePageTitleMenu(event) {
   }
 }
 
+// When the page menu last opened. Opening it shows the view band, which shifts the
+// layout; a scrolled pane (an open email in Mail) then fires a scroll event, and
+// the scroll-closes-menus rule shut the menu the moment it opened (laptop check,
+// 2026-11-17). Scrolls in the first moment after opening are layout, not the user.
+let pageTitleMenuOpenedAt = 0;
+const PAGE_MENU_SCROLL_GRACE_MS = 400;
+
 function openPageTitleMenu() {
   // Opens on the current view, on the group of the page you're on; the others stay closed.
+  pageTitleMenuOpenedAt = Date.now();
   menuViewKey.view = null;
   syncPageMenuToView();
   showHeaderViewBand(true);
@@ -18998,6 +20653,9 @@ function closeFloatingMenus() {
 
 function closeFloatingMenusOnPageScroll(event) {
   if (elements.weekJumpMenu?.contains(event.target)) return;
+  if (Date.now() - pageTitleMenuOpenedAt < PAGE_MENU_SCROLL_GRACE_MS) return;
+  // Scrolling inside a menu (a long Watch tab list) isn't a page scroll.
+  if (event.target instanceof Element && event.target.closest(".folder-context-menu")) return;
   const startMenu = document.getElementById("groceryRangeStartMenu");
   const endMenu = document.getElementById("groceryRangeEndMenu");
   if (startMenu?.contains(event.target) || endMenu?.contains(event.target)) return;
@@ -20756,7 +22414,7 @@ function syncGoogleCalendarLinks({ force = false } = {}) {
     if (!status.connected) { gcalStatus = status; return false; }
     const proposals = proposeGoogleLinks(status.calendars, status.links, normalizeLinkedCalendars(state.calendars));
     if (proposals.length) status = { ...status, links: (await gcalApi.action(token, { action: "link", links: proposals })).links };
-    const tombstoned = new Set((state.tombstones?.calendars || []).map(String));
+    const tombstoned = new Set(deletedIdsFor("calendars").map(String));
     const rec = reconcileGoogleLinks(normalizeLinkedCalendars(state.calendars), status.links, status.calendars, tombstoned, { colorFor: (color, index) => normalizeCalendarColor(color, index) });
     for (const appCalendarId of rec.unlink) {
       try { status = { ...status, links: (await gcalApi.action(token, { action: "unlink", appCalendarId })).links }; } catch { /* retried next sync */ }
@@ -22198,9 +23856,20 @@ function watchItemById(id) {
   return watchItemsList().find((item) => item.id === id) || null;
 }
 
-function openWatchSearchDialog() {
+// "Find the right title" (Luke, 2026-10-29): a show with no poster opens this
+// window with its title; the tapped result fills in poster, year, services and
+// seasons on THAT show (its progress stays). Results already on the list are
+// tagged "In your list" and can't be picked. Shows are ADDED from the page's
+// search bar — this window no longer adds (the "+" was removed, 2026-10-29).
+let watchSearchLinkId = null;
+function openWatchSearchDialog({ linkId = null } = {}) {
+  const linkItem = linkId ? watchItemById(linkId) : null;
+  if (!linkItem) return;
+  watchSearchLinkId = linkItem.id;
+  const head = elements.watchSearchDialog.querySelector(".dialog-head h2");
+  if (head) head.textContent = "Find the right title";
   elements.watchSearchDialogResults.innerHTML = "";
-  elements.watchSearchDialogInput.value = "";
+  elements.watchSearchDialogInput.value = linkItem.title;
   if (!elements.watchSearchDialog.open) elements.watchSearchDialog.showModal();
   requestAnimationFrame(() => elements.watchSearchDialogInput.focus());
 
@@ -22217,36 +23886,60 @@ function openWatchSearchDialog() {
   elements.watchSearchDialogInput.removeEventListener("input", elements.watchSearchDialogInput._handler);
   elements.watchSearchDialogInput._handler = handleInput;
   elements.watchSearchDialogInput.addEventListener("input", handleInput);
+  fetchWatchSearchResultsDialog(linkItem.title);
 }
 
 async function fetchWatchSearchResultsDialog(query) {
   const resultsEl = elements.watchSearchDialogResults;
+  const token = (fetchWatchSearchResultsDialog.token = (fetchWatchSearchResultsDialog.token || 0) + 1);
   resultsEl.innerHTML = `<div class="watch-search-loading">Searching…</div>`;
   try {
     const response = await fetch(tmdbSearchUrl(query), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
+    if (token !== fetchWatchSearchResultsDialog.token) return; // a newer search is on its way
     if (!response.ok) { resultsEl.innerHTML = `<div class="watch-search-error">${escapeHtml(data.error || "Search failed.")}</div>`; return; }
     if (!data.results?.length) { resultsEl.innerHTML = `<div class="watch-search-empty">No results found.</div>`; return; }
-    resultsEl.innerHTML = data.results.map((r) =>
-      watchTmdbResultTemplate(r, `data-tmdb-pick="${escapeHtml(JSON.stringify(r))}"`)
-    ).join("");
+    const linking = watchSearchLinkId;
+    resultsEl.innerHTML = data.results.map((r, i) => {
+      const owned = r.tmdbId != null ? videoInWatchlist(r.tmdbId) : null;
+      const isSelf = owned && owned.id === linking;
+      return watchTmdbResultTemplate(r, `data-tmdb-pick="${i}"`, owned && !isSelf ? "In your list" : "");
+    }).join("");
     resultsEl.querySelectorAll("[data-tmdb-pick]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        let result;
-        try { result = JSON.parse(btn.dataset.tmdbPick); } catch { return; }
-        addWatchItemFromTmdb(result);
+        const result = data.results[Number(btn.dataset.tmdbPick)];
+        if (!result) return;
+        const owned = result.tmdbId != null ? videoInWatchlist(result.tmdbId) : null;
+        if (!linking) return;
+        if (owned && owned.id !== linking) {
+          try { showVoiceToast(`“${owned.title}” is already on your list.`); } catch { /* noop */ }
+          return;
+        }
+        linkWatchItemToTmdb(linking, result);
         elements.watchSearchDialog.close();
         renderWatchPlanner();
       });
     });
   } catch {
-    resultsEl.innerHTML = `<div class="watch-search-error">Search failed. Check your TMDB_API_KEY.</div>`;
+    if (token === fetchWatchSearchResultsDialog.token) resultsEl.innerHTML = `<div class="watch-search-error">Search failed. Try again in a moment.</div>`;
   }
 }
 
 function renderWatchPlanner() {
   if (!elements.watchPlannerGrid) return;
   const categories = state.watchSettings?.categories || [];
+  // Keep the list where it was across a redraw (ticking an episode, opening a
+  // season) so the screen doesn't jump; a tab switch starts at the top.
+  const prevList = elements.watchPlannerGrid.querySelector(".watch-list-panel");
+  const keepScroll = watchListScrollReset ? 0 : (prevList?.scrollTop || 0);
+  const keepWindowY = window.scrollY;
+  const keepEpisodes = new Map([...elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]")]
+    .filter((el) => el.scrollTop).map((el) => [el.dataset.watchEps, el.scrollTop]));
+  // While a newly picked season's episodes load, its short placeholder would let
+  // the list shrink and the browser pull the screen up; hold it at the last
+  // episode list's height until the episodes arrive.
+  const keepEpisodesHeight = Math.max(0, ...[...elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]")].map((el) => el.offsetHeight));
+  watchListScrollReset = false;
   elements.watchPlannerGrid.innerHTML = `
     <div class="watch-category-bar">
       <div class="watch-category-tabs" role="tablist" aria-label="Watch categories">
@@ -22263,9 +23956,6 @@ function renderWatchPlanner() {
           : `<button class="watch-category-tab watch-category-add-tab" type="button" data-watch-category-add title="Add tab">+</button>`
         }
       </div>
-      <div class="watch-category-actions">
-        <button class="watch-corner-btn" type="button" data-open-watch-search title="Add movie or TV show" aria-label="Add movie or TV show"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
-      </div>
     </div>
     <section class="day-column planner-day-panel do-backlog-panel watch-list-panel" aria-label="Watch List">
       <div class="do-board">
@@ -22279,6 +23969,7 @@ function renderWatchPlanner() {
       activeWatchCategory = btn.dataset.watchCategory;
       watchCategoryInputActive = false;
       expandedWatchItemId = null;
+      watchListScrollReset = true;
       renderWatchPlanner();
     });
     btn.addEventListener("dragover", (e) => {
@@ -22313,27 +24004,35 @@ function renderWatchPlanner() {
         const newCat = { id: createId("wcat"), name };
         state.watchSettings.categories.push(newCat);
         activeWatchCategory = newCat.id;
+        // "New tab…" from a show's Tabs popover files that show under it.
+        const forItem = watchNewTabFor && watchItemById(watchNewTabFor);
+        if (forItem) stampTab(forItem, newCat.id, true);
         persist();
       }
+      watchNewTabFor = null;
       watchCategoryInputActive = false;
       renderWatchPlanner();
     });
     inlineInput.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         watchCategoryInputActive = false;
+        watchNewTabFor = null;
         renderWatchPlanner();
       }
     });
     inlineInput.addEventListener("blur", () => {
       setTimeout(() => {
+        if (!watchCategoryInputActive) return; // already submitted or cancelled
         watchCategoryInputActive = false;
+        watchNewTabFor = null;
         renderWatchPlanner();
       }, 120);
     });
   }
 
-  elements.watchPlannerGrid.querySelectorAll("[data-open-watch-search]")
-    .forEach((btn) => btn.addEventListener("click", openWatchSearchDialog));
+  // Shows are added from the page's search bar (the "+" was removed, Luke 2026-10-29).
+  elements.watchPlannerGrid.querySelectorAll("[data-watch-focus-search]")
+    .forEach((btn) => btn.addEventListener("click", () => document.getElementById("discoverSearchInput")?.focus()));
 
   elements.watchPlannerGrid.querySelectorAll("[data-watch-section-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -22349,7 +24048,24 @@ function renderWatchPlanner() {
 
   bindWatchControls(elements.watchPlannerGrid);
 
+  if (keepEpisodesHeight) {
+    elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]").forEach((el) => {
+      if (el.querySelector(".watch-episodes-loading")) el.style.minHeight = `${keepEpisodesHeight}px`;
+    });
+  }
+  const newList = elements.watchPlannerGrid.querySelector(".watch-list-panel");
+  if (newList && keepScroll) newList.scrollTop = keepScroll;
+  elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]").forEach((el) => {
+    const top = keepEpisodes.get(el.dataset.watchEps);
+    if (top) el.scrollTop = top;
+  });
+  if (window.scrollY !== keepWindowY) window.scrollTo(window.scrollX, keepWindowY);
   updateTabIndicator(elements.watchPlannerGrid);
+  placeWatchPanelPointer(elements.watchPlannerGrid);
+  const open = expandedWatchItemId && watchItemById(expandedWatchItemId);
+  if (open) { ensureWatchNextSeasonLoaded(open); ensureWatchShownSeasonRuntimes(open); }
+  // Week-old where-to-watch / season counts refresh, the open show first.
+  if (!localDevMode || window.__liveQA?.watchRefreshInDev) refreshStaleWatchShows([open, ...watchVisibleItems()].filter(Boolean));
 }
 
 function watchDayTabTemplate(day, isActive) {
@@ -22421,24 +24137,16 @@ function watchAvailChip(item) {
 }
 
 // TV watch progress as a 0–100 percent (or null when nothing is tracked yet),
-// mirroring the per-season counting in watchSeasonTemplate.
+// mirroring the per-season counting in watchSeasonStats.
+// The poster's bar: progress through the season you're in (watch-place.js;
+// Luke, 2026-11-01) — not the whole show, so SNL isn't stuck near 0%.
 function watchProgressPct(item) {
   if (item.type !== "tv") return null;
-  const progress = item.seasonProgress || {};
-  const seasons = item.totalSeasons
-    ? Array.from({ length: item.totalSeasons }, (_, i) => i + 1)
-    : Object.keys(progress).map(Number);
-  let watched = 0, total = 0;
-  for (const s of seasons) {
-    const sd = progress[s] || {};
-    const eps = item.episodeData?.[s] || [];
-    const epTotal = eps.length || Object.keys(sd.episodes || {}).length;
-    const epWatched = Object.values(sd.episodes || {}).filter(Boolean).length;
-    if (sd.watched && epTotal) { watched += epTotal; total += epTotal; }
-    else { watched += epWatched; total += epTotal; }
-  }
-  if (!total) return null;
-  return Math.round((watched / total) * 100);
+  return watchSeasonPct(item, watchPlaceContext(item));
+}
+
+function watchPlaceContext(item) {
+  return { seasons: watchSeasonNumbers(item), episodesFor: (s) => watchEpisodes.get(item.tmdbId, s) };
 }
 
 // One-line meta under the poster: year · runtime (movie) or year · seasons (tv).
@@ -22456,8 +24164,9 @@ function watchCardSub(item) {
   return bits.join(" · ");
 }
 
-function watchListTemplate() {
-  let items = watchItemsList().filter((i) => i.status !== "watched");
+// The shows the current tab lists.
+function watchVisibleItems() {
+  let items = watchItemsList().filter((i) => i.status !== "watched" && !watchIsPendingRemoval(i.id));
   if (activeWatchCategory === "__upcoming") {
     items = items.filter((i) => i.theatricalReleaseDate && !i.inTheaters);
   } else if (activeWatchCategory === "__in-theaters") {
@@ -22465,6 +24174,11 @@ function watchListTemplate() {
   } else if (activeWatchCategory !== "all") {
     items = items.filter((i) => Array.isArray(i.categories) && i.categories.includes(activeWatchCategory));
   }
+  return items;
+}
+
+function watchListTemplate() {
+  const items = watchVisibleItems();
   const movies = items.filter((i) => i.type === "movie");
   const tvShows = items.filter((i) => i.type === "tv");
 
@@ -22493,7 +24207,7 @@ function watchEmptyStateTemplate() {
         <rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M7 5 4.5 19M17 5l2.5 14M2.5 9.5h19M2.5 14.5h19"/>
       </svg>
       <p class="watch-empty-msg">${escapeHtml(msg)}</p>
-      ${cta ? `<button class="secondary-btn compact-btn" type="button" data-open-watch-search>Add a movie or show</button>` : ""}
+      ${cta ? `<button class="secondary-btn compact-btn" type="button" data-watch-focus-search>Search to add a movie or show</button>` : ""}
     </div>
   `;
 }
@@ -22704,9 +24418,15 @@ function isWatchItemScheduled(id) {
   );
 }
 
+// The NEXT box is hidden (Luke, 2026-10-31) — kept in case he wants it back:
+// set this to true. watchNextEpisode still picks the season the panel opens on.
+const WATCH_SHOW_NEXT_BOX = false;
+
 function watchItemTemplate(item) {
   const expanded = expandedWatchItemId === item.id;
   const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w342${item.posterPath}` : null;
+  // No streaming-service label on the poster (Luke, 2026-10-29) — the open panel
+  // lists the services; "In theaters" / "Upcoming" / "Rent" still show.
   const chip = watchAvailChip(item);
   const pct = watchProgressPct(item);
   const isTv = item.type === "tv";
@@ -22715,39 +24435,259 @@ function watchItemTemplate(item) {
     ? `<img class="watch-poster-img" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`
     : watchPosterGlyph(item.type);
 
+  // The year and season count show only in the open panel, not under the
+  // poster (Luke, 2026-10-30).
   const sub = watchCardSub(item);
   const card = `
     <article class="do-task-item watch-item watch-card${expanded ? " is-expanded" : ""}" data-watch-item="${escapeHtml(item.id)}" aria-expanded="${expanded}" tabindex="0">
       <div class="watch-poster${posterUrl ? "" : " watch-poster--ph"}">
-        <span class="watch-badge watch-badge--${isTv ? "tv" : "movie"}">${isTv ? "TV" : "M"}</span>
-        ${chip ? `<span class="watch-avail watch-avail--${chip.cls}">${escapeHtml(chip.label)}</span>` : ""}
+        ${chip && chip.cls !== "stream" ? `<span class="watch-avail watch-avail--${chip.cls}">${escapeHtml(chip.label)}</span>` : ""}
         ${posterInner}
         ${pct != null ? `<div class="watch-progress" aria-hidden="true"><i style="width:${pct}%"></i></div>` : ""}
       </div>
       <div class="watch-card-meta">
         <span class="watch-card-title">${escapeHtml(item.title)}</span>
-        ${sub ? `<span class="watch-card-sub">${escapeHtml(sub)}</span>` : ""}
       </div>
     </article>
   `;
   if (!expanded) return card;
 
-  // Full-width detail row (spans the grid) with the controls that used to crowd
-  // the card: providers/showtimes/hub-play, load-info/find, and TV episode tracking.
+  // The show's panel (Luke, 2026-10-29). It spans the grid; `grid-auto-flow:
+  // dense` on .watch-grid lets the posters after this one fill the rest of its
+  // row first, so the row stays put and the panel opens under the whole row. A
+  // pointer on its top edge marks the open poster (placed in
+  // placeWatchPanelPointer after render). Actions live here so they work on a
+  // phone (iOS has no right-click; the laptop keeps the context menu too).
   const providerHtml = watchProviderOrShowtimesHtml(item);
   const episodeProgressHtml = isTv ? watchEpisodeProgressHtml(item) : "";
+  const id = escapeHtml(item.id);
   const detail = `
-    <div class="watch-detail-row" data-watch-detail="${escapeHtml(item.id)}">
+    <div class="watch-detail-row" data-watch-detail="${id}" role="region" aria-label="${escapeHtml(item.title)}">
+      <span class="watch-detail-pointer" aria-hidden="true"></span>
       <div class="watch-detail-inner">
-        ${providerHtml}
-        ${!item.streamingProviders && !item.inTheaters && !item.theatricalReleaseDate && item.tmdbId ? `<button class="watch-load-providers-btn secondary-btn compact-btn" type="button" data-watch-load-providers="${escapeHtml(item.id)}">Load streaming info</button>` : ""}
-        ${!item.tmdbId ? `<button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${escapeHtml(item.id)}">Find on TMDB</button>` : ""}
+        <div class="watch-detail-top">
+          <div class="watch-detail-head">
+            <span class="watch-detail-title">${escapeHtml(item.title)}</span>
+            ${sub ? `<span class="watch-detail-sub">${escapeHtml(sub)}</span>` : ""}
+            ${providerHtml}
+          </div>
+          <button class="watch-detail-more" type="button" data-watch-more="${id}" aria-label="More for ${escapeHtml(item.title)}" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+          </button>
+        </div>
+        ${isTv && WATCH_SHOW_NEXT_BOX ? watchNextEpisodeHtml(item) : ""}
+        ${!item.streamingProviders && !item.inTheaters && !item.theatricalReleaseDate && item.tmdbId ? `<button class="watch-load-providers-btn secondary-btn compact-btn" type="button" data-watch-load-providers="${id}">Load streaming info</button>` : ""}
+        ${!item.tmdbId ? `<div class="watch-detail-unlinked"><span>No poster or services yet.</span><button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${id}">Find the right title</button></div>` : ""}
         ${episodeProgressHtml}
       </div>
     </div>
   `;
   return card + detail;
 }
+
+// ── The open panel's pointer ─────────────────────────────────────────────────
+// After each render, point the panel at its poster. Switching to another poster
+// in the same row slides the pointer there (like the category-tab underline)
+// and skips the panel's entry animation; opening a new row just places it. The
+// page scrolls only when a different poster was opened, and only enough to
+// show the panel — never on the re-render after an episode tick.
+const gridPanelLast = {}; // per grid: { id, x, rowTop } of the panel as last drawn
+function placeWatchPanelPointer(root) {
+  const detail = root?.querySelector("[data-watch-detail]");
+  const card = detail ? root.querySelector(`[data-watch-item="${CSS.escape(detail.dataset.watchDetail)}"]`) : null;
+  placeGridPanelPointer(root, "watch", detail, card, detail?.dataset.watchDetail);
+}
+// Shared by every poster grid with an open panel (Watch, and Listen's Podcasts
+// and Books — Luke, 2026-11-11). `key` keeps each grid's last position apart.
+function placeGridPanelPointer(root, key, detail, card, id) {
+  if (!detail) { gridPanelLast[key] = null; return; }
+  const poster = card?.querySelector(".watch-poster") || card;
+  if (!poster) return;
+  const d = detail.getBoundingClientRect();
+  const p = poster.getBoundingClientRect();
+  const x = Math.round(p.left + p.width / 2 - d.left);
+  const rowTop = Math.round(p.top - root.getBoundingClientRect().top);
+  const prev = gridPanelLast[key];
+  gridPanelLast[key] = { id, x, rowTop };
+  if (prev && prev.rowTop === rowTop) {
+    detail.classList.add("is-steady"); // same row: no entry animation
+    if (prev.id !== id && prev.x !== x && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      detail.style.setProperty("--watch-ptr-x", `${prev.x}px`);
+      void detail.offsetWidth; // start the slide from where the pointer was
+      detail.classList.add("is-sliding");
+    }
+  }
+  detail.style.setProperty("--watch-ptr-x", `${x}px`);
+  if (!prev || prev.id !== id) {
+    const bottom = usableViewportBottom();
+    const r = detail.getBoundingClientRect();
+    if (r.bottom > bottom || r.top < 0) {
+      const top = p.top < 80 ? p.top : null;
+      if (top !== null) window.scrollBy({ top: top - 80, behavior: "smooth" });
+      else detail.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }
+}
+
+// ── Next episode ─────────────────────────────────────────────────────────────
+// The first unticked episode after your place — the episode crossed off most
+// recently — or from the start season when nothing is (watch-place.js; Luke,
+// 2026-11-01). Earlier unticked episodes count as skipped. Returns
+// { season, episode, name } or null when you're caught up.
+function watchNextEpisode(item) {
+  if (!item || item.type !== "tv") return null;
+  return watchNextFrom(item, watchPlaceContext(item));
+}
+
+function watchNextEpisodeHtml(item) {
+  const next = watchNextEpisode(item);
+  const id = escapeHtml(item.id);
+  if (!next) {
+    const anyTracked = Object.keys(item.seasonProgress || {}).length;
+    return anyTracked ? `<div class="watch-next watch-next--done">All caught up</div>` : "";
+  }
+  const label = `S${next.season} E${next.episode}`;
+  return `
+    <div class="watch-next">
+      <div class="watch-next-text">
+        <span class="watch-next-label">Next <span class="watch-next-code">${label}</span></span>
+        <span class="watch-next-ep">${escapeHtml(next.name || `Episode ${next.episode}`)}</span>
+      </div>
+      <button class="watch-next-tick" type="button" data-watch-next-tick="${id}" data-season="${next.season}" data-episode="${next.episode}" aria-label="Mark ${label} watched">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      </button>
+    </div>`;
+}
+
+// Load the episode list the Next line needs (once per show and season per
+// session; the panel shows the best guess meanwhile).
+const watchEpisodeListRequested = new Set();
+function ensureWatchNextSeasonLoaded(item) {
+  if (!item?.tmdbId || item.type !== "tv") return;
+  const next = watchNextEpisode(item);
+  const s = next ? next.season : null;
+  if (!s || watchEpisodes.get(item.tmdbId, s).length) return;
+  const key = `${item.id}:${s}`;
+  if (watchEpisodeListRequested.has(key)) return;
+  watchEpisodeListRequested.add(key);
+  loadWatchSeasonEpisodes(item.id, s);
+}
+
+// Which season the panel shows is this device's view, not data: kept in memory,
+// never synced (open seasons used to be saved as seasonProgress[n].__expanded, so
+// every tap was a save and the other person saw your seasons open). Unpicked, the
+// panel shows the season of the next episode.
+const watchSelectedSeason = new Map(); // itemId → season number
+
+// ── The panel's ⋯ menu (Luke, 2026-10-29) ────────────────────────────────────
+// Watched · Tabs · Remove, from the panel's top-right corner. Tabs swaps this
+// menu for the Tabs popover at the same spot.
+function openWatchMoreMenu(btn, itemId) {
+  const wasOpen = document.querySelector(`.watch-more-menu[data-for="${CSS.escape(itemId)}"]`);
+  closeFolderMenu();
+  if (wasOpen) return; // a second tap on ⋯ closes it
+  const item = watchItemById(itemId);
+  if (!item) return;
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu watch-item-context-menu watch-more-menu";
+  menu.dataset.for = itemId;
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-watch-more-act="watched">Watched</button>
+    <button type="button" role="menuitem" data-watch-more-act="tabs" aria-haspopup="menu">Tabs</button>
+    <div class="watch-context-divider"></div>
+    <button type="button" role="menuitem" data-watch-more-act="remove" class="danger-item">Remove</button>`;
+  menu.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const act = e.target.closest("[data-watch-more-act]")?.dataset.watchMoreAct;
+    if (!act) return;
+    closeFolderMenu();
+    if (act === "watched") openWatchLogDialog(itemId);
+    else if (act === "tabs") openWatchTabsMenu(btn, itemId, { alignRight: true });
+    else if (act === "remove") requestWatchRemove(itemId);
+  });
+  document.body.append(menu);
+  placeWatchPopover(menu, btn, { alignRight: true });
+}
+
+// Under the button (above it if there's no room), inside the screen.
+function placeWatchPopover(menu, btn, { alignRight = false } = {}) {
+  const r = btn.getBoundingClientRect();
+  const bottom = usableViewportBottom();
+  const left = Math.min(alignRight ? r.right - menu.offsetWidth : r.left, window.innerWidth - menu.offsetWidth - 10);
+  const below = r.bottom + 6;
+  const top = below + menu.offsetHeight > bottom - 10 ? r.top - menu.offsetHeight - 6 : below;
+  menu.style.left = `${Math.max(10, left)}px`;
+  menu.style.top = `${Math.max(10, top)}px`;
+}
+
+// ── Remove, with Undo (Luke, 2026-10-29) ─────────────────────────────────────
+// A removal waits ~6 s before it's real: the show disappears at once and the
+// toast offers Undo; nothing is saved or synced (no tombstone) until the toast
+// is gone. If the app closes first, the show simply stays — the safe way to fail.
+const WATCH_REMOVE_DELAY_MS = 6000;
+const watchPendingRemovals = new Map(); // id → timer
+function watchIsPendingRemoval(id) { return watchPendingRemovals.has(id); }
+function requestWatchRemove(id) {
+  const item = watchItemById(id);
+  if (!item || watchPendingRemovals.has(id)) return;
+  if (expandedWatchItemId === id) expandedWatchItemId = null;
+  const commit = () => {
+    watchPendingRemovals.delete(id);
+    if (watchItemById(id)) deleteWatchItem(id); else renderWatchPlanner();
+  };
+  watchPendingRemovals.set(id, setTimeout(commit, WATCH_REMOVE_DELAY_MS));
+  renderWatchPlanner();
+  if (elements.watchArchiveDialog?.open) openWatchArchive();
+  showMailToast(`Removed “${item.title}”`, () => {
+    clearTimeout(watchPendingRemovals.get(id));
+    watchPendingRemovals.delete(id);
+    renderWatchPlanner();
+    if (elements.watchArchiveDialog?.open) openWatchArchive();
+  }, { durationMs: WATCH_REMOVE_DELAY_MS });
+}
+
+// ── Tabs popover (the panel's Tabs button) ───────────────────────────────────
+// Ticks the tabs this show is filed under; stays open so several can be ticked.
+function openWatchTabsMenu(btn, itemId, { alignRight = false } = {}) {
+  closeFolderMenu();
+  const item = watchItemById(itemId);
+  if (!item) return;
+  const cats = state.watchSettings?.categories || [];
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu watch-item-context-menu watch-tabs-menu";
+  menu.setAttribute("role", "menu");
+  const draw = () => {
+    const on = new Set(Array.isArray(item.categories) ? item.categories : []);
+    menu.innerHTML = cats.length
+      ? cats.map((c) => `<button type="button" role="menuitemcheckbox" aria-checked="${on.has(c.id)}" data-watch-tab-toggle="${escapeHtml(c.id)}" class="watch-ctx-category-btn${on.has(c.id) ? " is-active" : ""}"><span class="watch-tabs-check" aria-hidden="true">${on.has(c.id) ? "&#10003;" : ""}</span>${escapeHtml(c.name)}</button>`).join("")
+        + `<div class="watch-context-divider"></div><button type="button" role="menuitem" data-watch-tab-new>New tab…</button>`
+      : `<div class="watch-tabs-empty">No tabs yet.</div><button type="button" role="menuitem" data-watch-tab-new>New tab…</button>`;
+  };
+  draw();
+  menu.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const t = e.target.closest("[data-watch-tab-toggle]");
+    if (t) {
+      const catId = t.dataset.watchTabToggle;
+      stampTab(item, catId, !(Array.isArray(item.categories) && item.categories.includes(catId)));
+      persist();
+      draw();
+      renderWatchPlanner();
+      return;
+    }
+    if (e.target.closest("[data-watch-tab-new]")) {
+      closeFolderMenu();
+      watchCategoryInputActive = true;
+      watchNewTabFor = itemId;
+      renderWatchPlanner();
+      elements.watchPlannerGrid?.querySelector("#watchCategoryInlineInput")?.focus();
+    }
+  });
+  document.body.append(menu);
+  placeWatchPopover(menu, btn, { alignRight });
+}
+let watchNewTabFor = null; // a show to file under the tab being typed (from the Tabs popover)
 
 function watchEpisodeProgressHtml(item) {
   const totalSeasons = item.totalSeasons || 0;
@@ -22758,10 +24698,7 @@ function watchEpisodeProgressHtml(item) {
       </div>
     `;
   }
-  const progress = item.seasonProgress || {};
-  const seasonsToShow = totalSeasons
-    ? Array.from({ length: totalSeasons }, (_, i) => i + 1)
-    : Object.keys(progress).map(Number).sort((a, b) => a - b);
+  const seasonsToShow = watchSeasonNumbers(item);
 
   if (!seasonsToShow.length) {
     return `
@@ -22771,45 +24708,95 @@ function watchEpisodeProgressHtml(item) {
     `;
   }
 
+  return watchSeasonPickerHtml(item, seasonsToShow);
+}
+
+function watchSeasonNumbers(item) {
+  return item.totalSeasons
+    ? Array.from({ length: item.totalSeasons }, (_, i) => i + 1)
+    : Object.keys(item.seasonProgress || {}).map(Number).filter((n) => n > 0).sort((a, b) => a - b);
+}
+
+// Episode lengths (Luke, 2026-10-29) came with tmdb-season later than the lists:
+// a list saved before then has no `runtime` on any episode, so the shown season
+// reloads once per session to pick them up (a network call, not a Supabase read).
+const watchRuntimeRequested = new Set();
+function ensureWatchShownSeasonRuntimes(item) {
+  if (!item?.tmdbId || item.type !== "tv") return;
+  const seasons = watchSeasonNumbers(item);
+  if (!seasons.length) return;
+  const s = watchShownSeason(item, seasons);
+  const eps = watchEpisodes.get(item.tmdbId, s);
+  // Reload once per session when the list predates lengths, or is over a week
+  // old (new episodes, air dates and names firm up while a season airs).
+  const stale = Date.now() - watchEpisodes.storedAt(item.tmdbId) > WATCH_REFRESH_AFTER_MS;
+  if (!eps.length || (!stale && eps.some((e) => e && "runtime" in e))) return;
+  const key = `${item.id}:${s}`;
+  if (watchRuntimeRequested.has(key)) return;
+  watchRuntimeRequested.add(key);
+  loadWatchSeasonEpisodes(item.id, s);
+}
+
+// The season the panel shows: the one picked on this device, else the next
+// episode's, else the last one (all caught up).
+function watchShownSeason(item, seasons) {
+  const picked = watchSelectedSeason.get(item.id);
+  if (seasons.includes(picked)) return picked;
+  return watchOpenSeason(item, { seasons, episodesFor: (n) => watchEpisodes.get(item.tmdbId, n) }) ?? seasons[seasons.length - 1];
+}
+
+function watchSeasonStats(item, seasonNum) {
+  const sd = item.seasonProgress?.[seasonNum] || {};
+  const episodes = watchEpisodes.get(item.tmdbId, seasonNum);
+  const watchedEps = sd.episodes || {};
+  const totalEps = episodes.length || Object.keys(watchedEps).length || 0;
+  const watchedCount = Object.values(watchedEps).filter(Boolean).length;
+  const allWatched = !!sd.watched || (totalEps > 0 && watchedCount >= totalEps);
+  return { episodes, watchedEps, totalEps, watchedCount, allWatched };
+}
+
+// One season at a time, picked from a menu (Luke, 2026-10-29). The menu names
+// only the season; there's no progress bar and no tick-the-whole-season box —
+// episodes are crossed off one at a time (Luke, 2026-10-30).
+function watchSeasonPickerHtml(item, seasons) {
+  const id = escapeHtml(item.id);
+  const shown = watchShownSeason(item, seasons);
+  const st = watchSeasonStats(item, shown);
   return `
-    <div class="watch-seasons" data-watch-seasons="${escapeHtml(item.id)}">
-      ${seasonsToShow.map((seasonNum) => watchSeasonTemplate(item, seasonNum, progress[seasonNum])).join("")}
+    <div class="watch-seasons" data-watch-seasons="${id}">
+      <div class="watch-season-pick">
+        <select class="watch-season-select" data-watch-season-select="${id}" aria-label="Season">
+          ${seasons.map((n) => `<option value="${n}"${n === shown ? " selected" : ""}>Season ${n}</option>`).join("")}
+        </select>
+      </div>
+      ${watchEpisodesTemplate(item, shown, st.episodes, st.watchedEps)}
     </div>
   `;
 }
 
-function watchSeasonTemplate(item, seasonNum, seasonData) {
-  const episodes = item.episodeData?.[seasonNum] || [];
-  const watchedEps = seasonData?.episodes || {};
-  const totalEps = episodes.length || Object.keys(watchedEps).length || 0;
-  const watchedCount = Object.values(watchedEps).filter(Boolean).length;
-  const allWatched = seasonData?.watched || (totalEps > 0 && watchedCount >= totalEps);
-  const isExpanded = seasonData?.__expanded || false;
+// Seasons panel polish (Luke, 2026-10-31; WATCH_AUDIT second audit S1–S7):
+// the whole season shows (no scroll box inside the list), rows are ~30px and one
+// line, the next episode to watch is marked, episodes not out yet show their
+// date and can't be ticked, and a failed load says so.
+function watchEpisodeAired(ep, today = localDateKey(new Date())) {
+  return !ep?.airDate || String(ep.airDate).slice(0, 10) <= today;
+}
 
-  return `
-    <div class="watch-season">
-      <div class="watch-season-head">
-        <label class="watch-season-label">
-          <input type="checkbox" class="watch-season-check" data-watch-season-toggle="${escapeHtml(item.id)}" data-season="${seasonNum}" ${allWatched ? "checked" : ""} />
-          Season ${seasonNum}
-        </label>
-        ${totalEps ? `<span class="watch-season-progress">${watchedCount}/${totalEps}</span>` : ""}
-        <button class="watch-season-expand-btn icon-btn" type="button" data-watch-season-expand="${escapeHtml(item.id)}" data-season="${seasonNum}" aria-label="${isExpanded ? "Collapse" : "Expand"} season ${seasonNum}">
-          <svg viewBox="0 0 24 24" aria-hidden="true" class="${isExpanded ? "is-expanded" : ""}"><path d="m6 9 6 6 6-6" /></svg>
-        </button>
-      </div>
-      ${isExpanded ? watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) : ""}
-    </div>
-  `;
+function formatWatchAirDate(iso) {
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return "";
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
 }
 
 function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
   if (!episodes.length) {
+    const failed = watchSeasonLoadFailed.has(`${item.id}:${seasonNum}`);
     return `
-      <div class="watch-episodes">
+      <div class="watch-episodes" data-watch-eps="${escapeHtml(item.id)}:${seasonNum}">
         <div class="empty-state watch-episodes-loading">
           ${item.tmdbId
-            ? `<button class="secondary-btn compact-btn" type="button" data-watch-load-season="${escapeHtml(item.id)}" data-season="${seasonNum}">Load episode list</button>`
+            ? `${failed ? `<span class="watch-episodes-error">Couldn't load the episodes.</span>` : ""}<button class="secondary-btn compact-btn" type="button" data-watch-load-season="${escapeHtml(item.id)}" data-season="${seasonNum}">${failed ? "Try again" : "Load episode list"}</button>`
             : `<div class="watch-episode-manual">
                 <span class="muted-label">Episodes watched:</span>
                 <input type="number" class="watch-ep-count-input" min="0" max="99" value="${Object.values(watchedEps).filter(Boolean).length}" data-watch-ep-count="${escapeHtml(item.id)}" data-season="${seasonNum}" />
@@ -22820,13 +24807,30 @@ function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
     `;
   }
   return `
-    <div class="watch-episodes">
-      ${episodes.map((ep) => `
-        <label class="watch-episode">
-          <input type="checkbox" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" ${watchedEps[ep.episodeNumber] ? "checked" : ""} />
-          <span>${escapeHtml(ep.name || `Episode ${ep.episodeNumber}`)}</span>
-        </label>
-      `).join("")}
+    <div class="watch-episodes" data-watch-eps="${escapeHtml(item.id)}:${seasonNum}">
+      ${(() => {
+        const today = localDateKey(new Date());
+        const next = watchNextEpisode(item);
+        return episodes.map((ep) => {
+          // No check box: a watched episode is struck through, and tapping the
+          // row crosses it off or back on (Luke, 2026-10-30).
+          const done = !!watchedEps[ep.episodeNumber];
+          const aired = watchEpisodeAired(ep, today);
+          const isNext = aired && !done && next && next.season === seasonNum && next.episode === ep.episodeNumber;
+          const name = ep.name || `Episode ${ep.episodeNumber}`;
+          const side = !aired && ep.airDate
+            ? `<span class="watch-episode-len watch-episode-date">${escapeHtml(formatWatchAirDate(ep.airDate))}</span>`
+            : (ep.runtime ? `<span class="watch-episode-len">${escapeHtml(formatWatchRuntime(ep.runtime))}</span>` : "");
+          const cls = `watch-episode${done ? " is-watched" : ""}${isNext ? " is-next" : ""}${aired ? "" : " is-upcoming"}`;
+          const label = isNext ? ` aria-label="Next: episode ${ep.episodeNumber}, ${escapeHtml(name)}"` : "";
+          return `
+          <button type="button" class="${cls}" data-watch-episode="${escapeHtml(item.id)}" data-season="${seasonNum}" data-episode="${ep.episodeNumber}" aria-pressed="${done}"${aired ? "" : " disabled"}${label} title="${escapeHtml(name)}">
+            <span class="watch-episode-num">${ep.episodeNumber}</span>
+            <span class="watch-episode-name">${escapeHtml(name)}</span>
+            ${side}
+          </button>`;
+        }).join("");
+      })()}
     </div>
   `;
 }
@@ -22834,7 +24838,10 @@ function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
 function bindWatchControls(root = document) {
   // Hub-powered Play/Open buttons on Watch cards (present once the media hub is
   // loaded) — same activation as Discover, via the shared handler.
-  if (mediaHub) root.querySelectorAll(".discover-svc").forEach((btn) => btn.addEventListener("click", () => discoverSvcActivate(btn, mediaHub)));
+  if (mediaHub) root.querySelectorAll(".discover-svc:not([data-watch-other-services])").forEach((btn) => btn.addEventListener("click", () => discoverSvcActivate(btn, mediaHub)));
+  root.querySelectorAll("[data-watch-other-services]").forEach((btn) => {
+    btn.addEventListener("click", () => openWatchOtherServices(btn.dataset.watchOtherServices));
+  });
   root.querySelectorAll("[data-watch-delete]").forEach((btn) => {
     btn.addEventListener("click", () => deleteWatchItem(btn.dataset.watchDelete));
   });
@@ -22846,7 +24853,14 @@ function bindWatchControls(root = document) {
   });
 
   root.querySelectorAll("[data-watch-find]").forEach((btn) => {
-    btn.addEventListener("click", () => openWatchTmdbSearch(btn.dataset.watchFind, root));
+    btn.addEventListener("click", () => openWatchSearchDialog({ linkId: btn.dataset.watchFind }));
+  });
+  // The open panel's ⋯ menu: Watched · Tabs · Remove (Luke, 2026-10-29).
+  root.querySelectorAll("[data-watch-more]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); openWatchMoreMenu(btn, btn.dataset.watchMore); });
+  });
+  root.querySelectorAll("[data-watch-next-tick]").forEach((btn) => {
+    btn.addEventListener("click", () => toggleWatchEpisode(btn.dataset.watchNextTick, Number(btn.dataset.season), Number(btn.dataset.episode), true));
   });
   root.querySelectorAll("[data-watch-load-providers]").forEach((btn) => {
     btn.addEventListener("click", () => loadWatchProviders(btn.dataset.watchLoadProviders));
@@ -22857,17 +24871,14 @@ function bindWatchControls(root = document) {
   root.querySelectorAll("[data-toggle-showtimes]").forEach((btn) => {
     btn.addEventListener("click", () => toggleShowtimesCollapse(btn.dataset.toggleShowtimes));
   });
-  root.querySelectorAll("[data-watch-season-toggle]").forEach((cb) => {
-    cb.addEventListener("change", () => toggleWatchSeason(cb.dataset.watchSeasonToggle, Number(cb.dataset.season), cb.checked));
-  });
-  root.querySelectorAll("[data-watch-season-expand]").forEach((btn) => {
-    btn.addEventListener("click", () => toggleWatchSeasonExpand(btn.dataset.watchSeasonExpand, Number(btn.dataset.season)));
+  root.querySelectorAll("[data-watch-season-select]").forEach((sel) => {
+    sel.addEventListener("change", () => selectWatchSeason(sel.dataset.watchSeasonSelect, Number(sel.value)));
   });
   root.querySelectorAll("[data-watch-load-season]").forEach((btn) => {
     btn.addEventListener("click", () => loadWatchSeasonEpisodes(btn.dataset.watchLoadSeason, Number(btn.dataset.season)));
   });
-  root.querySelectorAll("[data-watch-episode]").forEach((cb) => {
-    cb.addEventListener("change", () => toggleWatchEpisode(cb.dataset.watchEpisode, Number(cb.dataset.season), Number(cb.dataset.episode), cb.checked));
+  root.querySelectorAll("[data-watch-episode]").forEach((btn) => {
+    btn.addEventListener("click", () => toggleWatchEpisode(btn.dataset.watchEpisode, Number(btn.dataset.season), Number(btn.dataset.episode), btn.getAttribute("aria-pressed") !== "true"));
   });
   root.querySelectorAll("[data-watch-ep-count]").forEach((input) => {
     input.addEventListener("change", () => setWatchEpisodeCount(input.dataset.watchEpCount, Number(input.dataset.season), Number(input.value)));
@@ -22994,7 +25005,7 @@ function openWatchItemMenu(event) {
     </div>` : ""}
     <div class="watch-context-divider"></div>
     ${item.tmdbId ? `<button type="button" role="menuitem" data-watch-ctx-reload="${escapeHtml(itemId)}">Reload</button>` : ""}
-    <button type="button" role="menuitem" data-watch-ctx-delete="${escapeHtml(itemId)}" class="danger-item">Delete</button>
+    <button type="button" role="menuitem" data-watch-ctx-delete="${escapeHtml(itemId)}" class="danger-item">Remove</button>
   `;
 
   document.body.append(menu);
@@ -23032,12 +25043,7 @@ function openWatchItemMenu(event) {
       const catId = btn.dataset.categoryId;
       const it = watchItemById(itemId);
       if (!it) return;
-      if (!Array.isArray(it.categories)) it.categories = [];
-      if (it.categories.includes(catId)) {
-        it.categories = it.categories.filter((id) => id !== catId);
-      } else {
-        it.categories.push(catId);
-      }
+      stampTab(it, catId, !(Array.isArray(it.categories) && it.categories.includes(catId)));
       persist();
       renderWatchPlanner();
     });
@@ -23058,7 +25064,7 @@ function openWatchItemMenu(event) {
 
   const delBtn = menu.querySelector("[data-watch-ctx-delete]");
   if (delBtn) {
-    const h = handle(() => deleteWatchItem(itemId));
+    const h = handle(() => requestWatchRemove(itemId));
     delBtn.addEventListener("pointerdown", h);
     delBtn.addEventListener("click", h);
   }
@@ -23084,7 +25090,6 @@ function addWatchItem(title, type) {
     rating: null,
     watchNotes: null,
     seasonProgress: {},
-    episodeData: {},
     categories: [],
     createdAt: new Date().toISOString()
   };
@@ -23114,6 +25119,7 @@ function updateWatchItemStatus(id, status) {
   const item = watchItemById(id);
   if (!item) return;
   item.status = status;
+  touchWatchItem(item);
   persist();
   renderWatchPlanner();
 }
@@ -23134,31 +25140,13 @@ function unscheduleWatchItem(id, dayId) {
   renderWatchPlanner();
 }
 
-function toggleWatchSeason(itemId, seasonNum, checked) {
+// Show another season in the panel — this device only, never saved (see
+// watchSelectedSeason). Loads its episode list if it isn't there yet.
+function selectWatchSeason(itemId, seasonNum) {
   const item = watchItemById(itemId);
-  if (!item) return;
-  if (!item.seasonProgress[seasonNum]) item.seasonProgress[seasonNum] = {};
-  if (checked) {
-    const episodes = item.episodeData?.[seasonNum] || [];
-    if (episodes.length) {
-      item.seasonProgress[seasonNum].episodes = {};
-      episodes.forEach((ep) => { item.seasonProgress[seasonNum].episodes[ep.episodeNumber] = true; });
-    } else {
-      item.seasonProgress[seasonNum].watched = true;
-    }
-  } else {
-    item.seasonProgress[seasonNum] = {};
-  }
-  persist();
-  renderWatchPlanner();
-}
-
-function toggleWatchSeasonExpand(itemId, seasonNum) {
-  const item = watchItemById(itemId);
-  if (!item) return;
-  if (!item.seasonProgress[seasonNum]) item.seasonProgress[seasonNum] = {};
-  item.seasonProgress[seasonNum].__expanded = !item.seasonProgress[seasonNum].__expanded;
-  persist();
+  if (!item || !seasonNum) return;
+  watchSelectedSeason.set(itemId, seasonNum);
+  if (item.tmdbId && !watchEpisodes.get(item.tmdbId, seasonNum).length) loadWatchSeasonEpisodes(itemId, seasonNum);
   renderWatchPlanner();
 }
 
@@ -23173,9 +25161,7 @@ function initWatchSeasonTracking(itemId) {
 function toggleWatchEpisode(itemId, seasonNum, episodeNum, checked) {
   const item = watchItemById(itemId);
   if (!item) return;
-  if (!item.seasonProgress[seasonNum]) item.seasonProgress[seasonNum] = {};
-  if (!item.seasonProgress[seasonNum].episodes) item.seasonProgress[seasonNum].episodes = {};
-  item.seasonProgress[seasonNum].episodes[episodeNum] = checked;
+  stampTick(item, seasonNum, episodeNum, checked); // per-tick merge (watch-merge.js)
   persist();
   renderWatchPlanner();
 }
@@ -23186,9 +25172,8 @@ function setWatchEpisodeCount(itemId, seasonNum, count) {
   if (!item.seasonProgress[seasonNum]) item.seasonProgress[seasonNum] = {};
   if (!item.seasonProgress[seasonNum].episodes) item.seasonProgress[seasonNum].episodes = {};
   const existing = item.seasonProgress[seasonNum].episodes;
-  const newEps = {};
-  for (let i = 1; i <= count; i++) newEps[i] = true;
-  item.seasonProgress[seasonNum].episodes = { ...existing, ...newEps };
+  const at = new Date().toISOString();
+  for (let i = 1; i <= count; i++) if (!existing[i]) stampTick(item, seasonNum, i, true, at);
   persist();
   renderWatchPlanner();
 }
@@ -23277,6 +25262,7 @@ function saveWatchLog() {
   item.watchNotes = elements.watchLogNotes.value.trim() || null;
   const wasEdit = watchLogEditMode;
   if (!wasEdit) item.status = "watched";
+  touchWatchItem(item);
   watchLogPendingId = null;
   watchLogRating = null;
   watchLogEditMode = false;
@@ -23291,7 +25277,7 @@ function saveWatchLog() {
 
 function skipWatchLog() {
   const item = watchItemById(watchLogPendingId);
-  if (item) item.status = "watched";
+  if (item) { item.status = "watched"; touchWatchItem(item); }
   watchLogPendingId = null;
   watchLogRating = null;
   watchLogEditMode = false;
@@ -23302,7 +25288,7 @@ function skipWatchLog() {
 
 function openWatchArchive() {
   if (!elements.watchArchiveDialog || !elements.watchArchiveBody) return;
-  const watched = watchItemsList().filter((i) => i.status === "watched");
+  const watched = watchItemsList().filter((i) => i.status === "watched" && !watchIsPendingRemoval(i.id));
   const movies = watched.filter((i) => i.type === "movie");
   const tvShows = watched.filter((i) => i.type === "tv");
 
@@ -23322,8 +25308,14 @@ function openWatchArchive() {
       </div>`
     : `<div class="empty-state">Nothing archived yet. Mark something as Watched to send it here.</div>`;
 
+  // On a phone there's no right-click: tapping a show (or its ⋯) opens the same
+  // menu — Edit · Back to Watch list · Delete (Luke, 2026-11-01; decision 10).
   elements.watchArchiveBody.querySelectorAll("[data-watch-archive-item]").forEach((article) => {
     article.addEventListener("contextmenu", openWatchArchiveItemMenu);
+    article.addEventListener("click", (e) => {
+      if (e.target.closest("a, button:not([data-watch-archive-more])")) return; // service links keep their job
+      openWatchArchiveItemMenu(e);
+    });
   });
 
   if (!elements.watchArchiveDialog.open) elements.watchArchiveDialog.showModal();
@@ -23374,7 +25366,9 @@ function watchArchiveItemTemplate(item) {
               <span class="watch-item-title">${escapeHtml(item.title)}</span>
               ${item.year ? `<span class="watch-item-year">${escapeHtml(item.year)}</span>` : ""}
             </div>
-            <span class="watch-type-badge watch-type-${escapeHtml(item.type)}">${item.type === "tv" ? "TV" : "M"}</span>
+            <button class="watch-detail-more watch-archive-more" type="button" data-watch-archive-more aria-label="More for ${escapeHtml(item.title)}" aria-haspopup="menu">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+            </button>
           </div>
           ${watchItemMetaHtml(item)}
           ${ratingHtml}
@@ -23401,9 +25395,12 @@ function openWatchArchiveItemMenu(event) {
   event.stopPropagation();
   closeFolderMenu();
 
-  const article = event.currentTarget;
+  const article = event.currentTarget.closest?.("[data-watch-archive-item]") || event.currentTarget;
   const itemId = article.dataset.watchArchiveItem;
   if (!itemId) return;
+  // From the ⋯ button (or a keyboard click with no pointer position), open under it.
+  const more = event.target?.closest?.("[data-watch-archive-more]");
+  const anchor = more ? more.getBoundingClientRect() : null;
 
   const menu = document.createElement("div");
   menu.className = "folder-context-menu watch-item-context-menu";
@@ -23411,13 +25408,15 @@ function openWatchArchiveItemMenu(event) {
   menu.innerHTML = `
     <button type="button" role="menuitem" data-watch-ctx-edit="${escapeHtml(itemId)}">Edit</button>
     <div class="watch-context-divider"></div>
-    <button type="button" role="menuitem" data-watch-ctx-unarchive="${escapeHtml(itemId)}">Remove from Archive</button>
+    <button type="button" role="menuitem" data-watch-ctx-unarchive="${escapeHtml(itemId)}">Back to Watch list</button>
     <button type="button" role="menuitem" data-watch-ctx-delete="${escapeHtml(itemId)}" class="danger-item">Delete</button>
   `;
 
   elements.watchArchiveDialog.append(menu);
-  const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
-  const y = Math.min(event.clientY, usableViewportBottom() - menu.offsetHeight - 10);
+  const px = anchor ? anchor.right - menu.offsetWidth : (event.clientX || article.getBoundingClientRect().left + 20);
+  const py = anchor ? anchor.bottom + 4 : (event.clientY || article.getBoundingClientRect().top + 20);
+  const x = Math.min(px, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(py, usableViewportBottom() - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
@@ -23450,10 +25449,7 @@ function openWatchArchiveItemMenu(event) {
 
   const delBtn = menu.querySelector("[data-watch-ctx-delete]");
   if (delBtn) {
-    const h = handle(() => {
-      deleteWatchItem(itemId);
-      openWatchArchive();
-    });
+    const h = handle(() => requestWatchRemove(itemId)); // re-draws the Archive itself
     delBtn.addEventListener("pointerdown", h);
     delBtn.addEventListener("click", h);
   }
@@ -23534,9 +25530,9 @@ function categorizeWatchItem(id, targetCategoryId) {
   const isSystemTab = (x) => x === "all" || x === "__upcoming" || x === "__in-theaters";
   if (!isSystemTab(targetCategoryId)) {
     if (!isSystemTab(activeWatchCategory) && activeWatchCategory !== targetCategoryId) {
-      item.categories = item.categories.filter((c) => c !== activeWatchCategory);
+      stampTab(item, activeWatchCategory, false);
     }
-    if (!item.categories.includes(targetCategoryId)) item.categories.push(targetCategoryId);
+    if (!item.categories.includes(targetCategoryId)) stampTab(item, targetCategoryId, true);
   }
   activeWatchCategory = targetCategoryId;
   persist();
@@ -23557,44 +25553,7 @@ function handleWatchItemDrop(event, dayId) {
   draggedWatchScheduled = null;
 }
 
-async function fetchWatchSearchResults(query, root, addForm) {
-  const resultsEl = root.querySelector("[data-watch-search-results]");
-  if (!resultsEl) return;
-  resultsEl.innerHTML = `<div class="watch-search-loading">Searching...</div>`;
-  resultsEl.hidden = false;
-  trackUsage("tmdb_search");
-  try {
-    const response = await fetch(tmdbSearchUrl(query), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
-    const data = await response.json();
-    if (!response.ok) {
-      resultsEl.innerHTML = `<div class="watch-search-error">${escapeHtml(data.error || "Search failed.")}</div>`;
-      return;
-    }
-    if (!data.results?.length) {
-      resultsEl.innerHTML = `<div class="watch-search-empty">No results found.</div>`;
-      return;
-    }
-    resultsEl.innerHTML = data.results.map((r) =>
-      watchTmdbResultTemplate(r, `data-tmdb-pick="${escapeHtml(JSON.stringify(r))}"`)
-    ).join("");
-    resultsEl.querySelectorAll("[data-tmdb-pick]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        let result;
-        try { result = JSON.parse(btn.dataset.tmdbPick); } catch { return; }
-        const titleInput = addForm?.querySelector("[data-watch-add-input]");
-        const typeSelect = addForm?.querySelector("[data-watch-add-type]");
-        if (titleInput) titleInput.value = result.title;
-        if (typeSelect) typeSelect.value = result.type;
-        hideWatchSearchResults(root);
-        addWatchItemFromTmdb(result);
-      });
-    });
-  } catch {
-    resultsEl.innerHTML = `<div class="watch-search-error">Search failed. Check your TMDB_API_KEY.</div>`;
-  }
-}
-
-function watchTmdbResultTemplate(r, dataAttr) {
+function watchTmdbResultTemplate(r, dataAttr, tag = "") {
   const posterUrl = r.posterPath
     ? `https://image.tmdb.org/t/p/w185${r.posterPath}`
     : null;
@@ -23606,17 +25565,10 @@ function watchTmdbResultTemplate(r, dataAttr) {
       ${posterHtml}
       <span class="watch-result-title">${escapeHtml(r.title)}</span>
       ${r.year ? `<span class="watch-result-year">${escapeHtml(r.year)}</span>` : ""}
+      ${tag ? `<span class="watch-result-tag">${escapeHtml(tag)}</span>` : ""}
       <span class="watch-type-badge watch-type-${escapeHtml(r.type)}">${r.type === "tv" ? "TV" : "M"}</span>
     </button>
   `;
-}
-
-function hideWatchSearchResults(root) {
-  const resultsEl = root?.querySelector("[data-watch-search-results]");
-  if (resultsEl) {
-    resultsEl.hidden = true;
-    resultsEl.innerHTML = "";
-  }
 }
 
 function addWatchItemFromTmdb(tmdbResult) {
@@ -23639,13 +25591,34 @@ function addWatchItemFromTmdb(tmdbResult) {
     rating: null,
     watchNotes: null,
     seasonProgress: {},
-    episodeData: {},
     categories: (activeWatchCategory !== "all" && activeWatchCategory !== "__upcoming" && activeWatchCategory !== "__in-theaters") ? [activeWatchCategory] : [],
     createdAt: new Date().toISOString()
   };
   watchItemsList().push(item);
   persist();
   loadWatchProviders(item.id);
+}
+
+// Where-to-watch and season counts refresh on view once they're a week old
+// (Luke, 2026-10-31; WATCH_AUDIT decision 7 / S5): a few shows at a time, each
+// at most once a session, so a new season shows up and "In theaters" clears.
+const WATCH_REFRESH_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+const WATCH_REFRESH_PER_SESSION = 12;
+const watchRefreshTried = new Set();
+let watchRefreshRunning = 0;
+function refreshStaleWatchShows(items) {
+  const now = Date.now();
+  for (const item of items) {
+    if (watchRefreshRunning >= 2 || watchRefreshTried.size >= WATCH_REFRESH_PER_SESSION) return;
+    if (!item?.tmdbId || watchRefreshTried.has(item.id)) continue;
+    const at = Date.parse(item.providersUpdatedAt || "") || 0;
+    // A TV show saved before TMDB's type was kept is refreshed once to get it.
+    const needsType = item.type === "tv" && !("showType" in item);
+    if (now - at < WATCH_REFRESH_AFTER_MS && !needsType) continue;
+    watchRefreshTried.add(item.id);
+    watchRefreshRunning++;
+    loadWatchProviders(item.id).finally(() => { watchRefreshRunning--; refreshStaleWatchShows(items); });
+  }
 }
 
 async function loadWatchProviders(itemId) {
@@ -23660,6 +25633,14 @@ async function loadWatchProviders(itemId) {
     if (data.runtime) item.runtime = data.runtime;
     if (data.totalSeasons) item.totalSeasons = data.totalSeasons;
     if (data.totalEpisodes) item.totalEpisodes = data.totalEpisodes;
+    // Where a never-started show opens (watch-place.js): TMDB's type, genres and
+    // latest aired season. `showType` is set (null if TMDB has none) so a show is
+    // only backfilled once.
+    if (item.type === "tv" && "showType" in data) {
+      item.showType = data.showType || null;
+      item.genreIds = Array.isArray(data.genreIds) ? data.genreIds : [];
+      item.lastAiredSeason = data.lastAiredSeason || null;
+    }
     if (data.avgEpisodeRuntime) item.avgEpisodeRuntime = data.avgEpisodeRuntime;
     if (item.type === "movie") {
       item.inTheaters = data.inTheaters === true;
@@ -23672,40 +25653,6 @@ async function loadWatchProviders(itemId) {
   }
 }
 
-async function openWatchTmdbSearch(itemId, root) {
-  const item = watchItemById(itemId);
-  if (!item) return;
-  const resultsEl = root?.querySelector("[data-watch-search-results]");
-  if (!resultsEl) return;
-  resultsEl.innerHTML = `<div class="watch-search-loading">Searching for "${escapeHtml(item.title)}"...</div>`;
-  resultsEl.hidden = false;
-  try {
-    const response = await fetch(tmdbSearchUrl(item.title), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
-    const data = await response.json();
-    if (!response.ok || !data.results?.length) {
-      resultsEl.innerHTML = `<div class="watch-search-error">${escapeHtml(data.error || "No results found.")} <button class="secondary-btn compact-btn" type="button" data-close-watch-search>Close</button></div>`;
-      resultsEl.querySelector("[data-close-watch-search]")?.addEventListener("click", () => hideWatchSearchResults(root));
-      return;
-    }
-    resultsEl.innerHTML = `<div class="watch-search-header">Link "${escapeHtml(item.title)}" to:</div>` +
-      data.results.map((r) =>
-        watchTmdbResultTemplate(r, `data-tmdb-link="${escapeHtml(JSON.stringify({ ...r, targetId: itemId }))}"`)
-      ).join("") +
-      `<button class="secondary-btn compact-btn watch-search-cancel" type="button" data-close-watch-search>Cancel</button>`;
-    resultsEl.querySelectorAll("[data-tmdb-link]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        let result;
-        try { result = JSON.parse(btn.dataset.tmdbLink); } catch { return; }
-        linkWatchItemToTmdb(result.targetId, result);
-        hideWatchSearchResults(root);
-      });
-    });
-    resultsEl.querySelector("[data-close-watch-search]")?.addEventListener("click", () => hideWatchSearchResults(root));
-  } catch {
-    resultsEl.innerHTML = `<div class="watch-search-error">Search failed.</div>`;
-  }
-}
-
 function linkWatchItemToTmdb(itemId, tmdbResult) {
   const item = watchItemById(itemId);
   if (!item) return;
@@ -23713,26 +25660,35 @@ function linkWatchItemToTmdb(itemId, tmdbResult) {
   item.posterPath = tmdbResult.posterPath || item.posterPath;
   item.year = tmdbResult.year || item.year;
   item.overview = tmdbResult.overview || item.overview;
-  item.type = tmdbResult.type === "tv" ? "tv" : item.type;
+  item.type = tmdbResult.type === "tv" ? "tv" : "movie"; // the match decides (a plain title was guessed)
   item.totalSeasons = tmdbResult.totalSeasons || item.totalSeasons;
   item.streamingProviders = null;
   persist();
   loadWatchProviders(itemId);
 }
 
+// Seasons whose episode list failed to load this session (the panel says so and
+// offers "Try again"). Device-only; cleared on the next success.
+const watchSeasonLoadFailed = new Set();
 async function loadWatchSeasonEpisodes(itemId, seasonNum) {
   const item = watchItemById(itemId);
   if (!item?.tmdbId) return;
+  const key = `${itemId}:${seasonNum}`;
+  const fail = () => {
+    // Only the empty placeholder shows the message; a list already on screen stays.
+    if (watchEpisodes.get(item.tmdbId, seasonNum).length || watchSeasonLoadFailed.has(key)) return;
+    watchSeasonLoadFailed.add(key);
+    renderWatchPlanner();
+  };
   try {
     const response = await fetch(tmdbSeasonUrl(item.tmdbId, seasonNum), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
-    if (!response.ok || !data.episodes?.length) return;
-    if (!item.episodeData) item.episodeData = {};
-    item.episodeData[seasonNum] = data.episodes;
-    persist();
-    renderWatchPlanner();
+    if (!response.ok || !data.episodes?.length) { fail(); return; }
+    const hadFailed = watchSeasonLoadFailed.delete(key);
+    // Device data (watch-episodes.js): no save, nothing synced; redraw only if new.
+    if (watchEpisodes.set(item.tmdbId, seasonNum, data.episodes) || hadFailed) renderWatchPlanner();
   } catch {
-    // silently fail
+    fail();
   }
 }
 
@@ -23882,7 +25838,7 @@ function recreateHobbySummary(key) {
 const RECREATE_HOBBY_ICONS = {
   sailing: `<img class="workout-pool-img" src="./activity-sailing.png" alt="Sailing" width="52" height="52" draggable="false" />`,
   piano: `<img class="workout-pool-img" src="./activity-piano.png" alt="Piano" width="52" height="52" draggable="false" />`,
-  dutch: `<span class="lang-hobby-icon">${ldeIcon("translate", { size: 40 })}</span>`,
+  dutch: `<img class="workout-pool-img" src="./activity-dutch.png" alt="Dutch" width="52" height="52" draggable="false" />`,
 };
 const RECREATE_TRAVEL_ICON = `<img class="workout-pool-img" src="./activity-travel.png" alt="Travel" width="52" height="52" draggable="false" />`;
 
@@ -26349,11 +28305,29 @@ function scheduleReminderSync(delay = 2000) {
   reminderSyncTimer = window.setTimeout(syncNativeReminders, delay);
 }
 
+// The weekly Finance nudge rides the same schedule (iOS keeps one set of pending
+// notifications, and the reminder sync cancels anything it didn't ask for). The
+// count is remembered on this device so a cold start doesn't drop the nudge.
+const FINANCE_NUDGE_COUNT_KEY = "live-finance-nudge-count";
+function financeNudgeForReminders() {
+  try {
+    if (!isPageEnabled("finance") || !_finance.financeAlertPref("weeklyNudge")) return [];
+    let count = _finance.financeToCategorizeCount();
+    if (count == null) count = Number(localStorage.getItem(FINANCE_NUDGE_COUNT_KEY)) || 0;
+    else localStorage.setItem(FINANCE_NUDGE_COUNT_KEY, String(count));
+    const nudge = financeNudgeInstance(count);
+    // Return windows closing soon (receipt-returns.js), at most 20 pending.
+    let returns = [];
+    try { returns = _finance.financeReturnReminders().sort((a, b) => a.fireAt - b.fireAt).slice(0, 20); } catch { returns = []; }
+    return [...(nudge ? [nudge] : []), ...returns];
+  } catch { return []; }
+}
+
 function syncNativeReminders() {
   const native = reminderNative();
   if (!native) return Promise.resolve(null);
   try {
-    return native.sync(currentReminderInstances());
+    return native.sync([...currentReminderInstances(), ...financeNudgeForReminders()]);
   } catch (error) {
     console.warn("Reminder scheduling failed.", error);
     return Promise.resolve(null);
@@ -26380,6 +28354,7 @@ async function ensureReminderPermission() {
 
 // A tapped reminder opens its event (or at least its day) in the calendar.
 function openReminderTarget({ kind, eventId, date } = {}) {
+  if (kind === "finance") { showFinanceApp(); return; }
   if (!date) return;
   planViewDate = new Date(`${date}T00:00:00`);
   showPlanApp();
@@ -26683,7 +28658,7 @@ function getPlanEventsForRange(startKey, endKey) {
         if (seen.has(e.id)) return;
         const color = e.color || ((data.calendarSources || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
         eventInstancesInRange(e, startKey, endKey).forEach((inst) => {
-          events.push({ ...e, ...inst, source: "layer", layerView: layer, color, calendarName: VIEW_LABELS[layer] });
+          events.push({ ...e, ...inst, source: "layer", layerView: layer, color, calendarName: viewLabel(layer) });
         });
       });
       // That view's Tasks come with its calendar (decision 20), as task chips.
@@ -26695,7 +28670,7 @@ function getPlanEventsForRange(startKey, endKey) {
           const title = task?.title || task?.text || task?.name;
           if (!(key && title) || key < startKey || key > endKey) return;
           const scheduled = taskIsScheduled(task);
-          events.push({ id: `layer-do-${layer}-${task.id || title}`, title, date: key, color: PLAN_APP_COLORS.do, source: "layer-task", layerView: layer, calendarName: `${VIEW_LABELS[layer]} tasks`, isTask: true, done: Boolean(task?.done), allDay: !scheduled, startTime: scheduled ? task.time : null, endTime: null, taskState: scheduled ? "scheduled" : "due" });
+          events.push({ id: `layer-do-${layer}-${task.id || title}`, title, date: key, color: PLAN_APP_COLORS.do, source: "layer-task", layerView: layer, calendarName: `${viewLabel(layer)} tasks`, isTask: true, done: Boolean(task?.done), allDay: !scheduled, startTime: scheduled ? task.time : null, endTime: null, taskState: scheduled ? "scheduled" : "due" });
         });
       }
     });
@@ -26818,6 +28793,14 @@ function buildPlanAppDataIndex() {
       }
     }
   }
+  // Paydays from Finance's pay schedules, beside the bills (same "Bills" overlay).
+  try {
+    const from = new Date(); from.setMonth(from.getMonth() - 2, 1);
+    const to = new Date(); to.setMonth(to.getMonth() + 15, 0);
+    for (const p of (_finance.financePaydays(dateKeyFromDate(from), dateKeyFromDate(to)) || [])) {
+      push(p.date, { id: `finpay-${p.personId}-${p.date}`, title: `Payday · ${p.name} ${formatFinMoney(p.amount)}`, date: p.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.finance, source: "finance", calendarName: "Bills", readOnly: true });
+    }
+  } catch { /* Finance not loaded */ }
   return byDate;
 }
 
@@ -27459,7 +29442,7 @@ function renderPlanEventDetail(ev) {
     const synced = src?.lastFetched ? ` · synced ${new Date(src.lastFetched).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";
     sourceText = `Read-only — from “${calName}”${synced}`;
   } else if (ev.source === "layer") {
-    sourceText = `From your ${VIEW_LABELS[ev.layerView] || ""} calendar`;
+    sourceText = `From your ${viewLabel(ev.layerView)} calendar`;
   } else {
     sourceText = "Personal event";
   }
@@ -27480,7 +29463,7 @@ function renderPlanEventDetail(ev) {
 
   const personal = !ev.source || ev.source === "personal";
   const layerAction = ev.source === "layer" && viewIsSwitchable()
-    ? `<button type="button" class="primary-btn" data-plan-detail-layer="${escapeHtml(ev.layerView)}">Open in ${escapeHtml(VIEW_LABELS[ev.layerView] || "")}</button>`
+    ? `<button type="button" class="primary-btn" data-plan-detail-layer="${escapeHtml(ev.layerView)}">Open in ${escapeHtml(viewLabel(ev.layerView))}</button>`
     : "";
   actionsEl.innerHTML = layerAction || (personal
     ? `<button type="button" class="secondary-btn" data-plan-detail-delete>Delete</button><button type="button" class="primary-btn" data-plan-detail-edit>Edit</button>`
@@ -27635,6 +29618,9 @@ function openPlanEventDialog(date, eventId, prefill) {
       if (prefill.allDay === false) { elements.planEventAllDay.checked = false; elements.planTimeFields.hidden = false; }
       if (prefill.startTime) setPlanTimeField("planEventStart", prefill.startTime);
       if (prefill.endTime) setPlanTimeField("planEventEnd", prefill.endTime);
+      // An emailed invite (Mail's attachment viewer) also brings notes and a place.
+      if (prefill.notes) elements.planEventNotes.value = prefill.notes;
+      if (prefill.location) elements.planEventLocation.value = prefill.location;
     }
   }
   // Recurrence controls (edit a recurring event = edit the whole series). A
@@ -28278,7 +30264,7 @@ async function deletePlanEvent() {
   const afterChange = () => { persist(); if (activeAppArea === "plan") renderPlanPage(); else if (activeAppArea === "eat") renderPlanner(); };
   const restoreWhole = (snapshot) => () => {
     if ((state.planEvents || []).some((e) => e.id === id)) return; // already back
-    if (state.tombstones?.planEvents) state.tombstones.planEvents = state.tombstones.planEvents.filter((x) => x !== String(id));
+    unrecordDeletion("planEvents", id);
     state.planEvents = [...(state.planEvents || []), snapshot];
     afterChange();
   };
@@ -29241,6 +31227,7 @@ function refreshStalePodcastFeeds() {
         else if (activeMediaTab === "podcasts") {
           if (activePodcastTab === "recent") renderRecentEpisodes();
           else if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+          else if (activePodcastTab === "shows" && !activePodcastShowId) renderPodcastShowsGrid(); // an open panel's recent episodes
         }
       }
     }
@@ -29272,11 +31259,8 @@ function wireMediaTabs() {
     if (mediaSearchQuery) renderMediaSearchResults();
     else exitMediaSearch();
   });
-  // Media bell: a placeholder again — news articles moved to the News page
-  // (NEWS_PAGE_DESIGN.md).
-  document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => {
-    showMailToast("Listen notifications are coming soon.");
-  });
+  // Listen bell: music shows (AMPLIFIER_DESIGN.md).
+  document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => musicShows.openPanel());
 
   // (Reset-order moved into the Playlist settings modal.)
 
@@ -29466,9 +31450,82 @@ function watchTabSearch(q) {
 function showWatchList() {
   const grid = document.getElementById("watchPlannerGrid");
   const results = document.getElementById("discoverResults");
+  markWatchSide();
+  if (watchSideView === "youtube") { // the YouTube page's home: saved videos
+    if (grid) grid.hidden = true;
+    renderYouTubeSaved();
+    return;
+  }
   if (results) { results.hidden = true; results.innerHTML = ""; }
   if (grid) grid.hidden = false;
   renderWatchPlanner();
+}
+
+// ── Watch sidebar: Watch list · YouTube (Luke, 2026-10-29) ────────────────────
+// YouTube is its own page: the search bar searches YouTube only, and with no
+// search it lists the videos you've saved (state.mediaSaved, the app's saved
+// store — the same one Discover's bookmark writes). Tapping a video plays it in
+// the in-app player. Which page is showing is this device's view, never saved.
+let watchSideView = "list"; // "list" | "youtube"
+function markWatchSide() {
+  document.querySelectorAll("#watchSidebar [data-watch-side]").forEach((b) => {
+    const on = b.dataset.watchSide === watchSideView;
+    b.classList.toggle("is-active", on);
+    if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
+  });
+  const input = document.getElementById("discoverSearchInput");
+  if (input) {
+    input.placeholder = watchSideView === "youtube" ? "Search YouTube…" : "Search movies, shows, videos…";
+    input.setAttribute("aria-label", watchSideView === "youtube" ? "Search YouTube" : "Search all media");
+  }
+  document.getElementById("discoverResults")?.classList.toggle("is-youtube", watchSideView === "youtube");
+  const filter = document.querySelector("#watchPagePanel .discover-filter");
+  if (filter) filter.hidden = watchSideView === "youtube"; // the filter picks media types; YouTube is one
+}
+function setWatchSideView(view) {
+  watchSideView = view;
+  closeDiscoverFilterMenu();
+  const input = document.getElementById("discoverSearchInput");
+  if (input?.value) { input.value = ""; input.dispatchEvent(new Event("input", { bubbles: true })); }
+  runDiscoverSearch(""); // bumps the search token, then shows this page's home
+}
+function watchYouTubeRef(item) {
+  return (item?.providerRefs || []).some((r) => r && r.providerId === "youtube");
+}
+async function renderYouTubeSaved() {
+  const results = document.getElementById("discoverResults");
+  if (!results) return;
+  const token = ++discoverSearchToken;
+  results.hidden = false;
+  let hub;
+  try { hub = await getMediaHub(); } catch { hub = null; }
+  if (token !== discoverSearchToken || watchSideView !== "youtube") return;
+  const saved = hub ? hub.mstate.savedList(state.mediaSaved || [], { kind: "video" }).filter(watchYouTubeRef) : [];
+  if (!saved.length) {
+    results.innerHTML = `<div class="watch-yt-empty"><p class="watch-yt-empty-title">No saved videos yet</p><p>Search YouTube above, then tap the bookmark on a video to keep it here.</p><button class="secondary-btn compact-btn" type="button" data-watch-focus-search>Search YouTube</button></div>`;
+    results.querySelector("[data-watch-focus-search]")?.addEventListener("click", () => document.getElementById("discoverSearchInput")?.focus());
+    return;
+  }
+  discoverItemsByKey = new Map();
+  const views = discoverViewsFor(saved.map(savedRecordToItem), hub);
+  results.innerHTML = `<h3 class="watch-yt-head">Saved videos</h3>` + views.map((v) => discoverCardHtml(v)).join("");
+  wireDiscoverButtons(results, hub);
+  wireYouTubeCards(results, hub, { onUnsave: () => renderYouTubeSaved() });
+}
+// A YouTube card plays when tapped anywhere but its buttons; un-saving on the
+// saved list takes the video off it.
+function wireYouTubeCards(container, hub, { onUnsave = null } = {}) {
+  container.querySelectorAll(".discover-card").forEach((card) => {
+    card.classList.add("discover-card--tap");
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      const svc = card.querySelector(".discover-svc:not([disabled])");
+      if (svc) discoverSvcActivate(svc, hub);
+    });
+  });
+  if (onUnsave) container.querySelectorAll("[data-save-key]").forEach((btn) => btn.addEventListener("click", () => {
+    if (!btn.classList.contains("is-saved")) onUnsave();
+  }));
 }
 
 // ── Discover: universal media search across providers ─────────────────────────
@@ -29846,7 +31903,10 @@ async function runDiscoverSearch(query, { resultsId = "discoverResults", types =
   const token = ++discoverSearchToken;
   const isWatch = !types;
   if (!query) { if (isWatch) showWatchList(); else { results.hidden = true; results.innerHTML = ""; } return; }
-  const allowedIds = allowedProviderIds({ types: isWatch ? watchPageScopeTypes() : types });
+  const youTubeOnly = isWatch && watchSideView === "youtube";
+  const allowedIds = youTubeOnly ? new Set(["youtube"]) : allowedProviderIds({ types: isWatch ? watchPageScopeTypes() : types });
+  // YouTube lives only on its own page; the Watch list's search leaves it out (Luke, 2026-10-29).
+  if (isWatch && !youTubeOnly) allowedIds.delete("youtube");
   if (!allowedIds.size) { results.hidden = false; results.innerHTML = `<p class="discover-hint">No media types selected. Tap the filter and pick at least one.</p>`; return; }
   results.innerHTML = `<p class="discover-hint">Searching…</p>`;
   try {
@@ -29856,6 +31916,11 @@ async function runDiscoverSearch(query, { resultsId = "discoverResults", types =
     if (token !== discoverSearchToken) return; // out-of-order guard
     const enriched = await hub.search.enrichWithAvailability(items, hub.tmdb); // "where can I watch this"
     if (token !== discoverSearchToken) return;
+    if (youTubeOnly) {
+      renderDiscoverResults(enriched, providerStatuses, hub, { results, servicesOnly: false, pick: false });
+      wireYouTubeCards(results, hub);
+      return;
+    }
     renderDiscoverResults(enriched, providerStatuses, hub, { results, servicesOnly: isWatch && getWatchSearchScope().servicesOnly, pick: isWatch });
   } catch (e) {
     if (token !== discoverSearchToken) return;
@@ -29887,8 +31952,7 @@ function videoInWatchlist(tmdbId) {
 // history (seasonProgress, rating, watchedDate, non-want status) is never deleted.
 function watchItemIsPristine(w) {
   return w && w.status === "want" && !w.rating && !w.watchedDate &&
-    !(w.seasonProgress && Object.keys(w.seasonProgress).length) &&
-    !(w.episodeData && Object.keys(w.episodeData).length);
+    !(w.seasonProgress && Object.keys(w.seasonProgress).length);
 }
 // A canonical Discover video → the TMDB-result shape addWatchItemFromTmdb expects.
 function discoverVideoToTmdbResult(item) {
@@ -29925,10 +31989,32 @@ function watchHubProvidersHtml(item) {
     view = mediaHub.search.discoverView(canonical, mediaHub.registry);
   } catch { return ""; }
   if (!view || !view.hasTargets) return ""; // nothing resolved → keep the fallback
-  const group = (label, entries) => entries.length
-    ? `<div class="discover-svc-group"><span class="discover-svc-label">${label}</span>${entries.map((e) => discoverServiceBtn(e, view.title, view.key)).join("")}</div>`
+  // No "Your services" / "Other services" headings (Luke, 2026-10-29): your
+  // services are buttons, and the rest fold into one "Other services" button
+  // that opens a window listing them (openWatchOtherServices).
+  watchOtherServicesFor.set(item.id, { title: view.title, key: view.key, entries: view.others });
+  const yours = view.yours.map((e) => discoverServiceBtn(e, view.title, view.key)).join("");
+  const other = view.others.length
+    ? `<button class="discover-svc discover-svc--open watch-other-svc" type="button" data-watch-other-services="${escapeHtml(item.id)}" aria-haspopup="dialog">Other services</button>`
     : "";
-  return `<div class="watch-providers watch-providers--hub">${group("Your services", view.yours)}${group("Other services", view.others)}</div>`;
+  return `<div class="watch-providers watch-providers--hub"><div class="discover-svc-group">${yours}${other}</div></div>`;
+}
+
+// The services outside your own for each show drawn in a panel, for the
+// "Other services" window.
+const watchOtherServicesFor = new Map(); // item id → { title, key, entries }
+function openWatchOtherServices(itemId) {
+  const data = watchOtherServicesFor.get(itemId);
+  const dialog = document.getElementById("watchOtherServicesDialog");
+  if (!data || !dialog) return;
+  dialog.querySelector("#watchOtherServicesTitle").textContent = data.title || "";
+  const body = dialog.querySelector("#watchOtherServicesBody");
+  body.innerHTML = data.entries.map((e) => discoverServiceBtn(e, data.title, data.key)).join("");
+  body.querySelectorAll(".discover-svc").forEach((btn) => btn.addEventListener("click", () => {
+    if (mediaHub) discoverSvcActivate(btn, mediaHub);
+    dialog.close();
+  }));
+  if (!dialog.open) dialog.showModal();
 }
 function ensureHubForWatch() {
   if (watchHubReady || watchHubLoading) return;
@@ -30208,6 +32294,7 @@ function isArticlePubTab(tab) {
 // ─── Podcasts ─────────────────────────────────────────────────────────────────
 
 let activePodcastShowId = null;
+let expandedPodcastShowId = null; // the show whose panel is open in the Shows grid — this device's view, never saved
 let activePodcastTab = "shows";
 let activePodcastSavedCategory = "all";
 let podcastSavedCatInputActive = false;
@@ -30260,6 +32347,9 @@ let radioReconnectTries = 0;   // guards live-stream reconnect loops
 // "live"), which handles lock-screen / AirPods controls and reconnects itself.
 // { stationId, playing, subs } while active, else null. radioAudio stays null.
 let radioNative = null;
+// Why the native player gave up on the current station (from the plugin), so the
+// web-player fallback's "unavailable" toast can say what went wrong. "" = none.
+let radioNativeError = "";
 let radioMod = null, radioRegistry = null, radioCatalog = null, radioPrograms = null;
 let radioPanelWired = false;
 let radioSearchQuery = "";
@@ -30509,6 +32599,7 @@ function wireTopSearchDiscoverRow(listEl, q) {
 }
 // Universal Watch search for `q` (mediaApi.open).
 function goToDiscoverSearch(q) {
+  watchSideView = "list"; // a search from elsewhere is the all-media search
   showWatchApp();
   const input = document.getElementById("discoverSearchInput");
   if (input) input.value = q;
@@ -30531,7 +32622,9 @@ function switchPodcastTab(tabId) {
     refreshStalePodcastFeeds(); // re-renders the list when fresh episodes land
   } else if (tabId === "shows") {
     activePodcastShowId = null;
+    expandedPodcastShowId = null;
     renderPodcastShowsGrid();
+    refreshStalePodcastFeeds(); // the panels list recent episodes; redraws the grid if any landed
   } else if (tabId === "saved") {
     renderPodcastSavedEpisodes();
   } else if (tabId === "search") {
@@ -30700,9 +32793,10 @@ async function writeInactiveSection(section, scope, attempt = 0) {
   }
 
   const { stateUpdatedAt: remoteTs, ...remoteData } = rows[0].state || {};
-  const localFrag = { ...data, tombstones: state.tombstones, stateUpdatedAt: now };
+  const localFrag = { ...applyRowReset(section, keys, data, remoteData), tombstones: state.tombstones, stateUpdatedAt: now };
   const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
-  const merged = mergeStates(localFrag, remoteFrag);
+  // This row is not the one on screen: its deletes are its own scope's.
+  const merged = mergeStates(localFrag, remoteFrag, { ownerOf: (key) => tombstoneOwner(key, (s) => (s === section ? scope : sectionScope(s))) });
   const mergedFrag = {};
   for (const key of keys) { if (merged[key] !== undefined) mergedFrag[key] = merged[key]; }
   setShadowData(section, scope, mergedFrag);
@@ -30810,41 +32904,96 @@ function removePodcastFromCurrentScope(id) {
   renderPodcastShowsGrid();
 }
 
+// The Shows grid matches the Watch page (Luke, 2026-11-11): cover art four to
+// a row on a phone, and tapping a show opens a panel of its recent episodes
+// under that row — the grid stays put. "All episodes" in the panel opens the
+// show's full list (with its bundle settings), as tapping the show used to.
+const PODCAST_PANEL_EPISODES = 5;
+function podcastShowPanelHtml(show) {
+  const id = escapeHtml(show.id);
+  const all = Array.isArray(show.episodes) ? show.episodes : [];
+  const recent = [...all]
+    .sort((a, b) => (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0))
+    .slice(0, PODCAST_PANEL_EPISODES)
+    .map((e) => ({ ...e, showId: show.id, showTitle: show.title, showArt: show.art }));
+  const hasPlaylists = (state.podcastPlaylists || []).length > 0;
+  return `
+    <div class="watch-detail-row listen-detail-row" data-podcast-show-detail="${id}" role="region" aria-label="${escapeHtml(show.title)}">
+      <span class="watch-detail-pointer" aria-hidden="true"></span>
+      <div class="watch-detail-inner">
+        <div class="watch-detail-top">
+          <div class="watch-detail-head">
+            <span class="watch-detail-title">${escapeHtml(show.title)}</span>
+            <span class="watch-detail-sub">Recent episodes</span>
+          </div>
+          <button class="watch-detail-more" type="button" data-podcast-show-more="${id}" aria-label="More for ${escapeHtml(show.title)}" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+          </button>
+        </div>
+        ${show.lastError ? `<p class="podcast-feed-error" role="status">Not updating since ${escapeHtml(formatArticleDate(show.lastFetched))}: ${escapeHtml(show.lastError)}</p>` : ""}
+        ${recent.length
+          ? `<div class="listen-detail-episodes">${recent.map((e) => podcastEpisodeRowHtml(e, { showShowTitle: false, hasPlaylists })).join("")}</div>`
+          : `<p class="listen-detail-empty">No episodes yet.</p>`}
+        <button class="secondary-btn compact-btn listen-detail-all" type="button" data-podcast-show-all="${id}">All episodes</button>
+      </div>
+    </div>`;
+}
+
 function renderPodcastShowsGrid() {
   const listEl = document.getElementById("podcastEpisodeList");
   if (!listEl) return;
   const podcasts = [...(state.podcasts || [])].sort((a, b) =>
     (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }));
+  if (expandedPodcastShowId && !podcasts.some((p) => p.id === expandedPodcastShowId)) expandedPodcastShowId = null;
   const addCard = `
-    <button class="podcast-show-card podcast-show-card-add" type="button" id="podcastShowAddCard">
-      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      <span>Add show</span>
+    <button class="watch-card listen-card listen-card-add" type="button" id="podcastShowAddCard" aria-label="Add show">
+      <div class="watch-poster watch-poster--square watch-poster--ph">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="watch-card-meta"><span class="watch-card-title">Add show</span></div>
     </button>`;
 
-  if (!podcasts.length) {
-    listEl.innerHTML = `<div class="podcast-shows-grid">${addCard}</div>`;
-    listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
-    return;
-  }
-
-  listEl.innerHTML = `<div class="podcast-shows-grid">
-    ${podcasts.map(p => `
-      <button class="podcast-show-card" type="button" data-show-id="${escapeHtml(p.id)}">
-        ${p.art
-          ? `<img class="podcast-show-card-art" src="${escapeHtml(p.art)}" alt="${escapeHtml(p.title)}" loading="lazy">`
-          : `<div class="podcast-show-card-art podcast-show-card-art--placeholder"><svg viewBox="0 0 24 24" aria-hidden="true" width="32" height="32"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`}
-        <div class="podcast-show-card-title">${escapeHtml(p.title)}</div>
-        <div class="podcast-show-card-meta">${p.episodes?.length || 0} episode${p.episodes?.length === 1 ? "" : "s"}</div>
-      </button>
-    `).join("")}
+  listEl.innerHTML = `<div class="watch-grid listen-grid podcast-shows-grid">
+    ${podcasts.map((p) => {
+      const expanded = expandedPodcastShowId === p.id;
+      return `
+      <article class="watch-card listen-card${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-expanded="${expanded}" data-show-id="${escapeHtml(p.id)}">
+        <div class="watch-poster watch-poster--square${p.art ? "" : " watch-poster--ph"}">
+          ${p.art
+            ? `<img class="watch-poster-img" src="${escapeHtml(p.art)}" alt="" aria-hidden="true" loading="lazy">`
+            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4"/></svg>`}
+        </div>
+        <div class="watch-card-meta"><span class="watch-card-title">${escapeHtml(p.title)}</span></div>
+      </article>${expanded ? podcastShowPanelHtml(p) : ""}`;
+    }).join("")}
     ${addCard}
   </div>`;
 
-  listEl.querySelectorAll("[data-show-id]").forEach(btn => {
-    btn.addEventListener("click", () => openPodcastShow(btn.dataset.showId));
-    btn.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "show", btn.dataset.showId));
+  listEl.querySelectorAll(".listen-card[data-show-id]").forEach((card) => {
+    const toggle = () => {
+      expandedPodcastShowId = expandedPodcastShowId === card.dataset.showId ? null : card.dataset.showId;
+      renderPodcastShowsGrid();
+    };
+    card.addEventListener("click", toggle);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+    card.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "show", card.dataset.showId));
   });
+  listEl.querySelector("[data-podcast-show-more]")?.addEventListener("click", (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    openMediaShareMenu({
+      preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation(),
+      clientX: r.right - 200, clientY: r.bottom + 4,
+    }, "show", e.currentTarget.dataset.podcastShowMore);
+  });
+  listEl.querySelector("[data-podcast-show-all]")?.addEventListener("click", (e) => openPodcastShow(e.currentTarget.dataset.podcastShowAll));
   listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
+  const detail = listEl.querySelector("[data-podcast-show-detail]");
+  if (detail) wirePodcastEpisodeRows(detail);
+  placeGridPanelPointer(listEl, "podcasts", detail,
+    detail ? listEl.querySelector(`.listen-card[data-show-id="${CSS.escape(detail.dataset.podcastShowDetail)}"]`) : null,
+    detail?.dataset.podcastShowDetail);
 }
 
 function openPodcastShow(showId) {
@@ -31321,7 +33470,7 @@ function bundleSeriesId(showId, seriesName) {
 // Group one show's episodes into detected multi-part series, flagging each as
 // complete / released / held. Returned for both the playlist filter and the
 // show-view "waiting" cards.
-function getBundleSeriesGroups(show) {
+function getBundleSeriesGroups(show, released = state.podcastReleasedSeries || {}) {
   const groups = new Map();
   for (const ep of (show.episodes || [])) {
     const info = parseSeriesPart(ep.title);
@@ -31332,7 +33481,6 @@ function getBundleSeriesGroups(show) {
     if (info.total) g.total = Math.max(g.total || 0, info.total);
     g.eps.push({ id: ep.id, part: info.part, pubDate: ep.pubDate, title: ep.title });
   }
-  const released = state.podcastReleasedSeries || {};
   const now = Date.now();
   const out = [];
   for (const g of groups.values()) {
@@ -31354,12 +33502,12 @@ function getBundleSeriesGroups(show) {
 }
 
 // Episode ids to withhold from the playlist (unfinished series in opted-in shows).
-function getBundleHeldEpisodeIds() {
+function getBundleHeldEpisodeIds(lib = state) {
   const held = new Set();
-  const bundleOn = state.podcastBundleSeries || {};
-  for (const show of (state.podcasts || [])) {
+  const bundleOn = lib.podcastBundleSeries || {};
+  for (const show of (lib.podcasts || [])) {
     if (!bundleOn[show.id]) continue;
-    for (const g of getBundleSeriesGroups(show)) {
+    for (const g of getBundleSeriesGroups(show, lib.podcastReleasedSeries || {})) {
       if (g.held) for (const e of g.eps) held.add(e.id);
     }
   }
@@ -31427,20 +33575,93 @@ function hoistResumeEpisode(list) {
   return list;
 }
 
+// ── Listen: the one-time move (LISTEN_QUEUE_DESIGN.md §5) ────────────────────
+// Before this build, positions, played marks and queue edits lived in each
+// view's `media` row. Once per person per device, read just those keys from
+// both media rows (a few KB, not the whole row) and fold them into the
+// person's own `listen` row with what this device already has: the more
+// recent position wins, a finished mark sticks, queue adds are joined
+// (Personal's first). Repeating it is harmless, so a second device does the
+// same without undoing the first. Nothing is deleted from the old rows.
+const LISTEN_SEED_KEY = "live-listen-seeded-v1";
+async function seedListenRowOnce() {
+  if (localDevMode || !sharedStorageReady || !authSession?.access_token) return;
+  const uid = authSession.user?.id;
+  if (!uid || seedListenRowOnce.running) return;
+  const flag = `${LISTEN_SEED_KEY}:${uid}`;
+  try { if (localStorage.getItem(flag) === "1") return; } catch { return; }
+  seedListenRowOnce.running = true;
+  try {
+    const ids = scopeRowIds(supabaseConfig().stateId);
+    const personalId = rowIdForScope(ids, "media", "personal");
+    const householdId = ids.stateId ? rowIdForScope(ids, "media", "household") : null;
+    const want = [personalId, householdId].filter(Boolean);
+    if (!want.length) return;
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${want.join(",")})&select=${listenKeysSelect()}`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!res.ok) { console.warn("[listen] one-time move: read failed", res.status); return; } // next launch tries again
+    const rows = await res.json();
+    const byId = new Map((Array.isArray(rows) ? rows : []).map((r) => [r.id, listenKeysFromRow(r)]));
+    const current = Object.fromEntries(LISTEN_PERSON_KEYS.map((k) => [k, state[k]]));
+    const seed = mergeListenSeed(current, byId.get(personalId), byId.get(householdId));
+    const removed = new Set(deletedIdsFor("mediaQueueAdded"));
+    seed.mediaQueueAdded = seed.mediaQueueAdded.filter((e) => !removed.has(e.id));
+    for (const k of LISTEN_PERSON_KEYS) state[k] = seed[k];
+    mediaQueueIdCache = null;
+    persist();
+    try { localStorage.setItem(flag, "1"); } catch { /* full: runs again, harmlessly */ }
+    console.info("[listen] one-time move done", { episodes: Object.keys(seed.podcastProgress).length, queued: seed.mediaQueueAdded.length });
+    if (activeAppArea === "media") render();
+  } catch (e) {
+    console.warn("[listen] one-time move failed:", e.message);
+  } finally {
+    seedListenRowOnce.running = false;
+  }
+}
+
+// ── Listen: the queue's library (LISTEN_QUEUE_DESIGN.md) ─────────────────────
+// The queue and player are the person's, the same in every view; positions,
+// played marks and queue edits live in their own `listen` row, always in
+// `state`. The shows that fill the queue automatically are their home
+// library's: Personal for someone who has it (Luke, 2026-11-13: "Personal shows
+// only"), else Household. In another view that library is the off-screen copy
+// (the shadow); a device that hasn't loaded it yet has an empty queue until it
+// does, rather than showing the other view's shows as the queue.
+const EMPTY_LISTEN_LIBRARY = Object.freeze({});
+function listenLibrary() {
+  const home = listenHomeScope(currentViewList());
+  if (sectionScope("media") === home) return state;
+  return shadowData("media", home) || EMPTY_LISTEN_LIBRARY;
+}
+// A saved article by id: the queue's library first, then the view on screen.
+function listenArticleById(id) {
+  const lib = listenLibrary();
+  return (lib.savedArticles || []).find((x) => x.id === id)
+    || (lib === state ? null : (state.savedArticles || []).find((x) => x.id === id))
+    || null;
+}
+function listenArticleIsRead(id) {
+  const lib = listenLibrary();
+  return (lib.readArticleIds || []).includes(id) || (lib !== state && (state.readArticleIds || []).includes(id));
+}
+
 function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
-  const tiers = state.podcastShowTiers || {};
-  const epTiers = state.podcastEpisodeTiers || {};
-  const pubTiers = state.publicationTiers || {};
+  const lib = listenLibrary();
+  const tiers = lib.podcastShowTiers || {};
+  const epTiers = lib.podcastEpisodeTiers || {};
+  const pubTiers = lib.publicationTiers || {};
   const progress = state.podcastProgress || {};
 
-  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === (state.podcastPlaylistWindow ?? "month")) || RECENT_WINDOW_OPTIONS[4];
+  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === (lib.podcastPlaylistWindow ?? "month")) || RECENT_WINDOW_OPTIONS[4];
   const cutoff = Date.now() - windowOpt.ms;
 
   // Kept out by hand: "Remove from list" (also hides it under Recent) and
   // "Remove from queue" (queue only).
   const skipped = new Set([...(state.podcastAutoSkipped || []), ...(state.mediaQueueRemoved || [])]);
-  const held = getBundleHeldEpisodeIds();
-  const episodes = (state.podcasts || []).flatMap(p =>
+  const held = getBundleHeldEpisodeIds(lib);
+  const episodes = (lib.podcasts || []).flatMap(p =>
     (p.episodes || [])
       .filter(e => !progress[e.id]?.played && !skipped.has(e.id) && !held.has(e.id) && e.pubDate && new Date(e.pubDate).getTime() >= cutoff)
       .map(e => ({ ...e, showId: p.id, showTitle: p.title, showArt: p.art }))
@@ -31449,9 +33670,9 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
   let items = [...episodes];
 
   if (forceIncludeArticles) {
-    const readIds = new Set(state.readArticleIds || []);
-    const articleItems = (state.savedArticles || [])
-      .filter(a => !readIds.has(a.id) && articleHasListenableBody(a))
+    const readIds = new Set(lib.readArticleIds || []);
+    const articleItems = (lib.savedArticles || [])
+      .filter(a => !readIds.has(a.id) && !isMusicShow(a) && articleHasListenableBody(a)) // shows live under the Listen bell
       .map(articleQueueItem);
     items = [...items, ...articleItems];
   }
@@ -31460,7 +33681,7 @@ function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
     if (e.type === "article") return publicationTierFor(pubTiers, e.publication) ?? 4;
     return epTiers[e.id] ?? tiers[e.showId] ?? 4;
   };
-  const newestFirst = (state.podcastPrioritySort ?? "oldest") === "newest";
+  const newestFirst = (lib.podcastPrioritySort ?? "oldest") === "newest";
 
   const sorted = items.sort((a, b) => {
     const ta = effectiveTier(a), tb = effectiveTier(b);
@@ -31521,7 +33742,7 @@ function getAllListenList({ hoist = true } = {}) {
   const items = getAutoPlaylist(true, { hoist }).map((e) => (e.type === "article"
     ? { ...e, providerId: "tts" }
     : { ...e, type: e.type || "podcast", providerId: "podcast" }));
-  (state.readingItems || [])
+  (listenLibrary().readingItems || [])
     .filter((b) => b.status && b.status !== "finished")
     .forEach((b) => items.push({
       id: b.id,
@@ -31606,7 +33827,6 @@ function queueAddedItems() {
   const entries = normalizeQueueAdded(state.mediaQueueAdded);
   if (!entries.length) return [];
   const progress = state.podcastProgress || {};
-  const readIds = new Set(state.readArticleIds || []);
   const out = [];
   for (const e of entries) {
     if (e.kind === "episode") {
@@ -31614,8 +33834,8 @@ function queueAddedItems() {
       const item = playlistItemForEpisodeId(e.itemId);
       if (item) out.push({ ...item, providerId: "podcast", queueAdded: true });
     } else if (e.kind === "article") {
-      const a = (state.savedArticles || []).find((x) => x.id === e.itemId);
-      if (a && !readIds.has(a.id)) out.push({ ...articleQueueItem(a), providerId: "tts", queueAdded: true });
+      const a = listenArticleById(e.itemId);
+      if (a && !listenArticleIsRead(a.id)) out.push({ ...articleQueueItem(a), providerId: "tts", queueAdded: true });
     } else {
       out.push(queuedMusicRow(e));
     }
@@ -31670,10 +33890,12 @@ function removeQueueAddedEntries(match) {
 // list can't grow without bound. Run when something is added.
 function pruneQueueAddedEntries() {
   const progress = state.podcastProgress || {};
-  const articleIds = new Set((state.savedArticles || []).map((a) => a.id));
+  // Only drop what's known to be gone: before the other view's library has
+  // loaded on this device, its episodes can't be looked up yet.
+  if (listenLibrary() === EMPTY_LISTEN_LIBRARY) return;
   removeQueueAddedEntries((e) =>
     (e.kind === "episode" && (progress[e.itemId]?.played || !findPodcastEpisode(e.itemId).episode)) ||
-    (e.kind === "article" && !articleIds.has(e.itemId)));
+    (e.kind === "article" && !listenArticleById(e.itemId)));
 }
 function afterMediaQueueChange(message) {
   refreshRunningQueueOrder();
@@ -32232,6 +34454,7 @@ registerMediaProvider({
   play: (item, { autoplay = true, advance = false } = {}) => {
     // All queue in the native app → the plugin plays it (see
     // nativeQueueHandlesPodcasts); falls back to the web player if it can't.
+    if (autoplay && keepNativeEpisodePlaying(item.id, advance)) return;
     if (autoplay && mediaAllQueueId === item.id && nativeQueueHandlesPodcasts()) {
       startNativePodcast(item.id).then((ok) => { if (!ok) openPodcastEpisode(item.id, { autoplay, advance }); });
       return;
@@ -33329,6 +35552,15 @@ function findPodcastEpisode(episodeId) {
     const episode = show.episodes.find(e => e.id === episodeId);
     if (episode) return { episode, show };
   }
+  // The queue is the same in every view (LISTEN_QUEUE_DESIGN.md), so an episode
+  // in it may come from the other view's shows: look in the off-screen copies.
+  for (const scope of ["personal", "household"]) {
+    if (sectionScope("media") === scope) continue;
+    for (const show of (shadowData("media", scope)?.podcasts || [])) {
+      const episode = (show.episodes || []).find(e => e.id === episodeId);
+      if (episode) return { episode, show };
+    }
+  }
   const cached = podcastTabEpisodeMap.get(episodeId);
   if (cached) return { episode: cached, show: null };
   return { episode: null, show: null };
@@ -33409,6 +35641,16 @@ function showAdSkippedToast() {
 // exact behavior that used to be inline. Arrow bodies run at playback time, so
 // referencing functions/consts defined later in the file is fine.
 const MEDIA_KINDS = {
+  // A music show from the Listen bell (media-music-show-ui.js): the native player
+  // runs the whole show (spoken write-ups and Apple Music songs) by itself.
+  musicShow: {
+    active: () => musicShows.active(),
+    el: () => null,
+    toggle: () => musicShows.toggle(),
+    skip: (sec) => musicShows.step(sec < 0 ? -1 : 1),
+    open: () => musicShows.open(),
+    info: () => musicShows.info(),
+  },
   podcast: {
     active: () => !!podcastAudio,
     el: () => podcastAudio,
@@ -33478,7 +35720,7 @@ const MEDIA_KINDS = {
     info: () => { const a = listenArticle; return { art: a ? articleArtUrl(a) : "", title: a?.title || "Now playing", show: a?.author || a?.publication || "", date: a?.pubDate ? formatArticleDate(a.pubDate) : "", desc: plainTextFromHtml(a?.text || a?.excerpt).slice(0, 2000) }; },
   },
 };
-const NOW_PLAYING_ORDER = ["podcast", "radio", "music", "nativeAudio", "tts"];
+const NOW_PLAYING_ORDER = ["musicShow", "podcast", "radio", "music", "nativeAudio", "tts"];
 
 // THE one playback engine for the whole app. It owns the single shared media
 // element and drives every source; feature behavior is dispatched by the
@@ -33549,6 +35791,7 @@ function startPodcastPlayback(episode, show, { autoplay = true, advance = false,
   // iPhone app: play on the native player (see nativeQueueHandlesPodcasts). A
   // paused load (autoplay:false) stays on the web element until play is tapped,
   // which hands it over (togglePodcastPlayPause).
+  if (autoplay && !forceWeb && episode && keepNativeEpisodePlaying(episode.id, advance)) return;
   if (autoplay && !forceWeb && nativeQueueHandlesPodcasts() && episode && episode.audioUrl) {
     startNativePodcastEpisode(episode, show).then((ok) => {
       if (!ok) startPodcastPlayback(episode, show, { autoplay, advance, forceWeb: true });
@@ -34817,9 +37060,7 @@ async function getMusicCanon() {
 
 // Personal library lives at state.musicLibrary = { favorites, playlists }.
 function getMusicLibraryState() {
-  if (!state.musicLibrary || typeof state.musicLibrary !== "object") state.musicLibrary = { favorites: [], playlists: [] };
-  if (!Array.isArray(state.musicLibrary.favorites)) state.musicLibrary.favorites = [];
-  if (!Array.isArray(state.musicLibrary.playlists)) state.musicLibrary.playlists = [];
+  state.musicLibrary = normalizeMusicLibrary(state.musicLibrary);
   return state.musicLibrary;
 }
 function saveMusicLibrary(lib) { state.musicLibrary = lib; persist(); }
@@ -35657,7 +37898,7 @@ function playRadioStation(station) {
   teardownNativeRadio(false); // switching stations natively: the new play() replaces the old stream
   radioCurStation = station;
   radioStreamCandidates = (radioMod ? radioMod.streamCandidates(station) : (station.streams || [])).map((s) => s.url).filter(Boolean);
-  radioStreamIdx = 0; radioReconnectTries = 0;
+  radioStreamIdx = 0; radioReconnectTries = 0; radioNativeError = "";
   if (!radioStreamCandidates.length) { showVoiceToast("This station has no playable stream."); return; }
   if (nativeTts()) startNativeRadio(station);
   else radioLoadCurrentStream();
@@ -35668,7 +37909,8 @@ function playRadioStation(station) {
 // player. Falls back to the web player if the plugin won't start it.
 async function startNativeRadio(station) {
   const tts = nativeTts();
-  const rn = { stationId: station.id, playing: true, subs: [] };
+  const rn = { stationId: station.id, playing: true, everPlayed: false, subs: [] };
+  radioNativeError = "";
   radioNative = rn;
   clearWebMediaSession();
   setMiniPlayer(station.name, radioStationSubtitle(station), station.logoUrl || "");
@@ -35678,10 +37920,21 @@ async function startNativeRadio(station) {
   const refresh = () => { updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel(); };
   try {
     rn.subs.push(await tts.addListener("ttsState", (e) => { if (!live()) return; rn.playing = !!(e && e.playing); refresh(); }));
+    rn.subs.push(await tts.addListener("ttsLiveStarted", (e) => { if (live() && e && e.id === station.id) rn.everPlayed = true; }));
     rn.subs.push(await tts.addListener("ttsFinish", (e) => {
       if (!live() || !e || e.kind !== "live") return;
       // The plugin already reconnected and tried every stream.
-      showVoiceToast(`${radioCurStation ? radioCurStation.name : "Station"} is unavailable right now.`);
+      radioNativeError = (e && e.error) || "";
+      if (radioNativeError) console.warn("[radio] native player gave up:", radioNativeError);
+      if (!rn.everPlayed && radioCurStation) {
+        // Never got going natively → try the station in the web view's player
+        // before giving up (onRadioError toasts, with the native reason, if it fails too).
+        teardownNativeRadio(false);
+        radioStreamIdx = 0; radioReconnectTries = 0;
+        radioLoadCurrentStream();
+        return;
+      }
+      radioUnavailableToast();
       stopRadio();
     }));
     if (!live()) return;
@@ -35717,7 +37970,20 @@ function onRadioEnded() { // a live stream "ending" = a dropped connection → r
   if (radioReconnectTries < 2) { radioReconnectTries++; radioLoadCurrentStream(); return; }
   if (!radioTryNextStream()) stopRadio();
 }
-function onRadioError() { if (!radioTryNextStream()) { showVoiceToast(`${radioCurStation ? radioCurStation.name : "Station"} is unavailable right now.`); stopRadio(); } }
+function radioUnavailableToast() {
+  const name = radioCurStation ? radioCurStation.name : "Station";
+  const why = radioNativeError ? ` (${radioNativeError.slice(0, 140)})` : "";
+  showVoiceToast(`${name} is unavailable right now.${why}`);
+}
+function onRadioError() {
+  const el = radioAudio;
+  const code = el && el.error ? el.error.code : null;
+  console.warn("[radio] web player failed on", radioStreamCandidates[radioStreamIdx], "MediaError", code);
+  if (!radioTryNextStream()) {
+    if (!radioNativeError && code) radioNativeError = `web player error ${code}`;
+    radioUnavailableToast(); stopRadio();
+  }
+}
 
 function stopRadio() {
   teardownNativeRadio();
@@ -36034,6 +38300,7 @@ function nowPlayingEngineState() {
   return (k && s && s.providerId === k) ? s : null;
 }
 function nowPlayingIsPlaying() {
+  if (musicShows.active()) return musicShows.isPlaying(); // the native player runs the show
   if (musicPlaybackProvider) return !!(musicOwnedNP && musicOwnedNP.isPlaying); // Apple Music owns its transport
   if (radioNative) return !!radioNative.playing; // native live radio
   if (listenSpeechSynth) { // on-device voice (native plugin or Web Speech)
@@ -36047,6 +38314,7 @@ function nowPlayingIsPlaying() {
   return !!(listenSpeaking && listenAudio && !listenAudio.paused);
 }
 function nowPlayingElapsed() {
+  if (musicShows.active()) return 0; // a show is parts, not one timeline
   if (musicPlaybackProvider) return musicOwnedNP ? (musicOwnedNP.positionMs || 0) / 1000 : 0;
   if (radioNative) return 0; // live
   const s = nowPlayingEngineState();
@@ -36055,6 +38323,7 @@ function nowPlayingElapsed() {
 }
 // Live radio has no finite duration → 0 (the bar shows no progress for it).
 function nowPlayingTotal() {
+  if (musicShows.active()) return 0;
   if (musicPlaybackProvider) return (musicOwnedNP && musicOwnedNP.durationMs) ? musicOwnedNP.durationMs / 1000 : 0;
   if (radioNative) return 0; // live
   const s = nowPlayingEngineState();
@@ -36095,9 +38364,16 @@ function nowPlayingEpisodeStep(dir) {
 }
 function nowPlayingSeekFraction(f) {
   if (nowPlayingIsLive()) return; // live: no seek
+  if (musicShows.active()) return; // a show moves by parts (skip), not by seeking
   if (musicPlaybackProvider) { // Apple Music owns the transport
     const dur = musicOwnedNP && musicOwnedNP.durationMs;
     if (dur) musicPlaybackProvider.seek(Math.max(0, Math.min(1, f)) * dur);
+    return;
+  }
+  if (listenSpeechSynth && listenSpeechSynth.native && listenSpeechSynth.kind === "speech") {
+    // An article the iPhone's voice is reading: the plugin jumps to the sentence there.
+    const tts = nativeTts();
+    if (tts) tts.seekSpeech({ fraction: Math.max(0, Math.min(1, f)) }).catch(() => {});
     return;
   }
   if (nowPlayingKind() === "nativeAudio") { // the plugin's AVPlayer owns the transport
@@ -37615,7 +39891,7 @@ function returnToReaderOrigin(origin) {
     mail: () => showMailApp(), shop: showShopApp, inventory: showInventoryApp,
     finance: showFinanceApp, recreate: showRecreateApp, explore: showExploreApp,
     play: showPlayApp, weather: showWeatherApp, contacts: showContactsApp,
-    home: showHomeApp, watch: showWatchApp,
+    home: showHomeApp, watch: showWatchApp, documents: showDocumentsApp, photos: showPhotosApp,
   }[origin.area];
   if (!show) return;
   // Media comes back exactly as it was left (tab, search, open show); other
@@ -37929,18 +40205,27 @@ function fetchArticleBodyLive(article) {
     const reader = paper ? nativeArticleReader() : null;
     let nativeRes = null;
     let nativeError = "";
+    let blocked = "";
     if (reader) {
       try {
-        nativeRes = parseNativeExtractResult(await reader.extract({
+        const raw = await reader.extract({
           url: article.url, script: ARTICLE_DOM_EXTRACTOR_SOURCE, minChars: TEASER_MAX_CHARS, timeoutMs: 25000
-        }));
+        });
+        nativeRes = parseNativeExtractResult(raw);
+        blocked = nativeRes ? "" : nativeExtractBlockReason(raw);
       } catch (e) { nativeError = e?.message || ""; }
       if (nativeRes && !looksLikeTeaser(nativeRes.text)) return nativeRes;
+      if (nativeRes) notePaperTeaser(paper);
     }
     let serverRes = null;
     try { serverRes = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication }); } catch { serverRes = null; }
     const best = chooseLongerResult(nativeRes, serverRes?.text ? serverRes : null);
     if (best) return best;
+    // The phone's answer explains more than the server's: the papers always
+    // refuse the server (an "HTTP 403" said nothing about the phone).
+    if (blocked === "challenge") return { error: `${paper.name} asked this phone to confirm it's a person. Open the article in the app, finish the check there, then reload.`, blocked };
+    if (blocked === "paywall") return { error: `${paper.name} showed its sign-in wall: this phone isn't signed in. Sign in, then reload.`, blocked };
+    if (reader) return { error: `Couldn't load the article on this phone${nativeError ? ` (${nativeError})` : ""}. Open it in the app, then reload.` };
     return { error: serverRes?.error || nativeError || "Could not extract article text." };
   })();
   articleLiveFetches.set(article.id, p);
@@ -37982,11 +40267,32 @@ function markPaperSignIn(key, on) {
   } catch { /* storage unavailable: the paper just stays unchecked */ }
 }
 
+// How to sign in to a paper inside the app: Google's sign-in refuses embedded
+// browsers, so its page never verifies (Luke, 2026-10-28). Shown in the reader,
+// Sync Settings and (newer app builds) the sign-in sheet's own header.
+const PAPER_SIGNIN_HINT = "Use your email and password. Apple and Google sign-in don't work in the app.";
+const PAPER_SIGNIN_SHEET_HINT = "Use email and password, not Apple or Google"; // one line in the sheet's header
+
+// A phone-side read of a subscriber article came back cut off. If the phone
+// thinks it's signed in, its session has probably lapsed: check again (once per
+// paper per session), so Sync Settings stops saying "Signed in".
+const paperTeaserSeen = new Set();
+function notePaperTeaser(paper) {
+  if (!paper || paperTeaserSeen.has(paper.key)) return;
+  paperTeaserSeen.add(paper.key);
+  const st = paperSignInStateOnPhone(paper.key);
+  if (st !== "signed-in" && st !== "unverified") return;
+  verifyNewsSignIns().catch(() => null).finally(() => {
+    if (contextSettingsKind === "read-sync" && elements.contextSettingsDialog.open) renderContextSettingsDialog("read-sync");
+  });
+}
+
 async function signInToArticlePaper(paper) {
   const reader = nativeArticleReader();
   if (!reader || !paper) return;
   let res = null;
-  try { res = await reader.login({ url: paper.loginUrl, title: paper.name }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); return; }
+  paperTeaserSeen.delete(paper.key);
+  try { res = await reader.login({ url: paper.loginUrl, title: paper.name, hint: PAPER_SIGNIN_SHEET_HINT }); } catch (e) { showMailToast(e?.message || "Couldn't open the sign-in page."); return; }
   // The sheet has closed. Tell News what this phone now finds for each paper (a
   // status only — the sign-in cookies stay on the phone), and say how it went.
   // The sheet's steps (host + path only) go along so a stalled sign-in can be
@@ -38016,8 +40322,13 @@ async function reportPaperSignInsToNews(paper) {
 function articlePaperLoginActionsHtml(article, { teaser }) {
   const paper = subscriberPaperFor(article);
   if (!paper || !nativeArticleReader()) return "";
-  const lead = teaser ? `<p class="article-fetch-hint">Looks cut off? Sign in to ${escapeHtml(paper.name)} once in the app, then reload.</p>` : "";
-  return `${lead}<div class="article-paper-login-actions"><button class="secondary-btn" type="button" data-article-paper-login="${escapeHtml(paper.key)}">Sign in to ${escapeHtml(paper.name)}</button><button class="primary-btn" type="button" data-article-paper-reload="${escapeHtml(article.id)}">Reload full article</button></div>`;
+  const st = paperSignInStateOnPhone(paper.key);
+  const lapsed = teaser && paperTeaserSeen.has(paper.key) && (st === "signed-in" || st === "unverified");
+  const lead = !teaser ? ""
+    : lapsed ? `<p class="article-fetch-hint">Looks cut off: your ${escapeHtml(paper.name)} sign-in on this phone may have expired. Sign in again, then reload.</p>`
+    : `<p class="article-fetch-hint">Looks cut off? Sign in to ${escapeHtml(paper.name)} once in the app, then reload.</p>`;
+  const openHere = teaser ? "" : `<button class="secondary-btn" type="button" data-article-paper-open="${escapeHtml(article.id)}">Open article in the app</button>`;
+  return `${lead}<p class="article-fetch-hint article-paper-signin-note">${escapeHtml(PAPER_SIGNIN_HINT)}</p><div class="article-paper-login-actions">${openHere}<button class="secondary-btn" type="button" data-article-paper-login="${escapeHtml(paper.key)}">Sign in to ${escapeHtml(paper.name)}</button><button class="primary-btn" type="button" data-article-paper-reload="${escapeHtml(article.id)}">Reload full article</button></div>`;
 }
 
 // Whether this phone is signed in to a paper: what its last check found, else the
@@ -38063,13 +40374,28 @@ function articlePaperLoginsSettingsHtml() {
           <p class="sync-context-label">Newspaper sign-ins on this device</p>
           ${settingsInfoButton("paper-signins", "newspaper sign-ins")}
         </div>
-        ${settingsInfoPanel("paper-signins", "Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with Apple or with email and password: Google sign-in doesn't work inside apps.")}${rows}`;
+        <p class="settings-panel-note">${escapeHtml(PAPER_SIGNIN_HINT)}</p>
+        ${settingsInfoPanel("paper-signins", "Sign in to each paper once. News then collects its articles, and they load in full here, read with your subscription. Sign in with email and password: Apple and Google sign-in don't work inside apps.")}${rows}`;
 }
 
 function bindArticlePaperLoginActions(root, article) {
   const paper = subscriberPaperFor(article);
   root.querySelector("[data-article-paper-login]")?.addEventListener("click", () => signInToArticlePaper(paper));
   root.querySelector("[data-article-paper-reload]")?.addEventListener("click", () => refetchArticleWithLogin(article.id));
+  root.querySelector("[data-article-paper-open]")?.addEventListener("click", () => openArticleInPaperSheet(article));
+}
+
+// Open the article itself in the in-app browser sheet. It shares the hidden
+// reader's cookies, so passing a paper's bot check (or signing in) there lets
+// the reader load it; the article can also just be read in the sheet. Reloads
+// once the sheet closes.
+async function openArticleInPaperSheet(article) {
+  const reader = nativeArticleReader();
+  const paper = subscriberPaperFor(article);
+  if (!reader || !paper || !article?.url) return;
+  try { await reader.login({ url: article.url, title: paper.name, hint: "Finish any check, then tap Done" }); }
+  catch (e) { showMailToast(e?.message || "Couldn't open the article."); return; }
+  refetchArticleWithLogin(article.id);
 }
 
 async function fetchArticleText(id) {
@@ -39310,6 +41636,20 @@ async function startNativePodcastEpisode(episode, show) {
   return true;
 }
 
+// A tap on the episode the native player already holds must not start it again:
+// a start reopens it at the last saved spot (saved at most every 15 s), so it
+// jumped back (ISSUES.md, 2026-11-11). Show its panel, and carry on if it was
+// paused. Returns true when the tap was handled here (media-queue-order.js
+// episodeTapAction decides).
+function keepNativeEpisodePlaying(episodeId, advance = false) {
+  const s = nativePodcastSession();
+  const action = episodeTapAction({ tappedId: episodeId, sessionId: s && s.currentId, paused: !!(s && s.paused), advance });
+  if (action === "start") return false;
+  showPodcastEpisodePanel(episodeId);
+  if (action === "resume") toggleListenPlayPause();
+  return true;
+}
+
 // The native session when it is playing a podcast episode, else null — lets the
 // Podcasts-tab player panel drive/reflect it like the web player.
 function nativePodcastSession() {
@@ -39568,17 +41908,11 @@ function systemVoiceSkip(seconds) {
     return;
   }
   if (s.native) {
-    // AVSpeechSynthesizer can't seek within an utterance; skip forward advances
-    // to the next article, skip back restarts the current one.
-    if (seconds > 0) {
-      const tts = nativeTts();
-      Promise.resolve(tts ? tts.next() : null).catch(() => null).then((r) => {
-        if (r && r.advanced) return; // ttsItemStart syncs the UI
-        if (s.genId !== listenGenId) return;
-        teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen();
-      });
-    }
-    else { startListenNativeTts(s.article); }
+    // The plugin moves within the article by sentences (skipSpeech); a build
+    // without it falls back to: forward = next article, back = start again.
+    const tts = nativeTts();
+    if (tts) { tts.skipSpeech({ seconds }).catch(() => nativeSpeechSkipFallback(s, seconds)); return; }
+    nativeSpeechSkipFallback(s, seconds);
     return;
   }
   const target = Math.max(0, Math.min(s.chunks.length - 1, s.idx + (seconds > 0 ? 1 : -1)));
@@ -39588,6 +41922,22 @@ function systemVoiceSkip(seconds) {
   s.charsBefore = s.chunks.slice(0, target).reduce((a, c) => a + c.length, 0);
   s.charIndex = 0;
   speakSystemChunk();
+}
+
+// Older iPhone builds (no skipSpeech): forward = the next article, back = this
+// article from the start.
+function nativeSpeechSkipFallback(s, seconds) {
+  if (s.genId !== listenGenId) return;
+  if (seconds > 0) {
+    const tts = nativeTts();
+    Promise.resolve(tts ? tts.next() : null).catch(() => null).then((r) => {
+      if (r && r.advanced) return; // ttsItemStart syncs the UI
+      if (s.genId !== listenGenId) return;
+      teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen();
+    });
+  } else {
+    startListenNativeTts(s.article);
+  }
 }
 
 async function startListenTTS(article) {
@@ -39857,6 +42207,7 @@ function toggleListenPlayPause() {
 }
 
 function stopListen() {
+  musicShows.stop(); // a music show from the Listen bell (no-op when none plays)
   listenGenId++;
   teardownSystemVoice(); // cancel any on-device (speechSynthesis) read
   // Engine pauses the element, detaches its handlers, and clears the source;
@@ -39958,6 +42309,7 @@ async function callNetlifyFunction(name, body, { timeoutMs } = {}) {
 // Books folder: a horizontal tab bar (Audible / Libby / Kindle / Wishlist)
 // over a single content grid, matching the podcasts / saved-articles layout.
 let activeBookTab = "audible";
+let expandedReadingItemId = null; // the book whose panel is open in the Books grid — this device's view, never saved
 let bookCategoryInputActive = false;
 let draggedReadingItemId = null;
 function handleReadingItemDragStart(event) {
@@ -40006,7 +42358,7 @@ function renderBookTabs() {
 
   bar.querySelectorAll("[data-book-tab]").forEach((btn) => {
     const tabKey = btn.dataset.bookTab;
-    btn.addEventListener("click", () => { activeBookTab = tabKey; bookCategoryInputActive = false; renderBooksView(); });
+    btn.addEventListener("click", () => { activeBookTab = tabKey; bookCategoryInputActive = false; expandedReadingItemId = null; renderBooksView(); });
     // Custom wishlist tabs accept dragged books (drop = add to that wishlist).
     if (!BOOK_FORMAT_TABS.some((t) => t.key === tabKey)) {
       btn.addEventListener("dragover", (e) => {
@@ -40076,6 +42428,7 @@ function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
     : (i) => i.format === format;
 
   const allItems = readingItemsList().filter(filterFn);
+  if (expandedReadingItemId && !allItems.some((i) => i.id === expandedReadingItemId)) expandedReadingItemId = null;
   const active = allItems.filter(i => i.status !== "read");
   const reading = active.filter(i => i.status === "reading");
   const want = active.filter(i => i.status === "want");
@@ -40088,7 +42441,7 @@ function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
         <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         <span>${label}</span>
       </button>
-      <div class="watch-item-list">${items.map(item => readingItemTemplate(item)).join("")}</div>
+      <div class="watch-item-list watch-grid listen-grid">${items.map(item => readingCardTemplate(item)).join("")}</div>
     </div>`;
 
   const emptyHint = categoryId
@@ -40107,6 +42460,10 @@ function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
     </section>`;
 
   bindReadingControls(gridEl);
+  const detail = gridEl.querySelector("[data-reading-detail]");
+  placeGridPanelPointer(gridEl, "books", detail,
+    detail ? gridEl.querySelector(`[data-reading-item="${CSS.escape(detail.dataset.readingDetail)}"]`) : null,
+    detail?.dataset.readingDetail);
 }
 
 function renderReadingPlanner(formatFilter) {
@@ -40312,12 +42669,98 @@ function readingItemTemplate(item) {
   `;
 }
 
+// Books match the Watch page (Luke, 2026-11-11): covers four to a row on a
+// phone; tapping a cover opens the book's panel under that row (author, format,
+// library availability, and the library / Libby / Audible links). The ⋯ in the
+// panel is the same Shelves & options menu the old row had.
+function readingCardTemplate(item) {
+  const expanded = expandedReadingItemId === item.id;
+  const id = escapeHtml(item.id);
+  const card = `
+    <article class="watch-card listen-card reading-item${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-expanded="${expanded}" data-reading-item="${id}">
+      <div class="watch-poster${item.coverUrl ? "" : " watch-poster--ph"}">
+        ${item.coverUrl
+          ? `<img class="watch-poster-img" src="${escapeHtml(item.coverUrl)}" alt="" aria-hidden="true" loading="lazy" />`
+          : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`}
+      </div>
+      <div class="watch-card-meta"><span class="watch-card-title reading-item-title">${escapeHtml(item.title)}</span></div>
+    </article>`;
+  if (!expanded) return card;
+
+  const subParts = [];
+  if (item.authors?.length) subParts.push(item.authors.join(", "));
+  if (item.year) subParts.push(String(item.year));
+  if (item.pageCount) subParts.push(`${item.pageCount} pp`);
+  const formatLabels = { physical: "Physical", ebook: "eBook", audiobook: "Audiobook" };
+  const formatHtml = item.format
+    ? `<span class="reading-format-badge reading-format-${escapeHtml(item.format)}">${escapeHtml(formatLabels[item.format] || item.format)}</span>`
+    : "";
+  const libKey = getLibraryKey();
+  const linkIcon = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>`;
+  const detail = `
+    <div class="watch-detail-row listen-detail-row" data-reading-detail="${id}" role="region" aria-label="${escapeHtml(item.title)}">
+      <span class="watch-detail-pointer" aria-hidden="true"></span>
+      <div class="watch-detail-inner">
+        <div class="watch-detail-top">
+          <div class="watch-detail-head">
+            <span class="watch-detail-title">${escapeHtml(item.title)}</span>
+            ${subParts.length ? `<span class="watch-detail-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
+            ${formatHtml ? `<div class="listen-detail-badges">${formatHtml}</div>` : ""}
+            <div class="reading-item-avail" id="avail-${id}"></div>
+          </div>
+          <button class="watch-detail-more" type="button" data-reading-menu="${id}" title="Shelves & options" aria-label="Shelves and options for ${escapeHtml(item.title)}" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+          </button>
+        </div>
+        <div class="listen-detail-links">
+          <a class="reading-library-btn" href="${escapeHtml(hclCatalogUrl(item.title, item.authors))}" target="_blank" rel="noopener noreferrer" title="Find at ${escapeHtml(libKey.toUpperCase())} library catalog">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            Find at library
+          </a>
+          <a class="reading-library-btn reading-library-btn--libby" href="${escapeHtml(libbySearchUrl(item.title))}" target="_blank" rel="noopener noreferrer" title="Borrow in Libby">${linkIcon} Borrow in Libby</a>
+          <a class="reading-library-btn reading-library-btn--audible" href="${escapeHtml(audibleSearchUrl(item.title, item.authors))}" target="_blank" rel="noopener noreferrer" title="Find on Audible">${linkIcon} Listen on Audible</a>
+        </div>
+      </div>
+    </div>`;
+  return card + detail;
+}
+
 function bindReadingControls(root = document) {
   root.querySelectorAll("[data-reading-menu]").forEach((btn) => {
     btn.addEventListener("click", (e) => { e.stopPropagation(); openReadingItemMenu(e); });
   });
+  // The Books grid: tap a cover → toggle its panel (a real drag to a wishlist
+  // tab suppresses the click, as on Watch). The open panel checks the library.
+  root.querySelectorAll(".listen-card[data-reading-item]").forEach((card) => {
+    const toggle = () => {
+      expandedReadingItemId = expandedReadingItemId === card.dataset.readingItem ? null : card.dataset.readingItem;
+      renderBooksView();
+    };
+    card.addEventListener("click", toggle);
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+  });
+  root.querySelectorAll("[data-reading-detail]").forEach((detail) => {
+    const itemId = detail.dataset.readingDetail;
+    const item = readingItemById(itemId);
+    const availEl = detail.querySelector(`#avail-${CSS.escape(itemId)}`);
+    if (!item || !availEl) return;
+    if (hclAvailabilityCache.has(itemId)) {
+      const cached = hclAvailabilityCache.get(itemId);
+      if (cached) renderHclAvailability(availEl, cached);
+      else availEl.textContent = "Checking library…"; // in flight; its reply fills the panel below
+      return;
+    }
+    availEl.textContent = "Checking library…";
+    loadHclAvailability(itemId, item.title, item.authors).then((res) => {
+      const live = document.getElementById(`avail-${itemId}`); // the panel may have redrawn meanwhile
+      if (live) renderHclAvailability(live, res);
+    });
+  });
   root.querySelectorAll("[data-reading-item]").forEach((article) => {
     article.addEventListener("contextmenu", openReadingItemMenu);
+    if (article.classList.contains("listen-card")) return; // availability loads when its panel opens
     article.addEventListener("mouseenter", () => {
       const itemId = article.dataset.readingItem;
       const item = readingItemById(itemId);
@@ -40457,7 +42900,8 @@ function openReadingItemMenu(event) {
   // Works whether triggered by right-click on the row or a click on the row's
   // menu (⋯) button.
   const itemId = event.currentTarget.closest?.("[data-reading-item]")?.dataset.readingItem
-    || event.currentTarget.dataset.readingItem;
+    || event.currentTarget.dataset.readingItem
+    || event.currentTarget.dataset.readingMenu; // the open panel's ⋯ sits outside the cover
   if (!itemId) return;
 
   const item = readingItemById(itemId);
@@ -41583,7 +44027,7 @@ async function executeChatTool(name, input) {
           streamingProviders: null, providersUpdatedAt: null,
           totalSeasons: null, totalEpisodes: null, runtime: null, avgEpisodeRuntime: null,
           watchedDate: null, rating: null, watchNotes: null,
-          seasonProgress: {}, episodeData: {}, categories: [],
+          seasonProgress: {}, categories: [],
           createdAt: new Date().toISOString()
         });
         persist();
@@ -41612,6 +44056,7 @@ async function executeChatTool(name, input) {
         if (!item) return `No watchlist item found matching "${input.title}".`;
         item.status = "watched";
         if (!item.watchedDate) item.watchedDate = new Date().toISOString().slice(0, 10);
+        touchWatchItem(item);
         persist();
         return `Marked "${item.title}" as watched.`;
       }
@@ -44737,7 +47182,12 @@ function renderTravelBudget(trip, el = null) {
   if (!trip.budget) trip.budget = { total: 0, categories: Object.fromEntries(TRAVEL_BUDGET_CATS.map(c => [c, { budgeted: 0, spent: 0 }])) };
   const budget = trip.budget;
   const totalBudgeted = Object.values(budget.categories).reduce((s, c) => s + (c.budgeted || 0), 0) || budget.total || 0;
-  const totalSpent = (trip.expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
+  // Bank charges tagged to this trip in Finance count too (finance-tags.js), and
+  // charges dated during the trip are offered to add with one tap.
+  let bank = { charges: [], candidates: [] };
+  try { if (isPageEnabled("finance")) bank = _finance.financeTripSpend(trip.id) || bank; } catch { /* Finance not loaded */ }
+  const bankSpent = bank.charges.reduce((s, c) => s + (c.amount || 0), 0);
+  const totalSpent = (trip.expenses || []).reduce((s, e) => s + (e.amount || 0), 0) + bankSpent;
   const pct = totalBudgeted ? Math.min(100, Math.round(totalSpent / totalBudgeted * 100)) : 0;
   const overBudget = totalSpent > totalBudgeted && totalBudgeted > 0;
 
@@ -44779,7 +47229,31 @@ function renderTravelBudget(trip, el = null) {
         <button class="travel-add-day-btn" type="button" id="travelAddExpenseBtn" style="font-size:0.78rem">+ Add expense</button>
       </div>
       <div id="travelExpensesList">${expenseRows}</div>
-    </div>`;
+    </div>
+    ${bank.charges.length || bank.candidates.length ? `
+    <div class="travel-expenses-section">
+      <div class="travel-expenses-header"><span class="travel-expenses-title">From your bank</span><span class="travel-expense-amount">$${bankSpent.toFixed(2)}</span></div>
+      ${bank.charges.map((c) => `
+      <div class="travel-expense-row">
+        <span class="travel-expense-date">${escapeHtml(c.date)}</span>
+        <span class="travel-expense-desc">${escapeHtml(c.name)}</span>
+        <span class="travel-expense-amount">$${c.amount.toFixed(2)}</span>
+        <button class="travel-expense-remove" type="button" data-bank-untag="${escapeHtml(c.id)}" aria-label="Not part of this trip">✕</button>
+      </div>`).join("")}
+      ${bank.candidates.length ? `
+      <div class="travel-bank-candidates">
+        <div class="fin-hint">Charged during the trip — add the ones that belong to it:</div>
+        ${bank.candidates.slice(0, 30).map((c) => `
+        <div class="travel-expense-row is-candidate">
+          <span class="travel-expense-date">${escapeHtml(c.date)}</span>
+          <span class="travel-expense-desc">${escapeHtml(c.name)}</span>
+          <span class="travel-expense-amount">$${c.amount.toFixed(2)}</span>
+          <button class="secondary-btn compact-btn" type="button" data-bank-tag="${escapeHtml(c.id)}">Add</button>
+        </div>`).join("")}
+      </div>` : ""}
+    </div>` : ""}`;
+  el.querySelectorAll("[data-bank-tag]").forEach((b) => b.addEventListener("click", () => { _finance.financeTagTrip(b.dataset.bankTag, trip.id); renderTravelBudget(trip, el); }));
+  el.querySelectorAll("[data-bank-untag]").forEach((b) => b.addEventListener("click", () => { _finance.financeTagTrip(b.dataset.bankUntag, ""); renderTravelBudget(trip, el); }));
 
   el.querySelectorAll("[data-budget-cat]").forEach(inp => {
     inp.addEventListener("change", e => {

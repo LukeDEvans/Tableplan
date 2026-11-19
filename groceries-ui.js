@@ -8,6 +8,8 @@
 // and the legacy week.manualGroceries fold-in normalizer (normalizePersistentManual-
 // Groceries). manualGroceries storage is unchanged (Decision #2b) — the live list is
 // state.persistentManualGroceries (grocery section), which this module reads via `state`.
+import { storeReturnDays, addDays } from "./receipt-returns.js";
+import { isGroceryReceipt, receiptIntoPantry, undoPantry, PANTRY_ROOMS } from "./receipt-pantry.js";
 import * as LiveGroceryCatalog from './grocery-catalog.js';
 import * as LiveGrocerySources from './grocery-sources.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
@@ -362,6 +364,8 @@ export function normalizeGroceryPriceObservations(observations, stores = []) {
 export function normalizeGroceryPricingSettings(settings) {
   return {
     enabled: Boolean(settings?.enabled),
+    // Scanned grocery receipts add their items to Inventory (receipt-pantry.js). On by default.
+    pantryFromReceipts: settings?.pantryFromReceipts !== false,
     extraStoreCost: clampNumber(settings?.extraStoreCost, 0, 100, 5)
   };
 }
@@ -451,6 +455,8 @@ export function baseGroceryItemKey(item) {
 
 // ══════════════════════════════════════════════════════════════════════════
 export function createGroceriesModule(deps) {
+  const canMarkPersonal = deps.canMarkPersonal || (() => false);
+  const showPersonalReceipts = deps.showPersonalReceipts || (() => true);
   const {
     state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, isLocalDevHost, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp, getHomeLocation, getFreshAccessToken, recognizeReceiptText, isStateReady, handOff,
   } = deps;
@@ -1317,6 +1323,32 @@ function openReceiptEditView(receiptId) {
   elements.editReceiptTax.value = receipt.tax || "";
   elements.editReceiptFees.value = receipt.fees || "";
   elements.editReceiptTotal.value = receipt.total || "";
+  const tipEl = document.getElementById("editReceiptTip");
+  const last4El = document.getElementById("editReceiptLast4");
+  const personalRow = document.getElementById("editReceiptPersonalRow");
+  const personalEl = document.getElementById("editReceiptPersonal");
+  if (tipEl) tipEl.value = receipt.tip || "";
+  if (last4El) last4El.value = receipt.paymentLast4 || "";
+  if (personalRow) personalRow.hidden = !canMarkPersonal() && receipt.view !== "personal";
+  if (personalEl) personalEl.checked = receipt.view === "personal";
+  const pantryBtn = document.getElementById("editReceiptPantryBtn");
+  if (pantryBtn) {
+    pantryBtn.hidden = Boolean(receipt.pantryAddedAt) || receipt.view === "personal" || !(receipt.lineItems || []).length;
+    pantryBtn.onclick = () => { if (addReceiptsToPantry([receipt.id], { force: true })) pantryBtn.hidden = true; };
+  }
+  const returnEl = document.getElementById("editReceiptReturnBy");
+  const warrantyEl = document.getElementById("editReceiptWarranty");
+  const suggestEl = document.getElementById("editReceiptReturnSuggest");
+  if (returnEl) returnEl.value = receipt.returnBy || "";
+  if (warrantyEl) warrantyEl.value = receipt.warrantyUntil || "";
+  if (suggestEl) {
+    // The store's usual return window, as a one-tap fill (receipt-returns.js).
+    const days = storeReturnDays(receipt.storeName);
+    suggestEl.hidden = !days || !receipt.purchaseDate || Boolean(receipt.returnBy);
+    suggestEl.textContent = days ? `${days} days` : "";
+    suggestEl.title = days ? `${receipt.storeName}'s usual return window — check the receipt for this item` : "";
+    suggestEl.onclick = () => { if (returnEl) returnEl.value = addDays(receipt.purchaseDate, days); suggestEl.hidden = true; };
+  }
   elements.editReceiptLineList.innerHTML = "";
   (receipt.lineItems || []).forEach((line) => addEditReceiptLine(line));
   elements.shopReceiptsListView.hidden = true;
@@ -1389,6 +1421,7 @@ function addEditReceiptLine(line = {}) {
     </button>
     <input type="hidden" data-receipt-confidence value="${escapeHtml(String(line.confidenceScore ?? 0.9))}" />
     ${receiptBudgetSelectHtml(line.budgetCategory || "")}
+    ${canMarkPersonal() || line.owedBy ? `<label class="receipt-line-mine" title="A personal item the household paid for: you pay the household back"><input type="checkbox" data-receipt-mine ${line.owedBy ? "checked" : ""} data-owed-by="${escapeHtml(line.owedBy || "")}" /> Mine · pay back</label>` : ""}
   `;
   row.querySelector("[data-remove-receipt-line]").addEventListener("click", () => row.remove());
   elements.editReceiptLineList.append(row);
@@ -1415,7 +1448,12 @@ function editedReceiptFromForm() {
       discountAmount: Math.max(0, Number(row.querySelector("[data-receipt-discount]").value) || 0),
       confidenceScore: Number(row.querySelector("[data-receipt-confidence]").value) || 0.9,
       userCorrected: true,
-      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || ""
+      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || "",
+      owedBy: (() => {
+        const box = row.querySelector("[data-receipt-mine]");
+        if (!box) return "";
+        return box.checked ? (box.dataset.owedBy || getAuthSession()?.user?.id || "") : "";
+      })()
     };
   });
   return LiveReceiptDomain.normalizeReceipt({
@@ -1428,6 +1466,13 @@ function editedReceiptFromForm() {
     tax: elements.editReceiptTax.value,
     fees: elements.editReceiptFees.value,
     total: elements.editReceiptTotal.value,
+    tip: document.getElementById("editReceiptTip")?.value ?? original.tip,
+    paymentLast4: (document.getElementById("editReceiptLast4")?.value ?? original.paymentLast4 ?? "").replace(/\D/g, ""),
+    returnBy: document.getElementById("editReceiptReturnBy")?.value ?? original.returnBy,
+    warrantyUntil: document.getElementById("editReceiptWarranty")?.value ?? original.warrantyUntil,
+    view: document.getElementById("editReceiptPersonalRow")?.hidden === false
+      ? (document.getElementById("editReceiptPersonal")?.checked ? "personal" : "")
+      : original.view,
     lineItems
   }, createId);
 }
@@ -1473,6 +1518,8 @@ function saveReceiptEdit(event) {
   maybeWriteCloudSnapshot({ force: true }).catch(() => {});
   renderShopReceipts();
   closeReceiptEditView();
+  // A receipt that needed a look goes into Inventory once it's been saved.
+  addReceiptsToPantry([receipt.id]);
 }
 
 function deleteReceipt() {
@@ -1524,18 +1571,23 @@ function receiptScanIntro() {
 // The header scanner's entry: one tap from anywhere in the app. In the live app the
 // photos are sent straight off to be read (scan and go); the dialog never opens.
 // ocrPages: the document camera's own text recognition, when it did any.
+// Returns the id the receipt will have when the read comes back ("" when the scan
+// goes through the review dialog instead, where the id isn't known yet), so the
+// copy kept in Document can point at it.
 function openReceiptScanWithFiles(files, { ocrPages = null } = {}) {
   const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 6);
-  if (!list.length) return;
+  if (!list.length) return "";
   if (scanAndGoAvailable()) {
-    sendReceiptForReading(list, { ocrPages }).catch(() => {});
-    return;
+    const id = createId("receipt");
+    sendReceiptForReading(list, { ocrPages, id }).catch(() => {});
+    return id;
   }
   openReceiptScanDialog();
   receiptScanFiles = list;
   receiptImageEdits = retainScanImageEdits(receiptScanFiles, receiptImageEdits);
   updateReceiptScanSelectionStatus();
   scanReceiptImages();
+  return "";
 }
 
 function replaceReceiptScanFiles() {
@@ -1669,11 +1721,11 @@ function boundedOcrPages(pages) {
   return out.some((rows) => rows.length) ? out : null;
 }
 
-async function sendReceiptForReading(files, { ocrPages = null, edits = null } = {}) {
+async function sendReceiptForReading(files, { ocrPages = null, edits = null, id: presetId = "" } = {}) {
   const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 6);
   if (!list.length) return false;
   trackUsage("claude_receipt_scan");
-  const id = createId("receipt");
+  const id = presetId || createId("receipt");
   writeReceiptQueue(ReceiptQueue.addToQueue(readReceiptQueue(), {
     id,
     at: new Date().toISOString(),
@@ -1822,8 +1874,49 @@ function importScannedReceipts(imports, attach = []) {
   if (added.length) {
     renderGroceries();
     showMailToast(ReceiptQueue.resultsToast(added));
+    // Groceries that read cleanly go into Inventory (after the results toast, so
+    // its Undo is the one left on screen).
+    if (ready.length) setTimeout(() => addReceiptsToPantry(ready.map((r) => r.id)), 2500);
   }
   return added;
+}
+
+// A grocery receipt's items into Inventory, once per receipt (receipt-pantry.js).
+// `force`: the editor's "Add to pantry" (any receipt, any date). Otherwise only
+// grocery runs from the last two weeks, with the setting on. Returns the count.
+function addReceiptsToPantry(receiptIds, { force = false } = {}) {
+  if (!force && !groceryPricingSettings().pantryFromReceipts) return 0;
+  const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  const vis = state.inventoryRoomVisibility || {};
+  const rooms = new Set(Object.values(PANTRY_ROOMS).filter((id) => vis[id] !== false));
+  const before = state.inventoryItems || [];
+  let items = before;
+  const changed = [];
+  const done = [];
+  let added = 0, updated = 0;
+  for (const id of receiptIds || []) {
+    const r = (state.receipts || []).find((x) => x.id === id);
+    if (!r || r.pantryAddedAt || r.view === "personal") continue;
+    if (!force && (!isGroceryReceipt(r) || (r.purchaseDate || "") < cutoff)) continue;
+    const out = receiptIntoPantry(r, items, { createId, roomsAvailable: rooms });
+    if (!out.added && !out.updated) continue;
+    items = out.items;
+    changed.push(...out.changed.filter((c) => !changed.some((x) => x.id === c.id)));
+    added += out.added; updated += out.updated;
+    done.push(id);
+  }
+  if (!done.length) return 0;
+  const at = new Date().toISOString();
+  state.inventoryItems = items;
+  state.receipts = normalizeReceipts((state.receipts || []).map((r) => (done.includes(r.id) ? { ...r, pantryAddedAt: at } : r)));
+  persist();
+  const total = added + updated;
+  showMailToast(`${total} item${total === 1 ? "" : "s"} added to Inventory`, () => {
+    state.inventoryItems = undoPantry(state.inventoryItems, changed);
+    state.receipts = normalizeReceipts((state.receipts || []).map((r) => (done.includes(r.id) ? { ...r, pantryAddedAt: "" } : r)));
+    persist();
+  });
+  return total;
 }
 
 // Re-send whatever was cut off or couldn't go (offline), then look for results.
@@ -2133,7 +2226,12 @@ function reviewedReceiptFromForm() {
       discountAmount: Math.max(0, Number(row.querySelector("[data-receipt-discount]").value) || 0),
       confidenceScore: Number(row.querySelector("[data-receipt-confidence]").value) || 0.7,
       userCorrected: normalizedName !== row.dataset.originalName || category !== row.dataset.originalCategory,
-      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || ""
+      budgetCategory: row.querySelector("[data-receipt-budget]")?.value || "",
+      owedBy: (() => {
+        const box = row.querySelector("[data-receipt-mine]");
+        if (!box) return "";
+        return box.checked ? (box.dataset.owedBy || getAuthSession()?.user?.id || "") : "";
+      })()
     };
   });
   return LiveReceiptDomain.normalizeReceipt({
@@ -2986,6 +3084,7 @@ function renderGroceries() {
   const otherEntry = storeSections.find((s) => s.storeId === "");
   const storeEntries = storeSections.filter((s) => s.storeId !== "");
   const planSections = `
+    ${groceryListPriceStrip(activeNeeds)}
     ${nextStopSection}
     ${otherEntry ? storeSection({ ...otherEntry, name: "Other" }) : ""}
     ${storeEntries.map(storeSection).join("")}
@@ -3130,6 +3229,87 @@ function groceryFallbackRoutingTemplate(rows, priceAssignments = {}) {
       Drag an item to another store once to remember that choice.
     </div>
   `;
+}
+
+// What the list should cost, from past receipt prices (and manual estimates):
+// the cheapest known price per item, and which store is cheapest for how many
+// items. Read-only — it never moves an item between stores (that's the separate
+// price-routing setting).
+function groceryListPriceSummary(rows) {
+  const observations = currentGroceryPriceObservations();
+  if (!observations.length || !rows.length) return null;
+  const byKey = new Map();
+  observations.forEach((o) => {
+    const key = canonicalGroceryItemKey(o.itemKey);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(o);
+  });
+  const names = new Map(groceryStores().map((st) => [st.id, st.name]));
+  let total = 0, priced = 0;
+  const wins = new Map(); // storeId → items it's cheapest for
+  rows.forEach((row) => {
+    const best = new Map(); // storeId → lowest cost there
+    (byKey.get(row.key) || []).forEach((o) => {
+      if (!o.storeId || !names.has(o.storeId)) return;
+      const cost = estimatedObservationCost(row, o);
+      if (!(cost > 0)) return;
+      if (!best.has(o.storeId) || cost < best.get(o.storeId)) best.set(o.storeId, cost);
+    });
+    if (!best.size) return;
+    const [storeId, cost] = [...best.entries()].sort((a, b) => a[1] - b[1])[0];
+    total += cost; priced += 1;
+    wins.set(storeId, (wins.get(storeId) || 0) + 1);
+  });
+  if (!priced) return null;
+  return {
+    total, priced, count: rows.length,
+    stores: [...wins.entries()].sort((a, b) => b[1] - a[1]).map(([id, n]) => ({ id, name: names.get(id), items: n })),
+  };
+}
+// A recipe's cost from past prices: each ingredient's share of its cheapest known
+// package (1 cup of a 5-cup bag = a fifth of its price); a whole package when the
+// units can't be compared. → { total, priced, count } or null with no prices.
+function estimateRecipeCost(recipe, scale = 1) {
+  const observations = currentGroceryPriceObservations();
+  const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  if (!observations.length || !ingredients.length) return null;
+  const byKey = new Map();
+  observations.forEach((o) => {
+    const key = canonicalGroceryItemKey(o.itemKey);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(o);
+  });
+  let total = 0, priced = 0;
+  ingredients.forEach((ing) => {
+    const row = ingredientToGroceryRow(ing, recipe);
+    const obs = byKey.get(row.key);
+    if (!obs?.length) return;
+    const want = groceryQuantityForPrice(row);
+    let best = Infinity;
+    obs.forEach((o) => {
+      const pkg = convertComparablePriceQuantity(o.packageQuantity, normalizeComparablePriceUnit(String(o.packageUnit || "")));
+      const cost = want && pkg && want.unit === pkg.unit && pkg.quantity > 0 ? (want.quantity * scale / pkg.quantity) * o.price : o.price;
+      if (cost > 0 && cost < best) best = cost;
+    });
+    if (Number.isFinite(best)) { total += best; priced += 1; }
+  });
+  return priced ? { total, priced, count: ingredients.length } : null;
+}
+
+function groceryListPriceStrip(rows) {
+  const sum = groceryListPriceSummary(rows);
+  if (!sum) return "";
+  // The household's grocery budget (Finance categories named "Groceries"), as a
+  // weekly figure beside this week's list.
+  const groceryMonthly = (state.financeBudgetGroups || []).flatMap((g) => g.categories || [])
+    .filter((c) => /grocer/i.test(c.name || ""))
+    .reduce((t, c) => t + (c.items || []).reduce((u, it) => u + (Number(it.amount) || 0), 0), 0);
+  const weekly = groceryMonthly > 0 ? groceryMonthly * 12 / 52 : 0;
+  return `
+    <div class="grocery-price-strip" role="note">
+      <span class="grocery-price-strip-total">≈ ${formatCurrency(sum.total)}</span>
+      <span class="grocery-price-strip-meta">for ${sum.priced} of ${sum.count} item${sum.count === 1 ? "" : "s"} at their cheapest known price${sum.stores.length ? ` · cheapest at ${sum.stores.slice(0, 3).map((st) => `${escapeHtml(st.name)} (${st.items})`).join(", ")}` : ""}${weekly ? ` · grocery budget ≈ ${formatCurrency(weekly)}/week` : ""}</span>
+    </div>`;
 }
 
 function groceryPricePlanTemplate(plan) {
@@ -5567,6 +5747,7 @@ function renderShopReceipts() {
   const el = elements.shopReceiptsList;
   if (!el) return;
   const receipts = (state.receipts || [])
+    .filter((r) => r.view !== "personal" || showPersonalReceipts())
     .slice()
     .sort((a, b) => (b.purchaseDate || "").localeCompare(a.purchaseDate || ""));
   const queued = receiptQueueCardsHtml();
@@ -5663,6 +5844,7 @@ function renderShopReceipts() {
   function setPendingReceiptDraft(v) { pendingReceiptDraft = v; }
 
   return {
+    estimateRecipeCost, groceryListPriceSummary, buildActiveNeedRows,
     startReceiptScanQueue,
     refreshReceiptScanResults,
     handleReceiptScanResults,

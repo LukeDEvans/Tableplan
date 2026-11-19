@@ -9,6 +9,7 @@
 // service-role functions touch them (no group prefix → no client RLS match).
 // Files prefixed with _ are not deployed as individual functions.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+const Titles = require("./_news-titles.js");
 
 const DAY_MS = 86400000;
 const FRESH_DAYS = 3;          // older articles are never delivered (News keeps 3 days)
@@ -205,15 +206,22 @@ async function extractNewsLinks(html, source, { resolve } = {}) {
   for (const { url, inner } of hits) {
     const c = canonicalizeArticleUrl(url);
     if (!c) continue;
-    const text = textOf(inner);
+    // A link wrapping a whole card (headline, summary, byline) → its headline,
+    // with the summary kept for the subtitle (NEWS_TITLES_DESIGN.md).
+    const { headline: text, dek } = Titles.splitAnchor(inner);
     const goodText = text.length >= 8 && !JUNK_TITLE_RE.test(text) && !BOILER_RE.test(text) ? text : "";
     const img = (inner.match(/<img\b[^>]*\ssrc=["']([^"']+)["']/i) || [])[1] || "";
     const cur = byKey.get(c.key);
     if (!cur) {
       if (byKey.size >= PER_EMAIL_CAP) continue;
-      byKey.set(c.key, { url: c.url, key: c.key, anchorText: goodText, emailImage: /^https:\/\//i.test(img) ? decodeEntities(img) : "" });
+      byKey.set(c.key, { url: c.url, key: c.key, anchorText: goodText, anchorDek: goodText ? dek : "", emailImage: /^https:\/\//i.test(img) ? decodeEntities(img) : "" });
     } else {
-      if (goodText.length > cur.anchorText.length) cur.anchorText = goodText;
+      // Prefer the link text that reads as a headline, then the longer one.
+      const better = (a, b) => {
+        const wa = Titles.isWeakTitle(a, { url: c.url, origin: "email" }), wb = Titles.isWeakTitle(b, { url: c.url, origin: "email" });
+        return wa !== wb ? !wa : a.length > b.length;
+      };
+      if (goodText && better(goodText, cur.anchorText)) { cur.anchorText = goodText; cur.anchorDek = dek; }
       if (!cur.emailImage && /^https:\/\//i.test(img)) cur.emailImage = decodeEntities(img);
     }
   }
@@ -242,11 +250,6 @@ function parseArticleMeta(head) {
   };
 }
 
-function titleFromSlug(url) {
-  const segs = String(url || "").replace(/\.html?$/i, "").split("/").filter(Boolean);
-  const slug = [...segs].reverse().find((s) => /[a-z]/i.test(s) && s.includes("-")) || "";
-  return slug ? slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "";
-}
 
 // ── Sections (NEWS_PAGE_DESIGN.md §3) ─────────────────────────────────────────
 // One shared list across papers; anything unmapped is "more" (never dropped).
@@ -315,10 +318,16 @@ function buildNewsCard(link, meta, source, { emailDate, nowMs }) {
     || (!Number.isNaN(metaDate) ? new Date(metaDate).toISOString() : null)
     || (emailDate && !Number.isNaN(Date.parse(emailDate)) ? new Date(emailDate).toISOString() : null);
   if (publishedAt && !isFresh(publishedAt, nowMs)) return null;
-  const title = String(meta?.title || "").replace(source.titleSuffixRe, "").trim()
-    || link.anchorText || titleFromSlug(link.url);
+  // The page's own headline when it could be read; otherwise the link text if it
+  // reads as a headline, else the URL slug (NEWS_TITLES_DESIGN.md). The hourly
+  // job retries weak ones from the feeds and the page.
+  const { title } = Titles.chooseEmailTitle({
+    metaTitle: String(meta?.title || "").replace(source.titleSuffixRe, "").trim(),
+    anchor: link.anchorText,
+    url: link.url
+  });
   if (!title) return null;
-  const subtitle = String(meta?.description || "").trim();
+  const subtitle = String(meta?.description || "").trim() || (title === link.anchorText ? String(link.anchorDek || "") : "");
   return {
     id: seenId(link.key),
     url: link.url,

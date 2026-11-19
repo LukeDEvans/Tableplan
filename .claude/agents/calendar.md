@@ -174,3 +174,10 @@ say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/`
 other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
 the client, and native `ios/` changes only ship this way), or both. Log anything real
 you notice but don't fix to `ISSUES.md`.
+
+## Written from outside: Claude Duet (2026-11-17)
+`supabase/functions/liv-mcp/write-tools.js` writes this domain's data directly in its
+`tableplan_states` row, with tombstones and stamps, the way a device saves. When you change
+this domain's data shape, slot ids, tombstone keys or view rules, update write-tools.js and
+its tests (test/assistant-liv-mcp.test.js) in the same PR; then `npm run build:liv-mcp`
+and redeploy the liv-mcp Edge Function. DUET_CONNECTOR_DESIGN.md §5.

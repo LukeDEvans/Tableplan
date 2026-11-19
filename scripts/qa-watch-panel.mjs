@@ -1,0 +1,621 @@
+#!/usr/bin/env node
+// Headless QA for the Watch page (Luke, 2026-10-29): the show panel opens under
+// the whole row (the row stays put), a pointer marks the open poster and slides
+// within a row, Watched · Tabs · Remove (the ⋯ menu) work by tapping, Remove has Undo, the
+// Next-episode line ticks an episode, episodes are crossed off by tapping (no check boxes), a
+// season's open state isn't saved, "Find the right title" links a plain title
+// and tags titles already on the list, there's no "+" to add a show (the search
+// bar does that), a short list starts at the top, and services outside yours
+// sit behind an "Other services" button.
+//
+//   node scripts/qa-watch-panel.mjs [url]   (default http://localhost:4174/; needs `npm run dev:local`)
+//   TMDB is mocked; nothing leaves the machine. QA_WATCH_SHOT=/path/prefix → screenshots.
+import { chromium } from "playwright";
+import { existsSync } from "node:fs";
+
+const URL = process.argv[2] || "http://localhost:4174/";
+const SHOT = process.env.QA_WATCH_SHOT || "";
+const LAUNCH = { headless: true, args: ["--no-proxy-server", "--proxy-bypass-list=*"] };
+const results = [];
+const check = (cond, name, detail) => {
+  results.push(!!cond);
+  console.log(cond ? `  ✓ ${name}` : `  ✗ ${name}${detail !== undefined ? ` — ${typeof detail === "string" ? detail : JSON.stringify(detail)}` : ""}`);
+};
+
+async function launch() {
+  try { return await chromium.launch({ ...LAUNCH, channel: "chrome" }); } catch { /* none */ }
+  try { return await chromium.launch(LAUNCH); } catch { /* none */ }
+  const p = `${process.env.PLAYWRIGHT_BROWSERS_PATH || "/opt/pw-browsers"}/chromium`;
+  if (existsSync(p)) return chromium.launch({ ...LAUNCH, executablePath: p });
+  throw new Error("No Chromium available");
+}
+const json = (body) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+const prov = (n) => ({ link: "https://www.themoviedb.org/x", flatrate: [{ provider_id: 1, provider_name: n }] });
+const eps = (n) => Array.from({ length: n }, (_, i) => ({ episodeNumber: i + 1, name: `A fairly long episode title number ${i + 1}` }));
+// Fresh ids each run: a removal in an earlier run stays recorded (and syncs back).
+const RUN = String(Date.now() % 1000000);
+let R = RUN;
+const seedFor = (r) => JSON.parse(JSON.stringify(SEED).replaceAll(`-${RUN}"`, `-${r}"`));
+const SEED = [
+  { id: `qa-m1-${R}`, type: "movie", title: "Oppenheimer", tmdbId: 872585, year: "2023", runtime: 181, streamingProviders: prov("Peacock"), createdAt: "2026-10-01T00:00:00Z" },
+  { id: `qa-m2-${R}`, type: "movie", title: "Past Lives", tmdbId: 666277, year: "2023", streamingProviders: prov("Max"), createdAt: "2026-10-02T00:00:00Z" },
+  { id: `qa-m3-${R}`, type: "movie", title: "Arrival", tmdbId: 329865, year: "2016", streamingProviders: prov("Netflix"), createdAt: "2026-10-03T00:00:00Z" },
+  { id: `qa-m4-${R}`, type: "movie", title: "Heat", tmdbId: 949, year: "1995", streamingProviders: prov("Netflix"), createdAt: "2026-10-04T00:00:00Z" },
+  { id: `qa-m5-${R}`, type: "movie", title: "Some Title From Notes", createdAt: "2026-10-05T00:00:00Z" },
+  { id: `qa-t1-${R}`, type: "tv", title: "House of the Dragon", tmdbId: 94997, year: "2022", totalSeasons: 3, streamingProviders: prov("Max"),
+    seasonProgress: { 1: { watched: true }, 2: { watched: true }, 3: { episodes: { 1: true, 2: true, 3: true, 4: true, 5: true }, __expanded: true } },
+    episodeData: { 3: eps(8) }, createdAt: "2026-07-22T00:00:00Z" },
+];
+const SEARCH = [
+  { tmdbId: 111, type: "movie", title: "The Right Match", year: "2019", posterPath: null },
+  { tmdbId: 872585, type: "movie", title: "Oppenheimer", year: "2023", posterPath: null },
+];
+
+const browser = await launch();
+try {
+  for (const width of [390, 360]) {
+    console.log(`\n${width}px`);
+    R = `${RUN}w${width}`; // fresh ids per width too
+    const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: true });
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.route(/image\.tmdb\.org/, (r) => r.fulfill({ status: 404, body: "" }));
+    await page.route(/(functions|api)\/tmdb-search/, (r) => r.fulfill(json({ results: SEARCH })));
+    const seasonCalls = [];
+    let failSeasons = false;
+    await page.route(/(functions|api)\/tmdb-season/, (r) => {
+      seasonCalls.push(r.request().url());
+      if (failSeasons) return r.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+      // Season 2's last episode isn't out yet (air date in the future).
+      const s2 = /season=2/.test(r.request().url());
+      r.fulfill(json({ episodes: eps(8).map((e) => ({ ...e, runtime: 50 + e.episodeNumber, airDate: s2 && e.episodeNumber === 8 ? "2099-01-01" : "2024-06-01" })) }));
+    });
+    await page.route(/(?:functions|api)\/(tmdb-watch-providers|tmdb-details|youtube-search|stream-links|showtimes)/, (r) => r.fulfill(json({ results: [], items: [], providers: null })));
+
+    await page.goto(URL + "#watch", { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => document.body.classList.contains("app-authed") || (document.getElementById("lockDevSignInBtn") && !document.getElementById("lockDevSignInBtn").hidden), null, { timeout: 30000 });
+    if (!(await page.evaluate(() => document.body.classList.contains("app-authed")))) await page.click("#lockDevSignInBtn");
+    await page.waitForSelector("#discoverSearchInput", { state: "visible", timeout: 20000 });
+    // Seed only once the view's rows are settled (they can swap in after boot).
+    await page.waitForFunction(() => window.__liveQA?.viewsReady?.() === true, null, { timeout: 20000 }).catch(() => {});
+    await page.waitForTimeout(800);
+    await page.evaluate((r) => { globalThis.__qaR = r; }, R);
+    await page.evaluate((items) => window.__liveQA.watchSeedForQa(items), seedFor(R));
+    await page.evaluate(() => document.querySelector('[data-watch-category="all"]')?.click());
+    await page.waitForTimeout(400);
+
+    const moreAct = async (id, act) => {
+      await page.locator(`[data-watch-more="${id}"]`).tap();
+      await page.waitForTimeout(150);
+      await page.locator(`.watch-more-menu [data-watch-more-act="${act}"]`).tap();
+      await page.waitForTimeout(200);
+    };
+    const tops = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("[data-watch-item]")].map((c) => [c.dataset.watchItem, Math.round(c.getBoundingClientRect().top + scrollY)])));
+    const before = await tops();
+    if (process.env.QA_DEBUG) console.log("seeded", seedFor(R).map((i) => i.id), Object.keys(before));
+    check(before[`qa-m1-${globalThis.__qaR ?? R}`] === before[`qa-m4-${globalThis.__qaR ?? R}`], "four movies share the first row", before);
+
+    // Open the 2nd poster: the row stays put, the panel sits under the whole row.
+    await page.locator(`[data-watch-item="qa-m2-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(350);
+    const after = await tops();
+    check([`qa-m1-${globalThis.__qaR ?? R}`, `qa-m2-${globalThis.__qaR ?? R}`, `qa-m3-${globalThis.__qaR ?? R}`, `qa-m4-${globalThis.__qaR ?? R}`].every((id) => after[id] === after[`qa-m1-${globalThis.__qaR ?? R}`]), "the row stays put when a poster opens", after);
+    const geo = await page.evaluate(() => {
+      const d = document.querySelector(`[data-watch-detail="qa-m2-${globalThis.__qaR ?? R}"]`);
+      const row = [...document.querySelectorAll(`[data-watch-item="qa-m1-${globalThis.__qaR ?? R}"],[data-watch-item="qa-m4-${globalThis.__qaR ?? R}"]`)].map((c) => c.getBoundingClientRect().bottom);
+      const p = document.querySelector(`[data-watch-item="qa-m2-${globalThis.__qaR ?? R}"] .watch-poster`).getBoundingClientRect();
+      const ptr = d?.querySelector(".watch-detail-pointer")?.getBoundingClientRect();
+      return { below: d && d.getBoundingClientRect().top >= Math.max(...row) - 1, ptrX: ptr && Math.round(ptr.left + ptr.width / 2), posterX: Math.round(p.left + p.width / 2) };
+    });
+    check(geo.below, "the panel opens under the whole row");
+    check(geo.ptrX != null && Math.abs(geo.ptrX - geo.posterX) <= 2, "the pointer points at the open poster", geo);
+    check(await page.locator(".watch-avail--stream").count() === 0, "no streaming-service bubble on the posters");
+    check(await page.locator(".watch-badge").count() === 0, "no TV / M badge on the posters");
+    // Year and season count only in the open panel (Luke, 2026-10-30).
+    const subs = await page.evaluate((id) => ({ cards: document.querySelectorAll(".watch-card .watch-card-sub").length, panel: document.querySelector(`[data-watch-detail="${id}"] .watch-detail-sub`)?.textContent.trim() || "" }), `qa-m2-${globalThis.__qaR ?? R}`);
+    check(subs.cards === 0, "no year or season count under the posters", subs);
+    check(/\d{4}/.test(subs.panel), "…but the open panel still shows them", subs);
+
+    // The ring around the open poster isn't cut off at either end of the row,
+    // and the posters kept their size.
+    const ringFits = async (id) => {
+      await page.locator(`[data-watch-item="${id}"]`).tap();
+      await page.waitForTimeout(300);
+      return page.evaluate((pid) => {
+        const list = document.querySelector(".watch-list-panel");
+        const lr = list.getBoundingClientRect();
+        const p = document.querySelector(`[data-watch-item="${pid}"] .watch-poster`).getBoundingClientRect();
+        const cs = getComputedStyle(document.querySelector(`[data-watch-item="${pid}"] .watch-poster`));
+        const reach = parseFloat(cs.outlineWidth) + parseFloat(cs.outlineOffset);
+        return { left: Math.round(p.left - reach - lr.left), right: Math.round(lr.left + list.clientWidth - (p.right + reach)), w: Math.round(p.width) };
+      }, id);
+    };
+    const leftRing = await ringFits(`qa-m1-${globalThis.__qaR ?? R}`);
+    const rightRing = await ringFits(`qa-m4-${globalThis.__qaR ?? R}`);
+    check(leftRing.left >= 0 && rightRing.right >= 0, "the ring shows in full at both ends of the row", { leftRing, rightRing });
+    check(leftRing.w >= (width === 390 ? 75 : 68), "…and the posters keep their size", leftRing);
+    await page.locator(`[data-watch-item="qa-m2-${globalThis.__qaR ?? R}"]`).tap(); // back to where the next checks expect
+    await page.waitForTimeout(300);
+    if (SHOT) await page.screenshot({ path: `${SHOT}-panel-${width}.png` });
+
+    // Services: no "Your services" / "Other services" headings; services outside
+    // yours fold into one "Other services" button that opens a window (Luke, 2026-10-29).
+    const m2 = `qa-m2-${globalThis.__qaR ?? R}`;
+    await page.waitForSelector(`[data-watch-detail="${m2}"] [data-watch-other-services]`, { timeout: 8000 }).catch(() => {});
+    check(await page.locator(`[data-watch-detail="${m2}"] .discover-svc-label`).count() === 0, "the panel has no services headings");
+    const otherBtn = page.locator(`[data-watch-detail="${m2}"] [data-watch-other-services]`);
+    check(await otherBtn.count() === 1, "services outside yours fold into an 'Other services' button");
+    if (await otherBtn.count()) {
+      // Services are plain links in the link colour — no bubbles — left-aligned,
+      // "Other services" first, right under the year line (Luke, 2026-10-31).
+      const svc = await page.evaluate((id) => {
+        const d = document.querySelector(`[data-watch-detail="${id}"]`);
+        const head = d.querySelector(".watch-detail-head");
+        // No mocked service counts as one of yours, so put a stand-in "yours"
+        // button where the app renders them (before "Other services").
+        const group = d.querySelector(".watch-providers .discover-svc-group");
+        const fake = document.createElement("button");
+        fake.className = "discover-svc qa-fake-svc"; fake.textContent = "Netflix";
+        group.prepend(fake);
+        const els = [...d.querySelectorAll(".watch-providers .discover-svc")];
+        const btns = els.map((b) => ({ t: b.textContent.trim(), r: b.getBoundingClientRect() }));
+        const other = btns.find((b) => /Other services/.test(b.t));
+        const sub = d.querySelector(".watch-detail-sub").getBoundingClientRect();
+        const probe = document.createElement("span");
+        probe.style.color = "var(--accent-dark, var(--accent))"; head.append(probe);
+        const linkColor = getComputedStyle(probe).color; probe.remove();
+        const cs = els.map((b) => getComputedStyle(b));
+        return {
+          n: btns.length,
+          inHead: !!d.querySelector(".watch-detail-head .watch-providers"),
+          noBubble: cs.every((c) => c.backgroundColor === "rgba(0, 0, 0, 0)" && parseFloat(c.borderTopWidth) === 0 && parseFloat(c.paddingLeft) === 0),
+          linkColored: cs.every((c) => c.color === linkColor),
+          otherFirst: other && btns.every((b) => b === other || b.r.left > other.r.left),
+          otherLeftGap: other && Math.round(other.r.left - head.getBoundingClientRect().left),
+          underSub: Math.round(Math.min(...btns.map((b) => b.r.top)) - sub.bottom),
+        };
+      }, m2);
+      check(svc.inHead && svc.noBubble && svc.linkColored, "services are plain links in the link colour, no bubbles", svc);
+      check(svc.n >= 2 && svc.otherFirst && Math.abs(svc.otherLeftGap) <= 1, "…left-aligned, 'Other services' first", svc);
+      check(svc.underSub >= 0 && svc.underSub <= 4, "…right under the year line", svc);
+      await page.evaluate(() => document.querySelectorAll(".qa-fake-svc").forEach((e) => e.remove()));
+      await otherBtn.tap();
+      await page.waitForTimeout(250);
+      const win = await page.evaluate(() => {
+        const d = document.getElementById("watchOtherServicesDialog");
+        return { open: d.open, title: d.querySelector("#watchOtherServicesTitle").textContent, services: [...d.querySelectorAll("#watchOtherServicesBody .discover-svc")].map((b) => b.textContent.trim()) };
+      });
+      check(win.open && win.title === "Past Lives" && win.services.join() === "Max", "…which opens a window naming the other services", win);
+      if (SHOT) await page.screenshot({ path: `${SHOT}-other-${width}.png` });
+      await page.locator("#closeWatchOtherServicesBtn").tap();
+      await page.waitForTimeout(200);
+      check(!(await page.evaluate(() => document.getElementById("watchOtherServicesDialog").open)), "…and closes");
+    }
+
+    // Another poster in the same row: the pointer slides; the panel doesn't re-animate.
+    await page.locator(`[data-watch-item="qa-m4-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(60);
+    const slide = await page.evaluate(() => {
+      const d = document.querySelector(`[data-watch-detail="qa-m4-${globalThis.__qaR ?? R}"]`);
+      return { sliding: d?.classList.contains("is-sliding"), steady: d?.classList.contains("is-steady") };
+    });
+    check(slide.sliding && slide.steady, "switching within the row slides the pointer", slide);
+    await page.waitForTimeout(350);
+    const geo2 = await page.evaluate(() => {
+      const ptr = document.querySelector(`[data-watch-detail="qa-m4-${globalThis.__qaR ?? R}"] .watch-detail-pointer`).getBoundingClientRect();
+      const p = document.querySelector(`[data-watch-item="qa-m4-${globalThis.__qaR ?? R}"] .watch-poster`).getBoundingClientRect();
+      return Math.abs((ptr.left + ptr.width / 2) - (p.left + p.width / 2));
+    });
+    check(geo2 <= 2, "…and ends at the new poster", geo2);
+    check(await page.locator(`[data-watch-item="qa-m4-${globalThis.__qaR ?? R}"].is-expanded`).count() === 1, "the open poster carries the ring");
+
+    // Tap again closes.
+    await page.locator(`[data-watch-item="qa-m4-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(200);
+    check(await page.locator("[data-watch-detail]").count() === 0, "tapping the open poster closes the panel");
+
+    // The ⋯ menu, top-right of the panel: Watched · Tabs · Remove.
+    await page.locator(`[data-watch-item="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(250);
+    const corner = await page.evaluate(() => {
+      const d = document.querySelector(`[data-watch-detail="qa-m3-${globalThis.__qaR ?? R}"] .watch-detail-inner`).getBoundingClientRect();
+      const b = document.querySelector(`[data-watch-more="qa-m3-${globalThis.__qaR ?? R}"]`)?.getBoundingClientRect();
+      return b && { right: Math.round(d.right - b.right), top: Math.round(b.top - d.top), oldRow: !!document.querySelector(".watch-detail-actions") };
+    });
+    check(corner && corner.right >= 0 && corner.right < 24 && corner.top < 24 && !corner.oldRow, "⋯ sits top-right and the bottom buttons are gone", corner);
+    await page.locator(`[data-watch-more="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(150);
+    const items = await page.$$eval(".watch-more-menu [data-watch-more-act]", (b) => b.map((x) => x.textContent.trim()));
+    check(items.join() === "Watched,Tabs,Remove", "⋯ opens Watched · Tabs · Remove", items);
+    await page.locator(`[data-watch-more="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(150);
+    check(await page.locator(".watch-more-menu").count() === 0, "…and a second tap closes it");
+
+    // Remove with Undo.
+    await moreAct(`qa-m3-${globalThis.__qaR ?? R}`, "remove");
+    await page.waitForTimeout(200);
+    check(await page.locator(`[data-watch-item="qa-m3-${globalThis.__qaR ?? R}"]`).count() === 0, "Remove hides the show at once");
+    check(await page.locator("#mailToast .mail-toast-undo").count() === 1, "…with an Undo toast");
+    const tombEarly = await page.evaluate(() => window.__liveQA.watchTombstonesForQa());
+    check(!(tombEarly || []).includes(`qa-m3-${globalThis.__qaR ?? R}`), "…and nothing recorded until the toast is gone", tombEarly);
+    await page.evaluate(() => document.querySelector("#mailToast .mail-toast-undo").click());
+    await page.waitForTimeout(200);
+    check(await page.locator(`[data-watch-item="qa-m3-${globalThis.__qaR ?? R}"]`).count() === 1, "Undo puts it back");
+    await page.waitForTimeout(6300);
+    check(await page.locator(`[data-watch-item="qa-m3-${globalThis.__qaR ?? R}"]`).count() === 1, "…and it stays after the toast would have expired");
+
+    // Remove for real.
+    await page.locator(`[data-watch-item="qa-m3-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(250);
+    await moreAct(`qa-m3-${globalThis.__qaR ?? R}`, "remove");
+    await page.waitForTimeout(6400);
+    const gone = await page.evaluate(() => window.__liveQA.watchItemsForQa());
+    check(Array.isArray(gone) && !gone.some((i) => i.id === `qa-m3-${globalThis.__qaR ?? R}`), "without Undo the show is removed", gone && gone.map((i) => i.id));
+    check((await page.evaluate(() => window.__liveQA.watchTombstonesForQa())).includes(`qa-m3-${globalThis.__qaR ?? R}`), "…and the removal is recorded for sync");
+
+    // Tabs popover.
+    await page.locator(`[data-watch-item="qa-m1-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(250);
+    await page.waitForTimeout(400); // let the open's scroll finish (a scroll closes menus)
+    await moreAct(`qa-m1-${globalThis.__qaR ?? R}`, "tabs");
+    check(await page.locator(".watch-tabs-menu [data-watch-tab-new]").count() === 1, "Tabs opens a menu with New tab…");
+    await page.locator(".watch-tabs-menu [data-watch-tab-new]").tap();
+    await page.waitForTimeout(150);
+    await page.fill("#watchCategoryInlineInput", "Date night");
+    await page.press("#watchCategoryInlineInput", "Enter");
+    await page.waitForTimeout(250);
+    const filed = await page.evaluate(() => {
+      const items = window.__liveQA.watchItemsForQa();
+      return items.find((i) => i.id === `qa-m1-${globalThis.__qaR ?? R}`)?.categories?.length || 0;
+    });
+    check(filed === 1, "New tab… files the show under the new tab", filed);
+    await page.evaluate(() => document.querySelector('[data-watch-category="all"]')?.click());
+    await page.waitForTimeout(200);
+
+    // Watched opens the log window.
+    await page.locator(`[data-watch-item="qa-m1-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(250);
+    await moreAct(`qa-m1-${globalThis.__qaR ?? R}`, "watched");
+    check(await page.evaluate(() => document.getElementById("watchLogDialog")?.open), "Watched opens the watched/rating window");
+    await page.evaluate(() => document.getElementById("watchLogDialog")?.close());
+
+    // Next episode + tracker layout. A short screen so the list has to scroll,
+    // which is what makes a redraw jump.
+    await page.setViewportSize({ width, height: 560 });
+    await page.waitForTimeout(200);
+    await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).scrollIntoViewIfNeeded();
+    await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(350);
+    // No NEXT box in the panel (Luke, 2026-10-31; the code stays behind
+    // WATCH_SHOW_NEXT_BOX). The panel still opens on the next episode's season.
+    check(await page.locator(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-next`).count() === 0, "no NEXT box in the panel");
+    if (SHOT) await page.screenshot({ path: `${SHOT}-tv-${width}.png` });
+    // Cross off S3 E6 (what the NEXT tick used to do) so the checks below see the same state.
+    await page.locator(`[data-watch-episode="qa-t1-${globalThis.__qaR ?? R}"][data-episode="6"]`).tap();
+    await page.waitForTimeout(300);
+    const pick = `[data-watch-season-select="qa-t1-${globalThis.__qaR ?? R}"]`;
+    const shown = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      return el && { value: el.value, options: [...el.options].map((o) => o.textContent.trim()), eps: document.querySelectorAll(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-episode`).length, boxes: document.querySelectorAll(".watch-season-open, .watch-season-head").length };
+    }, pick);
+    check(shown && shown.options.length === 3 && shown.boxes === 0, "seasons are a menu, not a box per season", shown);
+    check(shown && shown.value === "3" && shown.eps === 8, "it opens on the next episode's season, with its episodes", shown);
+    await page.waitForTimeout(300);
+    const lens = await page.$$eval(`[data-watch-detail="qa-t1-${globalThis.__qaR ?? R}"] .watch-episode-len`, (e) => e.map((x) => x.textContent.trim()));
+    check(lens.length === 8 && lens[0] === "51m" && lens[7] === "58m", "each episode shows its length (a list saved without lengths reloads)", lens);
+    const s3Calls = () => seasonCalls.filter((u) => /season=3/.test(u)).length;
+    const before3 = s3Calls();
+    await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).tap(); // close
+    await page.waitForTimeout(200);
+    await page.locator(`[data-watch-item="qa-t1-${globalThis.__qaR ?? R}"]`).tap(); // reopen
+    await page.waitForTimeout(300);
+    check(before3 === 1 && s3Calls() === 1, "…and only once", { before3, after: s3Calls() });
+    check(shown && shown.options.join() === "Season 1,Season 2,Season 3", "the season menu names only the season", shown && shown.options);
+    check(await page.locator(".watch-season-bar, .watch-season-all, [data-watch-season-toggle]").count() === 0, "no season progress bar or 'All' box");
+    await page.locator(pick).scrollIntoViewIfNeeded();
+    await page.waitForTimeout(150);
+    const where = () => page.evaluate((sel) => ({ top: Math.round(document.querySelector(sel).getBoundingClientRect().top), list: Math.round(document.querySelector(".watch-list-panel").scrollTop), win: Math.round(scrollY) }), pick);
+    const w0 = await where();
+    await page.selectOption(pick, "1");
+    await page.waitForTimeout(400);
+    const w1 = await where();
+    check(w0.list + w0.win > 0, "(the list is scrolled down for the next checks)", w0);
+    check(Math.abs(w1.top - w0.top) <= 1, "picking a season doesn't move the screen", { w0, w1 });
+    const s1 = await page.evaluate((sel) => ({ value: document.querySelector(sel).value, eps: [...document.querySelectorAll(".watch-episode")].map((c) => c.dataset.season) }), pick);
+    check(s1.value === "1" && s1.eps.length === 8 && s1.eps.every((x) => x === "1"), "picking Season 1 loads and shows its episodes", s1);
+    // A season that fails to load says so and offers Try again (Luke, 2026-10-31).
+    failSeasons = true;
+    await page.selectOption(pick, "2");
+    await page.waitForTimeout(400);
+    const failed = await page.evaluate(() => ({ msg: document.querySelector(".watch-episodes-error")?.textContent.trim() || "", btn: document.querySelector("[data-watch-load-season]")?.textContent.trim() || "" }));
+    check(/Couldn't load/.test(failed.msg) && failed.btn === "Try again", "a season that fails to load says so, with Try again", failed);
+    failSeasons = false;
+    await page.locator("[data-watch-load-season]").tap();
+    await page.waitForTimeout(400);
+    // Episodes not out yet show their date and can't be ticked.
+    const up = await page.evaluate(() => {
+      const b = document.querySelector('.watch-episode[data-season="2"][data-episode="8"]');
+      return b && { disabled: b.disabled, cls: b.classList.contains("is-upcoming"), side: b.querySelector(".watch-episode-len")?.textContent.trim() || "" };
+    });
+    check(up && up.disabled && up.cls && /2099/.test(up.side), "…then loads; an episode not out yet shows its date and can't be ticked", up);
+    await page.selectOption(pick, "3");
+    await page.waitForTimeout(300);
+    const ep8 = page.locator(`[data-watch-episode="qa-t1-${globalThis.__qaR ?? R}"][data-episode="8"]`);
+    await ep8.scrollIntoViewIfNeeded(); // the tap would do this itself; measure after it
+    await page.waitForTimeout(150);
+    const w1b = await where();
+    await ep8.tap();
+    await page.waitForTimeout(300);
+    const w2 = await where();
+    check(w1b.list + w1b.win > 0 && Math.abs(w2.top - w1b.top) <= 1, "ticking an episode doesn't move the screen", { w1b, w2 });
+    check(await page.evaluate(() => window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress[3].episodes[8] === true), "…and the tick is saved");
+    // Per-tick merge + device episode lists (Luke, 2026-10-31): the tick carries
+    // its own time; the synced show carries no episode lists — they're in this
+    // device's store, keyed by TMDB id.
+    const synced = await page.evaluate(() => {
+      const it = window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`);
+      let store = {};
+      try { store = JSON.parse(localStorage.getItem("live.watchEpisodes.v1") || "{}"); } catch {}
+      return { stamp: it.tickAt?.["3:8"] || null, hasLists: "episodeData" in it, device: Object.keys(store[String(it.tmdbId)]?.seasons || {}) };
+    });
+    check(!!synced.stamp && !synced.hasLists && synced.device.includes("3"), "a tick carries its own time; episode lists stay on the device", synced);
+    const struck = () => page.evaluate(() => {
+      const b = document.querySelector(`[data-watch-episode="qa-t1-${globalThis.__qaR ?? R}"][data-episode="8"]`);
+      return { cls: b.classList.contains("is-watched"), line: getComputedStyle(b.querySelector(".watch-episode-name")).textDecorationLine };
+    });
+    const st1 = await struck();
+    check(st1.cls && st1.line === "line-through", "a watched episode is struck through", st1);
+    await ep8.tap();
+    await page.waitForTimeout(300);
+    const st2 = await struck();
+    const saved2 = await page.evaluate(() => !!window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress[3].episodes?.[8]);
+    check(!st2.cls && st2.line === "none" && !saved2, "tapping it again uncrosses it", { st2, saved2 });
+    await ep8.tap();
+    await page.waitForTimeout(300);
+    const sizes = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll(".watch-episode")].map((e) => e.getBoundingClientRect());
+      const name = document.querySelector(".watch-episode-name").getBoundingClientRect().height;
+      return { head: Math.round(document.querySelector(".watch-season-select").getBoundingClientRect().height), row: Math.round(rows[0].height), name: Math.round(name), gap: Math.round(rows[1].top - rows[0].bottom) };
+    });
+    check(sizes.head <= 34, "the season menu is compact", sizes);
+    // The panel is the light surface; the season menu and episodes are one box
+    // (Luke, 2026-10-31).
+    const box = await page.evaluate(() => {
+      const probe = document.createElement("span"); probe.style.background = "var(--surface)"; document.body.append(probe);
+      const surface = getComputedStyle(probe).backgroundColor; probe.remove();
+      const panel = getComputedStyle(document.querySelector(".watch-detail-row")).backgroundColor;
+      const seasons = document.querySelector(".watch-seasons");
+      const sel = getComputedStyle(seasons.querySelector(".watch-season-select"));
+      const eps = getComputedStyle(seasons.querySelector(".watch-episodes"));
+      return { surface, panel, boxBorder: parseFloat(getComputedStyle(seasons).borderTopWidth), selBorder: parseFloat(sel.borderTopWidth), epsBorder: parseFloat(eps.borderTopWidth), divider: parseFloat(getComputedStyle(seasons.querySelector(".watch-season-pick")).borderBottomWidth) };
+    });
+    check(box.panel === box.surface, "the panel is the light surface", box);
+    check(box.boxBorder >= 1 && box.selBorder === 0 && box.epsBorder === 0 && box.divider >= 1, "the season menu heads one box with its episodes", box);
+    // ~30px rows, one line each (a long title ends in "…"), no gaps; the whole
+    // season shows — no scroll box inside the list (Luke, 2026-10-31).
+    check(sizes.row >= 28 && sizes.row <= 34 && sizes.name <= 20 && sizes.gap <= 1, "episode rows are ~30px, one line each", sizes);
+    const epBox = await page.evaluate(() => {
+      const e = document.querySelector(".watch-episodes");
+      const n = document.querySelector(".watch-episode-name");
+      return { overflow: getComputedStyle(e).overflowY, fits: e.scrollHeight <= e.clientHeight + 1, ellipsis: getComputedStyle(n).textOverflow };
+    });
+    check(epBox.overflow === "visible" && epBox.fits && epBox.ellipsis === "ellipsis", "the whole season shows, no scroll box inside the list", epBox);
+    // …and the lengths on the right aren't cut off.
+    const lenFit = await page.evaluate(() => {
+      const box = document.querySelector(".watch-episodes").getBoundingClientRect();
+      return [...document.querySelectorAll(".watch-episode-len")].every((l) => l.getBoundingClientRect().right <= box.right + 0.5);
+    });
+    check(lenFit, "episode lengths sit inside the box");
+    // Your place is the episode crossed off most recently (Luke, 2026-11-01): S3 E8
+    // was just ticked after E6, so E7 counts as skipped and nothing is next.
+    const nextMark = await page.evaluate(() => [...document.querySelectorAll(".watch-episode.is-next")].map((b) => `${b.dataset.season}:${b.dataset.episode}`));
+    check(nextMark.length === 0, "after the last episode, the skipped one isn't 'next'", nextMark);
+    // Untick E8: your place goes back to E6, so E7 is next and gets the mark.
+    await ep8.tap();
+    await page.waitForTimeout(300);
+    const nextMark2 = await page.evaluate(() => [...document.querySelectorAll(".watch-episode.is-next")].map((b) => `${b.dataset.season}:${b.dataset.episode}`));
+    check(nextMark2.join() === "3:7", "the next episode to watch is marked (the one after your place)", nextMark2);
+    await ep8.tap();
+    await page.waitForTimeout(300);
+    const lay = await page.evaluate(() => {
+      const boxes = document.querySelectorAll(".watch-episodes input[type=checkbox], .watch-seasons input[type=checkbox]").length;
+      const name = document.querySelector(".watch-episode-name").getBoundingClientRect().width;
+      const row = document.querySelector(".watch-episode").getBoundingClientRect().width;
+      const head = document.querySelector(".watch-season-select").getBoundingClientRect().height;
+      return { boxes, name: Math.round(name), row: Math.round(row), head };
+    });
+    check(lay.boxes === 0, "no check boxes in the episode list", lay);
+    check(lay.name >= lay.row * 0.55, "episode titles get most of the row's width", lay);
+    check(lay.head <= 34, "'Season 3' stays on one line", lay);
+    const savedOpen = await page.evaluate(() => JSON.stringify(window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-t1-${globalThis.__qaR ?? R}`).seasonProgress));
+    check(!/__expanded|selected/.test(savedOpen), "picking a season isn't saved", savedOpen);
+    if (SHOT) await page.screenshot({ path: `${SHOT}-tracker-${width}.png` });
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "nothing scrolls sideways");
+    const bars = await page.evaluate(() => [".watch-list-panel", ".watch-category-tabs"].map((q) => {
+      const e = document.querySelector(`#watchPagePanel ${q}`);
+      return { q, bar: getComputedStyle(e).scrollbarWidth, gutter: e.offsetWidth - e.clientWidth };
+    }));
+    check(bars.every((b) => b.bar === "none" && b.gutter <= 2), "no scroll bar on the list or the tab strip", bars);
+    await page.setViewportSize({ width, height: 844 });
+
+    // Link a plain title.
+    await page.locator(`[data-watch-item="qa-m5-${globalThis.__qaR ?? R}"]`).scrollIntoViewIfNeeded();
+    await page.locator(`[data-watch-item="qa-m5-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForTimeout(250);
+    await page.locator(`[data-watch-find="qa-m5-${globalThis.__qaR ?? R}"]`).tap();
+    await page.waitForSelector("#watchSearchDialogResults .watch-tmdb-result", { timeout: 5000 });
+    check(await page.inputValue("#watchSearchDialogInput") === "Some Title From Notes", "Find starts with the show's title");
+    check(/Find the right title/.test(await page.locator("#watchSearchDialog h2").textContent()), "…in link mode");
+    if (SHOT) await page.screenshot({ path: `${SHOT}-link-${width}.png` });
+    const tags = await page.locator("#watchSearchDialogResults .watch-result-tag").allTextContents();
+    check(tags.length === 1 && tags[0] === "In your list", "a result already on the list is tagged", tags);
+    await page.locator("#watchSearchDialogResults .watch-tmdb-result").nth(1).tap();
+    await page.waitForTimeout(250);
+    check(await page.evaluate(() => document.getElementById("watchSearchDialog").open), "…and can't be picked to link");
+    await page.locator("#watchSearchDialogResults .watch-tmdb-result").first().tap();
+    await page.waitForTimeout(300);
+    const linked = await page.evaluate(() => window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-m5-${globalThis.__qaR ?? R}`));
+    check(linked?.tmdbId === 111 && linked?.title === "Some Title From Notes", "the tapped result links that show (same entry)", linked && { tmdbId: linked.tmdbId, title: linked.title });
+
+    // No "+" to add a show: the search bar does that (Luke, 2026-10-29). The tab "+" stays.
+    check(await page.locator(".watch-category-bar [data-open-watch-search], .watch-corner-btn").count() === 0, "no '+' to add a show beside the tabs");
+    check(await page.locator(".watch-category-bar [data-watch-category-add]").count() === 1, "…the '+' that adds a tab is still there");
+
+    // A short list starts at the top of the list area, not the middle (Luke, 2026-10-29).
+    for (const [label, kinds] of [["TV only", ["tv", "tv", "tv"]], ["movies and TV", ["movie", "tv", "movie", "tv"]]]) {
+      await page.evaluate((items) => window.__liveQA.watchSeedForQa(items), kinds.map((type, i) => ({ id: `qa-s${i}-${R}-${label.length}`, type, title: `Short ${i}`, tmdbId: 8000 + i })));
+      await page.waitForTimeout(300);
+      const gaps = await page.evaluate(() => {
+        const list = document.querySelector(".watch-list-panel").getBoundingClientRect().top;
+        const heads = [...document.querySelectorAll(".watch-section-head")].map((h) => h.getBoundingClientRect());
+        const grids = [...document.querySelectorAll(".watch-grid")].map((g) => g.getBoundingClientRect());
+        return { firstPoster: Math.round(grids[0].top - list), headToGrid: Math.round(grids[0].top - heads[0].bottom), between: heads[1] ? Math.round(heads[1].top - grids[0].bottom) : null };
+      });
+      check(gaps.firstPoster < 60 && gaps.headToGrid < 16 && (gaps.between === null || gaps.between < 40), `a short list (${label}) starts at the top`, gaps);
+      if (SHOT) await page.screenshot({ path: `${SHOT}-short-${label.length}-${width}.png` });
+    }
+    await page.evaluate(() => document.querySelector("[data-watch-focus-search]") === null);
+    await page.evaluate(() => window.__liveQA.watchSeedForQa([]));
+    await page.waitForTimeout(300);
+    await page.locator("[data-watch-focus-search]").tap();
+    check(await page.evaluate(() => document.activeElement?.id === "discoverSearchInput"), "the empty list's button goes to the search bar");
+
+    // Sidebar: the same text size as Listen's menu.
+    const sizes2 = await page.evaluate(() => ({
+      watch: getComputedStyle(document.querySelector("#watchSidebar .article-sidebar-tab")).fontSize,
+      listen: getComputedStyle(document.querySelector("#mediaSidebar .article-sidebar-tab")).fontSize,
+    }));
+    check(sizes2.watch === sizes2.listen, "the Watch menu's text matches Listen's", sizes2);
+
+    // YouTube: only on its own page (Luke, 2026-10-29).
+    const ytCalls = [];
+    await page.route(/(functions|api)\/youtube-search/, (r) => {
+      ytCalls.push(r.request().url());
+      r.fulfill(json({ items: [{ id: { videoId: "qaVid1" }, snippet: { title: "Holiday baking tips", channelTitle: "Bake Club", publishedAt: "2025-12-01T00:00:00Z", thumbnails: {} } }] }));
+    });
+    const typeSearch = async (q) => {
+      await page.fill("#discoverSearchInput", q);
+      await page.locator("#discoverSearchInput").dispatchEvent("input");
+      await page.waitForTimeout(1200);
+    };
+    await typeSearch("baking");
+    check(ytCalls.length === 0, "the Watch list's search doesn't search YouTube", ytCalls.length);
+    await page.fill("#discoverSearchInput", "");
+    await page.locator("#discoverSearchInput").dispatchEvent("input");
+    await page.waitForTimeout(500);
+    const openSide = async (side) => {
+      await page.locator("#watchSidebarToggle").tap();
+      await page.waitForTimeout(250);
+      await page.locator(`#watchSidebar [data-watch-side="${side}"]`).tap();
+      await page.waitForTimeout(600);
+    };
+    await openSide("youtube");
+    const ytHome = await page.evaluate(() => ({
+      active: document.querySelector('#watchSidebar [data-watch-side="youtube"]').classList.contains("is-active"),
+      placeholder: document.getElementById("discoverSearchInput").placeholder,
+      filterHidden: document.querySelector("#watchPagePanel .discover-filter").hidden,
+      gridHidden: document.getElementById("watchPlannerGrid").hidden,
+      empty: !!document.querySelector("#discoverResults .watch-yt-empty"),
+    }));
+    check(ytHome.active && ytHome.placeholder === "Search YouTube…" && ytHome.filterHidden && ytHome.gridHidden, "YouTube is its own page in the menu", ytHome);
+    check(ytHome.empty, "…with a hint when nothing is saved yet", ytHome);
+    if (SHOT) await page.screenshot({ path: `${SHOT}-yt-empty-${width}.png` });
+    await typeSearch("baking");
+    const ytRes = await page.$$eval("#discoverResults .discover-card .discover-title", (t) => t.map((x) => x.textContent.trim()));
+    check(await page.locator("#discoverResults .discover-svc-label:visible").count() === 0, "…without a services heading");
+    check(ytCalls.length >= 1 && ytRes.length === 1 && /Holiday baking tips/.test(ytRes[0]), "its search searches YouTube only", { calls: ytCalls.length, ytRes });
+    if (SHOT) await page.screenshot({ path: `${SHOT}-yt-search-${width}.png` });
+    await page.locator("#discoverResults [data-save-key]").first().tap();
+    await page.waitForTimeout(200);
+    await page.fill("#discoverSearchInput", "");
+    await page.locator("#discoverSearchInput").dispatchEvent("input");
+    await page.waitForTimeout(800);
+    const savedList = await page.evaluate(() => ({ head: document.querySelector("#discoverResults .watch-yt-head")?.textContent, titles: [...document.querySelectorAll("#discoverResults .discover-title")].map((t) => t.textContent.trim()) }));
+    check(savedList.head === "Saved videos" && savedList.titles.length === 1, "a saved video is listed on the YouTube page", savedList);
+    if (SHOT) await page.screenshot({ path: `${SHOT}-yt-saved-${width}.png` });
+    await page.locator("#discoverResults .discover-card .discover-title").first().tap();
+    await page.waitForTimeout(400);
+    const frame = await page.evaluate(() => document.querySelector("#videoSurfaceOverlay iframe")?.getAttribute("src") || "");
+    check(/youtube\.com\/embed\/qaVid1/.test(frame), "tapping it plays it in the app", frame);
+    await page.evaluate(() => document.querySelector("#videoSurfaceOverlay .video-surface-close")?.click());
+    await page.waitForTimeout(200);
+    await page.locator("#discoverResults [data-save-key]").first().tap();
+    await page.waitForTimeout(800);
+    check(await page.locator("#discoverResults .watch-yt-empty").count() === 1, "un-saving takes it off the page");
+    await openSide("list");
+    const back = await page.evaluate(() => ({ grid: !document.getElementById("watchPlannerGrid").hidden, placeholder: document.getElementById("discoverSearchInput").placeholder, filter: !document.querySelector("#watchPagePanel .discover-filter").hidden }));
+    check(back.grid && back.filter && /movies, shows/.test(back.placeholder), "Watch list brings the list back", back);
+
+    // A talk / reality show you haven't started opens on its latest aired season,
+    // not Season 1 (Luke, 2026-11-01).
+    await page.evaluate((r) => {
+      const items = window.__liveQA.watchItemsForQa();
+      items.push({ id: `qa-snl-${r}`, type: "tv", title: "Late Night Sketch", tmdbId: 1667, year: "1975", totalSeasons: 51, showType: "Talk Show", genreIds: [35, 10767], lastAiredSeason: 51, providersUpdatedAt: new Date().toISOString(), createdAt: "2026-10-07T00:00:00Z" });
+      window.__liveQA.watchSeedForQa(items);
+    }, R);
+    await page.waitForTimeout(300);
+    await page.locator(`[data-watch-item="qa-snl-${R}"]`).scrollIntoViewIfNeeded();
+    await page.locator(`[data-watch-item="qa-snl-${R}"]`).tap();
+    await page.waitForTimeout(700);
+    const fresh = await page.evaluate((r) => ({
+      season: document.querySelector(`[data-watch-season-select="qa-snl-${r}"]`)?.value,
+      next: [...document.querySelectorAll(`[data-watch-detail="qa-snl-${r}"] .watch-episode.is-next`)].map((b) => `${b.dataset.season}:${b.dataset.episode}`),
+    }), R);
+    check(fresh.season === "51" && fresh.next.join() === "51:1", "a talk show you haven't started opens on its latest season", fresh);
+    await page.locator(`[data-watch-item="qa-snl-${R}"]`).tap(); // close
+    await page.waitForTimeout(200);
+
+    // Archive on a phone: tapping a show (no right-click) opens Edit · Back to
+    // Watch list · Delete; Back to Watch list returns it (Luke, 2026-11-01).
+    await page.evaluate((r) => {
+      const items = window.__liveQA.watchItemsForQa();
+      items.push({ id: `qa-a1-${r}`, type: "movie", title: "Watched By Mistake", tmdbId: 4242, year: "2020", status: "watched", createdAt: "2026-10-06T00:00:00Z" });
+      window.__liveQA.watchSeedForQa(items);
+    }, R);
+    await page.waitForTimeout(300);
+    await openSide("archive");
+    const arch = page.locator(`#watchArchiveDialog [data-watch-archive-item="qa-a1-${R}"]`);
+    check(await arch.count() === 1, "a watched show is in the Archive");
+    await arch.locator(".watch-item-title").tap();
+    await page.waitForTimeout(250);
+    const menuItems = await page.$$eval("#watchArchiveDialog .watch-item-context-menu [role=menuitem]", (b) => b.map((x) => x.textContent.trim()));
+    check(menuItems.join() === "Edit,Back to Watch list,Delete", "tapping an archived show opens its menu", menuItems);
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(150);
+    if (!(await page.evaluate(() => document.getElementById("watchArchiveDialog").open))) await openSide("archive");
+    await page.locator(`#watchArchiveDialog [data-watch-archive-item="qa-a1-${R}"] [data-watch-archive-more]`).tap();
+    await page.waitForTimeout(250);
+    if (SHOT) await page.screenshot({ path: `${SHOT}-archive-${width}.png` });
+    await page.locator("#watchArchiveDialog [data-watch-ctx-unarchive]").tap();
+    await page.waitForTimeout(300);
+    const backOn = await page.evaluate((r) => ({
+      status: window.__liveQA.watchItemsForQa().find((i) => i.id === `qa-a1-${r}`)?.status,
+      inArchive: !!document.querySelector(`#watchArchiveDialog [data-watch-archive-item="qa-a1-${r}"]`),
+    }), R);
+    check(backOn.status === "want" && !backOn.inArchive, "…and its ⋯ → Back to Watch list returns it to the list", backOn);
+    await page.evaluate(() => document.getElementById("watchArchiveDialog")?.close());
+
+    check(errors.length === 0, "no page errors", errors.slice(0, 3));
+    // Week-old where-to-watch refreshes on view, a few at a time, once each per
+    // session (Luke, 2026-10-31). The seeds have no providersUpdatedAt.
+    const provCalls = [];
+    page.on("request", (req) => { if (/tmdb-watch-providers/.test(req.url())) provCalls.push(req.url()); });
+    await page.evaluate((items) => { window.__liveQA.watchSeedForQa(items); window.__liveQA.watchRefreshInDev = true; }, seedFor(R));
+    await page.locator('[data-watch-category="all"]').tap();
+    await page.waitForTimeout(1200);
+    const firstRound = provCalls.length;
+    await page.locator('[data-watch-category="all"]').tap();
+    await page.waitForTimeout(800);
+    const refreshed = await page.evaluate(() => window.__liveQA.watchItemsForQa().filter((i) => i.providersUpdatedAt).length);
+    check(firstRound >= 5 && provCalls.length === firstRound && refreshed >= 5, "week-old shows refresh on view, once each a session", { firstRound, total: provCalls.length, refreshed });
+    await page.evaluate(() => { window.__liveQA.watchRefreshInDev = false; });
+
+    await context.close();
+  }
+} finally {
+  await browser.close();
+}
+const failed = results.filter((r) => !r).length;
+console.log(failed ? `\n✗ ${failed} of ${results.length} checks failed` : `\n✔ all ${results.length} checks passed`);
+process.exit(failed ? 1 : 0);

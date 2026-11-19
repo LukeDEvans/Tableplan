@@ -1,3 +1,4 @@
+const { authUserFetch } = require("./_auth-user.js");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 exports.handler = async (event) => {
@@ -66,7 +67,7 @@ exports.handler = async (event) => {
 
 async function getCallerUser(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
     if (!res.ok) return null;
     return await res.json();
   } catch { return null; }

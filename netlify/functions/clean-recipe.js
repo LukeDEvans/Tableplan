@@ -2,6 +2,7 @@
 // POST /api/clean-recipe
 // Body: { recipe, mode, existingTags, ingredientItems }
 // mode: "structure" | "tags" | "all"
+import { authUserFetch } from "./_auth-user.js";
 
 export const config = { path: "/api/clean-recipe" };
 
@@ -145,7 +146,7 @@ async function claudeCall(apiKey, { system, user }) {
 
 async function verifySession(token, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${token}` }
     });
     return res.ok;

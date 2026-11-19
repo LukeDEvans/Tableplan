@@ -21,7 +21,7 @@ changes to Mail only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `mail-frame.js`, `mail-attachment-view.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/gmail-attachment.mjs`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
+- files: `mail-frame.js`, `mail-attachment-view.js`, `mail-attachment-viewers.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/gmail-attachment.mjs`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
 - state: `mail*`
 
 ## Your scope (edit these)
@@ -73,12 +73,26 @@ changes to Mail only.
 - **Attachments open inside the app** (Luke, 2026-10-15): every attachment, not just
   PDFs. iPhone → the `AttachmentPreview` plugin (`ios/App/App/AttachmentPreviewPlugin.swift`,
   Quick Look + Share), which downloads straight from `gmail-attachment.mjs`; web → the
-  `#mailAttachmentViewer` dialog (PDF / bitmap images / plain text inline, Download for
-  the rest). `gmail-attachment.mjs` streams raw bytes (Netlify's streamed limit is
+  `#mailAttachmentViewer` dialog, drawn by `mail-attachment-viewers.js` (PDF / bitmap
+  images / plain text inline; since 2026-11-13 a CSV as a table, a calendar invite as
+  its events with **Add to Calendar** — the event editor opens filled in, nothing is
+  saved until Luke saves it — a contact card with **Add to Contacts** through
+  `importContactsVcf`, audio / video in a player; Download for the rest). Luke wants
+  every attachment to open inside the app (2026-11-13), using the Document page's own
+  editors for Office files. **Word (.docx)** opens in the word processor's preview mode
+  (`documents/editor/host.js` `openDocxPreview`: view only, from memory, nothing
+  stored; **Save to Document** makes it a document in the view's Document page through
+  `documentsUi.addConverted`); a file that can't be read falls back to Download with
+  the reason. Spreadsheets and slides follow when their editors can read .xlsx / .pptx;
+  HTML / .eml and zip are not built yet. The iPhone still opens every attachment in
+  Quick Look. The viewer reaches other pages only through what app.js
+  injects (`showMailAttachment`). `gmail-attachment.mjs` streams raw bytes (Netlify's streamed limit is
   20MB, vs ~6MB buffered, which with base64 meant 3.5MB); over ~19.5MB → Gmail. The
   old base64 `attachment` action stays as the fallback (and serves `cid:` images).
   **Security:** the sender controls the declared type — never render HTML/SVG in the
-  page, never create a blob with the sender's type (`mail-attachment-view.js`).
+  page, never create a blob with the sender's type (`mail-attachment-view.js`), and put
+  every value from a file in through `textContent` (CSV cells, invite and contact
+  fields). A contact's photo shows only when it is an inline bitmap; never a URL.
 
 ## Domain landmines (do NOT change without flagging)
 - **The sweep is bounded and idempotent** (ARCHITECTURE §8): claims a run atomically,
@@ -92,6 +106,20 @@ changes to Mail only.
   unguarded loop once caused an auth storm). Google Calendar has its own connect flow
   (`_gcal.js`) — don't merge the two.
 - Contacts lives inside the Mail page (contacts mode) but is the **contacts** agent's.
+- **Gmail rate limits** (Luke, 2026-11-05, after "Quota exceeded … Units per minute
+  per user" on fast folder switching): Gmail's per-user quota is enforced over a short
+  window, so bursts matter. `gFetch` / `gBatchGet` retry a rate limit (429, or 403
+  `rateLimitExceeded`/`userRateLimitExceeded`) **exactly once** after a delay — never a
+  loop, and a rate-limited batch **never** falls back to parallel individual calls.
+  Rows still unloaded show as "Couldn't load" (`loadFailed`), not dropped. Luke chose
+  **no client-side auto-retry** (storm risk).
+- **Folder cache is always fresh, never TTL-stale** (Luke, 2026-11-05): the first page
+  of a plain folder is cached with the mailbox `historyId`; returning to it sends
+  `ifUnchangedSince` and the server answers `unchanged` from one `history.list` (2 units)
+  or does a full load. Luke rejected a plain time-based cache and a folder-switch
+  debounce as noticeable downgrades — don't add them. Any action that changes a list
+  (`move`/`snooze`/`unsnooze`/`send`/non-peek `get`) clears the cache; Refresh always
+  does a full load. Read-ahead stops the moment a folder switch starts.
 
 ## Verify
 `npx vitest run` (`mail-*`, `auth-gmail-callback`), `npm run check:mail-frame`,
@@ -151,3 +179,8 @@ say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/`
 other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
 the client, and native `ios/` changes only ship this way), or both. Log anything real
 you notice but don't fix to `ISSUES.md`.
+
+## Search covers all mail (Luke, 2026-11-17)
+A Mail search looks through all of the person's mail, as Gmail's does (spam and trash
+excluded), not just the open folder: `loadMailList` sends `labelIds: []` when there's
+a query. Emptying the search box brings the folder back.

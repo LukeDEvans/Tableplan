@@ -20,7 +20,7 @@ changes to the Watch page only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `media-provider-tmdb.js`, `media-provider-youtube.js`, `media-provider-jellyfin.js`, `media-availability.js`, `media-deeplink.js`, `media-watch-adapter.js`, `media-search-scope.js`, `media-stream-links.js`, `netlify/functions/stream-links.mjs`, `netlify/functions/tmdb-*.js`, `netlify/functions/youtube-search.js`, `netlify/functions/showtimes.js`
+- files: `media-provider-tmdb.js`, `media-provider-youtube.js`, `media-provider-jellyfin.js`, `media-availability.js`, `media-deeplink.js`, `media-watch-adapter.js`, `media-search-scope.js`, `watch-merge.js`, `watch-episodes.js`, `watch-place.js`, `media-stream-links.js`, `netlify/functions/stream-links.mjs`, `netlify/functions/tmdb-*.js`, `netlify/functions/youtube-search.js`, `netlify/functions/showtimes.js`
 - state: `watch*`, `jellyfin`, `mediaServices`
 
 ## Your scope (edit these)
@@ -75,6 +75,121 @@ changes to the Watch page only.
   a result with no TMDB id (YouTube) plays when tapped. Listen's search keeps its Save
   buttons.
 
+- **Two lists (Luke, 2026-10-29):** a shared **Household** Watch list (Luke + Marijane)
+  and Luke's own **Personal** list — the existing per-view rows. Household starts empty
+  via the #189 row reset, which goes out with the next big deploy.
+- **The show panel (Luke, 2026-10-29; WATCH_AUDIT.md):** tapping a poster opens its panel
+  **under the whole row** — the row stays put (`grid-auto-flow: dense` on `.watch-grid`
+  lets later posters fill the row first). A **pointer** on the panel's top edge marks the
+  open poster and **slides** when another poster in the same row opens
+  (`placeWatchPanelPointer`); the open poster keeps its **ring**; tap again closes; no
+  dimming of other posters. The panel holds the full title, a **Next episode** line for TV
+  ("NEXT S3 E6" on one line, the title below, a round ✓ with no text — Luke, 2026-10-30; `watchNextEpisode`), services, the season tracker
+  and a **⋯ menu** with Watched · Tabs · Remove — the phone's way to do what the laptop's right-click
+  menu does (iOS has no right-click; holding a poster starts a drag).
+- **Remove waits ~6 s with Undo (2026-10-29):** `requestWatchRemove` hides the show and
+  shows the Undo toast; nothing is saved or tombstoned until the toast is gone
+  (`watchPendingRemovals`). All removals (panel, right-click, Archive) go through it.
+- **The shown season is device state (2026-10-29):** `watchSelectedSeason`, never synced;
+  the old `seasonProgress[n].__expanded` is dropped on load.
+- **No "+" to add a show (Luke, 2026-10-29):** shows are added only from the page's
+  search bar; the empty list's button focuses it. The tab "+" stays.
+- **"Find the right title" window (2026-10-29)** (`openWatchSearchDialog({ linkId })`, now
+  link-only): a show without a TMDB match opens it with its title; the tapped result fills
+  in that same show. Results already on the list are tagged **In your list** and can't be
+  picked. No Paste-a-list import and no automatic matching (Luke adds titles one by one).
+- **Services in the panel (Luke, 2026-10-29):** no "Your services" / "Other services"
+  headings. Your services are buttons; services outside them fold into one
+  **Other services** button (same look) that opens `#watchOtherServicesDialog` naming them
+  (each still opens its service).
+- **A short list starts at the top (2026-10-29):** `.watch-list-panel`, `.watch-sections`
+  and `.watch-section` pack their rows at the top (`align-content: start`); without it the
+  stretched grid put a short list mid-screen and pushed Movies and TV Shows apart.
+- **The screen stays put on a redraw (Luke, 2026-10-29):** `renderWatchPlanner` keeps the
+  list's scroll (and each open season's episode-list scroll, `data-watch-eps`) across the
+  redraw that follows picking a season or ticking an episode; only a tab switch
+  (`watchListScrollReset`) starts at the top. Any new redraw path gets this for free.
+- **Season menu (Luke, 2026-10-29):** the panel shows one season at a time, picked from a
+  `<select>` (`watchSeasonPickerHtml`) with that season's episodes below. Since
+  2026-10-30 (Luke) the options read only "Season 3" — no progress count, no progress bar,
+  and **no way to tick a whole season**: episodes are crossed off one at a time.
+  Unpicked it shows the next episode's season (`watchShownSeason`); the pick is device
+  state (`watchSelectedSeason`), never saved. Episode rows nearly touch.
+- **⋯ menu (Luke, 2026-10-29):** Watched · Tabs · Remove live in a ⋯ button at the panel's
+  top-right (`openWatchMoreMenu`); there's no button row at the bottom. Tabs opens the Tabs
+  popover at the same spot.
+- **No scroll bars (Luke, 2026-10-29):** the Watch list and its tab strip scroll without a
+  visible bar (`scrollbar-width: none` + `::-webkit-scrollbar`), scoped to `#watchPagePanel`.
+- **YouTube page (Luke, 2026-10-29):** "YouTube" sits under "Watch list" in the sidebar
+  (`watchSideView`, device-only). Its search bar searches YouTube only; with no search it
+  lists the saved YouTube videos (`state.mediaSaved`, the bookmark on a result); tapping a
+  video plays it in the in-app player (`openVideoSurface`). **The Watch list's search leaves
+  YouTube out** — YouTube is only on its own page. The search filter is hidden there.
+- **No streaming-service bubble on posters (Luke, 2026-10-29):** the open panel lists the
+  services; "In theaters" / "Upcoming" / "Rent" chips still show.
+- **Menu text matches Listen's (2026-10-29):** `#watchSidebar` tabs share `#mediaSidebar`'s
+  17px text and 48px rows.
+- **The ring isn't clipped (2026-10-29):** `#watchPlannerGrid` reaches 6px into the page's
+  side padding and pads back, so the open poster's ring shows at both ends of a row without
+  shrinking the posters.
+- **Episode lengths (Luke, 2026-10-29):** each episode row shows its length
+  (`tmdb-season` passes TMDB's `runtime`, minutes, or null) when TMDB has it. A season list
+  saved before that has no `runtime` key, so the shown season reloads once per session
+  (`ensureWatchShownSeasonRuntimes`); an unchanged reload isn't saved.
+- **No TV / M badge on posters (Luke, 2026-10-29):** the Movies / TV Shows sections already
+  say it.
+- **No NEXT box (Luke, 2026-10-31):** the panel no longer shows the Next-episode line.
+  The code stays (`watchNextEpisodeHtml`) behind `WATCH_SHOW_NEXT_BOX = false` in case he
+  wants it back; `watchNextEpisode` still picks the season the panel opens on. While a
+  picked season loads, its placeholder keeps the last episode list's height so the
+  screen doesn't move.
+- **Your place in a show (Luke, 2026-11-01):** `watch-place.js`. Your place is the episode
+  crossed off most recently (`tickAt`; older saves: the furthest tick). The panel opens on its
+  season, "next" (`.is-next`) is the first unticked episode after it — earlier unticked ones
+  count as skipped, never missed — and the poster bar is progress through that season. A
+  never-started show opens on Season 1, except talk / reality / news (TMDB `showType` or genre
+  10763/10764/10767), which open on `lastAiredSeason`. `tmdb-watch-providers` returns
+  `showType`, `genreIds`, `lastAiredSeason`; TV shows without `showType` refresh once to get it.
+- **Archive on the phone (Luke, 2026-11-01; decision 10, part):** tapping an archived show
+  or its ⋯ (`data-watch-archive-more`, replaces the TV/M badge there) opens Edit · **Back
+  to Watch list** (was "Remove from Archive") · Delete; right-click still works on the laptop.
+- **Seasons panel polish (Luke, 2026-10-31; second audit S1–S7):** the whole season shows
+  (no scroll box inside the list); rows ~30px, one line each (long titles end in "…");
+  the next episode to watch gets an accent row (`.is-next`); episodes not out yet show
+  their air date and can't be ticked (`.is-upcoming`, `disabled`); a failed load says
+  "Couldn't load the episodes." with Try again (`watchSeasonLoadFailed`, device-only).
+- **Refresh on view (Luke, 2026-10-31; decision 7):** `refreshStaleWatchShows` reloads
+  where-to-watch + season counts for shows in the current tab whose `providersUpdatedAt`
+  is over 7 days old — two at a time, each once a session, 12 a session; the open show's
+  episode list reloads when it's over a week old. Off in local dev unless
+  `window.__liveQA.watchRefreshInDev`.
+- **Per-tick merge (Luke, 2026-10-31; WATCH_AUDIT decision 5):** `watch-merge.js`. Every
+  episode tick (`stampTick` → `tickAt["s:e"]`), tab change (`stampTab` → `tabsAt[catId]`) and
+  other edit by a person (`touchItem` → `updatedAt`) carries its own time; `mergeStates`
+  merges `watchItems` with `mergeWatchItems`, deciding each episode and tab by its own time,
+  so two people's ticks both stick. Unstamped (older) data keeps the old newer-side rule.
+  Change ticks/tabs only through these helpers.
+- **Episode lists are device data (Luke, 2026-10-31; D3 / decision 6):** `watch-episodes.js`
+  keeps each show's season lists in this device's storage (`live.watchEpisodes.v1`, by
+  TMDB id, 80 shows LRU), never in the synced row. `normalizeWatchItems` moves an older
+  copy's `episodeData` into the store; `mergeWatchItems` drops it. Read lists with
+  `watchEpisodes.get(tmdbId, season)`.
+- **No year / season count under posters (Luke, 2026-10-30):** a poster shows only its
+  title; the open panel keeps the year and season count (`watchCardSub` → `.watch-detail-sub`).
+- **Episodes are crossed off, no check boxes (Luke, 2026-10-30):** each episode row is a
+  button; tapping it marks it watched (struck through, `.is-watched`) or back.
+- **Services are links under the year line (Luke, 2026-10-31; replaces the 2026-10-30
+  right-aligned bubbles):** in the panel the services sit in `.watch-detail-head` right
+  under the year / season count, as plain text links in the theme's link colour
+  (`--accent-dark`), no bubbles, left-aligned with "Other services" first.
+- **Panel colour and season box (Luke, 2026-10-31):** the panel is the light `--surface`;
+  the season menu is the header of one box with its episodes (a hairline between).
+- **Agreed, not built yet (WATCH_AUDIT.md "Decisions"):** per-tick merge of episode ticks
+  and tabs; episode lists/showtimes in a device cache and trimmed providers; refresh
+  where-to-watch on view after 7 days; two-line titles + grid/list toggle; hide empty
+  Upcoming / In Theaters; Archive window actions; Continue
+  watching row; Sort + Filter; "Finished — move to Archive?"; housekeeping.
+
 ## Domain landmines (do NOT change without flagging)
 - **Merges:** `watchItems` is an id-keyed union with tombstones (delete through
   `recordDeletion("watchItems", id)`), `watchPlans` merges per week
@@ -90,6 +205,7 @@ changes to the Watch page only.
 `npx vitest run` (`media-provider-tmdb`, `-youtube`, `-jellyfin`, `media-deeplink`,
 `media-watch-adapter`, `media-watch-merge` (Watch item → Discover availability path),
 `media-search-scope`), `npm run check:boot`, `npm run qa:watch-search`,
+`npm run qa:watch-panel` (the panel, pointer, actions, Undo, tracker, link mode),
 and headless Chromium at phone width against `npm run dev:local` (mock the tmdb/youtube
 functions with `page.route`).
 
@@ -133,3 +249,10 @@ say how the change reaches Luke: a **Netlify deploy** (anything under `netlify/`
 other server behavior), a **TestFlight build** (the iPhone app bundles its own copy of
 the client, and native `ios/` changes only ship this way), or both. Log anything real
 you notice but don't fix to `ISSUES.md`.
+
+## Written from outside: Claude Duet (2026-11-17)
+`supabase/functions/liv-mcp/write-tools.js` writes this domain's data directly in its
+`tableplan_states` row, with tombstones and stamps, the way a device saves. When you change
+this domain's data shape, slot ids, tombstone keys or view rules, update write-tools.js and
+its tests (test/assistant-liv-mcp.test.js) in the same PR; then `npm run build:liv-mcp`
+and redeploy the liv-mcp Edge Function. DUET_CONNECTOR_DESIGN.md §5.

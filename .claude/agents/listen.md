@@ -17,17 +17,20 @@ changes to the Listen page's audio (everything except streaming music) only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you verified.
 
+**Radio favourites and followed programs merge by union with add/remove stamps** (2026-11-17, `stamped-lists.js`, stamps in `mediaListStamps`): stamps are made in `persist()` against a baseline, so favouriting or following only needs its usual `persist()`.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `media-queue-*.js`, `media-tier.js`, `media-progress.js`, `media-history.js`, `media-state.js`, `media-sources.js`, `media-model.js`, `media-search.js`, `media-provider.js`, `media-provider-podcast.js`, `media-provider-radio.js`, `media-content.js`, `radio*.js`, `podcast-retention.js`, `playback-*.js`, `voice-*.js`, `tts-*.js`, `tts-*.mjs`, `kokoro-*.mjs`, `article-body-backfill.mjs`, `netlify/functions/fetch-podcast.js`, `netlify/functions/generate-tts.js`, `netlify/functions/kokoro-tts.mjs`, `netlify/functions/presynth-*.mjs`, `netlify/functions/_presynth-key.mjs`, `netlify/functions/tts-cache-cleanup.js`, `netlify/functions/check-hcl.js`
+- files: `media-queue-*.js`, `listen-queue.js`, `media-tier.js`, `media-progress.js`, `media-history.js`, `media-state.js`, `media-sources.js`, `media-model.js`, `media-search.js`, `media-provider.js`, `media-provider-podcast.js`, `media-provider-radio.js`, `media-content.js`, `radio*.js`, `podcast-retention.js`, `playback-*.js`, `voice-*.js`, `tts-*.js`, `tts-*.mjs`, `kokoro-*.mjs`, `article-body-backfill.mjs`, `netlify/functions/fetch-podcast.js`, `netlify/functions/generate-tts.js`, `netlify/functions/kokoro-tts.mjs`, `netlify/functions/presynth-*.mjs`, `netlify/functions/_presynth-key.mjs`, `netlify/functions/tts-cache-cleanup.js`, `netlify/functions/check-hcl.js`, `media-music-show.js`, `media-music-show-ui.js`, `netlify/functions/_music-show.js`
 - state: `podcast*`, `media*`, `radio*`, `readingItems`, `readingSettings`, `readingProgress`, `libraryKey`, `publicationTiers`
 
 ## Naming — read this first
 The page is **Listen** to Luke, but **internal keys did not change** (decision 6):
 `activeAppArea` is `"media"`, the page-access key is `read`, `#media` / `#read` /
-`#listen` all open it, and the data stays in the `media` state section. Change
+`#listen` all open it, and the library stays in the `media` state section. The
+person's own queue state and positions are in the **`listen`** section (below). Change
 visible labels only; renaming synced keys makes settings revert on other devices.
 Listen is in the **Media** menu group (with Watch) on the landing page and the page
 menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-player**
@@ -54,7 +57,20 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
   music tab — `showMediaApp`, `renderMediaAllList` (the queue), podcasts, radio,
   Books, `renderMediaSearchResults`, the mini-player / Now Playing. Search:
   `showMediaApp`, `renderMediaAllList`, `podcastQueue`, `mediaQueueAdded`, `miniPlayer`.
-- **Data (`media` section):** `podcasts`, `podcastProgress`, `podcastQueue`,
+- **One queue and player per person (Luke, 2026-11-13; LISTEN_QUEUE_DESIGN.md):**
+  `listen-queue.js` lists the keys that live in the person's own **`listen`** row
+  (`u-<uid>:listen`, never swapped by a view switch): `podcastProgress`,
+  `mediaProgress`, `readingProgress`, `mediaQueueAdded`, `mediaQueueRemoved`,
+  `podcastAutoSkipped`, `mediaAllPinnedOrder`, `mediaHistory`. So a position or a
+  finished mark is the person's in every view. The shows, articles and books that
+  fill the queue automatically are the person's **home library** (`listenLibrary()`
+  in app.js, views.js `listenHomeScope`): Personal for someone who has it, else
+  Household — Luke chose "Personal shows only"; a Household episode joins his queue
+  only by hand. `findPodcastEpisode` also looks in the other view's off-screen copy.
+  Saved shows/episodes stay per view. Watch is unchanged (shared in Household). A
+  one-time move (`seedListenRowOnce`) folds the old per-view copies in. QA:
+  `npm run qa:listen-queue`.
+- **Data (`media` section — the library; the queue keys above moved to `listen`):** `podcasts`, `podcastProgress`, `podcastQueue`,
   `podcast*` settings and tiers, `mediaProgress`, `mediaHistory`, `mediaSaved`,
   `mediaQueueAdded` / `mediaQueueRemoved` / `mediaQueueFallback`,
   `mediaAllPinnedOrder`, `radioFavorites` / `radioFollowedPrograms` /
@@ -66,6 +82,13 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
 - **Newsletter briefings live only in Listen (2026-10-16).** The Morning / The world
   in brief (saved articles `news-*`) reach the queue like any saved article; News no
   longer shows them anywhere. Keep them in the queue.
+- **Podcasts › Shows and Books look like the Watch page** (Luke, 2026-11-11): covers in
+  Watch's grid (`.watch-grid`, four a row on a phone); tapping a cover opens a panel under
+  its row (`.watch-detail-row`, pointer placed by the shared `placeGridPanelPointer`) and
+  the grid stays put — a show's panel lists its 5 most recent episodes with "All episodes"
+  opening the full list (bundle settings live there); a book's panel has author, format,
+  library availability and the library / Libby / Audible links. Don't bring back opening a
+  show as its own page on tap. QA: `node scripts/qa-listen-grid.mjs`.
 - **Books stays in Listen** for now (mostly audiobooks); how to organize non-audio
   books is undecided — don't move Kindle/Libby out.
 - **Saved articles still join the queue for read-aloud**; tapping one opens the
@@ -79,6 +102,30 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
   "month".
 - **A podcast whose audio never loads moves the queue on** (`onPodcastLoadFailed`,
   2026-10-26), like music; an error after playback started leaves it for a retry.
+- **Music shows live under the Listen bell, not in the queue (2026-10-28).** NYT's
+  The Amplifier is parsed by the inbox sweep (`netlify/functions/_music-show.js`, no
+  AI; Mail → Automation toggle `amplifierToListen`) into a saved article `show-<gmail
+  id>` carrying `musicShow`. The bell (`media-music-show-ui.js`) lists unfinished
+  shows; Play hands the whole show to `LiveTtsPlugin` as "speech" items (intro, each
+  song's write-up) and "appleMusic" items (each song, through MusicKit's
+  ApplicationMusicPlayer), so it runs with the phone locked. Finishing or dismissing
+  marks the article read. Outside the iPhone app Play opens it to read. Pure helpers
+  and matching: `media-music-show.js`. See AMPLIFIER_DESIGN.md.
+  While a show's song plays, a silent mixable keep-alive keeps the app awake so the
+  next write-up starts (2026-11-04; Luke played a whole show locked, 2026-11-05).
+- **An interrupted read carries on (Luke, 2026-11-05).** A text, Siri reading a
+  message or any interruption of 30 s or less resumes the article by itself (longer
+  ones only when iOS says "should resume"). After any interruption the plugin
+  re-speaks from the last word on a fresh synthesizer (`resetSynth`), never trusting
+  a paused `AVSpeechSynthesizer` to continue, and a resume with no words within 3 s
+  restarts once more. Don't reinstate "isSpeaking && !isPaused means playing" — that
+  is what left reads stuck (`test/tts-plugin-contract.test.js`).
+- **Skip within an article (Luke, 2026-11-05).** On the iPhone, the Now Playing back
+  / forward buttons, the lock screen's ±skip and the seek bar move within the
+  article by sentences (`skipSpeech` / `seekSpeech`; ≈15 characters a second at
+  normal speed); forward past the end finishes the article. A skip while paused
+  stays paused. Every `tts.<method>()` call must be registered in the plugin's
+  `pluginMethods` (checked by the same test).
 
 ## Shared infrastructure you steward (flag cross-domain effects)
 `playback-engine.js`, `playback-coordinator.js`, `playback-speed.js` (one speed for
@@ -96,6 +143,25 @@ through the engine.
   don't turn them into newest-wins.
 - TTS cache identity is content-addressed — changing what feeds the hash invalidates
   every cached clip (cost + egress). Flag before changing it.
+- Podcasts play from a download on the iPhone (Luke, 2026-11-11, "download then play"):
+  `EpisodeDownload` + "Episode downloads" in `LiveTtsPlugin.swift`. A downloaded file
+  plays first (Caches/LivePodcasts; removed when the episode finishes, after 3 weeks
+  unplayed, or over 2 GB). A new episode started from the beginning plays from its
+  download as it arrives, so what is heard and what is kept are one fetch. An episode
+  picked up part-way with no file streams as before while the download runs for next
+  time. The next queued episode is fetched ahead on Wi-Fi only. Anything that goes wrong
+  falls back to the stream at the same spot. Songs, radio and plain-http audio are
+  untouched. No web-code change: the plugin decides. Why: hosts put ads in per request,
+  so a stream that reconnects can continue in a different file (the jump back).
+- An episode stuck short of its end (iPhone): the native player's stall watch
+  (`checkAudioStall` in `LiveTtsPlugin.swift`) treats a stall in the last stretch, with
+  the network up, as finished, and reconnects a stall earlier in the episode (twice at
+  most). Offline is never "finished". Play after a stall reopens the episode at the same
+  spot (Luke, 2026-11-11).
+- A tap on the episode the iPhone is already playing never starts it again (Luke,
+  2026-11-11): it shows the episode, and resumes it if paused (`episodeTapAction` in
+  `media-queue-order.js`, `keepNativeEpisodePlaying` in `app.js`). A start reopens at the
+  last saved spot, up to 15 s back.
 - Background audio, lock-screen controls and native TTS only behave on the phone;
   headless Chromium can't prove them.
 

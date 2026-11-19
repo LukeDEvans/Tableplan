@@ -7,6 +7,7 @@
 // compatible ({ recipe }); an additive { result } carries the import contract.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const { safeFetch, statusForImportError } = require("./_import-fetch.js");
+const { authUserFetch } = require("./_auth-user.js");
 const { normalizeImportUrlInput } = require("./_import-url.js");
 const { extractRecipeFromHtml, extractRecipeFromText, findTitle } = require("./_recipe-extract.js");
 const { recipeResult } = require("./_import-contract.js");
@@ -68,7 +69,7 @@ function jsonResponse(statusCode, body) {
 
 async function verifySession(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     return res.ok;

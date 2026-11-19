@@ -4,7 +4,7 @@ const {
   loadUserGmailTokens, saveUserGmailTokens, deleteUserGmailTokens,
   getUserId, getValidAccessToken, gFetch, gBatchGet, headersMap, extractBody,
   htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep,
-  loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread
+  loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread, loadAppConfig
 } = require("./_gmail-shared");
 const { loadMailAiRow, dismissPendingRecipe } = require("./_recipe-digest");
 const NewsLinks = require("./_news-links");
@@ -114,6 +114,16 @@ exports.handler = async (event) => {
     if (view.kind === "foryou" && !forYou) view.kind = "front";
     const wantsWeights = forYou && view.kind === "foryou" && !q;
     const interest = forYou ? await NewsStore.loadInterest(serviceKey, userId, { cols: wantsWeights ? "all" : "teams" }).catch(() => null) : null;
+    // Opening the Front page (or the app: its dock ticker asks for the Front page)
+    // checks the papers' top feeds if nothing has in the last ten minutes, so a
+    // breaking story isn't an hour late (NEWS_FRONT_PAGE_DESIGN.md §10). Bounded,
+    // and never the reason a page fails.
+    if (view.kind === "front" && !light) {
+      await Promise.race([
+        require("./_news-feeds").runOpenCheck(serviceKey).catch((e) => { console.warn("[news] open check:", e.message); }),
+        new Promise((resolve) => setTimeout(resolve, 3500))
+      ]);
+    }
     const pageP = wantsWeights && interest
       ? NewsStore.loadForYou(serviceKey, userId, interest)
       : NewsStore.loadFeedPage(serviceKey, userId, { view: view.kind === "foryou" ? { kind: "front" } : view, before, q, limit: body.limit, athleticTagged: forYou });
@@ -225,6 +235,34 @@ exports.handler = async (event) => {
     if (q) params.set("q", q);
     labelIds.forEach((l) => params.append("labelIds", l));
 
+    // Always-fresh folder cache (the Mail page caches each folder's first
+    // page). Only the first page of a plain folder (no search, no paging) is
+    // cacheable. The client sends the mailbox history id it got with its cached
+    // copy; one history.list call (2 quota units, vs ~266 for a full load) says
+    // whether ANYTHING in the mailbox has changed since. Unchanged → the cached
+    // copy is exactly right. Changed, expired or unknown → full load as before.
+    // The history id is captured BEFORE the list is read, so a change that lands
+    // mid-load is caught by the next check (an extra reload, never a stale page).
+    const cacheable = !pageToken && !q;
+    let mailboxHistoryId = null;
+    if (cacheable) {
+      const since = String(body.ifUnchangedSince || "");
+      if (/^\d+$/.test(since)) {
+        const hr = await gFetch(gToken, `/history?${new URLSearchParams({ startHistoryId: since, maxResults: "1" })}`);
+        if (hr.ok) {
+          const hd = await hr.json().catch(() => null);
+          if (hd && !(hd.history || []).length) return json(200, { unchanged: true, historyId: hd.historyId || since });
+          mailboxHistoryId = hd?.historyId || null;
+        }
+        // 404 = history id too old to check; anything else = can't tell. Reload.
+      }
+      if (!mailboxHistoryId) {
+        const pr = await gFetch(gToken, "/profile").catch(() => null);
+        const pd = pr?.ok ? await pr.json().catch(() => null) : null;
+        mailboxHistoryId = pd?.historyId || null;
+      }
+    }
+
     // List CONVERSATIONS, not individual messages, so a multi-message chain is
     // one row (Gmail-style). Each thread is summarized from its latest message.
     const listRes = await gFetch(gToken, `/threads?${params}`);
@@ -267,9 +305,23 @@ exports.handler = async (event) => {
 
     const [total, attachmentIds, details] = await Promise.all([totalP, attachmentP, detailsP]);
 
+    let partial = false;
     const messages = threadList.map((t, i) => {
       const d = details[i];
       const msgs = d?.messages || [];
+      if (!d) {
+        // The row's details couldn't be fetched (e.g. Gmail was busy even after
+        // the one retry). Show the row rather than silently dropping it;
+        // opening it fetches the whole thread, which loads it properly.
+        partial = true;
+        return {
+          id: t.id, threadId: t.id, count: 1,
+          snippet: cleanSnippet(t.snippet || ""),
+          unread: false, starred: false, hasAttachment: false,
+          from: "", subject: "Couldn't load this message — tap to open",
+          date: "", internalDate: null, loadFailed: true
+        };
+      }
       if (!msgs.length) return null;
       const last = msgs[msgs.length - 1]; // most recent message drives the row
       const hdrs = headersMap(last.payload?.headers);
@@ -288,7 +340,13 @@ exports.handler = async (event) => {
       };
     }).filter(Boolean);
 
-    return json(200, { messages, nextPageToken: listData.nextPageToken || null, resultSizeEstimate: listData.resultSizeEstimate ?? null, total });
+    return json(200, {
+      messages, nextPageToken: listData.nextPageToken || null, resultSizeEstimate: listData.resultSizeEstimate ?? null, total,
+      // A partial page is never cached by the client (it would hide the
+      // missing rows until the mailbox next changed).
+      historyId: partial ? null : mailboxHistoryId,
+      partial
+    });
   }
 
   if (action === "attachment") {
@@ -325,6 +383,51 @@ exports.handler = async (event) => {
       console.error("checkInboxNow failed:", e.message);
       return json(502, { error: e.message || "Inbox check failed." });
     }
+  }
+
+  // Music shows (AMPLIFIER_DESIGN.md): turn the most recent playlist newsletters
+  // already in the mailbox (any label, incl. Apps/AI trash) into shows for the
+  // Listen bell. The app calls this once per device; the sweep handles new mail.
+  // Idempotent: a show already saved (id show-<messageId>) isn't saved again.
+  // (A show the user has finished or dismissed is filtered out by the app.)
+  if (action === "importMusicShows") {
+    const MusicShow = require("./_music-show");
+    const appCfg = await loadAppConfig(serviceKey, userId).catch(() => null);
+    const mailAi = appCfg?.mailAiSettings || {};
+    const sources = MusicShow.MUSIC_SHOW_SOURCES.filter((s) => mailAi[s.key] !== false);
+    if (!sources.length) return json(200, { imported: 0 });
+    const max = Math.min(Math.max(parseInt(body.max) || 2, 1), 4);
+    const params = new URLSearchParams({ maxResults: String(max * 2), q: 'in:anywhere from:nytimes.com subject:"The Amplifier" newer_than:21d' });
+    const listRes = await gFetch(gToken, `/messages?${params}`);
+    if (!listRes.ok) return json(502, { error: `Gmail search failed (${listRes.status}).` });
+    const ids = ((await listRes.json()).messages || []).map((m) => m.id).slice(0, max * 2);
+    let imported = 0;
+    const articles = [];
+    for (const id of ids) {
+      if (imported >= max) break;
+      const r = await gFetch(gToken, `/messages/${id}?format=full`);
+      if (!r.ok) continue;
+      const msg = await r.json();
+      const hdrs = headersMap(msg.payload?.headers);
+      const source = MusicShow.musicShowSourceFor(hdrs.from, hdrs.subject, mailAi);
+      if (!source) continue;
+      const show = MusicShow.parseMusicShow(extractBody(msg.payload) || "");
+      if (!show) continue;
+      await MusicShow.resolveShowSongs(show);
+      const article = MusicShow.musicShowArticle(show, source, { messageId: id, subject: hdrs.subject || "", date: hdrs.date || "" });
+      // Saved unless it's there already or was finished/dismissed (read) before.
+      let saved = false;
+      await require("./_state-sections.js").updateSection(serviceKey, `u-${userId}`, "media", (st) => {
+        const list = Array.isArray(st.savedArticles) ? st.savedArticles : [];
+        const read = Array.isArray(st.readArticleIds) ? st.readArticleIds : [];
+        if (list.some((a) => a?.id === article.id) || read.includes(article.id)) return null;
+        saved = true;
+        return { ...st, savedArticles: [...list, article] };
+      });
+      if (saved) { imported++; articles.push(article); }
+    }
+    // The records too, so the app shows them without waiting for a sync.
+    return json(200, { imported, articles });
   }
 
   if (action === "listBookingEmails") {

@@ -9,6 +9,7 @@
 // needs JS", not a hard error.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const { safeFetch } = require("./_import-fetch.js");
+const { authUserFetch } = require("./_auth-user.js");
 const { extractArticleFromHtml } = require("./_article-extract.js");
 
 exports.handler = async (event) => {
@@ -47,7 +48,7 @@ exports.handler = async (event) => {
 
 async function getUserId(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     if (!res.ok) return null;

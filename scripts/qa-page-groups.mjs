@@ -83,7 +83,7 @@ try {
   // Personal: Overview, then Calendar, News, Finance, Watch, Listen, Mail,
   // Exercise, Leisure — no Tasks, Weather, Scores, Meal Plan, Shop or Explore
   // (Explore is Household's since 2026-10-22).
-  const PERSONAL = ["Overview", "Calendar", "News", "Finance", "Watch", "Listen", "Mail", "Exercise", "Leisure"];
+  const PERSONAL = ["Overview", "Calendar", "News", "Finance", "Document", "Watch", "Listen", "Message", "Exercise", "Leisure"];
   const listed = (root) => visibleIn(`${root} .page-overview-btn, ${root} .page-group-pages > button`);
   console.log("Landing page");
   check((await visibleIn("#homePageGroups .page-group-head")).length === 0, "no group headings");
