@@ -62,7 +62,15 @@ describe("names", () => {
     { id: "t", storeName: "Target", purchaseDate: "2026-11-03", createdAt: "2026-11-03T17:55:00Z", source: "scan" },
   ];
   it("takes the store and date from the scan read right after it (not one saved before)", () => {
-    expect(receiptLabel(at, receipts)).toEqual({ name: "Costco · 2026-11-02", documentDate: "2026-11-02" });
+    expect(receiptLabel(at, receipts)).toEqual({ receiptId: "c", name: "Costco · 2026-11-02", documentDate: "2026-11-02" });
+  });
+  it("a scan that knows its receipt uses that one, never a neighbour in time", () => {
+    // Target was saved before the scan and would never be picked by time.
+    expect(receiptLabel(at, receipts, new Set(), "t")).toEqual({ receiptId: "t", name: "Target · 2026-11-03", documentDate: "2026-11-03" });
+    // The read hasn't come back yet: keep the id, name it by date, don't borrow Costco.
+    const waiting = receiptLabel(at, receipts, new Set(), "not-read-yet");
+    expect(waiting.receiptId).toBe("not-read-yet");
+    expect(waiting.name).toMatch(/^Receipt · /);
   });
   it("a read names only one receipt in a run", () => {
     const used = new Set();
@@ -135,6 +143,15 @@ describe("the outbox", () => {
     expect(added[0].meta.tags).toEqual(["receipt"]);
   });
 
+  it("a filed receipt points at its receipt record", async () => {
+    const box = createReceiptOutbox(createKeystore(memoryBackend()));
+    await box.queue([jpg(10, 10)], { scope: "g", receiptId: "receipt-1" });
+    await box.queue([jpg(10, 10)], { scope: "g" });
+    const lib = fakeLibrary();
+    await fileReceipts({ outbox: box, library: lib, scope: "g", folderId: "rf", newId: ids });
+    expect([...lib.stored.values()].map((a) => a.source)).toEqual([{ receiptId: "receipt-1" }, null]);
+  });
+
   it("a run after a crash between storing and removing files nothing twice", async () => {
     const box = createReceiptOutbox(createKeystore(memoryBackend()));
     await box.queue([jpg(10, 10)], { scope: "g" });
@@ -188,9 +205,9 @@ describe("the app's side (app.js)", () => {
   const app = readFileSync(fileURLToPath(new URL("../app.js", import.meta.url)), "utf8");
   it("the header scanner queues every scan with its household, and the camera's as camera pages", () => {
     const fn = app.slice(app.indexOf("function scanReceiptFromHeader("), app.indexOf("let receiptOutboxPromise"));
-    expect(fn).toMatch(/queueReceiptForDocuments\(images, \{ camera \}\)/);
+    expect(fn).toMatch(/const receiptId = openReceiptScanWithFiles\(images, scanOptions\);\s+queueReceiptForDocuments\(images, \{ camera, receiptId \}\)/);
     expect(app).toMatch(/scanReceiptFromHeader\(scannedPagesToFiles\(result\?\.pages\), \{[^}]*camera: true \}\)/);
-    expect(app).toMatch(/\.queue\(pages, \{ scope, camera \}\)/);
+    expect(app).toMatch(/\.queue\(pages, \{ scope, camera, receiptId \}\)/);
   });
   it("sign-out deletes the outbox", () => {
     expect(app).toContain(`deleteMessagingStore("${OUTBOX_DB}")`);

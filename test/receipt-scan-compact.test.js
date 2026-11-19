@@ -89,3 +89,12 @@ describe("scan deadline", () => {
     expect(err.code).toBeUndefined();
   });
 });
+
+describe("tip and card digits", () => {
+  it("keeps a printed tip and the card's last 4; drops anything that isn't 4 digits", () => {
+    expect(expandScanReceipt({ storeName: "Revival", total: 48.6, tip: 9.72, card: "XXXX XXXX XXXX 4417", lines: [] })).toMatchObject({ tip: 9.72, paymentLast4: "4417" });
+    expect(expandScanReceipt({ storeName: "Aldi", total: 5, card: "", lines: [] }).paymentLast4).toBeUndefined();
+    expect(expandScanReceipt({ storeName: "Aldi", total: 5, card: "41", lines: [] }).paymentLast4).toBeUndefined();
+    expect(expandScanReceipt({ storeName: "Aldi", total: 5, lines: [] })).not.toHaveProperty("card");
+  });
+});

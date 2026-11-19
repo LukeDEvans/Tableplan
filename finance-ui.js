@@ -1,5 +1,5 @@
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
-import { financeMonthsToSnapshot, financeOffsettingPairIds, financeTransferPairIds, financePendingDuplicates, localMonthKey, monthKeyOffset } from './finance-actuals.js';
+import { financeMonthsToSnapshot, financeOffsettingPairIds, financeTransferPairIds, financePendingDuplicates, localMonthKey, monthKeyOffset, financeMonthEntry, financeMonthEntryTotals, financeMonthEntriesMatch, financeTxnsCoverMonth, financeUncategorizedByMonth, financeProjectedSpend } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport, findDuplicateCsvAccount } from './finance-csv.js';
 import { saveFile } from './save-file.js';
@@ -8,6 +8,11 @@ import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
 import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 import { linkOutAttrs } from './link-out.js';
+import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
+import { financeOwedBalances } from './finance-settle.js';
+import { subscriptionReview, cashForecast, everydaySpendPerDay, goalProgress } from './finance-plan.js';
+import { TAX_KINDS, taxLabel, taxTagFor, taxYearSummary, taxYearCsv, tripCandidates, tripCharges } from './finance-tags.js';
+import { upcomingReturns, returnReminderInstances } from './receipt-returns.js';
 import { banksForAccounts, billerForBill, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
@@ -112,7 +117,62 @@ export const FINANCE_ACCOUNT_KINDS = ["cash", "retirement", "investment", "debt"
 // section — these are preferences, not ledger data.
 export const FINANCE_ALERTS = [
   { key: "priceChange", label: "Subscription price change", desc: "Flag when a recurring charge's amount changes vs its budget line." },
+  { key: "weeklyNudge", label: "Weekly reminder to categorize", desc: "Sunday evening on this iPhone, when transactions are waiting. Uses the same notification permission as calendar reminders." },
 ];
+
+// The weekly "N to categorize" notification, scheduled on the phone itself next to
+// calendar reminders (app.js syncNativeReminders). → { id, fireAt, title, body, kind }
+// or null. `count`: uncategorized transactions; `now`: ms. Fires the next Sunday at
+// 18:00 local, never within the next 10 minutes. The id changes with the count and
+// the week, so a changed count replaces the old notification instead of keeping it.
+// The month at a glance, for someone who doesn't want to open Finance: spent vs
+// budget, measured against how far through the month it is. Reads the saved
+// current-month totals, which sync, so it works before Finance has loaded on this
+// device. → { tone: "ok" | "ahead" | "over", text } or null without a budget.
+export function financeGlanceFrom({ spent, budget, uncategorized = 0, now = new Date() }) {
+  if (!(budget > 0)) return null;
+  const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const expected = budget * (now.getDate() / dim);
+  const left = budget - spent;
+  const money = (n) => `$${Math.round(Math.abs(n)).toLocaleString()}`;
+  const tail = uncategorized > 0 ? ` · ${uncategorized} to categorize` : "";
+  if (left < 0) return { tone: "over", text: `${money(left)} over budget this month${tail}` };
+  if (spent > expected * 1.1) return { tone: "ahead", text: `Spending ahead of pace · ${money(left)} left${tail}` };
+  return { tone: "ok", text: `On track · ${money(left)} left this month${tail}` };
+}
+// Grocery spending against its budget so far this month. groups: budget groups;
+// cats: this month's saved totals { "group:cat": amount }. Grocery categories are
+// the ones named like "Groceries". → { spent, budget, left, ahead } or null.
+export function groceryPaceFrom({ groups, cats, now = new Date() }) {
+  let budget = 0, spent = 0;
+  for (const g of groups || []) for (const c of g.categories || []) {
+    if (!/grocer/i.test(c.name || "")) continue;
+    budget += (c.items || []).reduce((s, it) => s + (Number(it.amount) || 0), 0);
+    spent += Math.abs(Number(cats?.[`${g.id}:${c.id}`]) || 0);
+  }
+  if (!(budget > 0)) return null;
+  const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const expected = budget * (now.getDate() / dim);
+  return { spent: Math.round(spent * 100) / 100, budget, left: Math.round((budget - spent) * 100) / 100, ahead: spent > budget || spent > expected * 1.1 };
+}
+
+export const FINANCE_NUDGE_ID_BASE = 2000000000;
+export function financeNudgeInstance(count, now = Date.now()) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (!n) return null;
+  const at = new Date(now);
+  at.setHours(18, 0, 0, 0);
+  at.setDate(at.getDate() + ((7 - at.getDay()) % 7));
+  if (at.getTime() < now + 10 * 60 * 1000) at.setDate(at.getDate() + 7);
+  const week = Math.floor(at.getTime() / (7 * 86400000)) % 100;
+  return {
+    id: FINANCE_NUDGE_ID_BASE + week * 1000 + Math.min(n, 999),
+    fireAt: at.getTime(),
+    title: "Finance",
+    body: `${n} transaction${n === 1 ? "" : "s"} to categorize`,
+    kind: "finance",
+  };
+}
 export function normalizeFinanceAccounts(raw, createId) {
   return (Array.isArray(raw) ? raw : []).map((a) => ({
     id: a?.id || createId("fin-account"),
@@ -153,6 +213,8 @@ export function normalizeFinanceGoals(raw) {
     target: Number(g.target) || 0,
     current: Number(g.current) || 0,
     targetDate: typeof g.targetDate === "string" ? g.targetDate : "",
+    // A goal can follow an account's balance instead of a typed amount.
+    accountId: typeof g.accountId === "string" ? g.accountId : "",
   }));
 }
 
@@ -238,7 +300,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail, queueReceiptFile, onFinanceCountChanged, memberName, currentViewKey } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -688,6 +750,100 @@ function financeRemapNames() {
   for (const a of state.financeAccounts || []) if (a?.linkedId && a.name) names[a.linkedId] = a.name;
   return names;
 }
+// ── Moving accounts between Household and Personal (FINANCE_SPLIT_DESIGN.md §8) ──
+// Pick accounts → "Review the move" (the server's dry run: nothing changes) →
+// confirm → the server moves them and this device reloads its finance. Shown to
+// the household's admin only; in Household it moves accounts to Personal, in
+// Personal back to Household.
+const financeMove = { picked: new Set(), busy: "", report: null, error: "", result: null };
+function financeMoveDirection() { return financeScopeNow() === "personal" ? "toHousehold" : "toPersonal"; }
+function financeMoveReset() { financeMove.picked.clear(); financeMove.busy = ""; financeMove.report = null; financeMove.error = ""; financeMove.result = null; }
+function financeMoveBlock() {
+  // Only once the server can do it (simplefin `status` says so after its deploy).
+  if (!canMoveFinanceAccounts?.() || !financeLinkStatus?.moves) return "";
+  const toPersonal = financeMoveDirection() === "toPersonal";
+  const accounts = (state.financeAccounts || []).filter((a) => a && a.id);
+  if (!accounts.length && !financeMove.result) return "";
+  const n = financeMove.picked.size;
+  const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+  const head = `
+      <div class="fin-subhead">${toPersonal ? "Personal accounts" : "Move back to Household"}</div>`;
+  if (financeMove.result) {
+    const v = financeMove.result.verified || {};
+    return `${head}
+      <p class="fin-hint" data-fin-move-result>${v.clean === false
+        ? "Moved, but the check found something left behind. Nothing is lost; tell Claude before moving anything else."
+        : (financeMove.result.direction === "toHousehold" ? "Moved back to Household." : "Moved. Those accounts now show only in your Personal view.")}</p>`;
+  }
+  if (financeMove.report) {
+    const r = financeMove.report;
+    const lines = (r.accounts || []).map((a) => `<li><strong>${escapeHtml(a.name || "Account")}</strong> · ${[
+      a.transactions != null ? plural(a.transactions, "transaction") : "",
+      a.labels ? plural(a.labels, "label") : "", a.notes ? plural(a.notes, "note") : "",
+      a.receipts ? plural(a.receipts, "receipt") : "", a.links ? plural(a.links, "return link") : "",
+    ].filter(Boolean).map(escapeHtml).join(" · ")}</li>`).join("");
+    const cats = (r.copiedCategories || []).map((c) => c.name).filter(Boolean);
+    const extras = [
+      r.historyDays ? `${plural(r.historyDays, "day")} of balance history ${r.historyDays === 1 ? "moves" : "move"} too.` : "",
+      cats.length ? `Budget categories copied ${toPersonal ? "to Personal" : "to Household"} with blank amounts: ${cats.join(", ")}.` : "",
+      r.merchants?.movedWithAccounts ? `${plural(r.merchants.movedWithAccounts, "merchant")} seen only on ${(r.accounts || []).length === 1 ? "this account" : "these accounts"}: ${r.merchants.movedWithAccounts === 1 ? "its rule and name move" : "their rules and names move"} too.` : "",
+      r.merchants?.copied ? `${plural(r.merchants.copied, "merchant")} also used elsewhere: ${r.merchants.copied === 1 ? "its rule is" : "their rules are"} copied.` : "",
+      "Month totals are rebuilt in both views.",
+    ].filter(Boolean);
+    return `${head}
+      <div class="fin-remap-row" data-fin-move-report>
+        <p class="fin-hint"><strong>Review the move.</strong> Nothing has changed yet.</p>
+        <ul class="fin-hint fin-move-list">${lines}</ul>
+        ${extras.map((t) => `<p class="fin-hint">${escapeHtml(t)}</p>`).join("")}
+        ${(r.problems || []).map((p) => `<p class="fin-hint fin-move-problem">${escapeHtml(p.message || "")}</p>`).join("")}
+        ${financeMove.error ? `<p class="fin-hint fin-move-problem">${escapeHtml(financeMove.error)}</p>` : ""}
+        <div class="fin-item-row fin-item-row--tools">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="move-cancel" ${financeMove.busy ? "disabled" : ""}>Cancel</button>
+          <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="move-confirm" ${financeMove.busy ? "disabled" : ""}>${financeMove.busy === "move" ? "Moving…" : `Move ${plural((r.accounts || []).length, "account")}`}</button>
+        </div>
+      </div>`;
+  }
+  return `${head}
+      <p class="fin-hint">${toPersonal
+        ? "Accounts you mark here become yours alone. Their balances, transactions, labels and history leave Household and show only in your Personal view; nobody else's app receives them."
+        : "Accounts you pick here go back to Household, with their transactions, labels and history, for everyone in the household."}</p>
+      <div class="fin-remap-row" data-fin-move-pick>
+        ${accounts.map((a) => `
+        <label class="fin-hint fin-store-toggle"><input type="checkbox" class="live-toggle" data-fin-edit="move-pick" data-id="${escapeHtml(String(a.id))}" ${financeMove.picked.has(String(a.id)) ? "checked" : ""} ${financeMove.busy ? "disabled" : ""} /> ${escapeHtml(a.name || "Account")}${a.linkedId ? "" : " (manual)"}</label>`).join("")}
+        ${financeMove.error ? `<p class="fin-hint fin-move-problem">${escapeHtml(financeMove.error)}</p>` : ""}
+        <div class="fin-item-row fin-item-row--tools">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="move-review" ${!n || financeMove.busy ? "disabled" : ""}>${financeMove.busy === "review" ? "Checking…" : "Review the move"}</button>
+        </div>
+      </div>`;
+}
+async function financeMoveCall(confirm) {
+  const picked = [...financeMove.picked].filter((id) => (state.financeAccounts || []).some((a) => String(a.id) === id));
+  if (!picked.length || financeMove.busy) return;
+  financeMove.busy = confirm ? "move" : "review";
+  financeMove.error = "";
+  renderFinancePage();
+  try {
+    // Anything typed but not yet saved must reach the server before it plans from the row.
+    if (confirm) await Promise.resolve(persist());
+    const data = await callNetlifyFunction("simplefin", { action: "moveAccounts", direction: financeMoveDirection(), accountIds: picked, confirm });
+    if (!data || data.error) throw new Error(data?.error || "unknown error");
+    if (!confirm) { financeMove.report = data.report || { accounts: [] }; return; }
+    financeMove.result = { ...data, direction: financeMoveDirection() };
+    financeMove.report = null;
+    financeMove.picked.clear();
+    financeLive = null; financeLiveAll = null; // the bank cache was re-sorted on the server
+    await reloadFinanceAfterMove?.();
+    await syncFinanceTxnStore?.();
+    refreshFinanceLive?.(false);
+  } catch (e) {
+    financeMove.error = `Couldn't ${confirm ? "move" : "check"}: ${e?.message || e}`;
+  } finally {
+    financeMove.busy = "";
+    renderFinancePage();
+    refreshFinanceSettingsIfOpen();
+  }
+}
+
 function financeRemapBlock() {
   const live = financeLive?.accounts || [];
   if (!financeStoreActive() || !live.length) return "";
@@ -876,7 +1032,6 @@ let financeReceiptsImported = false;
 let financeReceiptsLoadedAt = 0;
 let financeReceiptsInFlight = false;
 const RECEIPT_INBOX_MIN_INTERVAL_MS = 2 * 60 * 1000;
-const RECEIPT_MATCH_DAYS = 4;
 
 async function loadFinanceReceipts() {
   if (financeReceiptsInFlight) return;
@@ -887,6 +1042,7 @@ async function loadFinanceReceipts() {
     const data = await callNetlifyFunction("simplefin", { action: "receipts" });
     const result = Array.isArray(data?.receipts) ? importFinanceInboxReceipts(data.receipts) : 0;
     const changed = typeof result === "number" ? result : (result?.added || 0) + (result?.updated || 0);
+    if (changed) autoLinkFinanceReceipts();
     if (changed && getActiveAppArea() === "finance") renderFinancePage();
   } finally {
     financeReceiptsInFlight = false;
@@ -902,21 +1058,79 @@ function financeReceiptList() {
   try { return receiptsForFinance() || []; } catch { return []; }
 }
 
-function receiptMatchesTxn(r, t) {
-  if ((t.amount || 0) >= 0 || !(Number(r.total) > 0)) return false;
-  if (Math.abs(Math.abs(t.amount) - Number(r.total)) > 0.02) return false;
-  if (!r.date) return true;
-  return Math.abs(new Date(t.posted || 0).getTime() - new Date(r.date).getTime()) <= RECEIPT_MATCH_DAYS * 86400000;
+// Which transaction each receipt belongs to (receipt-matcher.js): store name,
+// dates, a tip, the card's last 4; one receipt per transaction. Worked out once
+// per set of transactions and receipts, not per row.
+let financeReceiptFitCache = null;
+function financeReceiptFits() {
+  const txns = financeLabeledTxns();
+  const list = financeReceiptList();
+  const sig = `${list.length}:${list.reduce((n, r) => n + (r.financeTxnId ? 1 : 0), 0)}:${list[0]?.id || ""}:${list[list.length - 1]?.id || ""}`;
+  if (financeReceiptFitCache && financeReceiptFitCache.txns === txns && financeReceiptFitCache.sig === sig) return financeReceiptFitCache;
+  const spend = txns.filter((t) => (t.amount || 0) < 0);
+  const byReceipt = matchReceipts(list, spend);
+  const byTxn = new Map();
+  const byId = new Map(list.map((r) => [r.id, r]));
+  for (const [receiptId, fit] of byReceipt) byTxn.set(fit.txn.id, { receipt: byId.get(receiptId), fit });
+  financeReceiptFitCache = { txns, sig, byReceipt, byTxn, list };
+  return financeReceiptFitCache;
 }
 
-// The receipt for a spend transaction: the one already linked to it (itemized
-// earlier), else an unlinked receipt with the same total (±2¢) dated within
-// 4 days. Used to prefill the split editor with categorized portions.
-function financeReceiptForTxn(t, list = financeReceiptList()) {
+// The receipt for a spend transaction: the one linked to it, else the one that
+// fits it. Used to prefill the split editor with categorized portions.
+function financeReceiptForTxn(t) {
   if (!t || (t.amount || 0) >= 0) return null;
-  return list.find((r) => r.financeTxnId === t.id)
-    || list.find((r) => !r.financeTxnId && receiptMatchesTxn(r, t))
-    || null;
+  return financeReceiptFits().byTxn.get(t.id)?.receipt || null;
+}
+
+// What Document shows on a receipt's file: what was read, and its charge.
+function financeReceiptInfo(receiptId) {
+  const list = financeReceiptList();
+  const r = list.find((x) => x.id === receiptId);
+  if (!r) return null;
+  const haveTxns = Boolean(financeLive?.accounts?.length);
+  const fit = haveTxns ? financeReceiptFits().byReceipt.get(receiptId) || null : null;
+  // Before Finance has loaded this visit, only a saved link is known.
+  const status = !haveTxns && r.financeTxnId ? "matched" : receiptStatus(r, fit);
+  return {
+    id: r.id, store: r.merchant || "", date: r.date || "", total: Number(r.total) || 0, tip: Number(r.tip) || 0,
+    source: r.source || "scan", status, statusLabel: RECEIPT_STATUS_LABEL[status] || "",
+    known: haveTxns || Boolean(r.financeTxnId),
+    items: (r.items || []).map((i) => ({ name: i.name || "", price: Number(i.price) || 0, category: i.category ? financeTxnLabelName(i.category) || "" : "" })),
+    txn: fit?.txn ? { id: fit.txn.id, posted: fit.txn.posted || "", name: fit.txn.displayName || fit.txn.description || "", account: fit.txn.account || "", amount: Number(fit.txn.amount) || 0 } : null,
+  };
+}
+
+// A certain match (same amount, right dates, same store, no twin charge) links
+// itself, so the receipt stays with its transaction after either scrolls out of
+// the window. Anything less waits for a tap. Bounded: only unlinked receipts.
+//
+// A linked receipt whose lines all have categories that add up to the charge
+// also itemizes its transaction (receiptAutoSplit). Marked { auto, receiptId } so
+// it can be told apart from a split made by hand; never over a hand-made label.
+function autoLinkFinanceReceipts() {
+  let linked = 0, itemized = 0;
+  const { byReceipt, list } = financeReceiptFits();
+  const byId = new Map(list.map((r) => [r.id, r]));
+  for (const [receiptId, fit] of byReceipt) {
+    if (fit.confidence !== "sure" && fit.confidence !== "linked") continue;
+    if (fit.confidence === "sure") { linkReceiptToFinanceTxn(receiptId, fit.txn.id); linked += 1; }
+    const existing = state.financeTxnLabels?.[fit.txn.id];
+    if (existing) continue; // labelled or split already (by hand or before)
+    const split = receiptAutoSplit(byId.get(receiptId), fit.txn);
+    if (!split) continue;
+    if (!state.financeTxnLabels || typeof state.financeTxnLabels !== "object") state.financeTxnLabels = {};
+    state.financeTxnLabels[fit.txn.id] = { split, auto: true, receiptId };
+    itemized += 1;
+  }
+  if (itemized) {
+    invalidateFinanceLabeled();
+    updateFinanceMonthActuals();
+    setPageNotifCount("finance", financeBellCount());
+    persist();
+  }
+  if (linked || itemized) financeReceiptFitCache = null;
+  return linked + itemized;
 }
 
 let financeLinkStatusChecking = false;
@@ -980,6 +1194,8 @@ async function refreshFinanceLive(force = false) {
   invalidateFinanceLabeled(); // fresh accounts payload — the cache (now decoupled from financeLive) needs a nudge
   updateFinanceMonthActuals();
   updateFinanceRecurring();
+  autoLinkFinanceReceipts();
+  try { onFinanceCountChanged?.(); } catch { /* the nudge is best-effort */ }
   setPageNotifCount("finance", financeBellCount());
   if (financeHistory === null) loadFinanceHistory();
   if (!financeReceiptsImported) loadFinanceReceipts().catch(() => {});
@@ -1178,7 +1394,8 @@ function financeLabeledTxns() {
       // magnitudes; portions land in their categories individually.
       if (typeof ex === "object" && Array.isArray(ex.split)) { t.label = "split"; t.split = ex.split; }
       else t.label = ex;
-      t.labelSource = "manual";
+      // A split filled in from a matched receipt shows as automatic until edited.
+      t.labelSource = typeof ex === "object" && ex.auto ? "auto" : "manual";
       continue;
     }
     // CSV-supplied category (import_label): below your own labels, above rules.
@@ -1527,6 +1744,7 @@ function updateFinanceRecurring() {
     const amt = Math.round(Math.abs(latest.amount) * 100) / 100;
     if (entry) {
       if (entry.lastSeen !== seenDate || entry.lastAmount !== amt) {
+        if (entry.lastAmount && entry.lastAmount !== amt) entry.prevAmount = entry.lastAmount;
         entry.lastSeen = seenDate;
         entry.lastAmount = amt;
         entry.expectedDay = new Date(latest.posted || 0).getDate() || entry.expectedDay;
@@ -1595,7 +1813,8 @@ function financeSpendTrends(viewMonth) {
     const avg = priorVals.length ? priorVals.reduce((s, v) => s + v, 0) / priorVals.length : 0;
     if (cur < 5 && avg < 5) continue;
     const delta = cur - avg;
-    movers.push({ key: k, name: financeTxnLabelName(`cat:${k}`), cur, avg, delta, pct: avg > 0 ? Math.round((delta / avg) * 100) : null });
+    const spark = months.map((m) => (ma[m]?.cats && ma[m].cats[k] != null ? Math.abs(Number(ma[m].cats[k]) || 0) : null));
+    movers.push({ key: k, name: financeTxnLabelName(`cat:${k}`), cur, avg, delta, pct: avg > 0 ? Math.round((delta / avg) * 100) : null, spark, months });
   }
   movers.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   return { series, movers: movers.slice(0, 5), hasData: series.some((s) => s.spend != null) };
@@ -2408,22 +2627,8 @@ function updateFinanceMonthActuals() {
   if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
   let changed = false;
   for (const month of monthsToWrite) {
-    const cats = {};
-    const incomeBy = {};
-    let incomeGot = 0;
-    for (const t of txns) {
-      if ((t.posted || "").slice(0, 7) !== month || !t.label) continue;
-      for (const p of financeTxnPortions(t)) {
-        if (p.label === "income" || p.label.startsWith("income:")) {
-          incomeGot += p.amount;
-          incomeBy[p.label] = Math.round(((incomeBy[p.label] || 0) + p.amount) * 100) / 100;
-        } else if (p.label.startsWith("cat:")) {
-          const k = p.label.slice(4);
-          cats[k] = Math.round(((cats[k] || 0) + p.amount) * 100) / 100;
-        }
-      }
-    }
-    const entry = { cats, income: Math.round(incomeGot * 100) / 100, incomeBy };
+    if (financeMonthClosed(month) && state.financeMonthActuals[month]) continue;
+    const entry = financeMonthEntry(txns, month, financeTxnPortions);
     if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) continue;
     state.financeMonthActuals[month] = entry;
     changed = true;
@@ -2482,11 +2687,24 @@ async function scanReceiptIntoSplit(file) {
       }
       const grouped = [...byLabel.entries()].map(([label, amount]) => ({ label, amount: Math.round(amount * 100) / 100 }));
       financeSplitDraft.portions = grouped.length ? grouped : data.receipt.portions.map((p) => ({ label: p.label || "", amount: p.amount }));
-      // Keep the receipt image: best-effort upload + attach to this txn. Never
-      // let a storage hiccup (missing bucket, offline, not signed in) undo the
-      // split the user just got — the scan result stands on its own.
+      // Keep the receipt like any other scan (FINANCE_AUDIT D3): a record in the one
+      // receipts list, linked to this transaction, and the photo filed in Document ›
+      // Receipts pointing at it. Best-effort: the split above stands on its own.
       const txnId = financeSplitDraft.txnId;
-      uploadReceiptImage(txnId, file).catch((e) => console.warn("Receipt image not kept:", e?.message || e));
+      try {
+        const scanId = createId("split-scan");
+        const r = data.receipt;
+        importFinanceInboxReceipts([{ id: scanId, source: "scan", merchant: r.merchant || "", date: r.date || "", total: Number(r.total) || 0, items: Array.isArray(r.items) ? r.items : [] }]);
+        const receiptId = `receipt-scan-${scanId}`;
+        if ((receiptsForFinance() || []).some((x) => x.id === receiptId)) {
+          linkReceiptToFinanceTxn(receiptId, txnId);
+          queueReceiptFile?.([file], { receiptId });
+        } else if (!queueReceiptFile) {
+          uploadReceiptImage(txnId, file).catch((e) => console.warn("Receipt image not kept:", e?.message || e));
+        } else {
+          queueReceiptFile([file], {});
+        }
+      } catch (e) { console.warn("Receipt not kept:", e?.message || e); }
     } else {
       alert(data?.error ? `Scan failed: ${data.error}` : "Could not read a receipt from that photo — try a straighter, brighter shot.");
     }
@@ -2870,6 +3088,7 @@ function renderFinanceAccountsPanel() {
       </div>
       <p class="fin-hint">${financeStoreStatusText()}</p>
       ${financeRemapBlock()}
+      ${financeMoveBlock()}
       ${financeCsvBatches().map((b) => `
         <div class="fin-item-row fin-item-row--tools">
           <span class="fin-hint">CSV · ${escapeHtml(String(b.account).replace(/^csv:/, ""))} · ${b.count} txns · ${escapeHtml(String(b.from || "").slice(0, 10))} – ${escapeHtml(String(b.to || "").slice(0, 10))}</span>
@@ -3048,9 +3267,108 @@ function applyBudgetSearch() {
   });
 }
 
+// A 6-month line for one category: 2px stroke, no axes, the latest month dotted.
+// Months with no saved totals are gaps. The row's own text carries the numbers.
+function financeSparkline(values, months, name) {
+  const pts = (values || []).map((v, i) => (v == null ? null : { i, v }));
+  const real = pts.filter(Boolean);
+  if (real.length < 2) return `<span class="fin-spark" aria-hidden="true"></span>`;
+  const W = 52, H = 20, pad = 3;
+  const max = Math.max(...real.map((p) => p.v), 1);
+  const x = (i) => pad + (i * (W - pad * 2)) / Math.max(1, values.length - 1);
+  const y = (v) => H - pad - (v / max) * (H - pad * 2);
+  let d = "", pen = false;
+  for (const p of pts) { if (!p) { pen = false; continue; } d += `${pen ? "L" : "M"}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`; pen = true; }
+  const last = real[real.length - 1];
+  const label = (months || []).map((m, i) => (values[i] == null ? null : `${new Date(m + "-15T12:00:00").toLocaleDateString(undefined, { month: "short" })} ${formatFinMoney(values[i])}`)).filter(Boolean).join(", ");
+  return `<svg class="fin-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${escapeHtml(`${name}: ${label}`)}"><title>${escapeHtml(label)}</title><path d="${d}"/><circle cx="${x(last.i).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="2.5"/></svg>`;
+}
+
 // Compact "when was this last synced" label. Bank data refreshes ~once a day,
 // so exact minutes matter less than "today / yesterday / a date" — that's the
 // low-cost freshness cue in place of a refresh button that would fetch nothing new.
+// Uncategorized money out in the review window, for the weekly nudge. null until the
+// bank data is on screen (so a cold start doesn't cancel the nudge with a zero).
+function financeToCategorizeCount() {
+  if (!financeLive?.accounts?.length) return null;
+  return financeDeckWindow(financeLabeledTxns()).filter((t) => !t.label && (Number(t.amount) || 0) < 0 && !t.pending).length;
+}
+
+// Tax-time and trip tags (finance-tags.js). Tax: picked by hand, else from the
+// category's name. Trip: only by hand (charges dated during a trip are offered).
+function financeTaxTag(t) {
+  const label = t?.label === "split" ? (t.split?.[0]?.label || "") : (t?.label || "");
+  return taxTagFor(t, { picked: state.financeTxnTax || {}, categoryName: label.startsWith("cat:") ? financeTxnLabelName(label) : "" });
+}
+// Paydays in [startKey, endKey] for the Calendar: each person's active pay
+// scenario with a weekly/biweekly cadence and a known payday. Net of deductions.
+function financePaydays(startKey, endKey) {
+  const out = [];
+  for (const p of state.financePeople || []) {
+    const sc = (p.scenarios || []).find((x) => x.id === p.activeScenarioId) || (p.scenarios || [])[0];
+    if (!sc || !(sc.amount > 0) || sc.payFrequency === "monthly") continue;
+    const net = Math.round((sc.amount - scenarioDeductionPerPeriod(sc)) * 100) / 100;
+    for (const date of scenarioPaydaysInRange(sc, startKey, endKey)) out.push({ date, name: p.name || "Payday", amount: net, personId: p.id });
+  }
+  return out;
+}
+function financeGroceryPace() {
+  return groceryPaceFrom({ groups: state.financeBudgetGroups, cats: state.financeMonthActuals?.[financeCurrentMonthKey()]?.cats || {} });
+}
+function financeMonthGlance() {
+  const cur = state.financeMonthActuals?.[financeCurrentMonthKey()];
+  const spent = Object.values(cur?.cats || {}).reduce((s, v) => s + Math.abs(Number(v) || 0), 0);
+  return financeGlanceFrom({ spent, budget: financeExpensesTotal(), uncategorized: financeToCategorizeCount() || 0 });
+}
+function financeTrips() {
+  return (Array.isArray(state.trips) ? state.trips : []).filter((t) => t && t.id && !t.deletedAt && !t.archived);
+}
+// For the trip's Budget tab (app.js): its tagged charges and the untagged ones
+// dated during it. → { charges: [...], candidates: [...] } as { id, date, name, amount }.
+function financeTripSpend(tripId) {
+  const trip = financeTrips().find((t) => t.id === tripId);
+  const txns = financeLabeledTxns();
+  const tagged = state.financeTxnTrip || {};
+  const view = (t) => ({ id: t.id, date: (t.posted || "").slice(0, 10), name: t.displayName || t.description || "", amount: -(Number(t.amount) || 0) });
+  return {
+    charges: tripCharges(txns, tripId, tagged).map(view),
+    candidates: trip ? tripCandidates(txns, trip, tagged).map(view) : [],
+  };
+}
+function financeTagTrip(txnId, tripId) {
+  if (!state.financeTxnTrip || typeof state.financeTxnTrip !== "object") state.financeTxnTrip = {};
+  // Union-merged by key across devices, so "untagged" is "", not a deletion.
+  state.financeTxnTrip[txnId] = tripId || "";
+  persist();
+}
+function exportFinanceTaxYear(year) {
+  const txns = financeLabeledTxns().map((t) => ({ ...t, name: t.displayName || t.description || "", receipt: (() => { const r = financeReceiptForTxn(t); return r ? `${r.merchant || "Receipt"} · ${r.date || ""}` : ""; })() }));
+  const summary = taxYearSummary(txns, { year, picked: state.financeTxnTax || {}, categoryNameOf: (t) => { const l = t.label === "split" ? (t.split?.[0]?.label || "") : (t.label || ""); return l.startsWith("cat:") ? financeTxnLabelName(l) : ""; } });
+  saveFile(new Blob([taxYearCsv(summary)], { type: "text/csv" }), `tax-${year}.csv`, { title: `Tax ${year}` })
+    .catch(() => showMailToast?.("Couldn't export on this device."));
+}
+
+// A closed month keeps its saved totals: nothing recomputes them until it's reopened.
+function financeMonthClosed(month) {
+  const c = state.financeClosedMonths;
+  return Boolean(c && typeof c === "object" && c[month] && c[month] !== false);
+}
+
+// The bank pull itself is old (the daily job or the bridge failed): say so once,
+// at the top, instead of leaving it to a line of small print under the list.
+const FINANCE_STALE_PULL_MS = 36 * 3600 * 1000;
+function financeStalePullBanner() {
+  if (!financeLinkStatus?.connected || financeLiveLoading || !financeLive?.at || !financeLive.accounts?.length) return "";
+  const age = Date.now() - financeLive.at;
+  if (!(age > FINANCE_STALE_PULL_MS)) return "";
+  const days = Math.max(2, Math.round(age / 86400000));
+  return `
+    <div class="fin-stale-banner" role="status">
+      <span>Bank data is ${days} days old.</span>
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="refresh-live">Refresh</button>
+    </div>`;
+}
+
 function finUpdatedLabel(ts) {
   if (!ts) return "";
   const d = new Date(ts);
@@ -3111,6 +3429,35 @@ function renderFinancePage() {
     incomeActual = Number(storedThis.income) || 0;
   }
   const catActual = (g, c) => catActuals.get(`${g.id}:${c.id}`) || 0;
+  // Money out with no category in the viewed month: what every total leaves out.
+  const uncatByMonth = financeUncategorizedByMonth(allTxns);
+  const uncatThis = uncatByMonth.get(monthKey) || { spend: 0, count: 0 };
+  const skippedMerchants = Object.values((state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {}).filter(Boolean).length;
+  // A past month shows its saved totals. When stored history covers the whole
+  // month and adds up differently (something was categorized later), offer to
+  // update the saved totals. Never automatic: saved history only changes by hand.
+  let staleSaved = null;
+  const closedThis = financeMonthClosed(monthKey);
+  if (!isCurrentMonth && !closedThis && storedThis && haveLive && financeStoreActive() && financeTxnsCoverMonth(allTxns, monthKey, financeCurrentMonthKey())) {
+    const fresh = financeMonthEntry(allTxns, monthKey, financeTxnPortions);
+    if (!financeMonthEntriesMatch(storedThis, fresh)) staleSaved = { saved: financeMonthEntryTotals(storedThis), now: financeMonthEntryTotals(fresh) };
+  }
+  // Per-category charges this month, for the "at this rate" projection: a known
+  // bill or a rent-sized payment counts once instead of being extrapolated.
+  const recurringKeys = new Set((state.financeRecurring || []).filter((r) => r.active !== false && r.merchantKey).map((r) => r.merchantKey));
+  const catCharges = new Map();
+  if (isCurrentMonth && useLive) {
+    for (const t of allTxns) {
+      if (!t.label || (t.posted || "").slice(0, 7) !== monthKey) continue;
+      const merchantKey = financeMerchantKey(t.description || "");
+      for (const p of financeTxnPortions(t)) {
+        if (!p.label.startsWith("cat:")) continue;
+        const k = p.label.slice(4);
+        if (!catCharges.has(k)) catCharges.set(k, []);
+        catCharges.get(k).push({ amount: p.amount, merchantKey });
+      }
+    }
+  }
   const prevMonthKey = monthKeyOffset(monthKey, -1);
   const lastMo = storedMonths[prevMonthKey];
   const lastMoGroupActual = (g) => lastMo?.cats
@@ -3221,9 +3568,12 @@ function renderFinancePage() {
     const pctb = Math.min(100, Math.round((Math.max(0, actual) / budget) * 100));
     return `<div class="fin-budget-bar"><i class="${actual > budget ? "is-over" : ""}" style="width:${pctb}%"></i></div>`;
   };
-  const budgetPace = (actual, budget) => {
+  const projectedFor = (key, budget) => financeProjectedSpend(catCharges.get(key) || [], {
+    budget, dayOfMonth: bDayOfMonth, daysInMonth: bDaysInMonth, isRecurring: (c) => recurringKeys.has(c.merchantKey),
+  }).projected;
+  const budgetPace = (actual, budget, key) => {
     if (!isCurrentMonth || !showActuals || !(budget > 0) || !(actual > 0) || bDayOfMonth < 3) return "";
-    const projected = (actual / bDayOfMonth) * bDaysInMonth;
+    const projected = projectedFor(key, budget);
     const over = projected - budget;
     if (over > Math.max(1, budget * 0.03)) return `<span class="fin-budget-pace is-over">~${formatFinMoney(over)} over by month-end</span>`;
     if (actual > budget) return `<span class="fin-budget-pace is-over">over budget</span>`;
@@ -3241,7 +3591,7 @@ function renderFinancePage() {
         const budget = financeCategoryTotal(c);
         const actual = catActual(g, c);
         if (!(budget > 0) || !(actual > 0)) continue;
-        const projected = (actual / bDayOfMonth) * bDaysInMonth;
+        const projected = projectedFor(`${g.id}:${c.id}`, budget);
         const over = projected - budget;
         if (over > Math.max(1, budget * 0.03)) paceCategories.push({ group: g.label, name: c.name, over });
       }
@@ -3315,7 +3665,7 @@ function renderFinancePage() {
         <div class="fin-category" data-fin-cat-name="${escapeHtml((c.name || "").toLowerCase())}">
           ${rowHtml}
           ${showActuals ? budgetBar(actual, budget) : ""}
-          ${budgetPace(actual, budget)}
+          ${budgetPace(actual, budget, `${g.id}:${c.id}`)}
           ${open ? `
           <div class="fin-category-items">
             ${(() => {
@@ -3346,7 +3696,7 @@ function renderFinancePage() {
   const personalFree = (state.financePersonal || []).reduce((s, p) => s + financeItemsTotal(p.incomeItems) - financeItemsTotal(p.expenseItems), 0);
   const personalCard = `
     <div class="fin-card" data-fin-card="personal">
-      ${cardHead("card:personal", "Personal", `${formatFinMoney(personalFree)}/mo free`)}
+      ${cardHead("card:personal", "Allowances", `${formatFinMoney(personalFree)}/mo free`)}
       ${!personalOpen ? "" : (state.financePersonal || []).map((p) => {
         const inc = financeItemsTotal(p.incomeItems);
         const exp = financeItemsTotal(p.expenseItems);
@@ -3783,6 +4133,30 @@ function renderFinancePage() {
         ${(t.amount || 0) < 0 ? `<button class="fin-txn-act" type="button" data-fin-action="detail-scan-receipt" data-id="${escapeHtml(t.id)}">${scanReceiptSvg}<span>Scan receipt</span></button>` : ""}
       </div>`}
 
+      ${(t.amount || 0) < 0 ? (() => {
+        const tax = financeTaxTag(t);
+        const trips = financeTrips();
+        const tripId = (state.financeTxnTrip || {})[t.id] || "";
+        const at = Date.parse(t.posted || "");
+        const during = !tripId && trips.find((tr) => tr.startDate && tr.endDate && at >= Date.parse(tr.startDate + "T00:00:00") - 86400000 && at <= Date.parse(tr.endDate + "T23:59:59") + 2 * 86400000);
+        return `
+      <div class="fin-txn-card-section fin-txn-tags">
+        <label class="fin-tag-field"><span class="fin-hint">Tax</span>
+          <select class="fin-item-name" data-fin-edit="txn-tax" data-id="${escapeHtml(t.id)}" aria-label="Tax category">
+            <option value="none" ${!tax.kind ? "selected" : ""}>None</option>
+            ${TAX_KINDS.map((k) => `<option value="${k.key}" ${tax.kind === k.key ? "selected" : ""}>${escapeHtml(k.label)}${tax.kind === k.key && tax.source === "rule" ? " (from category)" : ""}</option>`).join("")}
+          </select>
+        </label>
+        ${trips.length ? `
+        <label class="fin-tag-field"><span class="fin-hint">Trip</span>
+          <select class="fin-item-name" data-fin-edit="txn-trip" data-id="${escapeHtml(t.id)}" aria-label="Trip">
+            <option value="">No trip</option>
+            ${trips.map((tr) => `<option value="${escapeHtml(tr.id)}" ${tr.id === tripId ? "selected" : ""}>${escapeHtml(tr.name || "Trip")}</option>`).join("")}
+          </select>
+        </label>
+        ${during ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-tag-trip" data-id="${escapeHtml(t.id)}" data-trip="${escapeHtml(during.id)}">During ${escapeHtml(during.name || "a trip")} — add it</button>` : ""}` : ""}
+      </div>`;
+      })() : ""}
       ${returnLinkHtml(t)}
       ${rc?.id ? `
       <div class="fin-return-box fin-receipt-email">
@@ -3968,7 +4342,79 @@ function renderFinancePage() {
           <span class="fin-stat-label">${label} <span class="fin-budget-caret">${open ? "▴" : "▾"}</span></span>
           <span class="fin-stat-value">${value}</span>
         </button>`;
+  // What the totals leave out, and saved totals that have gone stale. Shown only
+  // when there is something to act on.
+  const truthMonthName = new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long" });
+  // The month in one line: spent of budgeted, what's left. Uncategorized sits right
+  // under it, so the three are never out of sight together.
+  const spentThis = [...catActuals.values()].reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const leftThis = expenses - spentThis;
+  const monthLine = showActuals && expenses > 0 ? `
+      <div class="fin-truth-row fin-month-line">
+        <span class="fin-truth-name">Spent ${formatFinMoney(spentThis)}<span class="fin-of"> of ${formatFinMoney(expenses)} budgeted</span></span>
+        <span class="fin-truth-amt${leftThis < 0 ? " is-over" : ""}">${leftThis < 0 ? `${formatFinMoney(-leftThis)} over` : `${formatFinMoney(leftThis)} left`}</span>
+      </div>
+      ${budgetBar(spentThis, expenses)}` : "";
+  // Closing a finished month: a short checklist, then its totals are kept as they are.
+  const pastMonth = monthKey < financeCurrentMonthKey();
+  const monthReceipts = pastMonth ? financeReceiptList().filter((r) => (r.date || "").slice(0, 7) === monthKey && Number(r.total) > 0) : [];
+  const unmatchedReceipts = monthReceipts.filter((r) => !financeReceiptFits().byReceipt.has(r.id)).length;
+  const closeChecks = [
+    { ok: !uncatThis.count, text: uncatThis.count ? `${uncatThis.count} uncategorized` : "Everything categorized" },
+    { ok: !unmatchedReceipts, text: unmatchedReceipts ? `${unmatchedReceipts} receipt${unmatchedReceipts === 1 ? "" : "s"} not matched to a charge` : "Receipts matched" },
+    { ok: !staleSaved, text: staleSaved ? "Saved totals out of date" : "Saved totals up to date" },
+  ];
+  const closeBlock = !pastMonth || !showActuals ? "" : closedThis ? `
+      <div class="fin-truth-row">
+        <span class="fin-truth-name">${escapeHtml(truthMonthName)} is closed<span class="fin-of"> · its totals are kept as they are</span></span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="reopen-month">Reopen</button>
+      </div>` : `
+      <div class="fin-truth-row fin-close-row">
+        <span class="fin-truth-name">Close ${escapeHtml(truthMonthName)}
+          <span class="fin-close-checks">${closeChecks.map((c) => `<span class="fin-close-check${c.ok ? " is-ok" : ""}"><span aria-hidden="true">${c.ok ? "✓" : "•"}</span> ${escapeHtml(c.text)}</span>`).join("")}</span>
+        </span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="close-month">${closeChecks.every((c) => c.ok) ? "Close" : "Close anyway"}</button>
+      </div>`;
+  // Personal items the household paid for, by person (finance-settle.js). The
+  // Household view lists everyone who owes; the Personal view only you.
+  const meId = getAuthSession()?.user?.id || "";
+  const inPersonalView = currentViewKey?.() === "personal";
+  const owedRows = [...financeOwedBalances(financeReceiptList(), state.financeSettlements || []).entries()]
+    .filter(([by, p]) => p.balance > 0 && (!inPersonalView || by === meId));
+  const owedBlock = owedRows.map(([by, p]) => {
+    const who = memberName ? memberName(by) : "";
+    const label = who === "You" || by === meId ? "You owe the household" : `${escapeHtml(who || "A household member")} owes the household`;
+    return `
+      <div class="fin-truth-row">
+        <span class="fin-truth-name">${label}<span class="fin-of"> · ${p.items.length} personal item${p.items.length === 1 ? "" : "s"} on household receipts</span></span>
+        <span class="fin-truth-amt">${formatFinMoney(p.balance)}</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-owed" data-by="${escapeHtml(by)}" data-amount="${p.balance}">Paid back</button>
+      </div>`;
+  }).join("");
+  const truthCard = (monthLine || closeBlock || owedBlock || (showActuals && (uncatThis.count || staleSaved || skippedMerchants))) ? `
+    <div class="fin-card fin-truth-card" data-fin-card="truth">
+      ${monthLine}
+      ${uncatThis.count ? `
+      <button class="fin-truth-row fin-truth-btn" type="button" data-fin-action="show-uncategorized">
+        <span class="fin-truth-name">Uncategorized<span class="fin-of"> · ${uncatThis.count} transaction${uncatThis.count === 1 ? "" : "s"}, not in the totals below</span></span>
+        <span class="fin-truth-amt">${formatFinMoney(uncatThis.spend)}</span>
+        <span class="fin-truth-go" aria-hidden="true">›</span>
+      </button>` : ""}
+      ${staleSaved ? `
+      <div class="fin-truth-row">
+        <span class="fin-truth-name">${escapeHtml(truthMonthName)}'s saved totals are out of date<span class="fin-of"> · saved ${formatFinMoney(staleSaved.saved.spend)} spent, now ${formatFinMoney(staleSaved.now.spend)}</span></span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="update-saved-month">Update</button>
+      </div>` : ""}
+      ${skippedMerchants ? `
+      <div class="fin-truth-row">
+        <span class="fin-truth-name">${skippedMerchants} merchant${skippedMerchants === 1 ? " is" : "s are"} skipped from review<span class="fin-of"> · their charges never come up to categorize</span></span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="unskip-all-merchants">Bring back</button>
+      </div>` : ""}
+      ${owedBlock}
+      ${closeBlock}
+    </div>` : "";
   const budgetView = `
+    ${truthCard}
     ${budgetPaceCard}
     <div class="fin-card fin-monthly-budget" data-fin-card="monthly-budget">
       <div class="fin-budget-kpis">
@@ -4005,22 +4451,20 @@ function renderFinancePage() {
   // spend transaction (the reverse of financeReceiptForTxn). Drives the receipts
   // inbox + itemize prompt. Only recent receipts: older ones' charges are out of
   // the loaded transaction window, and the list holds every receipt ever saved.
-  const rSpendTxns = allTxns.filter((t) => (t.amount || 0) < 0);
   const rCutoff = Date.now() - 45 * 86400000;
   const rRecent = financeReceiptList()
     .filter((r) => Number(r.total) > 0 && (!r.date || new Date(r.date).getTime() >= rCutoff))
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   const rMatched = [], rUnmatched = [];
-  const rClaimed = new Set(rRecent.map((r) => r.financeTxnId).filter(Boolean));
+  const rFits = financeReceiptFits().byReceipt;
   for (const r of rRecent) {
-    const t = r.financeTxnId
-      ? rSpendTxns.find((x) => x.id === r.financeTxnId)
-      : rSpendTxns.find((x) => !rClaimed.has(x.id) && receiptMatchesTxn(r, x));
-    if (t) { rClaimed.add(t.id); rMatched.push({ r, t }); } else rUnmatched.push(r);
+    const t = rFits.get(r.id)?.txn;
+    if (t) rMatched.push({ r, t }); else rUnmatched.push(r);
   }
   const itemizable = rMatched.filter(({ r, t }) => t.label !== "split" && (r.portions || r.items || []).length > 1);
 
   const financeTabNav = `
+    ${financeStalePullBanner()}
     <div class="fin-tabs" role="tablist" aria-label="Finance sections">
       ${FINANCE_TABS.map((t) => {
         const dot = (t.id === "transactions" && hasTxnAttention) || (t.id === "accounts" && hasAcctAttention);
@@ -4110,7 +4554,8 @@ function renderFinancePage() {
         <div class="fin-subhead" style="margin-top:14px;">Vs your recent average</div>
         ${trends.movers.map((m) => `
           <div class="fin-mover-row">
-            <span class="fin-mover-name">${escapeHtml(m.name)}</span>
+            <span class="fin-mover-name" title="${escapeHtml(m.name)}">${escapeHtml(String(m.name).split(" · ").pop())}</span>
+            ${financeSparkline(m.spark, m.months, m.name)}
             <span class="fin-mover-cur">${formatFinMoney(m.cur)}</span>
             ${m.pct != null
               ? `<span class="fin-mover-delta ${m.delta > 0 ? "is-over" : "is-under"}" title="3-month average ${formatFinMoney(m.avg)}">${m.delta > 0 ? "▲" : "▼"} ${Math.abs(m.pct)}%</span>`
@@ -4122,6 +4567,7 @@ function renderFinancePage() {
   const cfIn = showActuals ? incomeActual : null;
   const cfOut = monthActualSpend;
   const cfNet = (cfIn != null && cfOut != null) ? cfIn - cfOut : null;
+  const cfUncat = cashflow.series.reduce((s, m) => s + (uncatByMonth.get(m.month)?.spend || 0), 0);
   const cashFlowCard = cashflow.hasData ? `
     <div class="fin-card fin-insights-card">
       <div class="fin-subhead fin-accounts-title">Cash flow</div>
@@ -4142,34 +4588,117 @@ function renderFinancePage() {
           </div>`).join("")}
       </div>
       <div class="fin-cf-legend"><span class="fin-cf-key in">Money in</span><span class="fin-cf-key out">Money out</span></div>
+      ${cfUncat > 0 ? `<p class="fin-hint">Money out counts categorized spending. Not counted over these months: ${formatFinMoney(cfUncat)} uncategorized.</p>` : ""}
     </div>` : "";
-  const subs = (state.financeRecurring || []).filter((r) => r.active !== false).sort((a, b) => (b.lastAmount || 0) - (a.lastAmount || 0));
-  const subsTotal = subs.reduce((s, r) => s + (r.lastAmount || 0), 0);
-  const subsCard = subs.length ? `
+  // Subscriptions: every recurring charge with its yearly cost, a price change,
+  // a possible duplicate, and where to cancel (finance-plan.js).
+  const subsReview = subscriptionReview(state.financeRecurring);
+  const subsById = new Map(subsReview.rows.map((r) => [r.id, r]));
+  const subsCard = subsReview.rows.length ? `
     <div class="fin-card fin-insights-card">
       <div class="fin-subhead fin-accounts-title">Subscriptions &amp; recurring</div>
-      <div class="fin-subs-total"><span>${subs.length} recurring charge${subs.length === 1 ? "" : "s"}</span><span>${formatFinMoney(subsTotal)}<span class="fin-of">/mo</span></span></div>
-      ${subs.map((r) => `
-        <div class="fin-sub-row">
-          <span class="fin-sub-name">${escapeHtml(r.name)}</span>
-          <span class="fin-sub-day">day ${Math.min(28, Math.max(1, r.expectedDay || 1))}</span>
-          <span class="fin-sub-amt">${formatFinMoney(r.lastAmount || 0)}</span>
+      <div class="fin-subs-total"><span>${subsReview.rows.length} recurring charge${subsReview.rows.length === 1 ? "" : "s"}</span><span>${formatFinMoney(subsReview.monthly)}<span class="fin-of">/mo · ${formatFinMoney(subsReview.yearly)}/yr</span></span></div>
+      ${subsReview.rows.map((r) => `
+        <div class="fin-sub-item">
+          <div class="fin-sub-top"><span class="fin-sub-name">${escapeHtml(r.name)}</span><span class="fin-sub-amt">${formatFinMoney(r.monthly)}</span></div>
+          <div class="fin-sub-meta">
+            <span>day ${r.day} · ${formatFinMoney(r.yearly)}/yr</span>
+            ${r.priceFrom != null ? `<span class="fin-sub-flag is-up">was ${formatFinMoney(r.priceFrom)}</span>` : ""}
+            ${r.dupOf ? `<span class="fin-sub-flag">same as ${escapeHtml(subsById.get(r.dupOf)?.name || "another")}?</span>` : ""}
+            <span class="fin-sub-actions">
+              ${r.link ? `<button type="button" class="out-link-chip out-link-chip--small" ${linkOutAttrs({ webUrl: r.link, label: `Manage ${r.name}` }, escapeHtml)}>Cancel…</button>` : ""}
+              <button type="button" class="fin-sub-not" data-fin-action="recurring-not" data-id="${escapeHtml(r.id)}" title="Not a recurring charge" aria-label="Not a recurring charge: ${escapeHtml(r.name)}">Not recurring</button>
+            </span>
+          </div>
         </div>`).join("")}
     </div>` : "";
+
+  // 30 days ahead for the spending accounts: paychecks in, known bills and
+  // everyday spending out (finance-plan.js). Spending accounts = cash accounts
+  // that aren't the emergency fund.
+  const forecastCard = (() => {
+    if (!haveLive || !isCurrentMonth) return "";
+    const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
+    const emergency = new Set(financeCardAccountIds("emergency"));
+    const spendIds = financeCardAccountIds("cash").filter((id) => !emergency.has(id));
+    const startBalance = financeSumByAccountIds(spendIds, liveById);
+    if (startBalance == null) return "";
+    const today = new Date();
+    const endKey = dateKeyFromDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 31));
+    const paydays = [];
+    for (const p of state.financePeople || []) {
+      const sc = (p.scenarios || []).find((x) => x.id === p.activeScenarioId) || (p.scenarios || [])[0];
+      if (!sc || !(sc.amount > 0) || sc.payFrequency === "monthly") continue;
+      const net = sc.amount - scenarioDeductionPerPeriod(sc);
+      for (const d of scenarioPaydaysInRange(sc, dateKeyFromDate(today), endKey)) paydays.push({ date: d, amount: net });
+    }
+    const monthNow = localMonthKey(today);
+    const bills = (state.financeRecurring || []).filter((r) => r.active !== false && r.lastAmount > 0)
+      .map((r) => ({ name: r.name, day: Math.min(28, Math.max(1, r.expectedDay || 1)), amount: r.lastAmount, paidThisMonth: (r.lastSeen || "").slice(0, 7) === monthNow }));
+    const recurringKeysAll = new Set((state.financeRecurring || []).filter((r) => r.active !== false).map((r) => r.merchantKey));
+    const dailySpend = everydaySpendPerDay(allTxns.map((t) => ({ posted: t.posted, amount: t.amount, merchantKey: financeMerchantKey(t.description || ""), isTransfer: t.label === "mgmt" || t.label === "income" })), { now: today, recurringKeys: recurringKeysAll });
+    const f = cashForecast({ startBalance, today, days: 30, paydays, bills, dailySpend });
+    if (!f.points.length) return "";
+    const vals = [startBalance, ...f.points.map((p) => p.balance)];
+    // Scale to the range the balance moves in; show zero only when it's crossed.
+    const vMin = Math.min(...vals), vMax = Math.max(...vals);
+    const span = Math.max(vMax - vMin, Math.abs(vMax) * 0.1, 50);
+    const lo = vMin < 0 ? Math.min(vMin, 0) - span * 0.1 : vMin - span * 0.15, hi = vMax + span * 0.15;
+    const W = 300, H = 90, P = 6;
+    const x = (i) => P + (i * (W - 2 * P)) / (vals.length - 1);
+    const y = (v) => H - P - ((v - lo) / (hi - lo || 1)) * (H - 2 * P);
+    const path = vals.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+    const LOW = 500;
+    const warn = f.low.balance < LOW;
+    const lowDate = new Date(f.low.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const hits = f.points.map((p, i) => `<rect x="${(x(i + 1) - (W - 2 * P) / vals.length / 2).toFixed(1)}" y="0" width="${((W - 2 * P) / vals.length).toFixed(1)}" height="${H}" fill="transparent"><title>${escapeHtml(`${new Date(p.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}: ${formatFinMoney(p.balance)}${p.events.length ? " · " + p.events.join(", ") : ""}`)}</title></rect>`).join("");
+    return `
+    <div class="fin-card fin-insights-card fin-forecast-card">
+      <div class="fin-subhead fin-accounts-title">Next 30 days</div>
+      <div class="fin-subs-total"><span>Spending accounts now ${formatFinMoney(startBalance)}</span><span>${formatFinMoney(f.end)}<span class="fin-of"> in 30 days</span></span></div>
+      <svg class="fin-forecast" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(`Projected balance: lowest ${formatFinMoney(f.low.balance)} on ${lowDate}, ${formatFinMoney(f.end)} in 30 days`)}">
+        ${lo < 0 ? `<line class="fin-forecast-zero" x1="0" x2="${W}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>` : ""}
+        <path d="${path}"/>
+        <circle class="${warn ? "is-low" : ""}" cx="${x(vals.indexOf(f.low.balance)).toFixed(1)}" cy="${y(f.low.balance).toFixed(1)}" r="3.5"/>
+        ${hits}
+      </svg>
+      <p class="fin-hint${warn ? " fin-forecast-warn" : ""}">${warn ? "⚠ " : ""}Lowest point ${formatFinMoney(f.low.balance)} on ${escapeHtml(lowDate)}${warn ? ` — under ${formatFinMoney(LOW)}` : ""}. Counts ${paydays.length} paycheck${paydays.length === 1 ? "" : "s"}, ${bills.length} recurring bill${bills.length === 1 ? "" : "s"} and about ${formatFinMoney(dailySpend)}/day of everyday spending.</p>
+    </div>`;
+  })();
+
   // Reports: where the viewed month's spend went (category breakdown) + CSV export.
   const catSpend = [...catActuals.entries()]
     .map(([k, v]) => ({ key: k, name: financeTxnLabelName(`cat:${k}`), amount: Math.abs(Number(v) || 0) }))
     .filter((c) => c.amount > 0)
     .sort((a, b) => b.amount - a.amount);
-  const catTotal = catSpend.reduce((s, c) => s + c.amount, 0);
+  // Shares are of everything that left the accounts, so Uncategorized is a row too.
+  const catTotal = catSpend.reduce((s, c) => s + c.amount, 0) + uncatThis.spend;
   const reportRows = (() => {
     const top = catSpend.slice(0, 8);
     const restTotal = catSpend.slice(8).reduce((s, c) => s + c.amount, 0);
     const rows = [...top];
     if (restTotal > 0) rows.push({ key: "__other", name: "Other", amount: restTotal });
+    if (uncatThis.spend > 0) rows.push({ key: "__uncat", name: "Uncategorized", amount: uncatThis.spend });
     return rows;
   })();
-  const reportMax = reportRows[0]?.amount || 1;
+  const reportMax = Math.max(1, ...reportRows.map((r) => r.amount));
+  // One whole split into parts: Needs / Wants / Savings / Uncategorized. Colored by
+  // budget group in the groups' own order (so a group keeps its color whatever its
+  // rank); Uncategorized is neutral. The rows below are its legend and table view.
+  const shareParts = (() => {
+    const parts = (state.financeBudgetGroups || []).map((g, i) => ({
+      key: g.id, name: g.label || "Group", slot: i < 8 ? i + 1 : 0,
+      amount: g.categories.reduce((s, c) => s + Math.abs(Number(catActuals.get(`${g.id}:${c.id}`)) || 0), 0),
+    }));
+    if (uncatThis.spend > 0) parts.push({ key: "__uncat", name: "Uncategorized", slot: 0, amount: uncatThis.spend });
+    const total = parts.reduce((s, p) => s + p.amount, 0);
+    return total > 0 ? parts.filter((p) => p.amount > 0).map((p) => ({ ...p, share: p.amount / total })) : [];
+  })();
+  const shareBar = shareParts.length > 1 ? `
+      <div class="fin-share" role="img" aria-label="${escapeHtml(shareParts.map((p) => `${p.name} ${formatFinMoney(p.amount)}, ${Math.round(p.share * 100)}%`).join("; "))}">
+        <div class="fin-share-bar">${shareParts.map((p) => `<i class="fin-share-seg s${p.slot}" style="flex-grow:${p.share.toFixed(4)}" title="${escapeHtml(`${p.name} · ${formatFinMoney(p.amount)} · ${Math.round(p.share * 100)}%`)}"></i>`).join("")}</div>
+        <div class="fin-share-legend">${shareParts.map((p) => `<span class="fin-share-key"><i class="fin-share-dot s${p.slot}"></i>${escapeHtml(p.name)} <b>${Math.round(p.share * 100)}%</b></span>`).join("")}</div>
+      </div>` : "";
   const reportsCard = financeLinkStatus?.connected ? `
     <div class="fin-card fin-insights-card">
       <div class="fin-report-head">
@@ -4180,6 +4709,7 @@ function renderFinancePage() {
         </div>
       </div>
       ${financeCsvImportPanelHtml()}
+      ${shareBar}
       ${reportRows.length ? reportRows.map((c) => `
         <div class="fin-report-row">
           <div class="fin-report-top"><span class="fin-report-name">${escapeHtml(c.name)}</span><span class="fin-report-amt">${formatFinMoney(c.amount)} <span class="fin-of">· ${catTotal > 0 ? Math.round((c.amount / catTotal) * 100) : 0}%</span></span></div>
@@ -4227,7 +4757,30 @@ function renderFinancePage() {
           ${receiptSourceChip(r)}
         </div>`).join("")}` : ""}
     </div>` : "";
-  const insightsView = `${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
+  // Tax time: this year's tagged totals and the export (finance-tags.js).
+  const taxYear = Number(monthKey.slice(0, 4));
+  const taxSummary = taxYearSummary(allTxns.map((t) => ({ ...t, name: t.displayName || t.description || "" })), {
+    year: taxYear, picked: state.financeTxnTax || {},
+    categoryNameOf: (t) => { const l = t.label === "split" ? (t.split?.[0]?.label || "") : (t.label || ""); return l.startsWith("cat:") ? financeTxnLabelName(l) : ""; },
+  });
+  const taxKinds = Object.entries(taxSummary.totals);
+  // Returns closing soon and warranties still in force (receipt-returns.js).
+  const ret = upcomingReturns(financeReceiptList());
+  const shortDate = (k) => new Date(k + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: k.slice(0, 4) === String(new Date().getFullYear()) ? undefined : "numeric" });
+  const returnsCard = ret.returns.length || ret.warranties.length ? `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Returns &amp; warranties</div>
+      ${ret.returns.map((r) => `<button class="fin-sub-top fin-tax-row fin-ret-row" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(r.id)}"><span class="fin-sub-name">${escapeHtml(r.store)} · return by ${escapeHtml(shortDate(r.date))}</span><span class="fin-sub-amt${r.daysLeft <= 3 ? " is-soon" : ""}">${r.daysLeft === 0 ? "today" : `${r.daysLeft} day${r.daysLeft === 1 ? "" : "s"}`}</span></button>`).join("")}
+      ${ret.warranties.slice(0, 8).map((r) => `<button class="fin-sub-top fin-tax-row fin-ret-row" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(r.id)}"><span class="fin-sub-name">${escapeHtml(r.store)} · warranty</span><span class="fin-sub-amt fin-of">until ${escapeHtml(shortDate(r.date))}</span></button>`).join("")}
+    </div>` : "";
+  const taxCard = `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Tax time · ${taxYear}</div>
+      ${taxKinds.length ? taxKinds.map(([k, v]) => `<div class="fin-sub-top fin-tax-row"><span class="fin-sub-name">${escapeHtml(taxLabel(k))}</span><span class="fin-sub-amt">${formatFinMoney(v)}</span></div>`).join("")
+        : `<p class="fin-hint">Nothing tagged yet. Tag a transaction as a donation, medical, childcare, a 529 contribution or a business expense from its details; categories with those names are tagged for you.</p>`}
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="export-tax-year" data-year="${taxYear}">Export ${taxYear} for taxes</button>
+    </div>`;
+  const insightsView = `${forecastCard}${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}${returnsCard}${taxCard}`;
 
   // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
   // bar + on-track note derived on the fly.
@@ -4238,29 +4791,46 @@ function renderFinancePage() {
     const now = new Date();
     return (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth());
   };
+  const goalLiveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
+  const goalAccounts = (state.financeAccounts || []).filter((a) => ["cash", "retirement", "investment"].includes(financeAccountKind(a)) || a.kind === "cash");
   const goalRow = (g) => {
     const editing = financeExpanded.has(`goal:${g.id}`);
-    const pct = g.target > 0 ? Math.min(100, Math.round((g.current / g.target) * 100)) : 0;
-    const reached = g.target > 0 && g.current >= g.target;
+    // Tied to an account: its balance is the progress, and the balance history
+    // gives a pace and a finish month (finance-plan.js goalProgress).
+    const acct = g.accountId ? (state.financeAccounts || []).find((a) => a.id === g.accountId) : null;
+    const bal = acct ? financeAccountBalance(acct, goalLiveById) : null;
+    const gp = goalProgress(g, { balanceNow: bal, history: financeHistory || {} });
+    const cur = gp.current;
+    const pct = g.target > 0 ? Math.min(100, Math.round((cur / g.target) * 100)) : 0;
+    const reached = g.target > 0 && cur >= g.target;
+    const monthLabel = (ym) => new Date(ym + "-15T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" });
     let note = "";
     if (reached) note = "Reached 🎉";
+    else if (gp.etaDate) note = `At ${formatFinMoney(gp.perMonth)}/mo, reached around ${monthLabel(gp.etaDate)}${gp.needPerMonth ? ` · ${formatFinMoney(gp.needPerMonth)}/mo needed for the target date` : ""}`;
     else if (g.targetDate) {
       const m = goalMonthsUntil(g.targetDate);
-      if (m != null) note = m <= 0 ? "Target date passed" : `${formatFinMoney((g.target - g.current) / m)}/mo to reach by ${new Date(g.targetDate + "T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
-    } else if (g.target > 0) note = `${formatFinMoney(g.target - g.current)} to go`;
+      if (m != null) note = m <= 0 ? "Target date passed" : `${formatFinMoney((g.target - cur) / m)}/mo to reach by ${new Date(g.targetDate + "T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
+    } else if (g.target > 0) note = `${formatFinMoney(g.target - cur)} to go${gp.linked && gp.perMonth != null && gp.perMonth <= 0 ? " · balance hasn't grown lately" : ""}`;
+    if (gp.linked) note = `${escapeHtml(acct.name || "Account")} · ${note}`;
     return `
       <div class="fin-goal">
         <button class="fin-goal-row" type="button" data-fin-action="toggle-expand" data-id="goal:${escapeHtml(g.id)}" aria-expanded="${editing}">
-          <div class="fin-goal-head-row"><span class="fin-goal-name">${escapeHtml(g.name || "Untitled goal")}</span><span class="fin-goal-nums">${formatFinMoney(g.current)} <span class="fin-of">/ ${formatFinMoney(g.target)}</span></span></div>
+          <div class="fin-goal-head-row"><span class="fin-goal-name">${escapeHtml(g.name || "Untitled goal")}</span><span class="fin-goal-nums">${formatFinMoney(cur)} <span class="fin-of">/ ${formatFinMoney(g.target)}</span></span></div>
           <div class="fin-gauge"><i class="${reached ? "is-done" : ""}" style="width:${pct}%"></i></div>
-          ${note ? `<div class="fin-goal-note${reached ? " is-done" : ""}">${escapeHtml(note)}</div>` : ""}
+          ${note ? `<div class="fin-goal-note${reached ? " is-done" : ""}">${gp.linked ? note : escapeHtml(note)}</div>` : ""}
         </button>
         ${editing ? `
         <div class="fin-goal-editor">
           <div class="fin-item-row"><input class="fin-item-name" type="text" value="${escapeHtml(g.name)}" placeholder="Goal name (e.g. Vacation fund)" data-fin-edit="goal-name" data-id="${escapeHtml(g.id)}" aria-label="Goal name" /></div>
           <div class="fin-item-row">
-            <input class="fin-item-amount" type="text" inputmode="decimal" value="${g.current || ""}" placeholder="Saved" data-fin-edit="goal-current" data-id="${escapeHtml(g.id)}" aria-label="Amount saved" />
+            ${g.accountId ? "" : `<input class="fin-item-amount" type="text" inputmode="decimal" value="${g.current || ""}" placeholder="Saved" data-fin-edit="goal-current" data-id="${escapeHtml(g.id)}" aria-label="Amount saved" />`}
             <input class="fin-item-amount" type="text" inputmode="decimal" value="${g.target || ""}" placeholder="Target" data-fin-edit="goal-target" data-id="${escapeHtml(g.id)}" aria-label="Target amount" />
+          </div>
+          <div class="fin-item-row">
+            <select class="fin-item-name" data-fin-edit="goal-account" data-id="${escapeHtml(g.id)}" aria-label="Track an account's balance">
+              <option value="">Typed amount (no account)</option>
+              ${goalAccounts.map((a) => `<option value="${escapeHtml(a.id)}" ${a.id === g.accountId ? "selected" : ""}>Balance of ${escapeHtml(a.name || "account")}</option>`).join("")}
+            </select>
           </div>
           <div class="fin-item-row fin-item-row--tools">
             <input type="date" class="fin-item-name fin-goal-date" value="${escapeHtml(g.targetDate || "")}" data-fin-edit="goal-date" data-id="${escapeHtml(g.id)}" aria-label="Target date (optional)" />
@@ -4485,6 +5055,9 @@ function onFinanceGridClick(e) {
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "remap-account") { remapFinanceAccount(btn.dataset.old); return; }
+  if (action === "move-review") { financeMoveCall(false); return; }
+  if (action === "move-confirm") { financeMoveCall(true); return; }
+  if (action === "move-cancel") { financeMove.report = null; financeMove.error = ""; renderFinancePage(); return; }
   if (action === "toggle-notifs") { openFinanceTxnReview(); return; }
   if (action === "review-txns") { openFinanceTxnReview(); return; }
   if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
@@ -4553,6 +5126,55 @@ function onFinanceGridClick(e) {
     persist();
     renderFinancePage();
     setPageNotifCount("finance", financeBellCount());
+    return;
+  }
+  if (action === "show-uncategorized") {
+    financeTab = "transactions";
+    Object.assign(financeTxnFilter, { q: "", kind: "unlabeled", account: "", from: "", to: "" });
+    renderFinancePage();
+    return;
+  }
+  if (action === "update-saved-month") {
+    // Same conditions as the offer: stored history must cover the whole month.
+    const month = financeViewMonth;
+    const txns = financeLabeledTxns();
+    if (month === financeCurrentMonthKey() || financeMonthClosed(month) || !financeStoreActive() || !financeTxnsCoverMonth(txns, month, financeCurrentMonthKey())) return;
+    if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
+    state.financeMonthActuals[month] = financeMonthEntry(txns, month, financeTxnPortions);
+    persist();
+    renderFinancePage();
+    return;
+  }
+  if (action === "txn-tag-trip") { financeTagTrip(btn.dataset.id, btn.dataset.trip || ""); renderFinancePage(); return; }
+  if (action === "export-tax-year") { exportFinanceTaxYear(Number(btn.dataset.year) || new Date().getFullYear()); return; }
+  if (action === "settle-owed") {
+    // Records that the person paid the household back what they owed right now.
+    const by = btn.dataset.by || "";
+    const amount = Math.round((Number(btn.dataset.amount) || 0) * 100) / 100;
+    if (!by || !(amount > 0)) return;
+    if (!Array.isArray(state.financeSettlements)) state.financeSettlements = [];
+    state.financeSettlements.push({ id: createId("settle"), by, amount, at: new Date().toISOString() });
+    persist();
+    renderFinancePage();
+    return;
+  }
+  if (action === "close-month" || action === "reopen-month") {
+    const month = financeViewMonth;
+    if (!(month < financeCurrentMonthKey())) return;
+    if (!state.financeClosedMonths || typeof state.financeClosedMonths !== "object") state.financeClosedMonths = {};
+    state.financeClosedMonths[month] = action === "close-month" ? { at: new Date().toISOString() } : false;
+    persist();
+    renderFinancePage();
+    return;
+  }
+  if (action === "unskip-all-merchants") {
+    // Merged across devices by key, so a skip is turned off (false), not deleted.
+    const skips = (state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {};
+    for (const k of Object.keys(skips)) skips[k] = false;
+    state.financeLabelSkips = skips;
+    persist();
+    setPageNotifCount("finance", financeBellCount());
+    renderFinancePage();
     return;
   }
   if (action === "skip-label-group") {
@@ -4859,13 +5481,22 @@ function onFinanceGridChange(e) {
     renderFinancePage();
     return;
   }
-  if (kind === "goal-name" || kind === "goal-target" || kind === "goal-current" || kind === "goal-date") {
+  if (kind === "txn-tax") {
+    if (!state.financeTxnTax || typeof state.financeTxnTax !== "object") state.financeTxnTax = {};
+    state.financeTxnTax[el.dataset.id] = el.value || "none";
+    persist();
+    renderFinancePage();
+    return;
+  }
+  if (kind === "txn-trip") { financeTagTrip(el.dataset.id, el.value); renderFinancePage(); return; }
+  if (kind === "goal-name" || kind === "goal-target" || kind === "goal-current" || kind === "goal-date" || kind === "goal-account") {
     const g = (state.financeGoals || []).find((x) => x.id === el.dataset.id);
     if (!g) return;
     if (kind === "goal-name") g.name = el.value.slice(0, 60);
     else if (kind === "goal-target") g.target = parseFinAmount(el.value) || 0;
     else if (kind === "goal-current") g.current = parseFinAmount(el.value) || 0;
     else if (kind === "goal-date") g.targetDate = el.value || "";
+    else if (kind === "goal-account") g.accountId = el.value || "";
     persist();
     renderFinancePage();
     return;
@@ -5000,6 +5631,11 @@ function onFinanceGridChange(e) {
     financeRemapChoice[el.dataset.old] = el.value;
     renderFinancePage();
     return;
+  } else if (kind === "move-pick") {
+    if (el.checked) financeMove.picked.add(String(el.dataset.id)); else financeMove.picked.delete(String(el.dataset.id));
+    financeMove.result = null;
+    renderFinancePage();
+    return;
   } else if (kind === "txn-source") {
     state.financeTxnSource = el.checked ? "store" : "feed";
     state.financeTxnSourceSetAt = new Date().toISOString(); // latest choice wins across devices
@@ -5095,5 +5731,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeGroceryPace, financeMonthGlance, financePaydays, financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

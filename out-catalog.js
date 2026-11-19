@@ -102,6 +102,7 @@ export const PLACES = {
 export const PAPER_APPS = {
   nyt:         { label: "NYT", hosts: ["nytimes.com"] },
   athletic:    { label: "The Athletic", hosts: ["nytimes.com", "theathletic.com"] },
+  npr:         { label: "NPR", hosts: ["npr.org"] },
   economist:   { label: "The Economist", hosts: ["economist.com"] },
   startribune: { label: "Star Tribune", hosts: ["startribune.com"] },
 };

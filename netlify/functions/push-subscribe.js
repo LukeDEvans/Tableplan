@@ -1,6 +1,7 @@
 // Stores or removes a Web Push subscription for the authenticated user.
 // POST   /api/push-subscribe  { subscription: PushSubscriptionJSON }  → 200
 // DELETE /api/push-subscribe  { endpoint: string }                    → 200
+import { authUserFetch } from "./_auth-user.js";
 
 export const config = { path: "/api/push-subscribe" };
 
@@ -18,7 +19,7 @@ export default async (req) => {
   if (!token) return jsonError(401, "Not authenticated.");
 
   // Resolve user ID from token
-  const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+  const userRes = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
     headers: { apikey: serviceKey, Authorization: `Bearer ${token}` }
   });
   if (!userRes.ok) return jsonError(401, "Invalid session.");

@@ -21,7 +21,7 @@ function stateSectionKeys() {
 }
 
 function mergeStatesBody() {
-  const start = src.indexOf("function mergeStates(newer, older) {");
+  const start = src.indexOf("function mergeStates(newer, older");
   const end = src.indexOf("\nfunction mergePlanWeeks", start);
   if (start < 0 || end < 0) throw new Error("mergeStates not found in app.js");
   return src.slice(start, end).replace(/\/\/.*$/gm, "");
@@ -76,10 +76,6 @@ const MERGE_NEWER_WINS_KEYS = {
   financeRetirementAccountIds: "finance account selection (authoritative; boot-empty guarded)",
   // KNOWN GAPS — newer-wins today because union needs delete tracking that
   // doesn't exist yet. Tracked follow-ups; remove from here when fixed.
-  nextStopItems: "FOLLOW-UP: needs recordDeletion('nextStopItems') on remove/purchase in groceries-ui.js before unionById",
-  radioFavorites: "FOLLOW-UP: stable station ids + permanent tombstones would block re-favouriting; needs timestamped tombstones",
-  radioFollowedPrograms: "FOLLOW-UP: same as radioFavorites",
-  musicLibrary: "FOLLOW-UP: {favorites, playlists}; un-favourite needs tombstones in music-library model",
 };
 
 describe("mergeStates covers every synced key (INF-5)", () => {

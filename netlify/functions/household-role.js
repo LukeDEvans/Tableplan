@@ -13,6 +13,7 @@
 // Nothing else on the row is written.
 
 const { userGroupQuery } = require("./_group-lookup.js");
+const { authUserFetch } = require("./_auth-user.js");
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const ROLES = ["admin", "member"];
@@ -81,7 +82,7 @@ function serviceHeaders(serviceKey) {
 
 async function getCallerUser(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
     if (!res.ok) return null;
     const user = await res.json();
     return user?.id ? user : null;

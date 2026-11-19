@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { unionById, unionStrings, unionByKey, mergeTombstones, tombstoneSetFor, computeDirtySections, writeDirtySections } from "../state-sync.js";
+import { unionById, unionStrings, unionByKey, mergeTombstones, tombstoneSetFor, computeDirtySections, settledSectionsAfterLoad, writeDirtySections, tombstoneIdsFor, effectiveTombstones, addTombstone, removeTombstone, ownedTombstoneKey } from "../state-sync.js";
 
 describe("unionById — the core cross-device list merge", () => {
   it("unions by id, newer (a) winning on collision", () => {
@@ -60,6 +60,104 @@ describe("tombstoneSetFor + unionById together (mergeStates delegation path)", (
     expect(unionById([{ id: "2" }], [{ id: "1" }], set).map((x) => x.id)).toEqual(["1"]);
     expect(tombstoneSetFor(tombstones, "watchItems")).toBe(null); // no tombstones for key
     expect(tombstoneSetFor({}, "recipes")).toBe(null);
+  });
+});
+
+// ── Per-view delete lists ────────────────────────────────────────────────────
+// "Remove from the household list" must not remove the same id from Personal
+// (ISSUES.md, 2026-10-27). HH / ME / BIZ are row owners.
+describe("per-view delete lists", () => {
+  const HH = "household", ME = "u-luke", BIZ = "space-1";
+
+  it("a delete made in one view applies there and nowhere else", () => {
+    const t = {};
+    addTombstone(t, "podcasts", "show-1", HH);
+    expect(tombstoneIdsFor(t, "podcasts", HH)).toEqual(["show-1"]);
+    expect(tombstoneIdsFor(t, "podcasts", ME)).toEqual([]);
+    expect(tombstoneIdsFor(t, "podcasts", BIZ)).toEqual([]);
+  });
+
+  it("is also written under the plain key, which older builds read", () => {
+    const t = {};
+    addTombstone(t, "podcasts", "show-1", HH);
+    expect(t.podcasts).toEqual(["show-1"]);
+    expect(t[ownedTombstoneKey("podcasts", HH)]).toEqual(["show-1"]);
+  });
+
+  it("a delete from before this change (plain key only) still applies in every view", () => {
+    const t = { podcasts: ["old-1"] };
+    addTombstone(t, "podcasts", "show-1", HH);
+    expect(tombstoneIdsFor(t, "podcasts", HH).sort()).toEqual(["old-1", "show-1"]);
+    expect(tombstoneIdsFor(t, "podcasts", ME)).toEqual(["old-1"]);
+  });
+
+  it("the same id deleted in both views is deleted in both", () => {
+    const t = {};
+    addTombstone(t, "watchItems", "w1", HH);
+    addTombstone(t, "watchItems", "w1", ME);
+    expect(tombstoneIdsFor(t, "watchItems", HH)).toEqual(["w1"]);
+    expect(tombstoneIdsFor(t, "watchItems", ME)).toEqual(["w1"]);
+    expect(tombstoneIdsFor(t, "watchItems", BIZ)).toEqual([]);
+  });
+
+  it("a row that can't be named yet holds a view's delete back rather than applying it", () => {
+    const t = { podcasts: ["old-1"] };
+    addTombstone(t, "podcasts", "show-1", HH);
+    expect(tombstoneIdsFor(t, "podcasts", null)).toEqual(["old-1"]);
+  });
+
+  it("a key with one row for everyone is unchanged (no owner, plain list)", () => {
+    const t = {};
+    addTombstone(t, "recipes", "r1", null);
+    expect(t).toEqual({ recipes: ["r1"] });
+    expect(tombstoneIdsFor(t, "recipes", null)).toBe(t.recipes);
+  });
+
+  it("taking a delete back clears it for that view only", () => {
+    const t = {};
+    addTombstone(t, "watchItems", "w1", HH);
+    addTombstone(t, "watchItems", "w1", ME);
+    removeTombstone(t, "watchItems", "w1", ME);
+    expect(tombstoneIdsFor(t, "watchItems", ME)).toEqual([]);
+    expect(tombstoneIdsFor(t, "watchItems", HH)).toEqual(["w1"]);
+  });
+
+  it("keeps each list to its newest ids", () => {
+    const t = {};
+    for (let i = 0; i < 5; i++) addTombstone(t, "podcasts", `s${i}`, HH, 3);
+    expect(t.podcasts).toEqual(["s2", "s3", "s4"]);
+    expect(t[ownedTombstoneKey("podcasts", HH)]).toEqual(["s2", "s3", "s4"]);
+  });
+
+  it("survives the cross-device union (mergeTombstones keeps owned keys)", () => {
+    const a = {}; addTombstone(a, "podcasts", "show-1", HH);
+    const b = {}; addTombstone(b, "podcasts", "show-2", ME);
+    const merged = mergeTombstones(a, b);
+    expect(tombstoneIdsFor(merged, "podcasts", HH)).toEqual(["show-1"]);
+    expect(tombstoneIdsFor(merged, "podcasts", ME)).toEqual(["show-2"]);
+  });
+
+  it("effectiveTombstones resolves every key for its own row", () => {
+    const t = { recipes: ["r1"] };
+    addTombstone(t, "podcasts", "show-1", HH);
+    addTombstone(t, "watchItems", "w1", ME);
+    const ownerOf = (key) => ({ podcasts: ME, watchItems: ME }[key] || null);
+    expect(effectiveTombstones(t, ownerOf)).toEqual({ recipes: ["r1"], podcasts: [], watchItems: ["w1"] });
+  });
+
+  it("effectiveTombstones is the map itself when nothing is owned (no behaviour change)", () => {
+    const t = { recipes: ["r1"], podcasts: ["p1"] };
+    expect(effectiveTombstones(t, () => HH)).toBe(t);
+    expect(effectiveTombstones(null)).toEqual({});
+  });
+
+  it("the union then filters as mergeStates does: Personal keeps what Household removed", () => {
+    const t = {};
+    addTombstone(t, "podcasts", "show-1", HH);
+    const personal = unionById([{ id: "show-1" }], [{ id: "show-1" }, { id: "show-2" }], tombstoneSetFor(effectiveTombstones(t, () => ME), "podcasts"));
+    const household = unionById([], [{ id: "show-1" }], tombstoneSetFor(effectiveTombstones(t, () => HH), "podcasts"));
+    expect(personal.map((x) => x.id)).toEqual(["show-1", "show-2"]);
+    expect(household).toEqual([]);
   });
 });
 
@@ -154,5 +252,37 @@ describe("writeDirtySections — in-flight edits are never marked clean (INF-1)"
     const { written, error } = await writeDirtySections(dirty, async ({ section }) => (section === "a" ? "merged-a" : undefined));
     expect(error).toBe(null);
     expect(written).toEqual({ a: "merged-a", b: "planned-b" });
+  });
+});
+
+describe("settledSectionsAfterLoad (a boot rewrites only what the merge changed)", () => {
+  const sections = { eat: ["plans"], do: ["doTasks"], media: ["podcasts"], fresh: ["x"] };
+  const raw = { eat: '{"plans":{}}', do: '{"doTasks":[{"id":"t","title":"a"}]}', media: '{"podcasts":[]}' };
+  const live = { eat: '{"plans":{}}', do: '{"doTasks":[{"id":"t","title":"a","done":false}]}', media: '{"podcasts":[{"id":"new"}]}', fresh: '{"x":1}' };
+  const tidiedServer = { eat: '{"plans":{}}', do: '{"doTasks":[{"id":"t","title":"a","done":false}]}', media: '{"podcasts":[]}', fresh: '{}' };
+  const cur = (keys) => live[Object.keys(sections).find((s) => sections[s] === keys)];
+  const tidy = (keys) => tidiedServer[Object.keys(sections).find((s) => sections[s] === keys)];
+
+  it("counts a section the app only tidied as written, keeps real changes and new rows dirty", () => {
+    let calls = 0;
+    const written = settledSectionsAfterLoad(sections, raw, cur, () => { calls++; return tidy; });
+    expect(written.eat).toBe(live.eat);           // equal raw
+    expect(written.do).toBe(live.do);             // equal once tidied → not re-sent
+    expect(written.media).toBe(raw.media);        // a real local change → still dirty
+    expect(written.media).not.toBe(live.media);
+    expect("fresh" in written).toBe(false);       // no server row → dirty, gets created
+    expect(calls).toBe(1);                        // the tidy pass runs once, lazily
+  });
+  it("never runs the tidy pass when everything matches raw", () => {
+    let calls = 0;
+    settledSectionsAfterLoad({ eat: ["plans"] }, { eat: '{"plans":{}}' }, () => '{"plans":{}}', () => { calls++; return null; });
+    expect(calls).toBe(0);
+  });
+  it("keeps differing sections dirty when the tidied copy can't be made", () => {
+    const written = settledSectionsAfterLoad(sections, raw, cur, () => null);
+    expect(written.do).toBe(raw.do);
+  });
+  it("returns null (write everything) when nothing was loaded", () => {
+    expect(settledSectionsAfterLoad(sections, null, cur, () => tidy)).toBe(null);
   });
 });

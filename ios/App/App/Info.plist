@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Live uses the camera to scan receipts, and the codes that link your devices and verify a contact for secure messages.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Live counts and shows the photos and videos in your library. Nothing leaves your phone unless you choose to add it to Live.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Live uses Face ID to unlock your Documents each time you open them.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
@@ -46,6 +48,14 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.mrlukedevans.live.photos.refresh</string>
+		<string>com.mrlukedevans.live.photos.process</string>
+		<string>com.mrlukedevans.live.photos.sync.*</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

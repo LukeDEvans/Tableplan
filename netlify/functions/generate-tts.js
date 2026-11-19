@@ -1,3 +1,4 @@
+const { authUserFetch } = require("./_auth-user.js");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const BUCKET = "article-audio";
 // Upper bound on input text (MED-10) — bounds the paid TTS fan-out per request.
@@ -167,7 +168,7 @@ async function uploadToStorage(serviceKey, path, buffer, contentType) {
 
 async function getUserId(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     if (!res.ok) return null;

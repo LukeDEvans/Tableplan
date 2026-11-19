@@ -77,6 +77,19 @@ return {
       fees: number(receipt?.fees),
       discounts: number(receipt?.discounts),
       total: number(receipt?.total),
+      // What bookkeeping needs beyond the total (FINANCE_AUDIT D5). All optional:
+      // a tip printed on the receipt (not part of `total`), the paying card's last
+      // 4 digits when printed, who scanned it, and which view it belongs to
+      // ("" = household; "personal" = that person's own purchase).
+      tip: Math.max(0, number(receipt?.tip)),
+      paymentLast4: /^\d{4}$/.test(text(receipt?.paymentLast4)) ? text(receipt.paymentLast4) : "",
+      scannedBy: text(receipt?.scannedBy),
+      view: text(receipt?.view) === "personal" ? "personal" : "",
+      // Last day to return it, and when its warranty ends ("YYYY-MM-DD" or "").
+      returnBy: /^\d{4}-\d{2}-\d{2}$/.test(text(receipt?.returnBy)) ? text(receipt.returnBy) : "",
+      warrantyUntil: /^\d{4}-\d{2}-\d{2}$/.test(text(receipt?.warrantyUntil)) ? text(receipt.warrantyUntil) : "",
+      // When its items were added to Inventory (receipt-pantry.js), so it's done once.
+      pantryAddedAt: text(receipt?.pantryAddedAt),
       imageUrl: text(receipt?.imageUrl),
       fileRef: text(receipt?.fileRef),
       imageRefs: normalizeImageRefs(receipt?.imageRefs),
@@ -122,7 +135,10 @@ return {
       confidenceScore: line?.confidenceScore === undefined || line?.confidenceScore === null || line?.confidenceScore === "" ? 0.7 : Math.min(1, Math.max(0, number(line.confidenceScore, 0.7))),
       userCorrected: Boolean(line?.userCorrected),
       // Finance budget category key ("cat:<groupId>:<categoryId>") or "".
-      budgetCategory: text(line?.budgetCategory)
+      budgetCategory: text(line?.budgetCategory),
+      // A personal item on a household-paid receipt: the user id of the person who
+      // pays the household back for it (finance-settle.js), or "".
+      owedBy: text(line?.owedBy)
     };
   }
 
@@ -319,8 +335,14 @@ return {
       source: receipt.source || "scan",
       externalId: receipt.externalId || "",
       financeTxnId: receipt.financeTxnId || "",
+      tip: number(receipt.tip),
+      last4: receipt.paymentLast4 || "",
+      view: receipt.view || "",
+      returnBy: receipt.returnBy || "",
+      warrantyUntil: receipt.warrantyUntil || "",
+      needsReview: Boolean(receipt.extraction && receipt.extraction.status && receipt.extraction.status !== "ok"),
       hasImage: (receipt.imageRefs || []).length > 0,
-      items: (receipt.lineItems || []).map((line) => ({ name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
+      items: (receipt.lineItems || []).map((line) => ({ ...(line.owedBy ? { owedBy: line.owedBy } : {}), name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
       portions: receiptFinancePortions(receipt)
     };
   }

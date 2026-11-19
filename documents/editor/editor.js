@@ -46,15 +46,19 @@ const MAX_IMAGE_PX = 2400;
 const isPhone = () => window.matchMedia("(max-width: 760px)").matches;
 const randHex = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, "0")).join("");
 
-export async function openDocEditor({ store, file, me, people = [], deps = {}, host = document.body, onClose = null, startEditing = false }) {
+// preview: { onKeep?, keepLabel?, note? } opens a document that isn't a file of ours
+// (a Word attachment in Mail): view only, nothing written anywhere, no device copy.
+// onKeep is what the header's button does (Mail: bring it into the Document page).
+export async function openDocEditor({ store, file, me, people = [], deps = {}, host = document.body, onClose = null, startEditing = false, preview = null }) {
   const root = document.createElement("div");
-  root.className = "wp-root";
+  root.className = preview ? "wp-root is-preview" : "wp-root";
   root.innerHTML = `
     <header class="wp-top">
       <button type="button" class="wp-back" data-act="close" aria-label="Back to Document">${IC.back}</button>
       <div class="wp-title"><input type="text" data-no-clear aria-label="Document name" maxlength="200" value="${esc(file.name)}"><span class="wp-status" role="status">Opening…</span></div>
       <div class="wp-people" data-people></div>
       <select class="wp-mode" data-mode aria-label="Mode"><option value="editing">Editing</option><option value="suggesting">Suggesting</option><option value="viewing">Viewing</option></select>
+      ${preview?.onKeep ? `<button type="button" class="primary-btn wp-keep" data-act="keep">${esc(preview.keepLabel || "Save to Document")}</button>` : ""}
       <button type="button" class="wp-icon" data-act="comments" title="Comments" aria-label="Comments">${IC.comment}</button>
       <button type="button" class="wp-icon" data-act="phone-menu" title="More" aria-label="More">${IC.more}</button>
     </header>
@@ -120,7 +124,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
   const session = createDocSession({
     store, me,
     liveOpen: deps.liveOpen || null,
-    cache: createDocCache(`${file.scope}/${file.id}`, store.cacheSeal || {}),
+    cache: preview ? null : createDocCache(`${file.scope}/${file.id}`, store.cacheSeal || {}),
     getText: () => ({ text: editor ? nodeText(editor.state.doc) : "", pages: pageCount }),
   });
   try { await session.ready; } catch (e) {
@@ -138,7 +142,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
   let comments = null;
   let versions = null;
   let lastLayout = null;
-  const editingAllowed = () => mode !== "viewing" && !previewing;
+  const editingAllowed = () => mode !== "viewing" && !previewing && !preview;
   let previewing = false;
   let phoneEditing = startEditing;
 
@@ -223,6 +227,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
 
   // ---- modes ----------------------------------------------------------------------------------
   function setMode(m) {
+    if (preview) m = "viewing";
     mode = m;
     editor.storage.suggesting.enabled = m === "suggesting";
     applyEditable();
@@ -336,7 +341,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
   const unsub = session.subscribe((s) => showStatus(s));
   function showStatus(s) {
     const label = { loading: "Opening…", saving: "Saving…", saved: "All changes saved", unsaved: "Saving soon…", offline: "Offline — changes kept on this device", error: s.error || "Couldn't save" }[s.status] || "";
-    statusEl.textContent = mode === "viewing" ? `Viewing · ${label}` : label;
+    statusEl.textContent = preview ? (preview.note || "View only") : mode === "viewing" ? `Viewing · ${label}` : label;
     statusEl.classList.toggle("is-error", s.status === "error");
     const ppl = $("[data-people]");
     const seen = new Set();
@@ -638,6 +643,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     const act = t.closest("[data-act]")?.dataset.act;
     if (!act) return;
     if (act === "close") close();
+    else if (act === "keep") preview?.onKeep?.();
     else if (act === "comments") toggleSide("comments");
     else if (act === "side-close") closeSide();
     else if (act === "phone-menu") openPop(t.closest("[data-act]"), phoneMenu(), onMenuItem);
@@ -1176,6 +1182,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
 
   // ---- title ----------------------------------------------------------------------------------------------
   const nameInput = $(".wp-title input");
+  if (preview) nameInput.readOnly = true;
   nameInput.addEventListener("change", async () => {
     const n = nameInput.value.trim();
     if (!n) { nameInput.value = file.name; return; }
@@ -1192,7 +1199,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
     else if (k === "f" && !e.shiftKey && !e.altKey) { e.preventDefault(); openFind(); }
     else if (k === "h" && e.shiftKey) { e.preventDefault(); openFind(); }
     else if (k === "p" && !e.shiftKey) { e.preventDefault(); run("print"); }
-    else if (k === "s") { e.preventDefault(); session.save(); }
+    else if (k === "s") { e.preventDefault(); if (!preview) session.save(); }
     else if (k === "m" && e.altKey) { e.preventDefault(); run("comment"); }
     else if (k === "c" && e.shiftKey) { e.preventDefault(); run("wordCount"); }
     else if (e.key === "." && e.shiftKey) { e.preventDefault(); run("sizeUp"); }
@@ -1213,7 +1220,7 @@ export async function openDocEditor({ store, file, me, people = [], deps = {}, h
 
   async function close() {
     closePop();
-    statusEl.textContent = "Saving…";
+    if (!preview) statusEl.textContent = "Saving…";
     try { await session.close(); } catch { /* kept on the device */ }
     comments?.destroy();
     window.removeEventListener("resize", onResize);

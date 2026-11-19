@@ -1,4 +1,5 @@
 const { userGroupQuery } = require("./_group-lookup.js");
+const { authUserFetch } = require("./_auth-user.js");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 exports.handler = async (event) => {
@@ -88,7 +89,7 @@ async function fetchMemberships(serviceKey) {
 
 async function getCallerUser(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     return res.ok ? await res.json() : null;

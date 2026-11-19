@@ -12,6 +12,7 @@
 // this is additive.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const { runImport } = require("./_import-gateway.js");
+const { authUserFetch } = require("./_auth-user.js");
 const { statusForImportError } = require("./_import-fetch.js");
 
 exports.handler = async (event) => {
@@ -44,7 +45,7 @@ exports.handler = async (event) => {
 
 async function verifySession(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     return res.ok;

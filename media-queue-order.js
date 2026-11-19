@@ -68,3 +68,14 @@ export function heldQueueId({ localId = null, lastHistory = null, progress = {},
   }
   return null;
 }
+
+// What a tap on an episode's row should do when the native player may already
+// hold that episode. Starting it again would reopen it at the last SAVED spot
+// (saved at most every 15 s), so it would jump back; instead a tap on the
+// episode that is loaded shows it ("show") or carries on from where it is
+// ("resume"). Anything else — another episode, nothing loaded, or the queue
+// moving on by itself — is a normal start.
+export function episodeTapAction({ tappedId = null, sessionId = null, paused = false, advance = false } = {}) {
+  if (advance || !tappedId || !sessionId || tappedId !== sessionId) return "start";
+  return paused ? "resume" : "show";
+}

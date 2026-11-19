@@ -56,13 +56,13 @@ export function createReceiptOutbox(store, { now = () => Date.now() } = {}) {
   return {
     // pages: [{ bytes: Uint8Array, type: "image/jpeg" | … }]; scope: the household
     // it's for (filed only there); camera: pages from the document camera.
-    async queue(pages, { scope, camera = false } = {}) {
+    async queue(pages, { scope, camera = false, receiptId = "" } = {}) {
       if (!scope) return null;
       const kept = (pages || []).filter((p) => p?.bytes instanceof Uint8Array && p.bytes.length && /^image\//.test(pageType(p.type))).slice(0, MAX_PAGES);
       if (!kept.length || kept.reduce((n, p) => n + p.bytes.length, 0) > OUTBOX_ENTRY_MAX_BYTES) return null;
       const at = now();
       const key = `r:${String(at).padStart(15, "0")}:${Math.random().toString(36).slice(2, 10)}`;
-      await store.set(key, { at, scope, camera: Boolean(camera), attempts: 0, pages: kept.map((p) => ({ bytes: p.bytes, type: pageType(p.type) })) });
+      await store.set(key, { at, scope, camera: Boolean(camera), receiptId: String(receiptId || ""), attempts: 0, pages: kept.map((p) => ({ bytes: p.bytes, type: pageType(p.type) })) });
       await prune();
       return key;
     },
@@ -79,15 +79,18 @@ export function createReceiptOutbox(store, { now = () => Date.now() } = {}) {
 // match is the first scan receipt saved in the 15 minutes after it (a minute's
 // slack for clocks) that no other receipt in this run took. receipts: [{ id,
 // storeName, purchaseDate, createdAt, source }]; used: ids already taken.
-export function receiptLabel(at, receipts = [], used = new Set()) {
-  const near = (receipts || [])
+// `receiptId`: the id the scan was given (known for a scan-and-go receipt); that
+// receipt is used when it has arrived, and time is only the fallback.
+export function receiptLabel(at, receipts = [], used = new Set(), receiptId = "") {
+  const known = receiptId ? (receipts || []).find((r) => r?.id === receiptId && r.storeName) : null;
+  const near = known || (receiptId ? null : (receipts || [])
     .filter((r) => (r?.source || "scan") === "scan" && r?.storeName && r?.createdAt && !used.has(r.id))
     .map((r) => ({ r, gap: Date.parse(r.createdAt) - at }))
     .filter((x) => Number.isFinite(x.gap) && x.gap >= -60 * 1000 && x.gap <= 15 * 60 * 1000)
-    .sort((a, b) => a.gap - b.gap)[0]?.r;
+    .sort((a, b) => a.gap - b.gap)[0]?.r);
   if (near?.id) used.add(near.id);
   const date = near?.purchaseDate || isoDay(at);
-  return { name: `${near ? near.storeName : "Receipt"} · ${date}`.slice(0, 200), documentDate: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : isoDay(at) };
+  return { receiptId: receiptId || near?.id || "", name: `${near ? near.storeName : "Receipt"} · ${date}`.slice(0, 200), documentDate: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : isoDay(at) };
 }
 
 function isoDay(ms) {
@@ -193,12 +196,14 @@ export async function fileReceipts({
       try {
         let ids = Array.isArray(entry.fileIds) && entry.fileIds.length === keep.length ? entry.fileIds : null;
         if (!ids) { ids = keep.map(() => newId()); await outbox.put(entry.key, { ...entry, fileIds: ids }); }
-        const { name, documentDate } = receiptLabel(entry.at, receipts(), used);
+        const { name, documentDate, receiptId } = receiptLabel(entry.at, receipts(), used, entry.receiptId || "");
+        // The file points at its receipt, so Document can show what was read from it.
+        const source = receiptId ? { receiptId } : null;
         for (const [i, d] of keep.entries()) {
           if (await library.has(scope, ids[i])) continue; // stored before a crash
           const thumb = await makeThumb(d.first);
           await library.addFile(scope, {
-            id: ids[i], content: d.content, thumb, folderId,
+            id: ids[i], content: d.content, thumb, folderId, source,
             meta: { name: keep.length > 1 ? `${name} (${i + 1})` : name, mime: d.mime, pages: d.pages, documentDate, tags: ["receipt"] },
           });
         }
@@ -210,6 +215,41 @@ export async function fileReceipts({
         else await outbox.put(entry.key, { ...(await outbox.get(entry.key) || entry), attempts });
         out.failed++;
       }
+    }
+    return out;
+  });
+}
+
+// Personal receipts folder (Luke, 2026-11-12): a receipt marked Personal has its file
+// moved from the household's Receipts into the owner's Personal › Receipts. Copy first
+// (the copy's source.movedFrom names the household file, so a second run doesn't copy
+// twice), then the household file is removed (library.dropMovedReceipt; the database
+// checks it's the caller's own Personal receipt). One file failing doesn't stop the rest.
+// personalIds: ids of this person's Personal receipts. Returns { moved, failed }.
+export async function movePersonalReceiptFiles({ library, from, to, personalIds, lock = (fn) => fn() }) {
+  const ids = new Set([...(personalIds || [])].map(String));
+  if (!ids.size || !from || !to || from === to) return { moved: 0, failed: 0 };
+  return lock(async () => {
+    const out = { moved: 0, failed: 0 };
+    const waiting = (await library.files(from)).filter((f) => f.source?.receiptId && ids.has(String(f.source.receiptId)));
+    if (!waiting.length) return out;
+    const folders = await library.ensureStartingFolders(to, { receipts: true, names: [] });
+    const folderId = folders.find((f) => f.kind === "receipts")?.id || null;
+    const copied = new Set((await library.files(to, { includeDeleted: true })).map((f) => f.source?.movedFrom).filter(Boolean));
+    for (const f of waiting) {
+      try {
+        if (!copied.has(f.id)) {
+          const { bytes, name, mime } = await library.open(from, f.id);
+          let thumb = null;
+          if ((f.parts || []).includes("thumb")) { try { thumb = await library.thumbnail(from, f.id); } catch { thumb = null; } }
+          await library.addFile(to, {
+            content: bytes, thumb, folderId, source: { receiptId: String(f.source.receiptId), movedFrom: f.id },
+            meta: { name, mime, pages: f.pages, documentDate: f.documentDate, tags: f.tags },
+          });
+        }
+        if (await library.dropMovedReceipt(from, f.id, f.parts)) out.moved++;
+        else out.failed++;
+      } catch { out.failed++; }
     }
     return out;
   });
