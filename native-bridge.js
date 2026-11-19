@@ -413,3 +413,40 @@ export function nativePhotoLibrary() {
 export function nativeFileSrc(path) {
   try { return CapCore && typeof CapCore.convertFileSrc === "function" ? CapCore.convertFileSrc(path) : path; } catch { return path; }
 }
+
+// ── Utilities menu plugins (UTILITIES_MENU_DESIGN.md) ─────────────────────────
+// Each is null in a browser/PWA or an app build from before the plugin, and the
+// menu leaves the item off (decision 11).
+function _registerIfAvailable(name) {
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) return null;
+    const p = registerPlugin(name);
+    return (CapCore.isPluginAvailable && CapCore.isPluginAvailable(name)) ? p : null;
+  } catch { return null; }
+}
+
+// Alarms and timers through AlarmKit (LiveClockPlugin.swift, iOS 26+):
+// authorization(), requestAuthorization(), list(), scheduleAlarm({ hour, minute,
+// label, weekdays }), scheduleTimer({ seconds, label }), cancel({ id }),
+// pause({ id }), resume({ id }).
+let _clock;
+export function nativeClock() {
+  if (_clock === undefined) _clock = _registerIfAvailable("LiveClock");
+  return _clock;
+}
+
+// The iPhone's own camera, saving to the photo library (LiveCameraPlugin.swift):
+// capture() → { saved, kind: "photo"|"video" } | { cancelled }.
+let _camera;
+export function nativeCamera() {
+  if (_camera === undefined) _camera = _registerIfAvailable("LiveCamera");
+  return _camera;
+}
+
+// Song recognition (SongRecognizerPlugin.swift, ShazamKit — behind
+// song-recognizer.js): recognize({ timeoutSeconds }) → { status, song? }, cancel().
+let _songRecognizer;
+export function nativeSongRecognizer() {
+  if (_songRecognizer === undefined) _songRecognizer = _registerIfAvailable("SongRecognizer");
+  return _songRecognizer;
+}
