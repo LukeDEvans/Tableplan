@@ -95,7 +95,7 @@ import { toolAllowed, requiresConfirmation, isReadTool } from './assistant-tools
 import { normalizeDateRange, formatCalendarRange, formatTaskList, findContacts, formatContacts, summarizeTransactions, formatWeather, formatMailSearch, formatMailThread, addDaysKey, daysUntilAnnual, weekdayLabel } from './assistant-queries.js';
 import { captureBefore, captureAfter, canUndo, buildUndo } from './assistant-undo.js';
 import { computeSuggestions, pruneDismissed } from './assistant-suggestions.js';
-import { indexFromState, search as searchIndexQuery } from './search-index.js';
+import { createIndexCache, search as searchIndexQuery } from './search-index.js';
 import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
@@ -4133,7 +4133,13 @@ function setupDiagnostics() {
   // incremental (it can consume projectToday instead of re-deriving per-domain).
   window.__liveToday = (now) => projectToday(state, now instanceof Date ? now : new Date());
   window.__liveContext = (now) => buildAgentContext(state, now instanceof Date ? now : new Date());
-  window.__liveSearch = (q, opts) => searchIndexQuery(indexFromState(state), q, opts || {});
+  // Universal search (UNIVERSAL_SEARCH_DESIGN.md): the index is rebuilt only when
+  // state moves on, and results carry the view they came from.
+  const liveSearchIndex = createIndexCache();
+  window.__liveSearch = (q, opts = {}) => {
+    const view = currentViewKey();
+    return searchIndexQuery(liveSearchIndex(state, { view }), q, { view, today: localDateKey(new Date()), ...opts });
+  };
   // Receipt review — test-only verbs (local dev) for headless verification of the
   // validation banner + per-line highlighting + source thumbnails.
   window.__liveReceiptScan = {

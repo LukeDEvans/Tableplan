@@ -134,6 +134,8 @@ function makeDb(s: ReturnType<typeof svc>, who: { keyId: string; userId: string 
       const filter = ids ? `&id=in.(${ids.map((i) => `"${String(i).replace(/["\\]/g, "")}"`).join(",")})` : "";
       return s.get(`eat_recipes?select=${RECIPE_COLUMNS}${filter}&order=name.asc`);
     },
+    // Just what search needs (UNIVERSAL_SEARCH_DESIGN.md): no steps, no times.
+    recipeIndex: () => s.get(`eat_recipes?select=id,name,tags,ingredients&order=name.asc`),
   };
 }
 
