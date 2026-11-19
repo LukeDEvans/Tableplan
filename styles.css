@@ -26413,7 +26413,7 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
 .wallet-card span { opacity: 0.9; font-size: 0.9rem; }
 .wallet-show { display: grid; gap: 12px; justify-items: center; text-align: center; }
 .wallet-code { width: 100%; max-width: 440px; padding: 14px; border-radius: 14px; background: #fff; }
-.wallet-code svg { display: block; width: 100%; height: auto; max-height: 180px; }
+.wallet-code svg { stroke: none; display: block; width: 100%; height: auto; max-height: 180px; }
 .wallet-code.is-qr svg { max-width: 260px; max-height: none; margin: 0 auto; }
 .wallet-number { font-size: 1.4rem; font-weight: 700; letter-spacing: 0.06em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .wallet-form { display: grid; gap: 10px; }

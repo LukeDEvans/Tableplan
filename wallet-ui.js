@@ -102,7 +102,11 @@ export function openWallet(deps) {
       color = b.dataset.color;
       form.querySelectorAll("[data-color]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.color === color)));
     });
-    form.number.addEventListener("change", () => { if (!card) form.format.value = suggestFormat(form.number.value); });
+    // A new card's barcode follows the number as it's typed or pasted, until the
+    // person picks a format themselves.
+    let formatPicked = Boolean(card);
+    form.format.addEventListener("change", () => { formatPicked = true; });
+    form.number.addEventListener("input", () => { if (!formatPicked) form.format.value = suggestFormat(form.number.value); });
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const target = form.lib?.value || lib;

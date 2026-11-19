@@ -33,9 +33,11 @@ describe("barcode (Code 128)", () => {
     expect(() => code128Values("")).toThrow();
     expect(() => code128Values("é")).toThrow();
     expect(code128Svg("ABC")).toMatch(/^<svg[\s\S]*<rect/);
+    // The app's global svg rule strokes every shape; a stroked bar fills the spaces and won't scan.
+    expect(code128Svg("ABC")).toContain('stroke="none"');
   });
   it("draws a QR", () => {
-    expect(qrSvg("https://example.com", qrcode)).toMatch(/^<svg/);
+    expect(qrSvg("https://example.com", qrcode)).toMatch(/^<svg[^>]*stroke="none"/);
   });
 });
 

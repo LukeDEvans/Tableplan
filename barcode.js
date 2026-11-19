@@ -58,7 +58,7 @@ export function code128Svg(text, { height = 60, module = 2 } = {}) {
     if (i % 2 === 0) rects.push(`<rect x="${x}" y="0" width="${w}" height="${height}"/>`);
     x += w;
   });
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total} ${height}" width="${total * module}" height="${height * module / 2}" preserveAspectRatio="none" role="img" aria-label="Barcode ${escapeAttr(text)}"><rect width="${total}" height="${height}" fill="#fff"/><g fill="#000">${rects.join("")}</g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" stroke="none" viewBox="0 0 ${total} ${height}" width="${total * module}" height="${height * module / 2}" preserveAspectRatio="none" role="img" aria-label="Barcode ${escapeAttr(text)}"><rect width="${total}" height="${height}" fill="#fff"/><g fill="#000" shape-rendering="crispEdges">${rects.join("")}</g></svg>`;
 }
 
 // SVG of a QR code (qrcode-generator instance passed in, so this file stays
@@ -73,7 +73,7 @@ export function qrSvg(text, qrcode, { cell = 6, margin = 4 } = {}) {
   for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
     if (qr.isDark(r, c)) rects.push(`<rect x="${(c + margin) * cell}" y="${(r + margin) * cell}" width="${cell}" height="${cell}"/>`);
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="QR code"><rect width="${size}" height="${size}" fill="#fff"/><g fill="#000">${rects.join("")}</g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" stroke="none" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="QR code"><rect width="${size}" height="${size}" fill="#fff"/><g fill="#000" shape-rendering="crispEdges">${rects.join("")}</g></svg>`;
 }
 
 function escapeAttr(s) {
