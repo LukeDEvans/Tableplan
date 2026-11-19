@@ -165,7 +165,7 @@ describe("ranking and results", () => {
   });
   it("groups results by type with a 'more' count", () => {
     const g = groupResults([{ type: "recipe", id: 1 }, { type: "task", id: 2 }, { type: "recipe", id: 3 }, { type: "recipe", id: 4 }], 2);
-    expect(g.map((x) => [x.type, x.label, x.items.length, x.more])).toEqual([["recipe", "Recipe", 2, 1], ["task", "Task", 1, 0]]);
+    expect(g.map((x) => [x.type, x.label, x.items.length, x.more])).toEqual([["recipe", "Recipes", 2, 1], ["task", "Tasks", 1, 0]]);
   });
 });
 

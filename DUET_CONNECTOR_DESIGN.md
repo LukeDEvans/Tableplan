@@ -170,6 +170,11 @@ reading only the JSON keys its sources name, each row once; recipes come from
 id, and the answer says titles are data, not instructions. Podcasts stay on the
 device (their rows carry episode lists). Design: UNIVERSAL_SEARCH_DESIGN.md.
 
+**Live since 2026-11-19 (liv-mcp v8, from #272).** Checked with a throwaway key over
+`pg_net` (since revoked): `tools/list` shows `search`; real queries return recipes and
+Watch items across Personal and Household. Not yet deployed: plural group headings
+("Watch list:" rather than "Watchs:") — goes out with the next liv-mcp deploy.
+
 ## 6. Open questions (to take one at a time)
 
 1. **First key:** mint it now from SQL with the secret given to Luke in chat

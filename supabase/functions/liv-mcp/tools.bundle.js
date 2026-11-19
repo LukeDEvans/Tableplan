@@ -407,6 +407,7 @@ var SOURCES = [
   {
     type: "recipe",
     label: "Recipe",
+    plural: "Recipes",
     section: "eat",
     keys: ["recipes"],
     server: "recipes-table",
@@ -420,6 +421,7 @@ var SOURCES = [
   {
     type: "task",
     label: "Task",
+    plural: "Tasks",
     section: "do",
     keys: ["doPlans", "doBacklog", "doTasks"],
     server: true,
@@ -442,6 +444,7 @@ var SOURCES = [
   {
     type: "event",
     label: "Event",
+    plural: "Events",
     section: "plan",
     keys: ["planEvents"],
     server: true,
@@ -456,6 +459,7 @@ var SOURCES = [
   {
     type: "trip",
     label: "Trip",
+    plural: "Trips",
     section: "travel",
     keys: ["trips"],
     server: true,
@@ -470,6 +474,7 @@ var SOURCES = [
   {
     type: "trip_idea",
     label: "Trip idea",
+    plural: "Trip ideas",
     section: "travel",
     keys: ["travelIdeas"],
     server: true,
@@ -478,6 +483,7 @@ var SOURCES = [
   {
     type: "watch",
     label: "Watch",
+    plural: "Watch list",
     section: "watch",
     keys: ["watchItems"],
     server: true,
@@ -491,6 +497,7 @@ var SOURCES = [
   {
     type: "article",
     label: "Saved article",
+    plural: "Saved articles",
     section: "media",
     keys: ["savedArticles"],
     server: true,
@@ -500,6 +507,7 @@ var SOURCES = [
     // Podcast shows carry their episode lists in the row, so this stays on the device.
     type: "podcast",
     label: "Podcast",
+    plural: "Podcasts",
     section: "media",
     keys: ["podcasts"],
     server: false,
@@ -508,6 +516,7 @@ var SOURCES = [
   {
     type: "shop",
     label: "Shopping list",
+    plural: "Shopping list",
     section: "grocery",
     keys: ["persistentManualGroceries"],
     server: true,
@@ -516,6 +525,7 @@ var SOURCES = [
   {
     type: "contact",
     label: "Contact",
+    plural: "Contacts",
     section: "contacts",
     keys: ["contacts"],
     server: true,
@@ -530,6 +540,7 @@ var SOURCES = [
 var SOURCE_TYPES = SOURCES.map((s) => s.type);
 var SOURCE_BY_TYPE = new Map(SOURCES.map((s) => [s.type, s]));
 var typeLabel = (type) => SOURCE_BY_TYPE.get(type)?.label || type;
+var typePlural = (type) => SOURCE_BY_TYPE.get(type)?.plural || typeLabel(type);
 var SEARCHABLE = SOURCES.flatMap((s) => s.keys.map((k) => ({ type: s.type, collection: k })));
 function toSearchDocs(data, { view = null, types = null, sources = SOURCES } = {}) {
   const d = data && typeof data === "object" ? data : {};
@@ -1604,7 +1615,7 @@ function formatSearch(query, results) {
   for (const r of [...results].sort((a, b) => SOURCE_TYPES.indexOf(a.type) - SOURCE_TYPES.indexOf(b.type) || b.score - a.score)) {
     if (r.type !== lastType) {
       lines.push(`
-${typeLabel(r.type)}s:`);
+${typePlural(r.type)}:`);
       lastType = r.type;
     }
     const bits = [r.detail, r.date, VIEW_LABELS[r.view] || r.view].filter(Boolean);
