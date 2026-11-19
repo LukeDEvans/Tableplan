@@ -6485,10 +6485,110 @@ body[data-theme="dark"] .workout-pool-img {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+/* History takes the recording controls' place (they're hidden while it shows),
+   so it starts at the top of the window rather than under the wheels. */
 .recording-history-section {
-  border-top: 1px solid color-mix(in srgb, var(--sun) 40%, var(--line));
-  padding-top: 12px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.recording-history-sort {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.recording-history-sort-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-right: 2px;
+}
+
+.recording-history-sort-btn {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 99px;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.recording-history-sort-btn.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.recording-history-list .workout-log-row--link {
+  min-height: 48px;
+  padding: 10px 2px;
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.recording-log-past-btn {
+  justify-self: start;
   margin-top: 4px;
+}
+
+/* The recording controls' wrapper: the full height of the window, with the
+   edit header (date + back to History) above the controls when editing. */
+.recording-pane {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  height: 100%;
+}
+
+.recording-pane.is-editing {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.recording-edit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recording-edit-back {
+  min-height: 40px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--accent-dark, var(--accent));
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+#activeExerciseDialog .recording-edit-date {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+#activeExerciseDialog .recording-edit-date input {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
 }
 
 /* ── Exercise recording dialog — full screen mobile-first ─────── */
@@ -6555,6 +6655,12 @@ body[data-theme="dark"] .workout-pool-img {
 #activeExerciseDialog .active-exercise-actions .secondary-btn {
   min-height: 58px;
   font-size: 0.95rem;
+}
+
+/* "Delete" while editing a logged entry */
+#activeExerciseDialog .active-exercise-actions .danger-btn {
+  color: var(--tomato);
+  padding: 0 20px;
 }
 
 /* Timed wheels — side-by-side Time | Distance layout */
