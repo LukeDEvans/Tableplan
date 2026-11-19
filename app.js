@@ -1,4 +1,5 @@
 import * as LiveGroceryCatalog from './grocery-catalog.js';
+import { historySortOptions, resolveHistorySort, nextHistorySort, sortHistoryLogs, formatLogSpeed } from './exercise-history.js';
 import { safeUrl, isSafeHref, isSafeSrc, parseInertHtml, scrubActiveAttributes, sanitizeUntrustedHtml } from './html-sanitize.js';
 import { buildMailBodyFrame as buildMailFrame, sanitizeMailFrameHtml } from './mail-frame.js';
 import { createMealplanModule, autoRule, defaultMealPlanConfig, groceryMealSlotId, mealEntryList, minimumMealEntryCount, normalizeMealPlanConfig, defaultMealEntries, weekdayDefaultDayIds, daySpecificDefaultMealEntries } from './mealplan-ui.js';
@@ -1052,6 +1053,8 @@ let activeExerciseContext = null;
 let pendingRepWeightSelection = null;
 let activeRecordingWorkoutId = null;
 let activeRecordingDateOverride = null;
+let activeRecordingEdit = null; // { logId, returnDateOverride } while a logged entry is open for editing
+let recordingHistorySort = { key: "date", dir: "desc" }; // History view order (this session only)
 let pendingRepMoodKey = null;
 const recordingSession = {};
 let planViewMode = "month";
@@ -1518,6 +1521,7 @@ const elements = {
   logActiveExerciseBtn: document.querySelector("#logActiveExerciseBtn"),
   viewActiveExerciseLogBtn: document.querySelector("#viewActiveExerciseLogBtn"),
   activeExerciseTitle: document.querySelector("#activeExerciseTitle"),
+  activeExerciseKicker: document.querySelector("#activeExerciseKicker"),
   activeExerciseContent: document.querySelector("#activeExerciseContent"),
   repWeightDialog: document.querySelector("#repWeightDialog"),
   closeRepWeightBtn: document.querySelector("#closeRepWeightBtn"),
@@ -3083,6 +3087,7 @@ function bindEvents() {
   elements.activeExerciseDialog.addEventListener("close", () => {
     activeRecordingWorkoutId = null;
     activeRecordingDateOverride = null;
+    activeRecordingEdit = null;
   });
   elements.logActiveExerciseBtn.addEventListener("click", logActiveExercise);
   elements.viewActiveExerciseLogBtn.addEventListener("click", toggleActiveExerciseLog);
@@ -15027,10 +15032,13 @@ function openActiveExerciseView(dayId, taskId) {
   }
   const details = normalizeExerciseDetails(workout?.exerciseDetails || task.exerciseDetails, workout?.notes || task.exerciseNotes, workout?.type || task.type);
   const data = normalizeExerciseData(task.exerciseData);
+  activeRecordingEdit = null;
+  elements.activeExerciseKicker.textContent = "Record";
   elements.activeExerciseTitle.textContent = task.title;
   elements.logActiveExerciseBtn.textContent = "Log Workout";
   elements.logActiveExerciseBtn.disabled = false;
   elements.viewActiveExerciseLogBtn.textContent = "View Log";
+  elements.viewActiveExerciseLogBtn.classList.remove("danger-btn");
   elements.activeExerciseContent.innerHTML = activeExerciseViewTemplate(task, details, data);
   elements.activeExerciseContent.querySelectorAll("[data-active-exercise-field]").forEach((input) => {
     input.addEventListener("change", () => updatePlayExerciseData(dayId, taskId, input.dataset.activeExerciseField, input.value));
@@ -15242,29 +15250,38 @@ function logActiveExercise() {
   }, 1200);
 }
 
-function logWorkoutFromRecording() {
-  const workout = state.workouts.find((w) => w.id === activeRecordingWorkoutId);
-  if (!workout) return;
-  const date = activeRecordingDateOverride || dateKeyFromDate(new Date());
-  const log = { id: createId("workout-log"), date, createdAt: new Date().toISOString() };
-
+// The values on the recording screen, as log fields (no id, date or createdAt).
+function collectRecordingLogFields(workout) {
+  const fields = {};
   if (workout.type === "timed") {
     elements.activeExerciseContent.querySelectorAll("[data-recording-wheel]").forEach((wheel) => {
       const fieldMap = { hours: "timedHours", minutes: "timedMinutes", distanceWhole: "distanceWhole", distanceDecimal: "distanceDecimal" };
       const field = fieldMap[wheel.dataset.recordingWheel];
-      if (field) log[field] = wheel.dataset.selectedValue || "";
+      if (field) fields[field] = wheel.dataset.selectedValue || "";
     });
-    log.distanceUnit = recordingSession.timed?.distanceUnit || "km";
+    fields.distanceUnit = recordingSession.timed?.distanceUnit || "km";
   } else if (workout.type === "reps") {
-    log.repWeights = { ...recordingSession.repWeights };
-    log.setCompletion = { ...recordingSession.setCompletion };
-    log.setRatings = { ...recordingSession.setRatings };
+    fields.repWeights = { ...recordingSession.repWeights };
+    fields.setCompletion = { ...recordingSession.setCompletion };
+    fields.setRatings = { ...recordingSession.setRatings };
   } else if (workout.type === "game") {
-    log.gameName = recordingSession.game.name || "";
-    log.gameDuration = recordingSession.game.duration || "";
-    log.gameNotes = recordingSession.game.notes || "";
-    log.gameRating = recordingSession.game.rating || null;
+    fields.gameName = recordingSession.game.name || "";
+    fields.gameDuration = recordingSession.game.duration || "";
+    fields.gameNotes = recordingSession.game.notes || "";
+    fields.gameRating = recordingSession.game.rating || null;
   }
+  return fields;
+}
+
+function logWorkoutFromRecording() {
+  const workout = state.workouts.find((w) => w.id === activeRecordingWorkoutId);
+  if (!workout) return;
+  if (activeRecordingEdit) {
+    saveEditedRecordingLog(workout);
+    return;
+  }
+  const date = activeRecordingDateOverride || dateKeyFromDate(new Date());
+  const log = { id: createId("workout-log"), date, createdAt: new Date().toISOString(), ...collectRecordingLogFields(workout) };
 
   workout.logs = normalizeWorkoutLogs([...(workout.logs || []), log]);
   persist();
@@ -15276,6 +15293,60 @@ function logWorkoutFromRecording() {
     activeRecordingDateOverride = null;
     renderPlayPlanner();
   }, 700);
+}
+
+// Editing a logged entry (Luke, 2026-11-19): tapping a History row reopens the
+// recording screen filled with that entry; Save Changes rewrites it in place
+// (same id and createdAt, so it stays the same entry), Delete removes it. Both
+// go back to the History list. The workout is one record in state.workouts
+// (newer copy wins on sync), the same way every other change to its logs syncs.
+function openRecordingLogEditor(logId) {
+  const workoutId = activeRecordingWorkoutId;
+  const workout = normalizeWorkouts(state.workouts).find((w) => w.id === workoutId);
+  if (!workout || !workout.logs.some((log) => log.id === logId)) return;
+  const returnDateOverride = activeRecordingEdit ? activeRecordingEdit.returnDateOverride : activeRecordingDateOverride;
+  openWorkoutRecordingDialog(workoutId, returnDateOverride, { editLogId: logId });
+}
+
+function saveEditedRecordingLog(workout) {
+  const logs = normalizeWorkoutLogs(workout.logs);
+  const index = logs.findIndex((log) => log.id === activeRecordingEdit.logId);
+  if (index < 0) {
+    returnToRecordingHistory();
+    return;
+  }
+  const dateInput = elements.activeExerciseContent.querySelector("[data-recording-edit-date]");
+  const date = String(dateInput?.value || "").trim() || logs[index].date;
+  logs[index] = { ...logs[index], ...collectRecordingLogFields(workout), date };
+  workout.logs = normalizeWorkoutLogs(logs);
+  persist();
+  renderPlayPlanner();
+  returnToRecordingHistory();
+}
+
+function deleteEditedRecordingLog() {
+  if (!activeRecordingEdit) return;
+  const workout = state.workouts.find((w) => w.id === activeRecordingWorkoutId);
+  if (!workout) return;
+  const log = normalizeWorkoutLogs(workout.logs).find((item) => item.id === activeRecordingEdit.logId);
+  if (!log) {
+    returnToRecordingHistory();
+    return;
+  }
+  if (!window.confirm(`Delete the ${log.date || "undated"} ${workout.title} entry? This can't be undone.`)) return;
+  workout.logs = normalizeWorkoutLogs(workout.logs).filter((item) => item.id !== log.id);
+  persist();
+  renderPlayPlanner();
+  returnToRecordingHistory();
+}
+
+// Back to the recording screen (fresh, as if just opened) with History showing.
+function returnToRecordingHistory() {
+  const workoutId = activeRecordingWorkoutId;
+  const returnDateOverride = activeRecordingEdit ? activeRecordingEdit.returnDateOverride : activeRecordingDateOverride;
+  if (!workoutId) return;
+  openWorkoutRecordingDialog(workoutId, returnDateOverride);
+  showRecordingHistory();
 }
 
 function openPastWorkoutDialog(workoutId = null) {
@@ -15296,41 +15367,89 @@ function startPastWorkout() {
   openWorkoutRecordingDialog(workoutId, date);
 }
 
+// History replaces the recording controls rather than sitting under them: the
+// full-height time/distance wheels can't share the window with a list (they
+// squeezed to nothing and drew over it — Luke's screenshot, 2026-11-19). The
+// wheels stay in the page, hidden, so their values survive a look at History.
 function toggleRecordingHistory() {
+  if (elements.activeExerciseContent.querySelector("[data-recording-history-section]")) hideRecordingHistory();
+  else showRecordingHistory();
+}
+
+function hideRecordingHistory() {
+  elements.activeExerciseContent.querySelector("[data-recording-history-section]")?.remove();
+  const pane = elements.activeExerciseContent.querySelector("[data-recording-pane]");
+  if (pane) pane.hidden = false;
+  elements.viewActiveExerciseLogBtn.textContent = "History";
+}
+
+function showRecordingHistory() {
   const workout = normalizeWorkouts(state.workouts).find((w) => w.id === activeRecordingWorkoutId);
-  if (!workout) return;
-  const section = elements.activeExerciseContent.querySelector("[data-recording-history-section]");
-  if (section) {
-    section.remove();
-    elements.viewActiveExerciseLogBtn.textContent = "History";
-    return;
-  }
+  if (!workout || activeRecordingEdit) return;
+  const pane = elements.activeExerciseContent.querySelector("[data-recording-pane]");
+  if (pane) pane.hidden = true;
   elements.viewActiveExerciseLogBtn.textContent = "Hide History";
-  const logs = normalizeWorkoutLogs(workout.logs)
-    .slice()
-    .sort((a, b) => String(b.date || b.createdAt).localeCompare(String(a.date || a.createdAt)));
-  const historyEl = document.createElement("div");
-  historyEl.className = "recording-history-section";
-  historyEl.setAttribute("data-recording-history-section", "");
-  historyEl.innerHTML = logs.length
+  let historyEl = elements.activeExerciseContent.querySelector("[data-recording-history-section]");
+  if (!historyEl) {
+    historyEl = document.createElement("div");
+    historyEl.className = "recording-history-section";
+    historyEl.setAttribute("data-recording-history-section", "");
+    elements.activeExerciseContent.appendChild(historyEl);
+  }
+  renderRecordingHistory(workout, historyEl);
+  elements.activeExerciseContent.scrollTop = 0;
+}
+
+function renderRecordingHistory(workout, historyEl) {
+  const sort = resolveHistorySort(workout.type, recordingHistorySort);
+  const logs = sortHistoryLogs(normalizeWorkoutLogs(workout.logs), workout.type, sort);
+  const options = historySortOptions(workout.type);
+  const sortRow = logs.length > 1 ? `
+    <div class="recording-history-sort" role="group" aria-label="Sort history">
+      <span class="recording-history-sort-label">Sort</span>
+      ${options.map((option) => {
+        const active = option.key === sort.key;
+        const arrow = active ? (sort.dir === "desc" ? " ↓" : " ↑") : "";
+        const order = sort.dir === "desc" ? (option.key === "date" ? "newest first" : option.key === "name" ? "Z to A" : "highest first") : (option.key === "date" ? "oldest first" : option.key === "name" ? "A to Z" : "lowest first");
+        return `<button type="button" class="recording-history-sort-btn${active ? " is-active" : ""}" data-history-sort="${escapeHtml(option.key)}" aria-pressed="${active}"${active ? ` aria-label="${escapeHtml(option.label)}, ${order}"` : ""}>${escapeHtml(option.label)}${arrow}</button>`;
+      }).join("")}
+    </div>` : "";
+  const rows = logs.length
     ? logs.map((log) => {
-        const summary = workoutLogSummary(workout, log);
-        return `<p class="workout-log-row">${escapeHtml(summary)}</p>`;
+        let summary = workoutLogSummary(workout, log);
+        if (sort.key === "speed") {
+          const speed = formatLogSpeed(log);
+          if (speed) summary += ` · ${speed}`;
+        }
+        return `<button type="button" class="workout-log-row workout-log-row--link" data-history-log="${escapeHtml(log.id)}" aria-label="Edit ${escapeHtml(summary)}"><span>${escapeHtml(summary)}</span><span class="workout-log-row-chevron" aria-hidden="true">›</span></button>`;
       }).join("")
     : `<p class="empty-state">No history yet.</p>`;
-  const logPastBtn = document.createElement("button");
-  logPastBtn.type = "button";
-  logPastBtn.className = "secondary-btn compact-btn recording-log-past-btn";
-  logPastBtn.textContent = "Log Past Date";
-  logPastBtn.addEventListener("click", () => {
-    elements.activeExerciseDialog.close();
-    openPastWorkoutDialog(activeRecordingWorkoutId);
+  historyEl.innerHTML = `
+    ${sortRow}
+    <div class="recording-history-list">${rows}</div>
+    <button type="button" class="secondary-btn compact-btn recording-log-past-btn" data-history-log-past>Log Past Date</button>
+  `;
+  historyEl.querySelectorAll("[data-history-sort]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      recordingHistorySort = nextHistorySort(workout.type, recordingHistorySort, btn.dataset.historySort);
+      renderRecordingHistory(workout, historyEl);
+    });
   });
-  historyEl.appendChild(logPastBtn);
-  elements.activeExerciseContent.appendChild(historyEl);
+  historyEl.querySelectorAll("[data-history-log]").forEach((btn) => {
+    btn.addEventListener("click", () => openRecordingLogEditor(btn.dataset.historyLog));
+  });
+  historyEl.querySelector("[data-history-log-past]")?.addEventListener("click", () => {
+    const workoutId = activeRecordingWorkoutId;
+    elements.activeExerciseDialog.close();
+    openPastWorkoutDialog(workoutId);
+  });
 }
 
 function toggleActiveExerciseLog() {
+  if (activeRecordingEdit) {
+    deleteEditedRecordingLog();
+    return;
+  }
   if (activeRecordingWorkoutId) {
     toggleRecordingHistory();
     return;
@@ -16354,39 +16473,65 @@ function workoutPoolCardTemplate(workout) {
   `;
 }
 
-function openWorkoutRecordingDialog(workoutId, dateOverride) {
+function openWorkoutRecordingDialog(workoutId, dateOverride, { editLogId = "" } = {}) {
   const workout = normalizeWorkouts(state.workouts).find((w) => w.id === workoutId);
   if (!workout) return;
+  const editLog = editLogId ? workout.logs.find((log) => log.id === editLogId) || null : null;
   activeRecordingWorkoutId = workoutId;
-  activeRecordingDateOverride = dateOverride || null;
+  activeRecordingDateOverride = editLog ? null : dateOverride || null;
+  activeRecordingEdit = editLog ? { logId: editLog.id, returnDateOverride: dateOverride || null } : null;
 
-  const lastLog = lastWorkoutLog(workoutId);
+  // A new entry starts from the last one; an edit starts from the entry itself.
+  const seed = editLog || lastWorkoutLog(workoutId);
   Object.assign(recordingSession, {
-    repWeights: { ...normalizeRepWeights(lastLog?.repWeights) },
-    setCompletion: {},
-    setRatings: {},
+    repWeights: { ...normalizeRepWeights(seed?.repWeights) },
+    setCompletion: editLog ? { ...editLog.setCompletion } : {},
+    setRatings: editLog ? { ...editLog.setRatings } : {},
     timed: {
-      hours: lastLog?.timedHours || workout.exerciseDetails.timed.hours,
-      minutes: lastLog?.timedMinutes || workout.exerciseDetails.timed.minutes,
-      distanceWhole: lastLog?.distanceWhole || workout.exerciseDetails.timed.distanceWhole,
-      distanceDecimal: lastLog?.distanceDecimal || workout.exerciseDetails.timed.distanceDecimal,
-      distanceUnit: lastLog?.distanceUnit || workout.exerciseDetails.timed.distanceUnit,
+      hours: seed?.timedHours || workout.exerciseDetails.timed.hours,
+      minutes: seed?.timedMinutes || workout.exerciseDetails.timed.minutes,
+      distanceWhole: seed?.distanceWhole || workout.exerciseDetails.timed.distanceWhole,
+      distanceDecimal: seed?.distanceDecimal || workout.exerciseDetails.timed.distanceDecimal,
+      distanceUnit: seed?.distanceUnit || workout.exerciseDetails.timed.distanceUnit,
     },
-    game: { name: "", duration: "", notes: "", rating: null },
+    game: editLog
+      ? { name: editLog.gameName || "", duration: editLog.gameDuration || "", notes: editLog.gameNotes || "", rating: editLog.gameRating || null }
+      : { name: "", duration: "", notes: "", rating: null },
   });
 
+  elements.activeExerciseKicker.textContent = editLog ? "Edit entry" : "Record";
   elements.activeExerciseTitle.textContent = workout.title;
-  elements.logActiveExerciseBtn.textContent = "Log Workout";
+  elements.logActiveExerciseBtn.textContent = editLog ? "Save Changes" : "Log Workout";
   elements.logActiveExerciseBtn.disabled = false;
   elements.viewActiveExerciseLogBtn.hidden = false;
-  elements.viewActiveExerciseLogBtn.textContent = "History";
-  elements.activeExerciseContent.innerHTML = workoutRecordingContentTemplate(workout);
+  elements.viewActiveExerciseLogBtn.textContent = editLog ? "Delete" : "History";
+  elements.viewActiveExerciseLogBtn.classList.toggle("danger-btn", Boolean(editLog));
+  elements.activeExerciseContent.innerHTML = `
+    <div class="recording-pane${editLog ? " is-editing" : ""}" data-recording-pane>
+      ${editLog ? recordingEditHeadTemplate(editLog) : ""}
+      ${workoutRecordingContentTemplate(workout)}
+    </div>
+  `;
+  elements.activeExerciseContent.querySelector("[data-recording-edit-back]")?.addEventListener("click", returnToRecordingHistory);
 
   if (workout.type === "timed") bindRecordingWheels();
   else if (workout.type === "reps") bindRepsRecordingCells();
   else if (workout.type === "game") bindGameRecordingFields();
 
+  elements.activeExerciseContent.scrollTop = 0;
   if (!elements.activeExerciseDialog.open) elements.activeExerciseDialog.showModal();
+}
+
+function recordingEditHeadTemplate(log) {
+  return `
+    <div class="recording-edit-head">
+      <button type="button" class="recording-edit-back" data-recording-edit-back>‹ History</button>
+      <label class="recording-edit-date">
+        <span>Date</span>
+        <input type="date" data-recording-edit-date value="${escapeHtml(log.date || "")}" />
+      </label>
+    </div>
+  `;
 }
 
 function workoutRecordingContentTemplate(workout) {
@@ -16497,26 +16642,28 @@ function bindRepsRecordingCells() {
 }
 
 function gameRecordingTemplate() {
+  const game = recordingSession.game || {};
+  const rated = (rating) => (game.rating === rating ? " is-active" : "");
   return `
     <div class="recording-game-form">
       <label class="recording-game-label">
         Event
-        <input class="recording-game-input" type="text" data-recording-field="name" placeholder="Yoga, football match…" autocomplete="off" />
+        <input class="recording-game-input" type="text" data-recording-field="name" value="${escapeHtml(game.name || "")}" placeholder="Yoga, football match…" autocomplete="off" />
       </label>
       <label class="recording-game-label">
         Duration
-        <input class="recording-game-input" type="text" data-recording-field="duration" placeholder="1h 30m" autocomplete="off" />
+        <input class="recording-game-input" type="text" data-recording-field="duration" value="${escapeHtml(game.duration || "")}" placeholder="1h 30m" autocomplete="off" />
       </label>
       <label class="recording-game-label recording-game-notes-label">
         Notes
-        <textarea class="recording-game-notes" data-recording-field="notes" rows="4" placeholder="Score, highlights, how it went…"></textarea>
+        <textarea class="recording-game-notes" data-recording-field="notes" rows="4" placeholder="Score, highlights, how it went…">${escapeHtml(game.notes || "")}</textarea>
       </label>
       <div class="recording-mood-section">
         <p class="recording-mood-label">How was it?</p>
         <div class="recording-mood-row">
-          <button class="rep-mood-btn" type="button" data-game-rating="hard" aria-label="Hard">😞</button>
-          <button class="rep-mood-btn" type="button" data-game-rating="ok" aria-label="OK">😐</button>
-          <button class="rep-mood-btn" type="button" data-game-rating="easy" aria-label="Great">😊</button>
+          <button class="rep-mood-btn${rated("hard")}" type="button" data-game-rating="hard" aria-label="Hard">😞</button>
+          <button class="rep-mood-btn${rated("ok")}" type="button" data-game-rating="ok" aria-label="OK">😐</button>
+          <button class="rep-mood-btn${rated("easy")}" type="button" data-game-rating="easy" aria-label="Great">😊</button>
         </div>
       </div>
     </div>
