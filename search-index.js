@@ -52,7 +52,7 @@ export function addDays(key, n) {
 // label → how a result is named to people and the assistant.
 export const SOURCES = [
   {
-    type: "recipe", label: "Recipe", section: "eat", keys: ["recipes"], server: "recipes-table",
+    type: "recipe", label: "Recipe", plural: "Recipes", section: "eat", keys: ["recipes"], server: "recipes-table",
     collect: (d) => list(d.recipes).map((r) => ({
       id: r.id, title: firstOf(r, ["name", "title"]),
       text: [textOf(r, ["tags"]), list(r.ingredients).map((i) => str(i.item)).join(" ")].join(" "),
@@ -60,7 +60,7 @@ export const SOURCES = [
     })),
   },
   {
-    type: "task", label: "Task", section: "do", keys: ["doPlans", "doBacklog", "doTasks"], server: true,
+    type: "task", label: "Task", plural: "Tasks", section: "do", keys: ["doPlans", "doBacklog", "doTasks"], server: true,
     collect: (d) => {
       const out = [];
       const add = (t, date) => out.push({ id: t.id, title: firstOf(t, ["title", "text"]), text: textOf(t, ["notes"]), date, detail: t.done ? "done" : (date ? "" : "backlog") });
@@ -78,47 +78,47 @@ export const SOURCES = [
     },
   },
   {
-    type: "event", label: "Event", section: "plan", keys: ["planEvents"], server: true,
+    type: "event", label: "Event", plural: "Events", section: "plan", keys: ["planEvents"], server: true,
     collect: (d) => list(d.planEvents).map((e) => ({
       id: e.id, title: str(e.title), text: [textOf(e, ["notes"]), flat(e.location)].join(" "),
       date: isDate(e.date) ? e.date : null, detail: e.recurrence ? "repeats" : (e.startTime ? str(e.startTime) : ""),
     })),
   },
   {
-    type: "trip", label: "Trip", section: "travel", keys: ["trips"], server: true,
+    type: "trip", label: "Trip", plural: "Trips", section: "travel", keys: ["trips"], server: true,
     collect: (d) => list(d.trips).map((t) => ({
       id: t.id, title: firstOf(t, ["name", "title", "destination"]), text: textOf(t, ["destination", "notes"]),
       date: isDate(t.startDate) ? t.startDate : null, detail: str(t.destination) !== firstOf(t, ["name", "title", "destination"]) ? str(t.destination) : "",
     })),
   },
   {
-    type: "trip_idea", label: "Trip idea", section: "travel", keys: ["travelIdeas"], server: true,
+    type: "trip_idea", label: "Trip idea", plural: "Trip ideas", section: "travel", keys: ["travelIdeas"], server: true,
     collect: (d) => list(d.travelIdeas).map((t) => ({ id: t.id, title: firstOf(t, ["name", "title", "destination", "place"]), text: textOf(t, ["destination", "place", "notes"]) })),
   },
   {
-    type: "watch", label: "Watch", section: "watch", keys: ["watchItems"], server: true,
+    type: "watch", label: "Watch", plural: "Watch list", section: "watch", keys: ["watchItems"], server: true,
     collect: (d) => list(d.watchItems).map((w) => ({
       id: w.id, title: str(w.title), text: textOf(w, ["year", "overview"]),
       detail: [w.type === "tv" ? "show" : "movie", w.status === "watched" ? "watched" : ""].filter(Boolean).join(", "),
     })),
   },
   {
-    type: "article", label: "Saved article", section: "media", keys: ["savedArticles"], server: true,
+    type: "article", label: "Saved article", plural: "Saved articles", section: "media", keys: ["savedArticles"], server: true,
     collect: (d) => list(d.savedArticles).map((a) => ({ id: a.id, title: str(a.title), text: textOf(a, ["author", "publication", "source"]), detail: firstOf(a, ["publication", "source"]) })),
   },
   {
     // Podcast shows carry their episode lists in the row, so this stays on the device.
-    type: "podcast", label: "Podcast", section: "media", keys: ["podcasts"], server: false,
+    type: "podcast", label: "Podcast", plural: "Podcasts", section: "media", keys: ["podcasts"], server: false,
     collect: (d) => list(d.podcasts).map((p) => ({ id: p.id ?? p.feedUrl, title: firstOf(p, ["title", "name"]), text: textOf(p, ["author"]), detail: str(p.author) })),
   },
   {
-    type: "shop", label: "Shopping list", section: "grocery", keys: ["persistentManualGroceries"], server: true,
+    type: "shop", label: "Shopping list", plural: "Shopping list", section: "grocery", keys: ["persistentManualGroceries"], server: true,
     collect: (d) => (Array.isArray(d.persistentManualGroceries) ? d.persistentManualGroceries : [])
       .map((x) => (typeof x === "string" ? x : str(x?.name ?? x?.item))).filter(Boolean)
       .map((name) => ({ id: `shop:${fold(name)}`, title: name, text: "" })),
   },
   {
-    type: "contact", label: "Contact", section: "contacts", keys: ["contacts"], server: true,
+    type: "contact", label: "Contact", plural: "Contacts", section: "contacts", keys: ["contacts"], server: true,
     collect: (d) => list(d.contacts).map((c) => ({
       id: c.id, title: firstOf(c, ["name"]) || [str(c.firstName), str(c.lastName)].filter(Boolean).join(" "),
       text: textOf(c, ["emails", "email", "phones", "phone", "groups", "company"]), detail: str(c.company),
@@ -128,6 +128,7 @@ export const SOURCES = [
 export const SOURCE_TYPES = SOURCES.map((s) => s.type);
 const SOURCE_BY_TYPE = new Map(SOURCES.map((s) => [s.type, s]));
 export const typeLabel = (type) => SOURCE_BY_TYPE.get(type)?.label || type;
+export const typePlural = (type) => SOURCE_BY_TYPE.get(type)?.plural || typeLabel(type);
 
 // Kept for older callers/tests: { type, collection } pairs.
 export const SEARCHABLE = SOURCES.flatMap((s) => s.keys.map((k) => ({ type: s.type, collection: k })));
@@ -234,7 +235,7 @@ export function search(index, query, { limit = 20, types = null, view = null, to
 export function groupResults(results, perType = 3) {
   const groups = new Map();
   for (const r of results || []) {
-    if (!groups.has(r.type)) groups.set(r.type, { type: r.type, label: typeLabel(r.type), items: [], more: 0 });
+    if (!groups.has(r.type)) groups.set(r.type, { type: r.type, label: typePlural(r.type), items: [], more: 0 });
     const g = groups.get(r.type);
     if (g.items.length < perType) g.items.push(r); else g.more += 1;
   }

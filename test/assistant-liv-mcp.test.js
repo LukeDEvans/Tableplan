@@ -631,7 +631,7 @@ describe("search", () => {
     const c = await call("search", { query: "612" });
     expect(c.text).toMatch(/Contacts:\n  - Dr\. Patel · Household \[id c1\]/);
     expect(c.text).not.toMatch(/base64/);
-    expect((await call("search", { query: "mil" })).text).toMatch(/Shopping lists:\n  - Milk · Household \[id shop:milk\]/);
+    expect((await call("search", { query: "mil" })).text).toMatch(/Shopping list:\n  - Milk · Household \[id shop:milk\]/);
   });
 
   it("filters by kind and by view; rejects a view the person doesn't have", async () => {
