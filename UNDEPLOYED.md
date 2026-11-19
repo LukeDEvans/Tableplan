@@ -10,4 +10,4 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-(Nothing waiting: everything above shipped in the 2026-11-17 deploy.)
+- **Exercise: editable, sortable workout history** · #270 · client only (reaches the iPhone by TestFlight; the web app on the next deploy). Fixes History drawing the time/distance wheels over the list; tap an entry to edit (date, values) or delete it; sort by Date or the kind's measures (Cardio Time/Distance/Speed, Strength Sets done/Heaviest, Games Rating/Event). Post-deploy: Claude — in Luke's Chrome, open a Cardio workout → History → sort, edit an entry's date, confirm it moves. Luke (iPhone) — open Bike → History: list reads cleanly, tap an entry, change it, Save Changes.
