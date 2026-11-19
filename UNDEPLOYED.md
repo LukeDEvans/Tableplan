@@ -10,4 +10,4 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-(Nothing waiting: everything up to #276 shipped in the 2026-11-19 deploy.)
+- **Wallet: barcodes that scan** · #278 · client only. The live Wallet draws Code 128 and QR codes with the app's global svg outline, which fills the white spaces, so a till scanner probably can't read them. Fixed, and a new card's barcode now follows a pasted number. Reaches the iPhone by TestFlight; the web on the next deploy. Post-deploy, Claude (Luke's Chrome): add a Household card, open it, the bars are crisp black and white, delete it. Luke (iPhone): show a Wallet card at a till.
