@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import { parsePlanIcs } from "../../calendar/ics.mjs";
 
 const require = createRequire(import.meta.url);
+const { authUserFetch } = require("./_auth-user.js");
 const { safeFetch, statusForImportError } = require("./_import-fetch.js");
 
 // Test seam only: lets tests inject fetchImpl / lookupImpl into safeFetch.
@@ -65,7 +66,7 @@ function jsonResponse(statusCode, body) {
 
 async function verifySession(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` } });
     return res.ok;
   } catch { return false; }
 }

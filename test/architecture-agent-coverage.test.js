@@ -6,7 +6,7 @@
 //   - files: `path`, `glob*`, …   (repo-root paths; `*` matches within one name)
 //   - state: `key`, `prefix*`, …  (STATE_SECTIONS keys)
 // This guard fails when:
-//   1. a module, calendar/, music/, messaging/, photos/ or documents/ (and documents/editor/) file or Netlify function exists that no agent claims and
+//   1. a module, calendar/, music/, messaging/, photos/ or documents/ (and documents/editor/, documents/sheet/engine/) file or Netlify function exists that no agent claims and
 //      that isn't listed in SHARED_FILES below;
 //   2. a STATE_SECTIONS key exists that no agent claims and isn't in SHARED_STATE;
 //   3. an ownership entry matches nothing (the file or key was renamed or removed);
@@ -39,6 +39,7 @@ const SHARED_FILES = {
   "vitest.config.mjs": "test config",
   "supabase-config.js": "Supabase client config",
   "state-sync.js": "state + sync",
+  "stamped-lists.js": "state + sync: add/remove stamps for small union-merged lists (radio, Next Stop)",
   "settings-sync.js": "synced-settings stamps",
   "native-bridge.js": "Capacitor bridge",
   "link-out.js": "the one hand-off to streaming apps, used by Watch and Scores (STREAMING_HANDOFF_DESIGN.md)",
@@ -74,6 +75,7 @@ const SHARED_FILES = {
   "netlify/functions/_state-sections.js": "server-side state access",
   "netlify/functions/_group-lookup.js": "server-side \"the user's group\" lookup, ordered like the client (auth/state)",
   "netlify/functions/_oauth-state.js": "signed OAuth state (Gmail + Google Calendar)",
+  "netlify/functions/_auth-user.js": "every function's sign-in check; refuses a token that skipped the authenticator code (auth)",
   "netlify/functions/chat.js": "assistant",
   "netlify/functions/daily-briefing.js": "daily maintenance (TTS cleanup, finance snapshot) + the briefing push until notifications Phase 2 retires it",
   "netlify/functions/push-subscribe.js": "notifications/push",
@@ -101,7 +103,7 @@ function listFiles(dir, re) {
   return readdirSync(join(root, dir)).filter((f) => re.test(f) && statSync(join(root, dir, f)).isFile()).map((f) => (dir === "." ? f : `${dir}/${f}`));
 }
 const CODE = /\.(js|mjs)$/;
-const candidateFiles = [...listFiles(".", CODE), ...listFiles("calendar", CODE), ...listFiles("music", CODE), ...listFiles("messaging", CODE), ...listFiles("messaging/crypto", CODE), ...listFiles("documents", CODE), ...listFiles("documents/crypto", CODE), ...listFiles("documents/editor", CODE), ...listFiles("photos", CODE), ...listFiles("netlify/functions", CODE)];
+const candidateFiles = [...listFiles(".", CODE), ...listFiles("calendar", CODE), ...listFiles("music", CODE), ...listFiles("messaging", CODE), ...listFiles("messaging/crypto", CODE), ...listFiles("documents", CODE), ...listFiles("documents/crypto", CODE), ...listFiles("documents/editor", CODE), ...listFiles("documents/sheet", CODE), ...listFiles("documents/sheet/engine", CODE), ...listFiles("documents/sheet/engine/functions", CODE), ...listFiles("photos", CODE), ...listFiles("netlify/functions", CODE)];
 
 function stateKeys() {
   const src = readFileSync(join(root, "app.js"), "utf8");

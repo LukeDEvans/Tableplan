@@ -96,7 +96,7 @@ function world({ signalsRow = null, existing = [], subs = { [U1]: { nyt: { statu
   const st = { calls: [], signalsRow, inserted: [], topics: [] };
   const body = {
     "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml": rss([{ title: "F.A.A. Grounds All Flights Nationwide", url: "https://www.nytimes.com/2026/11/14/us/faa-ground-stop.html" }]),
-    "https://www.startribune.com/arc/outboundfeeds/rss/?outputType=xml": rss([{ title: "Departures halted at MSP", url: "https://www.startribune.com/departures-halted-at-msp/601919999" }]),
+    "https://www.startribune.com/rss/": rss([{ title: "Departures halted at MSP", url: "https://www.startribune.com/departures-halted-at-msp/601919999" }]),
     "https://feeds.npr.org/1001/rss.xml": rss([{ title: "FAA halts flights nationwide : NPR", url: "https://www.npr.org/2026/11/14/nx-s1-5600123/faa-halts-flights" }]),
     "https://feeds.bbci.co.uk/news/rss.xml": rss([{ title: "All US flights grounded by regulator" }]),
     "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml": rss([{ title: "All US flights grounded by regulator" }]),
@@ -248,5 +248,28 @@ describe("the check when News opens", () => {
     await F.runOpenCheck("svc", { fetchImpl, nowMs: NOW });
     const reads = st.calls.filter((c) => c.method === "GET" && c.url.includes("tableplan_states"));
     expect(reads.every((c) => c.url.includes("id=eq.news_signals&select=state") || c.url.includes("mailnewssubs_"))).toBe(true);
+  });
+});
+
+describe("Star Tribune sections from item categories (2026-11-17)", () => {
+  const Feeds = require("../netlify/functions/_news-feeds.js");
+  it("reads <category domain> and places the story by its most specific tag", () => {
+    const xml = `<rss version="2.0"><channel><title>Startribune News</title>
+      <item><title><![CDATA[Measles is no longer considered eliminated]]></title>
+        <link>https://www.startribune.com/measles-is-no-longer-considered-eliminated/601922247</link>
+        <pubDate>Tue, 17 Nov 2026 22:08:33 GMT</pubDate>
+        <category domain="/news-politics/nation">Nation</category>
+        <category domain="/wires/food-culture">Food &amp; Culture</category></item>
+      <item><title>Legislature returns</title><link>https://www.startribune.com/legislature-returns/601922999</link>
+        <pubDate>Tue, 17 Nov 2026 20:00:00 GMT</pubDate>
+        <category domain="/news-politics/politics">Politics</category>
+        <category domain="/news-politics">News &amp; Politics</category></item>
+    </channel></rss>`;
+    const items = Feeds.parseFeed(xml);
+    expect(items.map((i) => i.categories)).toEqual([["/news-politics/nation", "/wires/food-culture"], ["/news-politics/politics", "/news-politics"]]);
+    expect(items.map((i) => Feeds.stribSection(i.categories))).toEqual(["us", "politics"]);
+    expect(Feeds.stribSection(["/news-politics/world"])).toBe("world");
+    expect(Feeds.stribSection(["/news-politics/twin-cities/twin-cities-suburbs", "/news-politics"])).toBe("mn");
+    expect(Feeds.stribSection([])).toBe(null);
   });
 });

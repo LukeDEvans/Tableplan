@@ -49,6 +49,8 @@ export const MOVED_OUT_FOLDERS = Object.freeze(["Home", "Vehicles"]);
 export const USAGE_WARN_BYTES = 7 * 1024 ** 3; // decision 5: warn at 7 GB of the 10 GB free
 
 const SAFE_DOC_MIME = "application/vnd.live.doc";
+const SAFE_SHEET_MIME = "application/vnd.live.sheet"; // spreadsheets in the Safe (SPREADSHEET_DESIGN.md §9)
+const SHEET_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 9h16M4 14h16M10 4v16"/></svg>';
 const DOC_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 13h6M9 17h4"/></svg>';
 
 export async function mountDocuments(root, deps) {
@@ -513,6 +515,7 @@ export async function mountDocuments(root, deps) {
           <input type="search" class="discover-search-input" data-search placeholder="Search ${esc(ui.title)}…" aria-label="Search documents" autocomplete="off" value="${esc(ui.query)}" />
           ${scanner ? `<button class="icon-btn" type="button" data-act="scan" title="Scan a document" aria-label="Scan a document">${ICON.scan}</button>` : ""}
           <button class="icon-btn" type="button" data-act="new-safe-doc" title="New document" aria-label="New document">${DOC_ICON}</button>
+          <button class="icon-btn" type="button" data-act="new-safe-sheet" title="New spreadsheet" aria-label="New spreadsheet">${SHEET_ICON}</button>
           <button class="icon-btn" type="button" data-act="add" title="${scanner ? "Add a file" : "Add a document"}" aria-label="${scanner ? "Add a file" : "Add a document"}">${ICON.add}</button>
           <button class="icon-btn" type="button" data-act="settings" title="Documents settings" aria-label="Documents settings">${ICON.gear}</button>
           <input type="file" data-file-input multiple hidden accept="${esc(MIME_TYPES.join(","))},.heic,.heif" />
@@ -887,9 +890,50 @@ export async function mountDocuments(root, deps) {
     if (f) openSafeDoc(f, { startEditing: true });
   }
 
+  // ---- spreadsheets in the Safe (SPREADSHEET_DESIGN.md §9): the same encrypted store ----
+  async function openSafeSheet(f, { startEditing = false } = {}) {
+    if (safeDoc) return;
+    const scope = ui.scope;
+    safeDoc = "opening";
+    try {
+      const fileKey = await library.docKey(scope, f.id);
+      const { createSafeDocStore } = await import("./editor/store-safe.js");
+      const { openSheetFor } = await import("./sheet/host.js");
+      const store = createSafeDocStore({ storage, transport, library, scope, fileId: f.id, fileKey });
+      const me = { id: userId, name: deps.myDisplayName?.() || "Me" };
+      safeDoc = await openSheetFor({
+        store, file: { id: f.id, name: f.name, scope }, me, startEditing,
+        deps: { liveOpen: deps.liveDocChannel || null, toast: deps.toast, isNative: deps.isNative, rename: () => {} },
+        onClose: () => { safeDoc = null; if (visible && ui.scope === scope) refresh(gen, scope).then(() => draw()).catch(() => {}); },
+      });
+      if (!safeDoc?.close) safeDoc = null;
+    } catch (e) {
+      safeDoc = null;
+      ui.error = e?.message || "That spreadsheet couldn't be opened.";
+      draw();
+    }
+  }
+  async function newSafeSheet() {
+    const scope = ui.scope;
+    const folderId = ui.folders.some((x) => x.id === ui.folder) ? ui.folder : null;
+    let id = null;
+    try {
+      await track(async () => {
+        const { sheetYdoc } = await import("./sheet/host.js");
+        const { docToContent } = await import("./editor/doc-model.js");
+        id = await library.addFile(scope, { content: docToContent(sheetYdoc().ydoc), text: " ", folderId, meta: { name: "Untitled spreadsheet", mime: SAFE_SHEET_MIME, pages: 1 } });
+        await refresh(gen, scope);
+      });
+    } catch (e) { ui.error = e?.message || "The spreadsheet couldn't be made."; draw(); return; }
+    draw();
+    const f = id && ui.files.find((x) => x.id === id);
+    if (f) openSafeSheet(f, { startEditing: true });
+  }
+
   async function openFile(id) {
     const fd = ui.files.find((x) => x.id === id);
     if (fd?.mime === SAFE_DOC_MIME && !fd.deletedAt) { openSafeDoc(fd); return; }
+    if (fd?.mime === SAFE_SHEET_MIME && !fd.deletedAt) { openSafeSheet(fd); return; }
     closeViewer();
     ui.viewer = { id };
     draw();
@@ -1121,6 +1165,7 @@ export async function mountDocuments(root, deps) {
       if (window.innerWidth <= 680) sb?.classList.toggle("is-expanded"); else sb?.classList.toggle("is-collapsed");
     } else if (act === "add") root.querySelector("[data-file-input]")?.click();
     else if (act === "new-safe-doc") newSafeDoc();
+    else if (act === "new-safe-sheet") newSafeSheet();
     else if (act === "scan") scanDocument();
     else if (act === "settings") settings();
     else if (act === "close-panel") { ui.panel = null; ui.error = ""; draw(); }

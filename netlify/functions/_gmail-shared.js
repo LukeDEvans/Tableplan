@@ -10,6 +10,7 @@ const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 const SWEEP_MIN_INTERVAL_MS = 30_000;   // at most one sweep per user per 30s
 const SWEEP_STALE_MS = 5 * 60_000;      // an in-progress lock older than this is treated as dead
 const { userGroupQuery } = require("./_group-lookup.js");
+const { authUserFetch } = require("./_auth-user.js");
 const { scanBookingFromEmailText } = require("../../booking-scan");
 const { claudeCall } = require("./_claude");
 const { recipeSourceForSender, extractRecipes, handleExtractedRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, enabledRecipeSources } = require("./_recipe-digest");
@@ -66,7 +67,7 @@ async function listGmailUsers(serviceKey) {
 
 async function getUserId(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     if (!res.ok) return null;

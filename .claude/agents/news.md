@@ -24,6 +24,8 @@ Scores. Scores has no menu entry of its own.
 
 **App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** ⋯ → **Open in <paper> app** opens the story's own link (the paper's app claims it) and counts as reading it; offered only when the link is on the paper's own domain (`out-catalog.js` `paperHandoff`), never for a newsletter's click tracker. `handOff` is injected from app.js.
 
+**Star Tribune sections come from each item's `<category domain>` tags** (2026-11-17, `stribSection` in `_news-feeds.js`): the new site only offers top-level feeds (`/rss/` and local, business, sports, opinion, variety, outdoors, things-to-do); politics, nation, world and health have no feed of their own.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { unionById, unionStrings, unionByKey, mergeTombstones, tombstoneSetFor, computeDirtySections, writeDirtySections, tombstoneIdsFor, effectiveTombstones, addTombstone, removeTombstone, ownedTombstoneKey } from "../state-sync.js";
+import { unionById, unionStrings, unionByKey, mergeTombstones, tombstoneSetFor, computeDirtySections, settledSectionsAfterLoad, writeDirtySections, tombstoneIdsFor, effectiveTombstones, addTombstone, removeTombstone, ownedTombstoneKey } from "../state-sync.js";
 
 describe("unionById — the core cross-device list merge", () => {
   it("unions by id, newer (a) winning on collision", () => {
@@ -252,5 +252,37 @@ describe("writeDirtySections — in-flight edits are never marked clean (INF-1)"
     const { written, error } = await writeDirtySections(dirty, async ({ section }) => (section === "a" ? "merged-a" : undefined));
     expect(error).toBe(null);
     expect(written).toEqual({ a: "merged-a", b: "planned-b" });
+  });
+});
+
+describe("settledSectionsAfterLoad (a boot rewrites only what the merge changed)", () => {
+  const sections = { eat: ["plans"], do: ["doTasks"], media: ["podcasts"], fresh: ["x"] };
+  const raw = { eat: '{"plans":{}}', do: '{"doTasks":[{"id":"t","title":"a"}]}', media: '{"podcasts":[]}' };
+  const live = { eat: '{"plans":{}}', do: '{"doTasks":[{"id":"t","title":"a","done":false}]}', media: '{"podcasts":[{"id":"new"}]}', fresh: '{"x":1}' };
+  const tidiedServer = { eat: '{"plans":{}}', do: '{"doTasks":[{"id":"t","title":"a","done":false}]}', media: '{"podcasts":[]}', fresh: '{}' };
+  const cur = (keys) => live[Object.keys(sections).find((s) => sections[s] === keys)];
+  const tidy = (keys) => tidiedServer[Object.keys(sections).find((s) => sections[s] === keys)];
+
+  it("counts a section the app only tidied as written, keeps real changes and new rows dirty", () => {
+    let calls = 0;
+    const written = settledSectionsAfterLoad(sections, raw, cur, () => { calls++; return tidy; });
+    expect(written.eat).toBe(live.eat);           // equal raw
+    expect(written.do).toBe(live.do);             // equal once tidied → not re-sent
+    expect(written.media).toBe(raw.media);        // a real local change → still dirty
+    expect(written.media).not.toBe(live.media);
+    expect("fresh" in written).toBe(false);       // no server row → dirty, gets created
+    expect(calls).toBe(1);                        // the tidy pass runs once, lazily
+  });
+  it("never runs the tidy pass when everything matches raw", () => {
+    let calls = 0;
+    settledSectionsAfterLoad({ eat: ["plans"] }, { eat: '{"plans":{}}' }, () => '{"plans":{}}', () => { calls++; return null; });
+    expect(calls).toBe(0);
+  });
+  it("keeps differing sections dirty when the tidied copy can't be made", () => {
+    const written = settledSectionsAfterLoad(sections, raw, cur, () => null);
+    expect(written.do).toBe(raw.do);
+  });
+  it("returns null (write everything) when nothing was loaded", () => {
+    expect(settledSectionsAfterLoad(sections, null, cur, () => tidy)).toBe(null);
   });
 });

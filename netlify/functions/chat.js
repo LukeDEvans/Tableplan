@@ -6,6 +6,7 @@
 // which applies each call). Mail and finance tools are opt-in: this function
 // reads the two flags from the household config row itself and only offers
 // those tools when they're on (CLAUDE.md "Mail AI features").
+import { authUserFetch } from "./_auth-user.js";
 
 import { ASSISTANT_CHAT_MODEL, toolSpecsForRequest } from "../../assistant-tools.js";
 import groupLookup from "./_group-lookup.js";
@@ -23,7 +24,7 @@ When the user's message starts with CURRENT CONTEXT, that block is a real-time s
 Guidelines:
 - Be concise and conversational — this is a chat, not an email
 - When Luke asks you to add, update, or change something, use the tools rather than just describing what to do
-- For questions about his data, answer from the context first; when it isn't there, use a lookup tool (get_calendar_range, list_tasks, find_contact, get_weather, search_recipes, and query_transactions / search_mail when available) instead of guessing
+- For questions about his data, answer from the context first; when it isn't there, use a lookup tool (search first when Luke names something without saying where it is; get_calendar_range, list_tasks, find_contact, get_weather, search_recipes, and query_transactions / search_mail when available) instead of guessing
 - If a lookup tool you'd need isn't offered (e.g. email or finance are switched off), say so and point Luke to Settings → Assistant / Mail AI to turn it on
 - When giving a briefing, lead with the most actionable items, then interesting observations, keep it to 3–5 bullet points
 - You can suggest actions (e.g. "want me to move that to Friday?") but don't use tools without clear intent
@@ -176,7 +177,7 @@ export default async (req, context) => {
 // Returns the signed-in user's id, or null.
 async function verifySession(token, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${token}` }
     });
     if (!res.ok) return null;

@@ -27,9 +27,11 @@
     "qa:page-groups": "node scripts/qa-page-groups.mjs",
     "qa:views": "node scripts/qa-views.mjs",
     "qa:listen-queue": "node scripts/qa-listen-queue.mjs",
+    "qa:podcast-upcoming": "node scripts/qa-podcast-upcoming.mjs",
     "qa:view-deletes": "node scripts/qa-view-deletes.mjs",
     "qa:finance-move": "node scripts/qa-finance-move.mjs",
     "build:finance-nightly": "node scripts/build-finance-nightly.mjs",
+    "build:liv-mcp": "node scripts/build-liv-mcp.mjs",
     "qa:calendar-month": "node scripts/qa-calendar-month.mjs",
     "qa:meal-context": "node scripts/qa-meal-context.mjs",
     "qa:watch-search": "node scripts/qa-watch-search.mjs",
@@ -46,7 +48,9 @@
     "check:messaging-migration": "node scripts/check-messaging-migration.mjs",
     "check:finance-move-guard": "node scripts/check-finance-move-guard-migration.mjs migrations/2026-11-11-finance-move-guard.sql",
     "ios:sync": "vite build && npx cap sync ios",
-    "ios:open": "npx cap open ios"
+    "ios:open": "npx cap open ios",
+    "qa:sheet": "node scripts/qa-sheet.mjs",
+    "sheet:conformance": "node scripts/sheet-conformance.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^6.2.2",

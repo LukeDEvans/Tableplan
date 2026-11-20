@@ -163,7 +163,7 @@ export function createEverydayLibrary({ transport, storage, now = () => Date.now
     // A Live document also has version snapshots and images (WORD_PROCESSOR_DESIGN.md §3, §6).
     // If they can't be listed now, leave the file for the next purge (the rows that name
     // the versions go with the file, so purging without them would orphan the blobs).
-    const extra = r.kind === "doc" ? await docParts(scope, r.id) : [];
+    const extra = r.kind === "doc" || r.kind === "sheet" ? await docParts(scope, r.id) : []; // spreadsheets keep version slots too
     await storage.remove(scope, r.id, [...(r.parts || ["content", "thumb"]), ...extra]);
     return Boolean(await transport.rpc("doc_ppurge_file", { p_id: uuid(id) }));
   }

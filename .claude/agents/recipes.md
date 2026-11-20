@@ -17,6 +17,8 @@ Tableplan** — a single-page, vanilla-ESM web app. Recipes has been **extracted
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. This domain has
   **zero UI test coverage** (below).
 
+- **Recipe timer on system timers (2026-11-19, UTILITIES_MENU_DESIGN.md §6):** `startRecipeTimer` also schedules an AlarmKit timer through the injected `systemTimer` (`schedule/cancel/pause/resume`; a no-op off the iPhone), so a cooking timer rings with the app closed. `openRecipeScanWithFiles(files)` is exported for the utilities menu's Scan → Recipe.
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a

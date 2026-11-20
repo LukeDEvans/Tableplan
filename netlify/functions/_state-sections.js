@@ -4,6 +4,7 @@
 // updated_at), mirroring the client's writeSectionWithMerge — a server
 // function can therefore never clobber a concurrent client write.
 const { userGroupQuery } = require("./_group-lookup.js");
+const { authUserFetch } = require("./_auth-user.js");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 function serviceHeaders(serviceKey) {
@@ -18,7 +19,7 @@ function serviceHeaders(serviceKey) {
 
 async function getUserIdFromToken(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    const res = await authUserFetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
     });
     if (!res.ok) return null;

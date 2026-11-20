@@ -45,12 +45,38 @@ const npr = (id, label = "") => ({ paper: "npr", url: `https://feeds.npr.org/${i
 
 const nyt = (name, label = "") => ({ paper: "nyt", url: `https://rss.nytimes.com/services/xml/rss/nyt/${name}.xml`, label });
 const econ = (slug) => ({ paper: "economist", url: `https://www.economist.com/${slug}/rss.xml`, label: slug });
-// Star Tribune: its site runs on Arc XP; both Arc's outbound-feed paths and the
-// legacy section feeds are listed — whichever answers is used (see the status row).
-const strib = (slug, label) => [
-  { paper: "startribune", url: `https://www.startribune.com/arc/outboundfeeds/rss/category/${slug}/?outputType=xml`, label },
-  { paper: "startribune", url: `https://www.startribune.com/${slug}/index.rss2`, label }
+// Star Tribune (checked 2026-11-17 from the server and in a browser): its new
+// site keeps the legacy feeds only for top-level sections — /rss/ (the whole
+// paper, wire stories included), local (= News & Politics), business, sports,
+// opinion, variety (= Food & Culture), outdoors, things-to-do; 10 items each.
+// Politics, Nation, World and Health have no feed of their own any more (404 "not
+// allowed"; Arc's /arc/outboundfeeds/ answers 429), but every item carries its
+// sections as <category domain="/news-politics/politics">, so stribSection()
+// places each story from those tags instead of from the feed it came in.
+const strib = (slug, label) => ({ paper: "startribune", url: `https://www.startribune.com/${slug}/index.rss2`, label });
+const STRIB_SECTION_RULES = [
+  [/^\/news-politics\/politics\b|\/politics(\/|$)/, "politics"],
+  [/^\/news-politics\/world\b|\/world(\/|$)/, "world"],
+  [/^\/news-politics\/nation\b|\/nation(\/|$)/, "us"],
+  [/health|wellness|science|climate|\/environment\b/, "science"],
+  [/^\/news-politics\/(twin-cities|greater-minnesota|minneapolis|st-paul)\b|^\/news-politics\/?$/, "mn"],
+  [/^\/sports\b/, "sports"],
+  [/^\/business\b/, "business"],
+  [/^\/opinion\b/, "opinion"],
+  [/^\/(wires\/)?(food-culture|things-to-do|variety)\b/, "culture"],
+  [/^\/outdoors\b/, "mn"],
 ];
+// The section for a Star Tribune item from its category domains (most specific
+// first, as the feed lists them), or null. Pure.
+function stribSection(categories) {
+  for (const d of Array.isArray(categories) ? categories : []) {
+    const domain = String(d || "").trim().toLowerCase();
+    if (!domain) continue;
+    const rule = STRIB_SECTION_RULES.find(([re]) => re.test(domain));
+    if (rule) return rule[1];
+  }
+  return null;
+}
 const athletic = (path) => ({ paper: "athletic", url: `https://www.nytimes.com/athletic/rss/${path}/`, label: "sports", athleticLeague: path });
 
 // ── The Athletic: favourite teams only (NEWS_RANKING_DESIGN.md §3.6) ─────────
@@ -64,7 +90,12 @@ const ATHLETIC_LEAGUE = { nfl: "nfl", nba: "nba", wnba: "wnba", nhl: "nhl", mlb:
 const ATHLETIC_SCOPE_LEAGUE = { nfl: "nfl", nba: "nba", wnba: "wnba", nhl: "nhl", mlb: "mlb", college: "college-football", soccer: "football", "soccer-w": "football" };
 // Seen in public feed directories (feedspot, feeder): rss/nba/timberwolves/,
 // rss/football/atlunited/, rss/mlb/braves/; team pages nhl/team/wild/, mlb/team/twins/.
-const ATHLETIC_KNOWN_SLUGS = { "nba:minnesota-timberwolves": "timberwolves", "nhl:minnesota-wild": "wild", "mlb:minnesota-twins": "twins", "soccer:atlanta-united-fc": "atlunited", "mlb:atlanta-braves": "braves" };
+const ATHLETIC_KNOWN_SLUGS = { "nba:minnesota-timberwolves": "timberwolves", "nhl:minnesota-wild": "wild", "mlb:minnesota-twins": "twins", "soccer:atlanta-united-fc": "atlunited", "mlb:atlanta-braves": "braves", "soccer:minnesota-united-fc": "mnufc", "soccer:united-states": "united-states" };
+// Teams checked to have no team feed (every candidate 404/500, 2026-11-17): no
+// team feeds are tried; their league feeds still catch stories that name them.
+// Minnesota Morris (Division III) isn't covered by The Athletic; its guessed slugs
+// (college-football/minnesota/, …/minnesota-morris-cougars/) 404'd every run (2026-11-18).
+const ATHLETIC_NO_TEAM_FEED = new Set(["college:minnesota-golden-gophers", "soccer:ajax-amsterdam", "college:minnesota-morris-cougars"]);
 const GENERIC = new Set(["fc", "afc", "sc", "cf", "united", "city", "state", "university", "club"]);
 const slugWord = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
@@ -73,8 +104,10 @@ function athleticLeagueFor(team) {
 }
 function athleticSlugCandidates(team) {
   const out = [];
+  if (ATHLETIC_NO_TEAM_FEED.has(team?.key)) return out;
   const add = (x) => { const v = slugWord(x); if (v && v.length >= 3 && !out.includes(v)) out.push(v); };
   add(ATHLETIC_KNOWN_SLUGS[team?.key]);
+  if (out.length) return out; // a known slug needs no guesses
   const words = slugWord(team?.name).split("-").filter(Boolean);
   const named = words.filter((w) => !GENERIC.has(w));
   if (team?.scope === "soccer" || team?.scope === "soccer-w") {
@@ -111,15 +144,15 @@ const FEEDS = [
   nyt("Business"), nyt("Economy"), nyt("Technology"), nyt("YourMoney"), nyt("RealEstate"),
   nyt("Science"), nyt("Climate"), nyt("Health"), nyt("Well"),
   nyt("Opinion"), nyt("Arts"), nyt("Books"), nyt("Movies"), nyt("Theater"), nyt("Television"),
-  nyt("FashionandStyle"), nyt("DiningandWine"), nyt("Travel"), nyt("Magazine"), nyt("Obituaries"), nyt("Sports"),
+  nyt("FashionandStyle"), nyt("DiningandWine"), nyt("Travel"), nyt("Magazine"), nyt("Obituaries"), // NYT's Sports.xml is empty since its sports moved to The Athletic
   econ("leaders"), econ("briefing"), econ("united-states"), econ("the-americas"), econ("asia"), econ("china"),
   econ("middle-east-and-africa"), econ("europe"), econ("britain"), econ("international"),
   econ("business"), econ("finance-and-economics"), econ("science-and-technology"), econ("culture"),
   econ("graphic-detail"), econ("obituary"), econ("special-report"), econ("by-invitation"), econ("the-world-this-week"),
-  { paper: "startribune", url: "https://www.startribune.com/arc/outboundfeeds/rss/?outputType=xml", label: "" },
-  ...strib("local", "Local"), ...strib("politics", "Politics"), ...strib("business", "Business"),
-  ...strib("sports", "Sports"), ...strib("opinion", "Opinion"), ...strib("variety", "Variety"),
-  ...strib("nation", "Nation"), ...strib("world", "World"), ...strib("health", "Health"),
+  { paper: "startribune", url: "https://www.startribune.com/rss/", label: "" },
+  strib("local", "Local"), strib("business", "Business"), strib("sports", "Sports"),
+  strib("opinion", "Opinion"), strib("variety", "Variety"), strib("outdoors", "Local"),
+  strib("things-to-do", "Variety"),
   // NPR: News (the main feed), then its sections so a story gets a real section.
   npr(1001), npr(1003, "National"), npr(1004, "World"), npr(1014, "Politics"), npr(1006, "Business"),
   npr(1019, "Technology"), npr(1007, "Science"), npr(1128, "Health"), npr(1008, "Arts & Culture"),
@@ -162,7 +195,8 @@ function parseFeed(xml) {
       title: stripHtml(text(it.title)),
       description: stripHtml(text(it.description)),
       image: media?.["@_url"] || "",
-      publishedAt: text(it.pubDate) || text(it["dc:date"])
+      publishedAt: text(it.pubDate) || text(it["dc:date"]),
+      categories: arr(it.category).map((c) => (c && typeof c === "object" ? c["@_domain"] || "" : "")).filter(Boolean)
     });
   }
   for (const e of atomEntries) {
@@ -210,7 +244,7 @@ function cardFromItem(item, feed, nowMs = Date.now()) {
     image: /^https:\/\//i.test(item.image || "") ? item.image : "",
     paper: feed.paper,
     source: source.name,
-    section: Links.sectionFor(c.url, { section: feed.label }, feed.paper),
+    section: (feed.paper === "startribune" && stribSection(item.categories)) || Links.sectionFor(c.url, { section: feed.label }, feed.paper),
     publishedAt,
     discoveredAt: new Date(nowMs).toISOString()
   };
@@ -410,7 +444,7 @@ async function runFeedIntake(serviceKey, { fetchImpl = fetch, nowMs = Date.now()
 const OPEN_CHECK_EVERY_MS = 10 * 60_000;
 const OPEN_CHECK_BUDGET_MS = 3000;
 const OPEN_CHECK_FETCH_MS = 2000;
-// The papers' front feeds: NYT's home page, the Star Tribune's top feed, NPR News.
+// The papers' front feeds: NYT's home page, the Star Tribune's /rss/, NPR News.
 const OPEN_CHECK_FEEDS = [FEEDS.find((f) => f.url.endsWith("/HomePage.xml")), FEEDS.find((f) => f.paper === "startribune" && f.label === ""), FEEDS.find((f) => f.paper === "npr" && f.label === "")].filter(Boolean);
 const openCheckOff = () => /^(1|true|yes)$/i.test(String(process.env.NEWS_OPEN_CHECK_DISABLED || ""));
 let lastOpenCheckSeen = 0; // this warm function's last known checkedAt (saves the row read)
@@ -451,6 +485,7 @@ async function runOpenCheck(serviceKey, { fetchImpl = fetch, nowMs = Date.now(),
 const resetOpenCheck = () => { lastOpenCheckSeen = 0; };
 
 module.exports = {
+  stribSection,
   FEEDS, FEED_SOURCES, NPR_SOURCE, OPEN_CHECK_FEEDS, OPEN_CHECK_EVERY_MS, collectSignals, runOpenCheck, resetOpenCheck,
   parseFeed, cardFromItem, collectFeedCards, loadSignedInUsers, runFeedIntake,
   athleticLeagueFor, athleticSlugCandidates, athleticFeedsFor, feedsForRun

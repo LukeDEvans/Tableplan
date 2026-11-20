@@ -14,7 +14,7 @@ const ENV = {
   DOC_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", DOC_S3_BUCKET: "liv-documents",
   DOC_S3_ACCESS_KEY_ID: "AK", DOC_S3_SECRET_ACCESS_KEY: "SK",
 };
-const SIGNED_IN = { "Bearer luke.token": luke, "Bearer wife.token": wife };
+const SIGNED_IN = { "Bearer luke.token": luke, "Bearer wife.token": wife, "Bearer enrolled.token": luke };
 const RPC_SQL = {
   photo_sync_register: ["select public.photo_sync_register($1::uuid, $2, $3, $4) as r", (a) => [a.p_user, a.p_device_key, a.p_name, a.p_secret_hash], "scalar"],
   photo_sync_device: ["select * from public.photo_sync_device($1::uuid, $2)", (a) => [a.p_device, a.p_secret_hash], "rows"],
@@ -42,7 +42,8 @@ beforeAll(async () => {
     const u = String(url);
     if (u.endsWith("/auth/v1/user")) {
       const id = SIGNED_IN[init.headers.authorization];
-      return id ? new Response(JSON.stringify({ id }), { status: 200 }) : new Response("{}", { status: 401 });
+      const factors = init.headers.authorization === "Bearer enrolled.token" ? [{ status: "verified" }] : undefined;
+      return id ? new Response(JSON.stringify({ id, factors }), { status: 200 }) : new Response("{}", { status: 401 });
     }
     const m = u.match(/\/rest\/v1\/rpc\/(\w+)$/);
     if (m) {
@@ -76,6 +77,7 @@ describe("photo-sync", () => {
   it("registers a device only for a signed-in person and gives its secret once", async () => {
     expect((await call({ op: "register", deviceKey: "dev-a" })).status).toBe(401);
     expect((await call({ op: "register", deviceKey: "dev-a" }, { authorization: "Bearer stolen.token" })).status).toBe(401);
+    expect((await call({ op: "register", deviceKey: "dev-a" }, { authorization: "Bearer enrolled.token" })).status).toBe(401); // skipped the authenticator code
     expect((await call({ op: "register", deviceKey: "bad key!" }, { authorization: "Bearer luke.token" })).status).toBe(400);
     const res = await call({ op: "register", deviceKey: "dev-a", name: "Luke's iPhone" }, { authorization: "Bearer luke.token" });
     expect(res.status).toBe(200);

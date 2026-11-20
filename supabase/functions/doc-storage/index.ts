@@ -67,6 +67,20 @@ async function ask(fn: string, args: Record<string, unknown>, auth: string): Pro
   return res.ok && (await res.json()) === true;
 }
 
+// A sign-in that skipped the authenticator code (aal1) is refused when the user
+// has a verified factor — the same rule as the tables' require_mfa_when_enrolled
+// policy, which the security-definer RPCs below don't go through on their own.
+function tokenAal(auth: string): string {
+  try {
+    const part = auth.replace(/^Bearer\s+/i, "").split(".")[1] || "";
+    return JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/"))).aal || "";
+  } catch { return ""; }
+}
+async function meetsMfa(auth: string): Promise<boolean> {
+  if (tokenAal(auth) === "aal2") return true;
+  try { return await ask("session_meets_mfa", {}, auth); } catch { return false; }
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origin) });
@@ -80,6 +94,7 @@ Deno.serve(async (req) => {
 
   const auth = req.headers.get("authorization") || "";
   if (!/^Bearer [A-Za-z0-9._-]+$/.test(auth)) return reply(401, { error: "sign in" }, origin);
+  if (!(await meetsMfa(auth))) return reply(401, { error: "authenticator code" }, origin);
 
   type Item = { scope?: string; fileId?: string; part?: string; size?: number; tier?: string };
   let body: { op?: string; items?: Array<Item | null> };
