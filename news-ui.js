@@ -410,6 +410,11 @@ export function createNewsModule(deps) {
   let wired = false;
   let verifying = false;
   let forYouAvailable = false;  // the server has the For you migration (newsFeed `forYou`)
+  // The server blends For you into the Front page (newsFeed `blend`; Luke,
+  // 2026-11-20). Until it says so the For you section stays in the header, so a
+  // TestFlight build that arrives before the deploy loses nothing.
+  let blendAvailable = false;
+  let seededBlend = false;
   let teamsSentSig = null;      // favourites signature sent this session
   let learned = null;           // "What News has learned": { likes, dislikes, muted, teams }
   let learnedState = "";        // "" | "loading" | "error"
@@ -477,7 +482,9 @@ export function createNewsModule(deps) {
     const key = viewKey();
     const page = pages.get(key);
     if (seeded) {
-      pages.set(key, { articles: articlesForView(seeded, view, query), nextBefore: null, loadedAt: Date.now() });
+      // A blended seed is already in the server's order, top stories first.
+      const blended = seededBlend && view.kind === "front" && !String(query || "").trim();
+      pages.set(key, { articles: blended ? seeded.filter((a) => a.paper !== "athletic") : articlesForView(seeded, view, query), nextBefore: null, loadedAt: Date.now(), blended });
       render();
       return;
     }
@@ -491,7 +498,9 @@ export function createNewsModule(deps) {
       action: "newsFeed",
       view: { kind: view.kind, key: view.key },
       q: String(query || "").trim() || undefined,
-      before: more ? page.nextBefore : undefined
+      before: more ? page.nextBefore : undefined,
+      // Ask for the blended Front page (Top stories + For you); an older server ignores it.
+      ...(view.kind === "front" && !more ? { blend: true } : {})
     });
     loadingKey = null;
     if (!Array.isArray(d?.articles)) {
@@ -505,8 +514,10 @@ export function createNewsModule(deps) {
     pages.set(key, {
       articles: more ? mergeArticles(page.articles, incoming) : incoming,
       nextBefore: d.nextBefore || null,
-      loadedAt: more ? page.loadedAt : Date.now()
+      loadedAt: more ? page.loadedAt : Date.now(),
+      blended: more ? !!page.blended : d.blend === true
     });
+    if (d.blend === true && !blendAvailable) blendAvailable = true;
     if (d.counts) counts = d.counts;
     if (d.signIns) { signIns = d.signIns; signInsLoaded = true; }
     if (d.forYou === true && !forYouAvailable) forYouAvailable = true;
@@ -557,7 +568,7 @@ export function createNewsModule(deps) {
     seenObserver?.disconnect();
     for (const t of seenTimers.values()) clearTimeout(t);
     seenTimers.clear();
-    if (view.kind !== "foryou" || !forYouAvailable || typeof IntersectionObserver !== "function") return;
+    if (!tracksSeen() || typeof IntersectionObserver !== "function") return;
     const root = $("newsContent")?.querySelector(".news-scroll") || null;
     seenObserver = new IntersectionObserver((entries) => {
       for (const e of entries) {
@@ -569,10 +580,17 @@ export function createNewsModule(deps) {
     }, { root, threshold: [0, 0.6] });
     for (const el of $("newsContent")?.querySelectorAll("[data-news-id]") || []) seenObserver.observe(el);
   }
+  // Stories that sat on screen unopened count as seen: in For you, and on the
+  // blended Front page, where seen stories sink on the next visit (Luke, 2026-11-20).
+  function tracksSeen(v = view) {
+    if (!forYouAvailable || query) return false;
+    if (v.kind === "foryou") return true;
+    return v.kind === "front" && !!pages.get(viewKey(v, ""))?.blended;
+  }
   function reportSkips() {
     if (!forYouSeen.size) return;
-    const page = pages.get(viewKey({ kind: "foryou" }, ""));
-    const ids = skipsToSend([...forYouSeen], page?.articles || [], skipsReported);
+    const cards = [...(pages.get(viewKey({ kind: "foryou" }, ""))?.articles || []), ...(pages.get(viewKey({ kind: "front" }, ""))?.articles || [])];
+    const ids = skipsToSend([...forYouSeen], cards, skipsReported);
     forYouSeen.clear();
     if (!ids.length || !forYouAvailable) return;
     for (const id of ids) { skipsReported.add(id); enqueue(id, "skip"); }
@@ -790,7 +808,7 @@ export function createNewsModule(deps) {
 
   function metaLine(a) {
     const paper = PAPER[a.paper]?.label || a.source || "";
-    const why = view.kind === "foryou" && a.why ? a.why : "";
+    const why = (view.kind === "foryou" || view.kind === "front") && a.why ? a.why : "";
     return [why, paper, timeAgo(a.publishedAt || a.discoveredAt), a.sentAt ? "In Media ✓" : ""].filter(Boolean).map(esc).join(" · ");
   }
 
@@ -812,7 +830,7 @@ export function createNewsModule(deps) {
       <div class="news-card-band" aria-hidden="true"></div>
       <div class="news-card-body">
         <div class="news-card-text">
-          <div class="news-card-sec">${esc(SECTION_LABEL[sectionOf(a)])}</div>
+          <div class="news-card-sec">${a.forYou && a.top ? `<span class="news-card-foryou">For you</span> · ` : ""}${esc(SECTION_LABEL[sectionOf(a)])}</div>
           <h4 class="news-card-title">${esc(a.title)}</h4>
           <div class="news-card-meta">${metaLine(a)}</div>
         </div>
@@ -841,7 +859,7 @@ export function createNewsModule(deps) {
         <button type="button" class="news-more news-learned-reset${armed ? " is-armed" : ""}" data-news-reset>${armed ? "Tap again to reset" : "Reset what News has learned"}</button>`;
     }
     return `<div class="news-scroll">
-      <div class="news-head"><button type="button" class="news-back" data-news-back-foryou aria-label="Back to For you">‹</button><h2 class="news-title">What News has learned</h2></div>
+      <div class="news-head"><button type="button" class="news-back" data-news-back aria-label="Back to ${blendAvailable ? "the Front page" : "For you"}">‹</button><h2 class="news-title">What News has learned</h2></div>
       <div class="news-head-sub">Remove anything that's off. Your favorite teams come from Scores.</div>
       ${body}
     </div>`;
@@ -868,7 +886,7 @@ export function createNewsModule(deps) {
   }
 
   // ── The section header ──
-  const headerList = () => headerViews({ forYou: forYouAvailable });
+  const headerList = () => headerViews({ forYou: forYouAvailable && !blendAvailable });
   function sectionMenuHtml() {
     const item = (v, label, extra = "") => {
       const cur = sameView(v, view);
@@ -881,6 +899,8 @@ export function createNewsModule(deps) {
       const note = st === "expired" ? "Sign in again" : (st === "none" || (st === "unknown" && signInsLoaded && !verifying)) ? "Not signed in" : "";
       h += item({ kind: "paper", key: p.key }, p.label, note ? ` <small class="news-side-warn">${note}</small>` : "");
     }
+    // For you's tuning lives here once it is part of the Front page.
+    if (forYouAvailable && blendAvailable) h += `<div class="news-section-label">For you</div>${item({ kind: "learned" }, "What News has learned")}`;
     return `<div class="news-section-menu" role="menu" aria-label="News sections">${h}</div>`;
   }
   function sectionBarHtml() {
@@ -933,7 +953,9 @@ export function createNewsModule(deps) {
     const title = viewLabel(view);
 
     let body = "";
-    const list = articlesForView(page.articles, view); // search already applied by the server
+    // Search is already applied by the server; a blended Front page keeps its order.
+    const blendedFront = view.kind === "front" && !!page.blended && !query;
+    const list = blendedFront ? page.articles.filter((a) => a && a.id && a.url) : articlesForView(page.articles, view);
     const forYouView = view.kind === "foryou";
     const shown = `${list.length}${page.nextBefore ? "+" : ""} ${list.length === 1 && !page.nextBefore ? "story" : "stories"}`;
     // No "N stories · N unread" line under the header (Luke, 2026-11-20); a search
@@ -942,6 +964,21 @@ export function createNewsModule(deps) {
     else if (forYouView) body += `<div class="news-head-sub">Ranked by what you read. Use ⋯ to tune it. <button class="news-link-btn" type="button" data-news-learned>What News has learned</button></div>`;
     if (!list.length) {
       body += `<p class="news-empty">${query ? "No stories match your search." : forYouView ? "You're all caught up. New stories arrive every hour." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
+    } else if (blendedFront) {
+      // The blended Front page (Luke, 2026-11-20): Top stories chosen by importance
+      // (with a couple lifted for you), then For you — everything else, ordered by
+      // importance, interests and freshness, seen stories last. The server's order.
+      const top = list.filter((a) => a.top), rest = list.filter((a) => !a.top);
+      if (top.length) {
+        body += `<h3 class="news-group-head">Top stories</h3>`;
+        body += leadHtml(top[0], `${top[0].forYou ? "For you" : "Top story"} · ${SECTION_LABEL[sectionOf(top[0])]}`);
+        if (top.length > 1) body += `<div class="news-grid">${top.slice(1).map(cardHtml).join("")}</div>`;
+        if (rest.length) body += `<h3 class="news-group-head is-split">For you</h3><div class="news-grid">${rest.map(cardHtml).join("")}</div>`;
+      } else {
+        body += leadHtml(rest[0], `Top for you · ${SECTION_LABEL[sectionOf(rest[0])]}`);
+        if (rest.length > 1) body += `<div class="news-grid">${rest.slice(1).map(cardHtml).join("")}</div>`;
+      }
+      if (page.nextBefore) body += `<button class="news-more" type="button" data-news-more>${loadingKey === viewKey() ? "Loading…" : "Load more stories"}</button>`;
     } else {
       const { lead, rest } = forYouView ? { lead: list[0], rest: list.slice(1) } : arrangeFront(list, nowMs);
       const kicker = forYouView ? `Top for you · ${SECTION_LABEL[sectionOf(lead)]}`
@@ -1000,10 +1037,10 @@ export function createNewsModule(deps) {
   function setView(next) {
     // Saved is the sidebar now (Luke, 2026-11-20): the old Saved / Sent views open it.
     if (next?.kind === "saved" || next?.kind === "sent") { openSidebar(); return; }
-    if (view.kind === "foryou" && next?.kind !== "foryou") { reportSkips(); flush(); }
+    if (tracksSeen() && (next?.kind !== view.kind || next?.key !== view.key)) { reportSkips(); flush(); }
     // The old Briefings view is gone (briefings live in Listen), so a stale link
     // to it opens the Front page.
-    view = next?.kind === "briefings" || !next?.kind ? { kind: "front" } : next;
+    view = next?.kind === "briefings" || !next?.kind || (next.kind === "foryou" && blendAvailable) ? { kind: "front" } : next;
     openMenuId = null;
     sectionMenuOpen = false;
     closeSidebar();
@@ -1140,7 +1177,7 @@ export function createNewsModule(deps) {
       if (e.target.closest("#newsScoresMount")) return; // the Scores view handles its own taps
       if (e.target.closest("[data-news-signin]")) { openSignInSettings?.(); return; }
       if (e.target.closest("[data-news-learned]")) { setView({ kind: "learned" }); return; }
-      if (e.target.closest("[data-news-back-foryou]")) { setView({ kind: "foryou" }); return; }
+      if (e.target.closest("[data-news-back]")) { setView({ kind: blendAvailable ? "front" : "foryou" }); return; }
       const forget = e.target.closest("[data-news-forget]");
       if (forget) { editLearned({ forget: [forget.dataset.newsForget] }); return; }
       const unmute = e.target.closest("[data-news-unmute]");
@@ -1194,7 +1231,7 @@ export function createNewsModule(deps) {
     });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) return;
-      if (isActive() && view.kind === "foryou") reportSkips();
+      if (isActive() && tracksSeen()) reportSkips();
       flush();
     });
   }
@@ -1210,6 +1247,8 @@ export function createNewsModule(deps) {
   function seed(list, status, opts = {}) {
     seeded = Array.isArray(list) ? list : [];
     forYouAvailable = !!opts?.forYou;
+    seededBlend = !!opts?.blend;
+    blendAvailable = seededBlend;
     learned = opts?.learned || null;
     signIns = status || {};
     signInsLoaded = true;
@@ -1222,7 +1261,7 @@ export function createNewsModule(deps) {
 
   // Leaving the page: send queued decisions and stop the Scores view's refresh.
   function leave() {
-    if (view.kind === "foryou") reportSkips();
+    if (tracksSeen()) reportSkips();
     flush();
     scores?.unmount();
     sectionMenuOpen = false;

@@ -145,7 +145,7 @@ async function run(browser, { width, height, forYou }) {
   check((await page.$$(".news-learned-label")).length === 0, "second tap resets");
   const lOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check(lOverflow <= 0, `learned view: no sideways scroll (${lOverflow}px)`);
-  await page.click("[data-news-back-foryou]");
+  await page.click("[data-news-back]");
   await page.waitForTimeout(150);
   check((await page.textContent(".news-title")).trim() === "For you", "back arrow returns to For you");
 

@@ -238,7 +238,8 @@ q }`), counts come from the server, "Load more" pages on, search is server-side.
   section; a tap on the title opens the list of sections — the page menu's look —
   with the papers at its foot. The "N stories · N unread" line is gone (a search still
   says what matched; For you keeps its "What News has learned" link).
-- **Order** (`headerViews`): For you · **Front page** (default) · Sports · World · U.S. ·
+- **Order** (`headerViews`): (For you, until the server blends it into the Front page —
+  NEWS_FRONT_PAGE_DESIGN.md §12) · **Front page** (default) · Sports · World · U.S. ·
   Politics · Minnesota · Business · Science & Health · Opinion · Culture · More. A swipe
   left from the Front page goes to Sports; For you sits one swipe right of it. No
   wrap-around. Every section is always in the order, so swipes are predictable.

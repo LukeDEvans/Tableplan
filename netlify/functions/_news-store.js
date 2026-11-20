@@ -106,10 +106,10 @@ const ATHLETIC_TAGGED_FILTER = "or(paper.neq.athletic,topics.not.is.null)";
 //   view: { kind: "front" | "section" | "paper" | "sent", key }
 //   before: "<published_at ISO>|<id>" cursor — rows strictly after it in
 //   (published_at desc, id desc) order; q: title / summary search.
-function feedQuery(userId, { view = {}, before, q, limit = 150, nowMs = Date.now(), athleticTagged = false } = {}) {
+function feedQuery(userId, { view = {}, before, q, limit = 150, nowMs = Date.now(), athleticTagged = false, extraColumns = "" } = {}) {
   const since = new Date(nowMs - KEEP_DAYS * DAY_MS - DAY_MS).toISOString(); // window incl. the URL-date grace day
   const parts = [
-    `select=${COLUMNS}`,
+    `select=${COLUMNS}${extraColumns ? `,${extraColumns}` : ""}`,
     `user_id=eq.${enc(userId)}`,
     "hidden_at=is.null",
     `published_at=gte.${enc(since)}`
@@ -342,10 +342,10 @@ const FRONT_MEMO_MS = 5 * 60_000;
 const frontMemo = new Map(); // userId → { at, top: [{ id, … }] }
 const frontRankOff = () => /^(1|true|yes)$/i.test(String(process.env.NEWS_FRONT_RANK_DISABLED || ""));
 
-function frontPoolQuery(userId, { nowMs = Date.now() } = {}) {
+function frontPoolQuery(userId, { nowMs = Date.now(), extraColumns = "" } = {}) {
   const since = new Date(nowMs - Front.POOL_WINDOW_MS).toISOString();
   return [
-    `select=${FRONT_POOL_COLUMNS}`, `user_id=eq.${enc(userId)}`, "hidden_at=is.null",
+    `select=${FRONT_POOL_COLUMNS}${extraColumns ? `,${extraColumns}` : ""}`, `user_id=eq.${enc(userId)}`, "hidden_at=is.null",
     `published_at=gte.${enc(since)}`, `and=${enc(`(${FRONT_PAPER_FILTER})`)}`,
     "order=published_at.desc", `limit=${FRONT_POOL_MAX}`
   ].join("&");
@@ -375,7 +375,7 @@ async function loadFrontTop(serviceKey, userId, { fetchImpl = fetch, nowMs = Dat
   const byId = new Map(rows.map((r) => [r.id, r]));
   return ids.map((id) => byId.get(id)).filter(Boolean);
 }
-const resetFrontMemo = (userId) => (userId ? frontMemo.delete(userId) : frontMemo.clear());
+const resetFrontMemo = (userId) => { if (userId) { frontMemo.delete(userId); blendPoolMemo.delete(userId); } else { frontMemo.clear(); blendPoolMemo.clear(); } };
 
 // One page of a view. On the first Front page the ranked top stories come first.
 //
@@ -420,6 +420,113 @@ async function loadFeedPage(serviceKey, userId, opts = {}) {
     }),
     // A full page means there may be more; the cursor is the last row's (time, id).
     nextBefore: rows.length >= capped ? `${rows[rows.length - 1].published_at}|${rows[rows.length - 1].id}` : null
+  };
+}
+
+// ── The blended Front page (Luke, 2026-11-20; NEWS_FRONT_PAGE_DESIGN.md §12) ──
+// Top stories are chosen by importance (_news-front.js rankFrontFor: angle, lift,
+// muted); everything below is ordered by importance + the person's interests +
+// freshness, with For you's variety rules and its occasional "something
+// different". Stories already seen — opened, or scrolled past on an earlier visit
+// (`skips`) — sink below the ones that are new to the person, in both parts.
+// Only for builds that ask (`blend: true`); everyone else, and the dock ticker,
+// get loadFeedPage as before.
+const BLEND_COLUMNS = "topics,skips";
+const BLEND_IMPORTANCE = 0.6;   // an event's score → points in the river
+const COVERED = 0.5;            // a top event's other stories count half (already on top)
+const WHY_MIN = 1.5;            // interest needed before a card says why it's there
+const blendPoolMemo = new Map(); // userId → { at, pool, signals }
+const isSeenRow = (r) => !!r?.read_at || (Number(r?.skips) || 0) >= 1;
+const featuresOfRow = (r) => (Array.isArray(r?.topics) && r.topics.length ? r.topics : Rank.storyFeatures(cardFromRow(r)));
+
+// Pure. topRows: the top stories' fresh rows in ranked order, each with `lifted`.
+// rows: the page's rows (newest first). rank: rankFrontFor's result.
+// → cards in display order: top (unseen, then seen), then the river.
+function arrangeBlendedFront(topRows, rows, rank, interest, { nowMs = Date.now(), rng = Math.random } = {}) {
+  const muted = interest?.muted || {};
+  const topIds = new Set(topRows.map((r) => r.id));
+  const topCards = [...topRows.filter((r) => !isSeenRow(r)), ...topRows.filter(isSeenRow)].map((r, i) => {
+    const c = cardFromRow(r);
+    c.top = true;
+    // `lead` one second apart keeps the dock ticker (and older code) in this order.
+    c.lead = new Date(nowMs - i * 1000).toISOString();
+    if (r.lifted) {
+      c.forYou = true;
+      const why = Rank.whyLabel(featuresOfRow(r), interest, nowMs);
+      if (why) c.why = why;
+    }
+    return c;
+  });
+  const fresh = [], seen = [];
+  const seenIds = new Set();
+  for (const r of rows || []) {
+    if (!r?.id || topIds.has(r.id) || seenIds.has(r.id)) continue;
+    seenIds.add(r.id);
+    const features = featuresOfRow(r);
+    if (features.some((f) => muted[f] !== undefined)) continue; // muted stays out, as in For you
+    const personal = Rank.scoreStory(features, interest, { nowMs, publishedAt: r.published_at, leadAt: r.lead_at });
+    if (personal == null) continue;
+    const imp = rank?.importance?.get(r.id);
+    const prior = imp ? imp.prior : (Front.SECTION_PRIOR[r.section] ?? 0);
+    const importance = imp ? imp.event * (imp.top ? COVERED : 1) + prior : prior;
+    const item = { id: r.id, section: r.section, features, publishedAt: r.published_at, row: r, score: BLEND_IMPORTANCE * importance + personal };
+    (isSeenRow(r) ? seen : fresh).push(item);
+  }
+  const arranged = Rank.arrangeForYou(fresh, interest, { limit: fresh.length, nowMs, rng });
+  seen.sort((a, b) => b.score - a.score);
+  const river = [...arranged, ...seen].map((x) => {
+    const c = cardFromRow(x.row);
+    const why = x.explore ? "Something different"
+      : Rank.interestScore(x.features, interest, nowMs) >= WHY_MIN ? Rank.whyLabel(x.features, interest, nowMs) : "";
+    if (why) c.why = why;
+    return c;
+  });
+  return [...topCards, ...river];
+}
+
+async function loadBlendedFront(serviceKey, userId, interest, opts = {}) {
+  const { limit = 150, fetchImpl = fetch, nowMs = Date.now(), rng, memo = true } = opts;
+  // The 24 h pool (with topics) is kept a few minutes per warm function; the
+  // ranking itself runs every time, so new feedback and mutes count at once.
+  const poolP = (async () => {
+    let hit = memo ? blendPoolMemo.get(userId) : null;
+    if (!hit || nowMs - hit.at > FRONT_MEMO_MS || nowMs < hit.at) {
+      const [pool, signalsRow] = await Promise.all([
+        getRows(serviceKey, frontPoolQuery(userId, { nowMs, extraColumns: "topics" }), { fetchImpl }),
+        Signals.loadSignalsRow(serviceKey, { fetchImpl, nowMs }).catch(() => ({}))
+      ]);
+      hit = { at: nowMs, pool, signals: Signals.signalRows(signalsRow.items, nowMs) };
+      if (memo) blendPoolMemo.set(userId, hit);
+    }
+    return hit;
+  })();
+  const [rows, hit] = await Promise.all([
+    getRows(serviceKey, feedQuery(userId, { view: { kind: "front" }, limit, nowMs, extraColumns: BLEND_COLUMNS }), { fetchImpl }),
+    poolP
+  ]);
+  const featuresCache = new Map();
+  const feats = (r) => { if (!featuresCache.has(r.id)) featuresCache.set(r.id, featuresOfRow(r)); return featuresCache.get(r.id); };
+  const rank = Front.rankFrontFor(hit.pool, {
+    nowMs, signals: hit.signals,
+    isWeak: (r) => Titles.isWeakTitle(r.title, { url: r.url, origin: r.origin || "rss" }),
+    interestOf: (r) => Rank.interestScore(feats(r), interest, nowMs),
+    isMuted: (r) => feats(r).some((f) => interest?.muted?.[f] !== undefined)
+  });
+  let topRows = [];
+  if (rank.top.length) {
+    // Read fresh, so a story hidden, read or scrolled past since shows that.
+    const ids = rank.top.map((t) => t.id);
+    const fresh = await getRows(serviceKey, [
+      `select=${COLUMNS},${BLEND_COLUMNS}`, `user_id=eq.${enc(userId)}`, "hidden_at=is.null", `id=in.(${ids.map((id) => `"${enc(id)}"`).join(",")})`
+    ].join("&"), { fetchImpl });
+    const byId = new Map(fresh.map((r) => [r.id, r]));
+    topRows = rank.top.map((t) => (byId.has(t.id) ? { ...byId.get(t.id), lifted: t.lifted } : null)).filter(Boolean);
+  }
+  const capped = Math.max(1, Math.min(PAGE_MAX, Number(limit) || 150));
+  return {
+    articles: arrangeBlendedFront(topRows, rows, rank, interest, { nowMs, rng }),
+    nextBefore: rows.length >= capped ? `${rows[rows.length - 1].published_at}|${rows[rows.length - 1].id}` : null,
+    blend: true
   };
 }
 
@@ -520,6 +627,6 @@ function acceptedArticleRecord(card, nowIso) {
 module.exports = {
   KEEP_DAYS, PRUNE_DAYS, PAGE_MAX, COLUMNS, FORYOU_SHOW,
   rowFromCard, cardFromRow, countsFromRows, feedQuery, parseCursor, searchTerm, forYouQuery, arrangeForYouRows,
-  insertArticles, setTopics, untaggedRecentIds, markLeads, getRows, patchRows, loadCounts, loadFeedPage, loadFrontTop, frontPoolQuery, resetFrontMemo, loadForYou, applyDecisions, learnFromDecisions, pruneArticles,
+  insertArticles, setTopics, untaggedRecentIds, markLeads, getRows, patchRows, loadCounts, loadFeedPage, loadFrontTop, frontPoolQuery, loadBlendedFront, arrangeBlendedFront, resetFrontMemo, loadForYou, applyDecisions, learnFromDecisions, pruneArticles,
   forYouReady, resetSchemaProbe, loadInterest, loadInterests, saveInterest
 };

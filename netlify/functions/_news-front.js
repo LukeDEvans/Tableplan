@@ -238,4 +238,96 @@ function rankFront(rows, { nowMs = Date.now(), max = TOP_MAX, isWeak = () => fal
   return top;
 }
 
-module.exports = { rankFront, clusterRows, storyTokens, stem, isLive, isLiveUpdate, POOL_WINDOW_MS, TOP_MAX, MIN_TOP_SCORE, SECTION_PRIOR };
+// ── The blended Front page (Luke, 2026-11-20) ────────────────────────────────
+// Top stories stay chosen by importance (the bar above), with three personal
+// touches; everything below them is ordered by _news-store.js using `importance`.
+//   - Angle: within an event, among stories nearly as good as its best (and never
+//     a live-blog update, or opinion unless the best is), the one the person's
+//     interests favour stands for it. A live blog itself always stands for its event.
+//   - Lift: up to LIFT_MAX stories just under the bar whose interest is strong
+//     join the block after the must-reads, marked `lifted`. In a full block a lift
+//     replaces the weakest must-read only if that one barely cleared the bar.
+//   - Muted: an event whose stories are all muted leaves the block unless it is
+//     big (heat ≥ BIG_EVENT_HEAT) — real news still leads.
+const LIFT_RANGE = 1.5;     // how far under MIN_TOP_SCORE a story may be lifted from
+const LIFT_INTEREST = 3;    // the interest it needs (a favourite team alone is 4)
+const LIFT_MAX = 2;
+const ANGLE_RANGE = 1;      // how close to the event's best story an angle must be
+const MARGINAL = 1;         // a must-read this close over the bar can give way to a lift
+
+// rows / opts as rankFront, plus interestOf(row) → number and isMuted(row) → bool.
+// Returns { top: [{ id, score, heat, …, lifted }], importance: Map(id → { event,
+// prior, cluster, top }) } — `importance` for every story in the 24 h pool.
+function rankFrontFor(rows, { nowMs = Date.now(), max = TOP_MAX, isWeak = () => false, signals = [], interestOf = () => 0, isMuted = () => false } = {}) {
+  const inWindow = (r) => nowMs - ms(r.published_at) <= POOL_WINDOW_MS && nowMs - ms(r.published_at) > -HOUR_MS;
+  const pool = (rows || []).filter((r) => r && r.id && r.title && !r.signal && inWindow(r) && !isWeak(r));
+  const extra = (signals || []).filter((r) => r && r.signal && r.title && inWindow(r));
+  const clusters = clusterRows([...pool, ...extra]).filter((c) => c.items.some((it) => !it.row.signal));
+  for (const c of clusters) scoreCluster(c, nowMs);
+  clusters.sort((a, b) => b.best - a.best);
+  const interest = new Map();
+  const interestOfRow = (row) => { if (!interest.has(row.id)) interest.set(row.id, Number(interestOf(row)) || 0); return interest.get(row.id); };
+  const big = (c) => c.heat >= BIG_EVENT_HEAT;
+  // The story that stands for an event, or null (all muted in a small event).
+  const pickRep = (c, skip = () => false) => {
+    const cands = c.ranked.filter((it) => !skip(it) && (big(c) || !isMuted(it.row)));
+    const best = cands[0];
+    if (!best) return null;
+    if (isLive(best.row) && !isLiveUpdate(best.row)) return best;
+    let pick = best;
+    for (const it of cands) {
+      if (best.repScore - it.repScore > ANGLE_RANGE) break;
+      if (isLiveUpdate(it.row) || (it.row.section === "opinion" && best.row.section !== "opinion")) continue;
+      if (interestOfRow(it.row) > interestOfRow(pick.row) + 0.25) pick = it;
+    }
+    return pick;
+  };
+  const describe = (c, it, lifted = false) => ({ id: it.row.id, score: Math.round(it.score * 100) / 100, heat: Math.round(c.heat * 100) / 100, stories: c.stories.length, papers: c.papers.size, outside: c.outlets.size, live: c.live, lifted });
+  const top = [];
+  const inTop = new Set();
+  for (const c of clusters) {
+    if (top.length >= max) break;
+    if (c.ranked[0].score < MIN_TOP_SCORE) continue;
+    const first = pickRep(c);
+    if (!first) continue;
+    top.push(describe(c, first));
+    inTop.add(c);
+    if (big(c) && top.length < max) {
+      const second = c.ranked.find((it) => it !== first && it.row.paper !== first.row.paper && !isLiveUpdate(it.row) && it.row.section !== "opinion");
+      if (second) top.push(describe(c, second));
+    }
+  }
+  // Lift: near-misses the person cares about, best first.
+  const lifts = [];
+  for (const c of clusters) {
+    if (inTop.has(c)) continue;
+    const s = c.ranked[0].score;
+    if (s >= MIN_TOP_SCORE || s < MIN_TOP_SCORE - LIFT_RANGE) continue;
+    const rep = pickRep(c);
+    if (!rep || isMuted(rep.row) || interestOfRow(rep.row) < LIFT_INTEREST) continue;
+    lifts.push({ c, rep, by: rep.score + 0.25 * interestOfRow(rep.row) });
+  }
+  lifts.sort((a, b) => b.by - a.by);
+  for (const l of lifts.slice(0, LIFT_MAX)) {
+    if (top.length >= max) {
+      // A full block: a lift may take the place of the weakest marginal must-read
+      // (under MARGINAL, not part of a big event) — never of real news.
+      let k = -1;
+      for (let i = top.length - 1; i >= 0; i--) {
+        if (!top[i].lifted && top[i].score < MIN_TOP_SCORE + MARGINAL && top[i].heat < BIG_EVENT_HEAT) { k = i; break; }
+      }
+      if (k < 0) break;
+      const [gone] = top.splice(k, 1);
+      for (const c of clusters) if (c.stories.some((it) => it.row.id === gone.id) && !top.some((t) => c.stories.some((it) => it.row.id === t.id))) inTop.delete(c);
+    }
+    top.push(describe(l.c, l.rep, true));
+    inTop.add(l.c);
+  }
+  const importance = new Map();
+  clusters.forEach((c, i) => {
+    for (const it of c.stories) importance.set(it.row.id, { event: c.eventScore, prior: SECTION_PRIOR[it.row.section] ?? 0, cluster: i, top: inTop.has(c) });
+  });
+  return { top, importance };
+}
+
+module.exports = { rankFront, rankFrontFor, LIFT_RANGE, LIFT_INTEREST, LIFT_MAX, BIG_EVENT_HEAT, clusterRows, storyTokens, stem, isLive, isLiveUpdate, POOL_WINDOW_MS, TOP_MAX, MIN_TOP_SCORE, SECTION_PRIOR };
