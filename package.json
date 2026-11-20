@@ -24,6 +24,7 @@
     "qa:display": "node scripts/qa-display.mjs",
     "qa:ticker": "node scripts/qa-ticker.mjs",
     "qa:news-for-you": "node scripts/qa-news-for-you.mjs",
+    "qa:news-header": "node scripts/qa-news-header.mjs",
     "qa:page-groups": "node scripts/qa-page-groups.mjs",
     "qa:views": "node scripts/qa-views.mjs",
     "qa:listen-queue": "node scripts/qa-listen-queue.mjs",

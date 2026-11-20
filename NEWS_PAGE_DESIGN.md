@@ -228,3 +228,24 @@ that row and remove dead URLs. The Star Tribune is the least certain.
 
 **Client** — each view loads its own page from the server (`newsFeed { view, before,
 q }`), counts come from the server, "Load more" pages on, search is server-side.
+
+## Section header and Saved sidebar (Luke, 2026-11-20)
+
+- **Header.** One section title, centered on the window and pinned above the stories
+  (it sits outside `.news-scroll`). The neighbouring sections' names show faintly at
+  the edges and step to them when tapped. A swipe on the header (touch: a mostly
+  sideways drag of 40 px+; laptop: a sideways two-finger swipe; or ←/→) changes
+  section; a tap on the title opens the list of sections — the page menu's look —
+  with the papers at its foot. The "N stories · N unread" line is gone (a search still
+  says what matched; For you keeps its "What News has learned" link).
+- **Order** (`headerViews`): For you · **Front page** (default) · Sports · World · U.S. ·
+  Politics · Minnesota · Business · Science & Health · Opinion · Culture · More. A swipe
+  left from the Front page goes to Sports; For you sits one swipe right of it. No
+  wrap-around. Every section is always in the order, so swipes are predictable.
+- **Sidebar = Saved.** The sections and papers left the sidebar; it now holds the
+  Saved list (the former Saved view, which is gone — old links to it open the
+  sidebar). Closed by default on every screen; the menu button slides it in over the
+  page; a tap beside it, ×, Escape or opening an article closes it. The desktop icon
+  rail no longer applies to News.
+- Client only (news-ui.js, styles.css, index.html): reaches the iPhone by TestFlight.
+  Checks: `test/news-section-header.test.js`, `scripts/qa-news-header.mjs`.
