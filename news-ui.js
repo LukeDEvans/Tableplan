@@ -1,8 +1,10 @@
 // news-ui.js — the News page (NEWS_PAGE_DESIGN.md). Articles linked in the
 // newspapers' emails (collected server-side by the mail sweep, _news-links.js),
 // sorted into newspaper sections, in the same shell as Mail and Media: a top bar,
-// a sidebar directory (Front page · Saved · sections · papers) and
-// the stories. Each story's ⋯ menu: Save, Open, Listen, Share, Hide. Only Save
+// a section header pinned above the stories (centered; swipe it to change
+// section, tap it for the list of sections and papers — Luke, 2026-11-20), the
+// stories, and a sidebar that holds the Saved list. Each story's ⋯ menu: Save,
+// Open, Listen, Share, Hide. Only Save
 // adds a story to Saved; Open / Listen read it without saving. Saved is the
 // one list of saved articles (stories saved here, newsletters, extension, URL,
 // scans, PDFs) — app.js owns it (MEDIA_SPLIT_DESIGN.md).
@@ -85,6 +87,39 @@ export function articlesForView(articles, view, query = "") {
   const q = String(query || "").trim().toLowerCase();
   if (q) list = list.filter((a) => `${a.title} ${a.subtitle || ""} ${a.source || ""}`.toLowerCase().includes(q));
   return list.sort((a, b) => cardTime(b) - cardTime(a));
+}
+
+// The section header (Luke, 2026-11-20): one centered title pinned at the top of
+// News. A swipe on it (or a sideways trackpad swipe, or ←/→) steps through these
+// views in order; a tap opens them as a menu. The Front page opens by default and
+// a swipe left goes to Sports. For you, while it is a view of its own, sits one
+// swipe right of the Front page so it doesn't come between Sports and the rest.
+export function headerViews({ forYou = false } = {}) {
+  const out = forYou ? [{ kind: "foryou" }] : [];
+  out.push({ kind: "front" }, { kind: "section", key: "sports" });
+  for (const s of NEWS_SECTIONS) if (s.key !== "sports") out.push({ kind: "section", key: s.key });
+  return out;
+}
+const sameView = (a, b) => !!a && !!b && a.kind === b.kind && (a.key || "") === (b.key || "");
+// The view one step from `current` (+1 = the next one, a swipe left), or null at
+// either end. A view that isn't in the list (a paper) steps from the Front page.
+export function stepView(views, current, dir) {
+  let i = views.findIndex((v) => sameView(v, current));
+  if (i < 0) i = views.findIndex((v) => v.kind === "front");
+  const next = views[i + dir];
+  return next || null;
+}
+// A finished touch on the header → +1 (next: swiped left), -1 (previous), 0.
+export function swipeStep(dx, dy, minPx = 40) {
+  if (Math.abs(dx) < minPx || Math.abs(dx) < Math.abs(dy) * 1.5) return 0;
+  return dx < 0 ? 1 : -1;
+}
+export function viewLabel(v) {
+  if (v?.kind === "foryou") return "For you";
+  if (v?.kind === "section") return SECTION_LABEL[v.key] || "Section";
+  if (v?.kind === "paper") return PAPER[v.key]?.label || "Paper";
+  if (v?.kind === "learned") return "What News has learned";
+  return "Front page";
 }
 
 // Pull-to-refresh (Luke, 2026-10-15): pulling down past the top of News refreshes
@@ -375,6 +410,11 @@ export function createNewsModule(deps) {
   let wired = false;
   let verifying = false;
   let forYouAvailable = false;  // the server has the For you migration (newsFeed `forYou`)
+  // The server blends For you into the Front page (newsFeed `blend`; Luke,
+  // 2026-11-20). Until it says so the For you section stays in the header, so a
+  // TestFlight build that arrives before the deploy loses nothing.
+  let blendAvailable = false;
+  let seededBlend = false;
   let teamsSentSig = null;      // favourites signature sent this session
   let learned = null;           // "What News has learned": { likes, dislikes, muted, teams }
   let learnedState = "";        // "" | "loading" | "error"
@@ -387,10 +427,13 @@ export function createNewsModule(deps) {
   let sportsTab = "scores";
   try { if (localStorage.getItem(SPORTS_TAB_KEY) === "stories") sportsTab = "stories"; } catch { /* private mode */ }
   const onScores = () => !!scores && view.kind === "section" && view.key === "sports" && sportsTab === "scores";
-  const onSaved = () => !!saved && view.kind === "saved";
+  let sectionMenuOpen = false;  // the header's menu of sections
+  let slideDir = 0;             // the header title's slide on the next render (+1 / -1)
+  let suppressTapUntil = 0;     // a swipe on the header isn't also a tap on it
+  // The sidebar is the Saved list (Luke, 2026-11-20); it opens over the page.
+  const sidebarOpen = () => !!$("newsSidebar")?.classList.contains("is-expanded");
 
   const $ = (id) => document.getElementById(id);
-  const isNarrow = () => window.innerWidth <= 680;
   const isActive = () => getActiveAppArea?.() === "news";
   const viewKey = (v = view, q = query) => `${v.kind}:${v.key || ""}:${String(q || "").trim().toLowerCase()}`;
   const currentPage = () => pages.get(viewKey()) || null;
@@ -435,12 +478,13 @@ export function createNewsModule(deps) {
 
   // Load (or refresh) the current view's first page, or with `more` its next page.
   async function load(force = false, { more = false } = {}) {
-    if (view.kind === "saved") { render(); return; }
     if (view.kind === "learned") { loadLearned(force); return; }
     const key = viewKey();
     const page = pages.get(key);
     if (seeded) {
-      pages.set(key, { articles: articlesForView(seeded, view, query), nextBefore: null, loadedAt: Date.now() });
+      // A blended seed is already in the server's order, top stories first.
+      const blended = seededBlend && view.kind === "front" && !String(query || "").trim();
+      pages.set(key, { articles: blended ? seeded.filter((a) => a.paper !== "athletic") : articlesForView(seeded, view, query), nextBefore: null, loadedAt: Date.now(), blended });
       render();
       return;
     }
@@ -454,7 +498,9 @@ export function createNewsModule(deps) {
       action: "newsFeed",
       view: { kind: view.kind, key: view.key },
       q: String(query || "").trim() || undefined,
-      before: more ? page.nextBefore : undefined
+      before: more ? page.nextBefore : undefined,
+      // Ask for the blended Front page (Top stories + For you); an older server ignores it.
+      ...(view.kind === "front" && !more ? { blend: true } : {})
     });
     loadingKey = null;
     if (!Array.isArray(d?.articles)) {
@@ -468,8 +514,10 @@ export function createNewsModule(deps) {
     pages.set(key, {
       articles: more ? mergeArticles(page.articles, incoming) : incoming,
       nextBefore: d.nextBefore || null,
-      loadedAt: more ? page.loadedAt : Date.now()
+      loadedAt: more ? page.loadedAt : Date.now(),
+      blended: more ? !!page.blended : d.blend === true
     });
+    if (d.blend === true && !blendAvailable) blendAvailable = true;
     if (d.counts) counts = d.counts;
     if (d.signIns) { signIns = d.signIns; signInsLoaded = true; }
     if (d.forYou === true && !forYouAvailable) forYouAvailable = true;
@@ -520,7 +568,7 @@ export function createNewsModule(deps) {
     seenObserver?.disconnect();
     for (const t of seenTimers.values()) clearTimeout(t);
     seenTimers.clear();
-    if (view.kind !== "foryou" || !forYouAvailable || typeof IntersectionObserver !== "function") return;
+    if (!tracksSeen() || typeof IntersectionObserver !== "function") return;
     const root = $("newsContent")?.querySelector(".news-scroll") || null;
     seenObserver = new IntersectionObserver((entries) => {
       for (const e of entries) {
@@ -532,10 +580,17 @@ export function createNewsModule(deps) {
     }, { root, threshold: [0, 0.6] });
     for (const el of $("newsContent")?.querySelectorAll("[data-news-id]") || []) seenObserver.observe(el);
   }
+  // Stories that sat on screen unopened count as seen: in For you, and on the
+  // blended Front page, where seen stories sink on the next visit (Luke, 2026-11-20).
+  function tracksSeen(v = view) {
+    if (!forYouAvailable || query) return false;
+    if (v.kind === "foryou") return true;
+    return v.kind === "front" && !!pages.get(viewKey(v, ""))?.blended;
+  }
   function reportSkips() {
     if (!forYouSeen.size) return;
-    const page = pages.get(viewKey({ kind: "foryou" }, ""));
-    const ids = skipsToSend([...forYouSeen], page?.articles || [], skipsReported);
+    const cards = [...(pages.get(viewKey({ kind: "foryou" }, ""))?.articles || []), ...(pages.get(viewKey({ kind: "front" }, ""))?.articles || [])];
+    const ids = skipsToSend([...forYouSeen], cards, skipsReported);
     forYouSeen.clear();
     if (!ids.length || !forYouAvailable) return;
     for (const id of ids) { skipsReported.add(id); enqueue(id, "skip"); }
@@ -709,38 +764,29 @@ export function createNewsModule(deps) {
   // ── Rendering ──
   function hue(section) { return `--c1:var(--news-${sectionOf({ section })}1);--c2:var(--news-${sectionOf({ section })}2)`; }
 
-  function sideTab(kind, key, inner, count) {
-    const active = view.kind === kind && (key == null || view.key === key);
-    return `<button class="article-sidebar-tab${active ? " is-active" : ""}" type="button" data-news-view="${kind}"${key ? ` data-news-key="${esc(key)}"` : ""} aria-current="${active}">
-      ${inner}${count ? `<span class="news-side-count">${count}</span>` : ""}</button>`;
-  }
-
+  // The sidebar is the Saved list (Luke, 2026-11-20) — the one list of saved
+  // articles (stories saved here, newsletters, extension, URL, scans, PDFs) that
+  // app.js owns (MEDIA_SPLIT_DESIGN.md). Sections moved to the header; the papers
+  // are at the foot of the header's menu. Built once, so re-renders keep the list
+  // and its scroll; the list itself is mounted the first time the sidebar opens.
   function renderSidebar() {
     const el = $("newsSidebar");
-    if (!el) return;
-    const c = counts || { all: 0, sent: 0, section: {}, paper: {}, sections: [] };
-    const present = new Set(c.sections || []);
-    let h = forYouAvailable ? sideTab("foryou", null, `${ICONS.foryou}<span>For you</span>`) : "";
-    h += sideTab("front", null, `${ICONS.front}<span>Front page</span>`, c.all);
-    // One Saved view (MEDIA_SPLIT_DESIGN.md): stories saved here land in the same
-    // list as newsletters, scans and links, so there is no separate "Sent" view.
-    if (saved) h += sideTab("saved", null, `${ICONS.saved}<span>Saved</span>`, saved.count?.() || 0);
-    h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Sections</div>`;
-    for (const s of NEWS_SECTIONS) {
-      // Sports always shows when the Scores view is mounted: scores don't depend on
-      // sports articles arriving, so hiding it until one does made Scores unreachable.
-      const alwaysShown = s.key === "sports" && !!scores;
-      if (!alwaysShown && !present.has(s.key) && !(view.kind === "section" && view.key === s.key)) continue;
-      h += sideTab("section", s.key, `<i class="news-side-dot article-sidebar-icon" style="${hue(s.key)}" aria-hidden="true"></i><span>${esc(s.label)}</span>`, c.section[s.key]);
-    }
-    if (!present.size) h += `<div class="news-side-empty">Sections appear as articles arrive.</div>`;
-    h += `<div class="article-sidebar-divider"></div><div class="article-sidebar-section-label">Papers</div>`;
-    for (const p of NEWS_PAPERS) {
-      const st = p.free ? "signed-in" : paperStatus(signIns, p.key);
-      const note = st === "expired" ? "Sign in again" : (st === "none" || (st === "unknown" && signInsLoaded && !verifying)) ? "Not signed in" : "";
-      h += sideTab("paper", p.key, `<i class="news-side-mark article-sidebar-icon" aria-hidden="true">${p.mark}</i><span class="news-side-paper"><span>${esc(p.label)}</span>${note ? `<small class="news-side-warn">${note}</small>` : ""}</span>`, c.paper[p.key]);
-    }
-    el.innerHTML = h;
+    if (!el || $("newsSavedMount")) return;
+    el.innerHTML = `<div class="news-side-head"><h2 class="news-side-title">${ICONS.saved}<span>Saved</span></h2>
+        <button type="button" class="news-side-close" data-news-side-close aria-label="Close saved articles">×</button></div>
+      ${saved ? `<div class="news-saved-mount" id="newsSavedMount"></div>` : `<p class="news-empty news-side-empty">Saved articles aren't available here.</p>`}`;
+  }
+  function openSidebar() {
+    const sb = $("newsSidebar");
+    if (!sb) return;
+    renderSidebar();
+    sb.classList.add("is-expanded");
+    $("newsSidebarToggle")?.setAttribute("aria-expanded", "true");
+    if (saved && $("newsSavedMount")) saved.mount($("newsSavedMount"), { query: String(query || "").trim() });
+  }
+  function closeSidebar() {
+    $("newsSidebar")?.classList.remove("is-expanded");
+    $("newsSidebarToggle")?.setAttribute("aria-expanded", "false");
   }
 
   function menuHtml(a) {
@@ -762,7 +808,7 @@ export function createNewsModule(deps) {
 
   function metaLine(a) {
     const paper = PAPER[a.paper]?.label || a.source || "";
-    const why = view.kind === "foryou" && a.why ? a.why : "";
+    const why = (view.kind === "foryou" || view.kind === "front") && a.why ? a.why : "";
     return [why, paper, timeAgo(a.publishedAt || a.discoveredAt), a.sentAt ? "In Media ✓" : ""].filter(Boolean).map(esc).join(" · ");
   }
 
@@ -784,7 +830,7 @@ export function createNewsModule(deps) {
       <div class="news-card-band" aria-hidden="true"></div>
       <div class="news-card-body">
         <div class="news-card-text">
-          <div class="news-card-sec">${esc(SECTION_LABEL[sectionOf(a)])}</div>
+          <div class="news-card-sec">${a.forYou && a.top ? `<span class="news-card-foryou">For you</span> · ` : ""}${esc(SECTION_LABEL[sectionOf(a)])}</div>
           <h4 class="news-card-title">${esc(a.title)}</h4>
           <div class="news-card-meta">${metaLine(a)}</div>
         </div>
@@ -813,7 +859,7 @@ export function createNewsModule(deps) {
         <button type="button" class="news-more news-learned-reset${armed ? " is-armed" : ""}" data-news-reset>${armed ? "Tap again to reset" : "Reset what News has learned"}</button>`;
     }
     return `<div class="news-scroll">
-      <div class="news-head"><button type="button" class="news-back" data-news-back-foryou aria-label="Back to For you">‹</button><h2 class="news-title">What News has learned</h2></div>
+      <div class="news-head"><button type="button" class="news-back" data-news-back aria-label="Back to ${blendAvailable ? "the Front page" : "For you"}">‹</button><h2 class="news-title">What News has learned</h2></div>
       <div class="news-head-sub">Remove anything that's off. Your favorite teams come from Scores.</div>
       ${body}
     </div>`;
@@ -839,13 +885,57 @@ export function createNewsModule(deps) {
     return `<div class="news-tabs" role="tablist" aria-label="Sports">${tab("scores", "Scores")}${tab("stories", "Stories", unread ? `<span class="news-tab-count">${unread}</span>` : "")}</div>`;
   }
 
+  // ── The section header ──
+  const headerList = () => headerViews({ forYou: forYouAvailable && !blendAvailable });
+  function sectionMenuHtml() {
+    const item = (v, label, extra = "") => {
+      const cur = sameView(v, view);
+      return `<button type="button" role="menuitemradio" aria-checked="${cur}" class="news-section-item${cur ? " is-current" : ""}" data-news-pick="${v.kind}"${v.key ? ` data-news-key="${esc(v.key)}"` : ""}>${esc(label)}${extra}</button>`;
+    };
+    let h = headerList().map((v) => item(v, viewLabel(v))).join("");
+    h += `<div class="news-section-label">Papers</div>`;
+    for (const p of NEWS_PAPERS) {
+      const st = p.free ? "signed-in" : paperStatus(signIns, p.key);
+      const note = st === "expired" ? "Sign in again" : (st === "none" || (st === "unknown" && signInsLoaded && !verifying)) ? "Not signed in" : "";
+      h += item({ kind: "paper", key: p.key }, p.label, note ? ` <small class="news-side-warn">${note}</small>` : "");
+    }
+    // For you's tuning lives here once it is part of the Front page.
+    if (forYouAvailable && blendAvailable) h += `<div class="news-section-label">For you</div>${item({ kind: "learned" }, "What News has learned")}`;
+    return `<div class="news-section-menu" role="menu" aria-label="News sections">${h}</div>`;
+  }
+  function sectionBarHtml() {
+    const list = headerList();
+    const prev = stepView(list, view, -1), next = stepView(list, view, 1);
+    const peek = (v, dir) => v
+      ? `<button type="button" class="news-section-peek is-${dir < 0 ? "prev" : "next"}" data-news-step="${dir}" tabindex="-1" aria-label="${esc(viewLabel(v))}"><span>${esc(viewLabel(v))}</span></button>`
+      : `<span class="news-section-peek" aria-hidden="true"></span>`;
+    const slide = slideDir ? ` is-slide-${slideDir > 0 ? "next" : "prev"}` : "";
+    slideDir = 0;
+    return `<div class="news-section-bar" data-news-section-bar>
+      ${peek(prev, -1)}
+      <h2 class="news-title"><button type="button" class="news-section-btn${slide}" data-news-section-btn aria-haspopup="menu" aria-expanded="${sectionMenuOpen}" aria-label="${esc(viewLabel(view))}. Swipe or use the arrow keys to change section, or tap for the list.">${esc(viewLabel(view))}</button></h2>
+      ${peek(next, 1)}
+      ${sectionMenuOpen ? sectionMenuHtml() : ""}
+    </div>`;
+  }
+  // Step to the neighbouring section (+1 = next, a swipe left).
+  function stepSection(dir) {
+    const next = stepView(headerList(), view, dir);
+    if (!next) {
+      const btn = $("newsContent")?.querySelector("[data-news-section-btn]");
+      btn?.classList.remove("is-bump"); void btn?.offsetWidth; btn?.classList.add("is-bump");
+      return;
+    }
+    slideDir = dir;
+    setView(next);
+  }
+
   function renderContent() {
     const el = $("newsContent");
     if (!el) return;
     // Sports → Scores is its own view: it doesn't wait on (or need) the stories.
     if (onScores()) {
-      el.innerHTML = `<div class="news-scroll">
-        <div class="news-head"><h2 class="news-title">Sports</h2></div>
+      el.innerHTML = `${sectionBarHtml()}<div class="news-scroll">
         ${sportsTabsHtml()}
         <div class="news-scores" id="newsScoresMount"></div>
       </div>`;
@@ -853,43 +943,42 @@ export function createNewsModule(deps) {
       return;
     }
     scores?.unmount();
-    // Saved articles: app.js owns the list (and keeps its scroll); News gives it a
-    // place. Built once per visit to the view so re-renders don't reset it.
-    if (onSaved()) {
-      if (!$("newsSavedMount")) {
-        el.innerHTML = `<div class="news-saved">
-          <div class="news-head"><h2 class="news-title">Saved</h2></div>
-          <div class="news-saved-mount" id="newsSavedMount"></div>
-        </div>`;
-      }
-      saved.mount($("newsSavedMount"), { query: String(query || "").trim() });
-      return;
-    }
-    saved?.unmount();
     if (view.kind === "learned") { el.innerHTML = learnedHtml(); return; }
     const page = currentPage();
     if (!page) {
-      el.innerHTML = `<div class="news-scroll"><p class="news-empty">${esc(loadError || "Loading News…")}</p></div>`;
+      el.innerHTML = `${sectionBarHtml()}<div class="news-scroll"><p class="news-empty">${esc(loadError || "Loading News…")}</p></div>`;
       return;
     }
     const nowMs = Date.now();
-    let title = "Front page";
-    if (view.kind === "foryou") title = "For you";
-    else if (view.kind === "section") title = SECTION_LABEL[view.key] || "Section";
-    else if (view.kind === "paper") title = PAPER[view.key]?.label || "Paper";
-    else if (view.kind === "sent") title = "Saved";
+    const title = viewLabel(view);
 
     let body = "";
-    const list = articlesForView(page.articles, view); // search already applied by the server
-    const c = counts || { all: 0, section: {}, paper: {} };
-    const unread = view.kind === "section" ? c.section[view.key] || 0
-      : view.kind === "paper" ? c.paper[view.key] || 0
-      : view.kind === "front" ? c.all : list.filter((a) => !a.readAt).length;
+    // Search is already applied by the server; a blended Front page keeps its order.
+    const blendedFront = view.kind === "front" && !!page.blended && !query;
+    const list = blendedFront ? page.articles.filter((a) => a && a.id && a.url) : articlesForView(page.articles, view);
     const forYouView = view.kind === "foryou";
     const shown = `${list.length}${page.nextBefore ? "+" : ""} ${list.length === 1 && !page.nextBefore ? "story" : "stories"}`;
-    body += `<div class="news-head-sub">${query ? `${shown} matching “${esc(query)}”` : forYouView ? `Ranked by what you read. Use ⋯ to tune it. <button class="news-link-btn" type="button" data-news-learned>What News has learned</button>` : `${shown} · ${unread} unread`}</div>`;
+    // No "N stories · N unread" line under the header (Luke, 2026-11-20); a search
+    // still says what matched, and For you keeps its way to "What News has learned".
+    if (query) body += `<div class="news-head-sub">${shown} matching “${esc(query)}”</div>`;
+    else if (forYouView) body += `<div class="news-head-sub">Ranked by what you read. Use ⋯ to tune it. <button class="news-link-btn" type="button" data-news-learned>What News has learned</button></div>`;
     if (!list.length) {
-      body += `<p class="news-empty">${query ? "No stories match your search." : view.kind === "sent" ? "Nothing saved yet. Use ⋯ → Save on any story." : forYouView ? "You're all caught up. New stories arrive every hour." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
+      body += `<p class="news-empty">${query ? "No stories match your search." : forYouView ? "You're all caught up. New stories arrive every hour." : `No stories here in the last ${KEEP_DAYS} days.`}</p>`;
+    } else if (blendedFront) {
+      // The blended Front page (Luke, 2026-11-20): Top stories chosen by importance
+      // (with a couple lifted for you), then For you — everything else, ordered by
+      // importance, interests and freshness, seen stories last. The server's order.
+      const top = list.filter((a) => a.top), rest = list.filter((a) => !a.top);
+      if (top.length) {
+        body += `<h3 class="news-group-head">Top stories</h3>`;
+        body += leadHtml(top[0], `${top[0].forYou ? "For you" : "Top story"} · ${SECTION_LABEL[sectionOf(top[0])]}`);
+        if (top.length > 1) body += `<div class="news-grid">${top.slice(1).map(cardHtml).join("")}</div>`;
+        if (rest.length) body += `<h3 class="news-group-head is-split">For you</h3><div class="news-grid">${rest.map(cardHtml).join("")}</div>`;
+      } else {
+        body += leadHtml(rest[0], `Top for you · ${SECTION_LABEL[sectionOf(rest[0])]}`);
+        if (rest.length > 1) body += `<div class="news-grid">${rest.slice(1).map(cardHtml).join("")}</div>`;
+      }
+      if (page.nextBefore) body += `<button class="news-more" type="button" data-news-more>${loadingKey === viewKey() ? "Loading…" : "Load more stories"}</button>`;
     } else {
       const { lead, rest } = forYouView ? { lead: list[0], rest: list.slice(1) } : arrangeFront(list, nowMs);
       const kicker = forYouView ? `Top for you · ${SECTION_LABEL[sectionOf(lead)]}`
@@ -900,9 +989,8 @@ export function createNewsModule(deps) {
       if (rest.length) body += `<div class="news-grid">${rest.map(cardHtml).join("")}</div>`;
       if (page.nextBefore) body += `<button class="news-more" type="button" data-news-more>${loadingKey === viewKey() ? "Loading…" : "Load more stories"}</button>`;
     }
-    el.innerHTML = `<div class="news-scroll">
+    el.innerHTML = `${sectionBarHtml()}<div class="news-scroll">
       ${view.kind === "front" ? signInBanner() : ""}
-      <div class="news-head"><h2 class="news-title">${esc(title)}</h2></div>
       ${view.kind === "section" && view.key === "sports" ? sportsTabsHtml() : ""}
       ${body}
     </div>`;
@@ -917,7 +1005,11 @@ export function createNewsModule(deps) {
     if (!menu || !scroller) return;
     const m = menu.getBoundingClientRect(), box = scroller.getBoundingClientRect();
     const below = box.bottom - m.top, above = m.top - 42 - box.top;
-    if (m.bottom > box.bottom && above > below) menu.classList.add("is-up");
+    if (m.bottom <= box.bottom) return;
+    // Upward only when it fits under the pinned section header; otherwise it stays
+    // below and the list scrolls just enough to show it.
+    if (above >= m.height && above > below) menu.classList.add("is-up");
+    else scroller.scrollBy?.({ top: Math.min(m.bottom - box.bottom + 8, m.top - box.top - 8) });
   }
 
   function render() {
@@ -926,14 +1018,32 @@ export function createNewsModule(deps) {
     renderContent();
   }
 
+  function renderBar() {
+    const bar = $("newsContent")?.querySelector("[data-news-section-bar]");
+    if (bar) bar.outerHTML = sectionBarHtml(); else renderContent();
+  }
+  function setSectionMenu(open) {
+    if (sectionMenuOpen === open) return;
+    sectionMenuOpen = open;
+    renderBar();
+    if (!open) return;
+    // Fit the menu inside News's content area (which clips it); it scrolls past that.
+    const menu = $("newsContent")?.querySelector(".news-section-menu");
+    const area = $("newsContent")?.getBoundingClientRect();
+    if (menu && area) menu.style.maxHeight = `${Math.max(160, Math.floor(area.bottom - menu.getBoundingClientRect().top - 10))}px`;
+    $("newsContent")?.querySelector(".news-section-item.is-current")?.focus?.({ preventScroll: true });
+  }
+
   function setView(next) {
-    if (view.kind === "foryou" && next?.kind !== "foryou") { reportSkips(); flush(); }
-    // The old "Sent" view folded into Saved; the old Briefings view is gone
-    // (briefings live in Listen), so a stale link to it opens the Front page.
-    view = next?.kind === "sent" && saved ? { kind: "saved" }
-      : next?.kind === "briefings" ? { kind: "front" } : next;
+    // Saved is the sidebar now (Luke, 2026-11-20): the old Saved / Sent views open it.
+    if (next?.kind === "saved" || next?.kind === "sent") { openSidebar(); return; }
+    if (tracksSeen() && (next?.kind !== view.kind || next?.key !== view.key)) { reportSkips(); flush(); }
+    // The old Briefings view is gone (briefings live in Listen), so a stale link
+    // to it opens the Front page.
+    view = next?.kind === "briefings" || !next?.kind || (next.kind === "foryou" && blendAvailable) ? { kind: "front" } : next;
     openMenuId = null;
-    if (isNarrow()) $("newsSidebar")?.classList.remove("is-expanded");
+    sectionMenuOpen = false;
+    closeSidebar();
     render();
     $("newsContent")?.querySelector(".news-scroll")?.scrollTo?.({ top: 0 });
     load();
@@ -942,7 +1052,7 @@ export function createNewsModule(deps) {
   // Refresh everything News shows (was the refresh button by the search box).
   function refreshAll() {
     if (onScores()) scores.refresh();
-    if (onSaved()) saved.refresh();
+    if (sidebarOpen()) saved?.refresh();
     flush();
     for (const p of pages.values()) p.loadedAt = 0; // every view re-reads when next shown
     load(true);
@@ -953,26 +1063,110 @@ export function createNewsModule(deps) {
     const page = $("newsMainPage");
     if (!page) return;
     wired = true;
-    $("newsSidebarToggle")?.addEventListener("click", () => {
-      const sb = $("newsSidebar");
-      if (!sb) return;
-      if (isNarrow()) sb.classList.toggle("is-expanded");
-      else sb.classList.toggle("is-collapsed");
+    // The menu button opens the Saved list over the page, on every screen size.
+    $("newsSidebarToggle")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (sidebarOpen()) closeSidebar(); else openSidebar();
     });
     wirePullToRefresh($("newsContent"), refreshAll);
     // Search runs on the server (titles across the whole window), debounced.
-    // Saved articles search on the device instead (they're local).
+    // The Saved list, once it has been opened, filters on the device as well.
     $("newsSearchInput")?.addEventListener("input", (e) => {
       query = e.target.value;
       clearTimeout(searchTimer);
-      if (onSaved()) { saved.search(query); return; }
+      if ($("newsSavedMount")?.firstElementChild) saved?.search(query);
       searchTimer = setTimeout(() => load(), 300);
     });
     $("newsSidebar")?.addEventListener("click", (e) => {
-      const tab = e.target.closest("[data-news-view]");
-      if (tab) setView({ kind: tab.dataset.newsView, key: tab.dataset.newsKey });
+      if (e.target.closest("[data-news-side-close]")) { closeSidebar(); return; }
+      // Opening a saved article puts the reader in the content's place: get the
+      // list out of its way (the row's own handler, in app.js, opens it).
+      if (e.target.closest(".article-row") && !e.target.closest(".article-row-actions")) closeSidebar();
     });
+
+    // Swipes on the section header. Touch: a mostly-sideways drag of 40 px or
+    // more; the title follows the finger while it moves. Trackpad: a sideways
+    // two-finger swipe over the header. Passive listeners only.
+    const content = $("newsContent");
+    let touch = null;
+    content?.addEventListener("touchstart", (e) => {
+      const bar = e.target.closest("[data-news-section-bar]");
+      touch = bar && e.touches.length === 1 && !e.target.closest(".news-section-menu")
+        ? { x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, dy: 0 } : null;
+    }, { passive: true });
+    content?.addEventListener("touchmove", (e) => {
+      if (!touch) return;
+      touch.dx = e.touches[0].clientX - touch.x;
+      touch.dy = e.touches[0].clientY - touch.y;
+      const btn = content.querySelector("[data-news-section-btn]");
+      if (btn && Math.abs(touch.dx) > Math.abs(touch.dy)) btn.style.transform = `translateX(${Math.max(-60, Math.min(60, touch.dx * 0.4))}px)`;
+    }, { passive: true });
+    const touchEnd = () => {
+      if (!touch) return;
+      const dir = swipeStep(touch.dx, touch.dy);
+      touch = null;
+      const btn = content.querySelector("[data-news-section-btn]");
+      if (btn) btn.style.transform = "";
+      if (!dir) return;
+      suppressTapUntil = Date.now() + 450;
+      stepSection(dir);
+    };
+    content?.addEventListener("touchend", touchEnd, { passive: true });
+    content?.addEventListener("touchcancel", () => { touch = null; const b = content.querySelector("[data-news-section-btn]"); if (b) b.style.transform = ""; }, { passive: true });
+    let wheelX = 0, wheelAt = 0, wheelLockUntil = 0;
+    content?.addEventListener("wheel", (e) => {
+      if (!e.target.closest("[data-news-section-bar]") || e.target.closest(".news-section-menu")) return;
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      const t = Date.now();
+      if (t < wheelLockUntil) return;
+      if (t - wheelAt > 300) wheelX = 0;
+      wheelAt = t;
+      wheelX += e.deltaX;
+      if (Math.abs(wheelX) < 80) return;
+      const dir = wheelX > 0 ? 1 : -1; // fingers moving left scroll right (+deltaX) → next
+      wheelX = 0;
+      wheelLockUntil = t + 600; // one step per swipe, not one per burst of events
+      stepSection(dir);
+    }, { passive: true });
+    content?.addEventListener("keydown", (e) => {
+      if (!e.target.closest?.("[data-news-section-bar]")) return;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        if (sectionMenuOpen) {
+          // Inside the open menu the arrows move between its items.
+          const items = [...content.querySelectorAll(".news-section-item")];
+          const i = items.indexOf(document.activeElement);
+          items[Math.max(0, Math.min(items.length - 1, i + (e.key === "ArrowRight" ? 1 : -1)))]?.focus();
+        } else {
+          stepSection(e.key === "ArrowRight" ? 1 : -1);
+          content.querySelector("[data-news-section-btn]")?.focus();
+        }
+        e.preventDefault();
+      } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && sectionMenuOpen) {
+        const items = [...content.querySelectorAll(".news-section-item")];
+        const i = items.indexOf(document.activeElement);
+        items[Math.max(0, Math.min(items.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]?.focus();
+        e.preventDefault();
+      }
+    });
+
     $("newsContent")?.addEventListener("click", (e) => {
+      // With the Saved list open over the page, a tap beside it only closes it.
+      if (sidebarOpen()) { closeSidebar(); return; }
+      // The section header: a tap on the title opens the menu, a tap on a
+      // neighbour's name steps to it, a menu item opens that section.
+      if (e.target.closest("[data-news-section-bar]")) {
+        if (Date.now() < suppressTapUntil) return;
+        const pick = e.target.closest("[data-news-pick]");
+        if (pick) {
+          const next = { kind: pick.dataset.newsPick, key: pick.dataset.newsKey };
+          if (sameView(next, view)) setSectionMenu(false); else setView(next);
+          return;
+        }
+        const step = e.target.closest("[data-news-step]");
+        if (step) { stepSection(Number(step.dataset.newsStep)); return; }
+        if (e.target.closest("[data-news-section-btn]")) { setSectionMenu(!sectionMenuOpen); return; }
+        return;
+      }
       const sportsTabBtn = e.target.closest("[data-news-sports-tab]");
       if (sportsTabBtn) {
         sportsTab = sportsTabBtn.dataset.newsSportsTab === "stories" ? "stories" : "scores";
@@ -983,7 +1177,7 @@ export function createNewsModule(deps) {
       if (e.target.closest("#newsScoresMount")) return; // the Scores view handles its own taps
       if (e.target.closest("[data-news-signin]")) { openSignInSettings?.(); return; }
       if (e.target.closest("[data-news-learned]")) { setView({ kind: "learned" }); return; }
-      if (e.target.closest("[data-news-back-foryou]")) { setView({ kind: "foryou" }); return; }
+      if (e.target.closest("[data-news-back]")) { setView({ kind: blendAvailable ? "front" : "foryou" }); return; }
       const forget = e.target.closest("[data-news-forget]");
       if (forget) { editLearned({ forget: [forget.dataset.newsForget] }); return; }
       const unmute = e.target.closest("[data-news-unmute]");
@@ -1021,16 +1215,23 @@ export function createNewsModule(deps) {
       open(id);
     });
     document.addEventListener("click", (e) => {
+      if (!isActive()) return;
+      if (sectionMenuOpen && !e.target.closest("[data-news-section-bar]")) setSectionMenu(false);
+      // A tap anywhere off the Saved list closes it (it lies over the page).
+      if (sidebarOpen() && !e.target.closest("#newsSidebar, #newsSidebarToggle")) closeSidebar();
       if (!openMenuId || e.target.closest(".news-menu, [data-news-dots]")) return;
       openMenuId = null;
-      if (isActive()) renderContent();
+      renderContent();
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && openMenuId) { openMenuId = null; renderContent(); }
+      if (e.key !== "Escape" || !isActive()) return;
+      if (openMenuId) { openMenuId = null; renderContent(); }
+      else if (sectionMenuOpen) { setSectionMenu(false); $("newsContent")?.querySelector("[data-news-section-btn]")?.focus(); }
+      else if (sidebarOpen()) closeSidebar();
     });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) return;
-      if (isActive() && view.kind === "foryou") reportSkips();
+      if (isActive() && tracksSeen()) reportSkips();
       flush();
     });
   }
@@ -1046,6 +1247,8 @@ export function createNewsModule(deps) {
   function seed(list, status, opts = {}) {
     seeded = Array.isArray(list) ? list : [];
     forYouAvailable = !!opts?.forYou;
+    seededBlend = !!opts?.blend;
+    blendAvailable = seededBlend;
     learned = opts?.learned || null;
     signIns = status || {};
     signInsLoaded = true;
@@ -1058,9 +1261,11 @@ export function createNewsModule(deps) {
 
   // Leaving the page: send queued decisions and stop the Scores view's refresh.
   function leave() {
-    if (view.kind === "foryou") reportSkips();
+    if (tracksSeen()) reportSkips();
     flush();
     scores?.unmount();
+    sectionMenuOpen = false;
+    closeSidebar();
   }
 
   // The iPhone app's sign-in sheet steps for `paper` (diagnostics), sent with the
@@ -1069,10 +1274,10 @@ export function createNewsModule(deps) {
     if (paper && Array.isArray(steps) && steps.length) pendingTrail = { paper, steps: steps.slice(0, 80).map(String) };
   }
 
-  // Show one of the sidebar's views ("saved", "front", …) — app.js uses this
-  // after a scan or Add-by-URL lands a new saved article.
+  // Show one of News's views ("front", a section…), or with "saved" open the
+  // Saved list — e.g. after a scan or Add-by-URL lands a new saved article.
   function showView(kind, key) {
-    if (kind === "saved" && !saved) return;
+    if (kind === "saved") { if (saved) openSidebar(); return; }
     if (view.kind !== kind || view.key !== key) setView({ kind, key });
   }
 
