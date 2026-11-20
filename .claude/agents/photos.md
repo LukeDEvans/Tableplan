@@ -92,7 +92,7 @@ You are the **Photos** domain agent for **Live / Tableplan**.
   photos only) reads the full-size image (`image`, 2048) and hands it to app.js's
   `sendToReceipts` dep → `scanReceiptFromHeader` (receipt scanner + Document › Receipts).
   It replaced the corner Scan menu's photo-library step.
-- **Changes from the Photos app (§18):** the change-tracking migration (2026-11-16c)
+- **Changes from the Photos app (§18):** `migrations/2026-11-16c-photo-sync-changes.sql`
   (`photo_sync_update` / `photo_sync_gone`) and the `update` / `gone` ops are written
   and tested in their own PR, **held by Luke (2026-11-16, "not yet")**; the phone skips them
   while the server lacks them (keeps its change-history mark).
