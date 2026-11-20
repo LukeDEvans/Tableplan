@@ -1,6 +1,6 @@
 # Utilities menu: the corner button becomes Liv's toolbox
 
-Status: **Plan approved, all decisions made (2026-11-19). All seven steps built 2026-11-19** (§11; branch `claude/utilities-menu`). Decisions are in §1. Repo facts come from `main` (2026-11-19).
+Status: **Plan approved, all decisions made (2026-11-19). All seven steps built 2026-11-19** (§11; branch `claude/utilities-menu`). **Changes after first use, 2026-11-20** in §12. Decisions are in §1. Repo facts come from `main` (2026-11-19).
 
 Goal: turn the scan button in the top-right corner into one menu of utilities: talking and chatting with Liv, Scan, Camera, Shazam, Calculator, Clock and Wallet. Liv works as an operating system with the assistant at its centre, and none of this adds to the landing page.
 
@@ -146,3 +146,42 @@ No database migration: every new key sits in an existing section.
 - **Shazam's "Find in Watch"** is left for later.
 - **Chat history** stays on the device as decided, but the existing history log still records chat turns on the server (`logChatTurns`); see ISSUES.md.
 - **Luke's step:** turn on the **ShazamKit** App Service for the app's identifier in the Apple Developer account, or Shazam returns an error.
+
+---
+
+## 12. Changes after first use (Luke, 2026-11-20; branch `claude/utilities-polish`)
+
+- **"Talk to Liv" is gone from the menu.** It opened the same chat as "Chat with Liv". Chat
+  stays because it covers both: type, or tap its mic. Pressing and holding the nine-dot
+  button still talks straight away. Menu: Chat with Liv, Scan, Camera, Shazam, Calculator,
+  Clock, Wallet.
+- **Scan opens the scanner at once** (no Camera / Photo library step). With no document
+  camera (laptop, web) it opens the photo picker. The destination choice after the scan
+  is unchanged.
+- **Photos → Receipts:** the Photos page's photo view has a **Receipt** button (iPhone,
+  photos only) that sends the full-size photo to the receipt scanner, filed in Document ›
+  Receipts as a scan is.
+- **Calculator looks and works like the iPhone's:** black screen, round keys (grey numbers,
+  lighter grey functions, orange operators); the whole expression in the big line while
+  typing, moved to the small grey line after "="; the line shrinks to fit, then wraps;
+  ⌫ in place of AC while typing; History behind the list icon (top left; tap a line to
+  reuse its result, Clear); the calculator icon (bottom left) switches Basic / Scientific
+  ((, ), x², x³, √x, 1/x, π, e).
+- **Clock looks and works like the iPhone's:** tab bar along the bottom (World Clock ·
+  Alarms · Stopwatch · Timers; no Alarms on a laptop), large titles, Edit and +, orange
+  accents, always dark.
+  - **World Clock** (new): cities with their time and "Today, +7HRS"; + picks a city.
+  - **Alarms:** rows with switches; the editor has a wheel time picker, Repeat (Every
+    Monday…) and Label, and Delete Alarm. Switching off cancels the AlarmKit alarm but
+    keeps the row; a one-time alarm that has rung shows as off. Rows are device records
+    (`live-clock-alarms-v1`) reconciled with AlarmKit's list each time Clock opens.
+  - **Stopwatch:** big digits, grey Lap/Reset and green Start / red Stop round buttons,
+    the running lap on top, fastest lap green and slowest red.
+  - **Timers:** wheel picker (hours, min, sec), Cancel / Start, a Label; running timers
+    as rows with a progress ring round pause/resume; **Recents** to start a past
+    duration again; + adds another while one runs.
+- **Shazam starts listening as soon as it opens.** The big button stops or listens again;
+  **History** (top right) lists songs found before, each with Save to Listen and Play.
+  Liv's own wave mark, not Shazam's logo.
+- Icons are Liv's own drawings throughout; nothing of Apple's or Shazam's artwork is used.
+- Client only: no database or server change. Reaches the iPhone by TestFlight.

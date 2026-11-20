@@ -9566,6 +9566,8 @@ async function showPhotosApp(event) {
         putFetch: storage.bytesUploadFetch(),
         toast: (text) => showMailToast(text),
         confirm: (text) => window.confirm(text),
+        // A photo of a receipt → the receipt scanner (and Document › Receipts, as a scan does).
+        sendToReceipts: (file) => scanReceiptFromHeader([file]),
       }));
       photosUi = await photosUiLoading;
     }
@@ -18579,12 +18581,13 @@ function bindUtilitiesMenuButton() {
     capabilities: utilityCapabilities,
     closeOtherMenus: () => closeFloatingMenus(),
     actions: {
-      talk: () => startLivTalk({ hold: false }),
       talkStart: () => startLivTalk({ hold: true }),
       talkEnd: () => finishLivTalk(),
       talkCancel: () => cancelLivTalk(),
       chat: () => openAiPanel(false),
-      scan: (how) => (how === "camera" ? openScanCamera() : elements.receiptScannerPhotoInput.click()),
+      // Scan opens the scanner straight away (Luke, 2026-11-20); with no document
+      // camera (the laptop, the web) it opens the photo picker instead.
+      scan: () => (nativeDocumentScanner() ? openScanCamera() : elements.receiptScannerPhotoInput.click()),
       camera: () => openLiveCamera(),
       shazam: () => openUtilitySheetFor("shazam"),
       calculator: () => openUtilitySheetFor("calculator"),
