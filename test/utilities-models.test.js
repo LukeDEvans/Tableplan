@@ -145,8 +145,8 @@ describe("liv search", () => {
 
 describe("utilities menu", () => {
   it("keeps the agreed order and hides phone-only tools on a laptop", () => {
-    expect(UTILITY_ITEMS.map((i) => i.label)).toEqual(["Talk to Liv", "Chat with Liv", "Scan", "Camera", "Shazam", "Calculator", "Clock", "Wallet"]);
-    expect(visibleUtilityItems({}).map((i) => i.id)).toEqual(["talk", "chat", "scan", "calculator", "clock", "wallet"]);
-    expect(visibleUtilityItems({ camera: true, shazam: true }).length).toBe(8);
+    expect(UTILITY_ITEMS.map((i) => i.label)).toEqual(["Chat with Liv", "Scan", "Camera", "Shazam", "Calculator", "Clock", "Wallet"]);
+    expect(visibleUtilityItems({}).map((i) => i.id)).toEqual(["chat", "scan", "calculator", "clock", "wallet"]);
+    expect(visibleUtilityItems({ camera: true, shazam: true }).length).toBe(7);
   });
 });

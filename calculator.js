@@ -2,8 +2,13 @@
 // Pure: an expression evaluator (no eval) and a key-press state machine.
 //
 // Keys: "0"-"9", ".", "+", "-", "*", "/", "%", "(", ")", "=", "±", "C" (clear
-// entry / all), "⌫". The expression is kept as tokens; "=" evaluates it with
-// normal precedence and adds a line to the history tape.
+// entry / all), "⌫", and the scientific keys "x²", "x³", "√", "1/x", "π", "e"
+// (applied to the number being typed, like the iPhone's). The expression is kept
+// as text; "=" evaluates it with normal precedence and adds a line to the history.
+//
+// Display (iPhone style, Luke 2026-11-20): the big line shows the whole expression
+// as it's typed ("12+3×2"); after "=" the expression moves to the small line above
+// (`shown`) and the big line shows the result.
 
 const OPS = { "+": 1, "-": 1, "*": 2, "/": 2 };
 
@@ -97,8 +102,18 @@ export function formatNumber(n) {
 }
 
 export function createCalculator() {
-  return { expr: "", display: "0", history: [], justEvaluated: false };
+  return { expr: "", display: "0", history: [], justEvaluated: false, shown: "" };
 }
+
+// Scientific keys that act on the number being typed (or the result after "=").
+const UNARY = {
+  "x²": (x) => x * x,
+  "x³": (x) => x * x * x,
+  "√": (x) => { if (x < 0) throw new Error("Error"); return Math.sqrt(x); },
+  "1/x": (x) => { if (x === 0) throw new Error("Can't divide by zero"); return 1 / x; },
+};
+const CONSTANTS = { "π": Math.PI, e: Math.E };
+const plainNumber = (n) => String(Number(n.toPrecision(12)));
 
 const isOpChar = (c) => ["+", "-", "*", "/"].includes(c);
 
@@ -106,7 +121,7 @@ const isOpChar = (c) => ["+", "-", "*", "/"].includes(c);
 export function press(state, key) {
   const s = { ...state, history: state.history };
   const last = s.expr.slice(-1);
-  const show = (expr) => ({ ...s, expr, display: displayFor(expr), justEvaluated: false });
+  const show = (expr) => ({ ...s, expr, display: displayFor(expr), justEvaluated: false, shown: "" });
   if (key === "C") {
     if (s.expr && !s.justEvaluated) return { ...createCalculator(), history: s.history };
     return { ...createCalculator(), history: s.history };
@@ -117,10 +132,29 @@ export function press(state, key) {
     try {
       const r = evaluate(s.expr);
       const shown = formatNumber(r);
-      const line = { expr: prettyExpr(s.expr), result: shown };
-      return { expr: String(Number(r.toPrecision(12))), display: shown, history: [line, ...s.history].slice(0, 50), justEvaluated: true };
+      const line = { expr: compactExpr(s.expr), result: shown };
+      return { expr: plainNumber(r), display: shown, history: [line, ...s.history].slice(0, 50), justEvaluated: true, shown: compactExpr(s.expr) };
     } catch (e) {
-      return { ...s, display: e?.message === "Can't divide by zero" ? "Can't divide by 0" : "Error", justEvaluated: false };
+      return { ...s, display: e?.message === "Can't divide by zero" ? "Can't divide by 0" : "Error", justEvaluated: false, shown: compactExpr(s.expr) };
+    }
+  }
+  if (key in UNARY || key in CONSTANTS) {
+    const base = s.expr;
+    const m = base.match(/(^|[+\-*/(])(-?[0-9.]+%?)$/);
+    const keep = m ? base.slice(0, base.length - m[2].length) : base;
+    if (key in CONSTANTS) {
+      // A constant replaces the number being typed; after an operator it's added.
+      if (s.justEvaluated) return show(plainNumber(CONSTANTS[key]));
+      return show((m ? keep : base) + plainNumber(CONSTANTS[key]));
+    }
+    if (!m) return s;
+    try {
+      const v = UNARY[key](evaluate(m[2]));
+      if (!Number.isFinite(v)) throw new Error("Error");
+      const next = show(keep + plainNumber(v));
+      return s.justEvaluated ? { ...next, justEvaluated: false } : next;
+    } catch (e) {
+      return { ...s, display: e?.message === "Can't divide by zero" ? "Can't divide by 0" : "Error" };
     }
   }
   if (/^[0-9]$/.test(key) || key === ".") {
@@ -160,15 +194,22 @@ export function prettyExpr(expr) {
   return String(expr || "").replace(/\*/g, " × ").replace(/\//g, " ÷ ").replace(/(\d|\)|%)\+/g, "$1 + ").replace(/(\d|\)|%)-/g, "$1 − ").replace(/\s+/g, " ").trim();
 }
 
-// What the big display shows while typing: the number being entered, else the
-// whole expression.
+// One number as typed, with thousands grouped and a trailing "." or "%" kept.
+function groupTyped(num) {
+  const [i, d] = num.replace("%", "").split(".");
+  const head = i === "" ? "0" : Number(i).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return `${head}${num.includes(".") ? `.${d || ""}` : ""}${num.endsWith("%") ? "%" : ""}`;
+}
+
+// The expression the way the iPhone shows it: "12,000+3×2", "−5", no spaces.
+export function compactExpr(expr) {
+  return String(expr || "")
+    .replace(/[0-9.]+%?/g, (n) => groupTyped(n))
+    .replace(/\*/g, "×").replace(/\//g, "÷").replace(/-/g, "−");
+}
+
+// What the big display shows while typing: the whole expression.
 export function displayFor(expr) {
   if (!expr) return "0";
-  const m = String(expr).match(/-?[0-9.]+%?$/);
-  if (m && m[0] === expr) {
-    const [i, d] = m[0].replace("%", "").split(".");
-    const head = i === "-" ? "-" : (i === "" ? "0" : Number(i).toLocaleString("en-US"));
-    return `${head}${m[0].includes(".") ? `.${d || ""}` : ""}${m[0].endsWith("%") ? "%" : ""}`;
-  }
-  return prettyExpr(expr);
+  return compactExpr(expr).replace(/^−/, "-");
 }

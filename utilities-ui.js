@@ -1,8 +1,8 @@
 // utilities-ui.js — the corner utilities menu (UTILITIES_MENU_DESIGN.md).
 //
 // The nine-dot button in the top-right corner: tap opens a plain dropdown of
-// tools (Talk to Liv, Chat with Liv, Scan, Camera, Shazam, Calculator, Clock,
-// Wallet); press and hold talks to Liv (the dots become a sound wave; release
+// tools (Chat with Liv, Scan, Camera, Shazam, Calculator, Clock, Wallet); press
+// and hold talks to Liv (the dots become a sound wave; release
 // sends, slide away cancels). Each tool opens as a full-screen sheet over the
 // current page (openUtilitySheet). Items that don't work on this device are left
 // off (decision 11: the laptop has no Camera, Shazam or alarms).
@@ -13,7 +13,6 @@ export const HOLD_MS = 420;
 export const CANCEL_DISTANCE = 60;
 
 export const UTILITY_ITEMS = Object.freeze([
-  { id: "talk", label: "Talk to Liv" },
   { id: "chat", label: "Chat with Liv" },
   { id: "scan", label: "Scan" },
   { id: "camera", label: "Camera", phoneOnly: true },
@@ -22,6 +21,10 @@ export const UTILITY_ITEMS = Object.freeze([
   { id: "clock", label: "Clock" },
   { id: "wallet", label: "Wallet" },
 ]);
+
+// "Talk to Liv" was dropped from the list (Luke, 2026-11-20): it opened the same
+// chat as "Chat with Liv", whose mic button and the button's press-and-hold both
+// still talk. Scan opens the scanner straight away (no Camera / Library step).
 
 // The items this device shows. `can` = { camera, shazam } capability flags.
 export function visibleUtilityItems({ camera = false, shazam = false } = {}) {
@@ -32,32 +35,18 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 export function bindUtilitiesMenu({ button, menu, capabilities = () => ({}), actions = {}, closeOtherMenus = () => {} }) {
   if (!button || !menu) return null;
-  let mode = "main"; // main | scan
-
   function render() {
-    const can = capabilities();
-    if (mode === "scan") {
-      const items = [
-        ...(can.scanCamera ? [{ id: "scan-camera", label: "Camera" }] : []),
-        { id: "scan-library", label: can.scanCamera ? "Photo library" : "Choose photos" },
-      ];
-      menu.innerHTML = `<button type="button" role="menuitem" class="utilities-back" data-util="back" aria-label="Back to tools">‹ Scan</button>`
-        + items.map((it) => `<button type="button" role="menuitem" data-util="${it.id}">${esc(it.label)}</button>`).join("");
-      return;
-    }
-    menu.innerHTML = visibleUtilityItems(can).map((it) => `<button type="button" role="menuitem" data-util="${it.id}">${esc(it.label)}</button>`).join("");
+    menu.innerHTML = visibleUtilityItems(capabilities()).map((it) => `<button type="button" role="menuitem" data-util="${it.id}">${esc(it.label)}</button>`).join("");
   }
 
   function open() {
     closeOtherMenus();
-    mode = "main";
     render();
     menu.hidden = false;
     button.setAttribute("aria-expanded", "true");
   }
   function close() {
     menu.hidden = true;
-    mode = "main";
     button.setAttribute("aria-expanded", "false");
   }
   const toggle = () => (menu.hidden ? open() : close());
@@ -66,16 +55,8 @@ export function bindUtilitiesMenu({ button, menu, capabilities = () => ({}), act
     e.stopPropagation();
     const id = e.target.closest("[data-util]")?.dataset.util;
     if (!id) return;
-    if (id === "back") { mode = "main"; render(); return; }
-    if (id === "scan") {
-      // Straight to the picker where there's no camera choice to make.
-      if (!capabilities().scanCamera) { close(); actions.scan?.("library"); return; }
-      mode = "scan"; render(); menu.querySelector("[data-util]:not(.utilities-back)")?.focus(); return;
-    }
     close();
-    if (id === "scan-camera") actions.scan?.("camera");
-    else if (id === "scan-library") actions.scan?.("library");
-    else actions[id]?.();
+    actions[id]?.();
   });
 
   // ── Tap = menu; press and hold = talk ──────────────────────────────────────

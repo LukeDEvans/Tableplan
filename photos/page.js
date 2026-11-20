@@ -10,10 +10,12 @@
 //   Luke 2026-11-16) and Delete (from Liv and the phone's library; iOS asks first).
 //   Elsewhere (the laptop) it shows the thumbnail, and Favourite and Delete work in
 //   Liv; a delete reaches the phone the next time Photos opens there.
+// • Send to Receipts (Luke, 2026-11-20): a photo of a receipt goes into the receipt
+//   scanner from here, since the corner menu's Scan now opens the camera straight away.
 //
 // mountPhotosPage(root, deps) → { show(scope), hide(), destroy() }
 // deps: rest, presign, plugin (PhotoLibrary or null), convertFileSrc, putFetch,
-//       toast(text), confirm(text) → boolean
+//       toast(text), confirm(text) → boolean, sendToReceipts(File) (optional)
 
 import { createPhotoLibrary, viewOf, daysLeft } from "./library.js";
 import { createPhotosCache } from "./cache.js";
@@ -254,6 +256,7 @@ export function mountPhotosPage(root, deps) {
           ? `<span class="photos-viewer-left">${daysLeft(p.deleted_at)} days left</span><button type="button" data-act="restore">Put back</button>`
           : `${canPhone ? `<button type="button" data-act="share">Share</button>` : ""}
              ${canPhone && p.kind === "photo" ? `<button type="button" data-act="markup">Markup</button>` : ""}
+             ${canPhone && p.kind === "photo" && deps.sendToReceipts ? `<button type="button" data-act="receipt" aria-label="Send to Receipts">Receipt</button>` : ""}
              <button type="button" data-act="fav" aria-pressed="${!!p.favorite}" aria-label="${p.favorite ? "Unfavourite" : "Favourite"}">${p.favorite ? "♥" : "♡"}</button>
              <button type="button" data-act="delete" class="is-danger">Delete</button>`}
       </div>`;
@@ -317,6 +320,14 @@ export function mountPhotosPage(root, deps) {
         if (!lid) { toast("This photo isn't on this iPhone."); return; }
         const { saved } = await plugin.markup({ id: lid });
         if (saved) { await refreshThumb(p.id, lid); showAt(at); }
+      } else if (act === "receipt") {
+        const lid = await localIdOf(p.id);
+        if (!lid) { toast("This photo isn't on this iPhone."); return; }
+        const { path } = await plugin.image({ id: lid, size: 2048 });
+        const blob = await (await fetch(convertFileSrc(path))).blob();
+        const file = new File([blob], `receipt-${p.id}.jpg`, { type: blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg" });
+        closeViewer();
+        deps.sendToReceipts(file);
       } else if (act === "delete") {
         await deletePhoto(p);
       } else if (act === "restore") {
