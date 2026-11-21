@@ -61,11 +61,11 @@ async function run(browser, { width, height, dark }) {
   await page.waitForSelector('[data-scores-game$="live-vik"]', { timeout: 10000 });
   await page.click('[data-scores-game$="live-vik"]');
   await page.waitForTimeout(300);
-  const btns = await page.$$eval(".scores-game.is-open .game-watch-btn", (els) => els.map((e) => e.textContent.trim()));
+  const btns = await page.$$eval(".scores-game.is-open .scores-watch-link", (els) => els.map((e) => e.textContent.trim()));
   check(btns.length === 2 && /Xfinity/.test(btns[0]) && /Fox One/.test(btns[1]), `live FOX game: ${btns.join(" | ")}`);
   check(await noSideScroll(page), "no sideways scroll (Scores)");
   if (OUT) await page.screenshot({ path: `${OUT}/scores-${width}${dark ? "-dark" : ""}.png` });
-  await page.click(".scores-game.is-open .game-watch-btn >> nth=1");
+  await page.click(".scores-game.is-open .scores-watch-link >> nth=1");
   await page.waitForTimeout(200);
   const opened = await page.evaluate(() => window.__opened.slice());
   check(opened.length === 1 && opened[0] === "https://www.foxone.com/", `web opens the website: ${opened.join(", ")}`);
@@ -74,7 +74,7 @@ async function run(browser, { width, height, dark }) {
   await page.click('.scores-tab[data-scores-ltab="nfl"]'); // a game without my teams is on its league's tab
   await page.click('[data-scores-game$="fin-chi"]');
   await page.waitForTimeout(300);
-  check((await page.$$(".scores-game.is-open .game-watch-btn")).length === 0, "final game: no Watch buttons");
+  check((await page.$$(".scores-game.is-open .scores-watch-link")).length === 0, "final game: no watch links");
 
   await page.evaluate((key) => window.__liveQA.tickerGameForQa(key, "live-vik"), today);
   await page.waitForSelector("#gameCardDialog .game-watch-btn", { timeout: 5000 }).catch(() => null);

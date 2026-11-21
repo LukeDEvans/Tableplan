@@ -46,8 +46,36 @@ only the stories, in its place among the sections (after Culture). The view:
   Xfinity account app instead, which is how a Wild game "opened the wrong Xfinity
   app". The web app still opens the website.
 
+**Revised 2026-11-21 (Luke):**
+
+- **Filter** (a ☰-style square left of the table button; off on ★): per league, per
+  device (`live-scores-filter-v1`). Default **All games** — every league, college
+  too, shows every game (the old "Top 25 and my teams" college default and its
+  Leagues-dialog switch are gone; `collegeScope` stays in state, unused). Options
+  come from the league's table (already fetched for the table view, CDN-cached):
+  conferences (a division's `parent`, new in the standings parse) and divisions /
+  conferences (leaf groups); college adds **Top 25**. A chip above the games shows
+  an active filter, ✕ clears it.
+- **Date:** ‹ the chosen day › (today by default), replacing the scrolling strip. A
+  tap on the day opens the device's own calendar (an invisible `<input type="date">`
+  over it; `showPicker()` on a laptop).
+- **The tab row** scrolls sideways only (`overflow-y: hidden; touch-action: pan-x`).
+- **Where to watch** in an open game: text links in a row ("Xfinity Stream · Fox
+  One"), no "Watch" label. (The dock's game card keeps its buttons.)
+- **Live details, from the scoreboard already fetched — no new requests, nothing
+  in Supabase** (Luke: fewer features over strain on the free tiers). The adapter
+  keeps each side's per-period `lines` and a small `live` object (`cleanLive`):
+  football down/distance/spot/red zone/last play; baseball count, outs, runners,
+  batter, pitcher; soccer goals and red cards (also on finished matches). The open
+  game shows a **box score** (regulation columns always, OT/SO when played), a
+  **football field** (away end zone left, ball on its spot, line of scrimmage and
+  line to gain, arrow for direction), a **diamond** with the count, and a **goals**
+  list. Only the scoreboard response grows (a few hundred bytes per live game); the
+  refresh cadence is unchanged. Play-by-play, player box scores and win
+  probability would need ESPN's per-game summary call — deliberately not built.
+
 Where §2 below disagrees (My Teams section, collapsible leagues, Follow buttons,
-schedule/table links, ‹ Back), this block wins. QA: `npm run qa:news-scores`.
+schedule/table links, ‹ Back, the college default), these blocks win. QA: `npm run qa:news-scores`.
 
 ## 1. Intent
 

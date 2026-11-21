@@ -210,6 +210,16 @@ open News → Scores. Scores has no menu entry of its own.
   team page's card is pinned with a star (filled = following) at its top right.
   Xfinity on the iPhone falls back to Xfinity Stream's App Store page, never
   xfinity.com (the Xfinity account app claims it). QA: `npm run qa:news-scores`.
+- **Scores, revised 2026-11-21 (Luke; SPORTS_SCORES_DESIGN.md):** a **filter** square
+  left of the table button (off on ★) — All games (default, college included; the
+  old college "Top 25 and my teams" default and switch are gone), conferences and
+  divisions from the league's table, Top 25 for college; remembered per league on
+  the device. The date is **‹ day ›** (today by default); a tap on the day opens the
+  device's calendar. The tab row scrolls sideways only. Where to watch in an open
+  game is **text links**, no "Watch" label. **Live details come only from the
+  scoreboard already fetched** — box score by period, a football field graphic, the
+  baseball diamond/count, soccer goals — never a per-game call or anything stored:
+  Luke would rather have fewer features than strain Supabase or Netlify.
 - **Scores works like the ESPN app's Scores tab**: a broad board plus per-user
   favorites the app puts first. It must survive losing ESPN — **only an adapter may
   know a vendor's URLs or JSON**; everything else speaks the canonical model.

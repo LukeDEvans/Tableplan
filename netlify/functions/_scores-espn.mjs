@@ -143,7 +143,38 @@ function parseSide(c) {
     record: total?.summary || total?.displayValue || "",
     rank: rank >= 1 && rank <= 25 ? rank : null, // ESPN marks unranked as 99
     winner: c.winner === true,
+    // Points per period (quarters, halves, periods, innings) for the box score.
+    lines: (Array.isArray(c.linescores) ? c.linescores : []).map((l) => scoreOf(l)).slice(0, 30),
   };
+}
+
+// What's happening now, from the scoreboard we already fetch (no per-game calls —
+// Luke, 2026-11-21: richer live games must not cost more requests). The canonical
+// cleaner (sports-model.js cleanLive) validates every field.
+//   football  down, distance, the spot ("MIN 34"), red zone, last play
+//   baseball  balls, strikes, outs, runners, batter, pitcher, last play
+//   soccer    goals and red cards (minute, side, player)
+function liveOf(comp, home, away) {
+  const sit = comp.situation || {};
+  const sideOf = (id) => (String(id) === home.team.refs.espn ? "home" : String(id) === away.team.refs.espn ? "away" : "");
+  const name = (a) => a?.athlete?.shortName || a?.athlete?.displayName || a?.shortName || a?.displayName || "";
+  const out = {};
+  const spot = String(sit.possessionText || "").trim() || (String(sit.downDistanceText || "").match(/\bat\s+(.+)$/i)?.[1] || "").trim();
+  if (sit.down != null || spot) {
+    out.down = sit.down;
+    out.distance = sit.distance;
+    out.spot = spot;
+    out.redZone = sit.isRedZone === true;
+  }
+  if (sit.balls != null || sit.outs != null || sit.onFirst != null) {
+    Object.assign(out, { balls: sit.balls, strikes: sit.strikes, outs: sit.outs, onFirst: sit.onFirst === true, onSecond: sit.onSecond === true, onThird: sit.onThird === true, batter: name(sit.batter), pitcher: name(sit.pitcher) });
+  }
+  if (sit.lastPlay?.text) out.lastPlay = sit.lastPlay.text;
+  const events = (Array.isArray(comp.details) ? comp.details : [])
+    .filter((d) => d?.scoringPlay || d?.redCard)
+    .map((d) => ({ minute: d.clock?.displayValue || "", side: sideOf(d.team?.id), who: name(d.athletesInvolved?.[0]), kind: d.redCard ? "red" : d.ownGoal ? "og" : d.penaltyKick ? "pen" : "goal" }));
+  if (events.length) out.events = events;
+  return Object.keys(out).length ? out : null;
 }
 
 function broadcastsOf(comp) {
@@ -187,6 +218,7 @@ export function parseEvent(event, leagueKey) {
     broadcasts: broadcastsOf(comp),
     situation: state === "live" ? (sit.shortDownDistanceText || sit.downDistanceText || "") : "",
     possession: state === "live" ? possession : "",
+    live: state === "live" ? liveOf(comp, home, away) : (state === "final" && isSoccer(leagueKey) ? liveOf({ details: comp.details }, home, away) : null),
     neutral: comp.neutralSite === true,
     link: linkOf(event),
     home,
@@ -245,13 +277,15 @@ function standingRow(entry) {
   };
 }
 // Leaf groups (divisions inside conferences, or the league's own table), named.
-function standingGroups(node, out = [], parentName = "") {
+// `parent` is the conference a division sits in ("American Football Conference"),
+// for the Scores filter; empty when the leaf is itself a conference.
+function standingGroups(node, out = [], parentName = "", depth = 0) {
   if (!node || typeof node !== "object") return out;
   const entries = node.standings?.entries;
   if (Array.isArray(entries) && entries.length) {
-    out.push({ name: node.name || parentName || "", rows: entries.map(standingRow).filter(Boolean) });
+    out.push({ name: node.name || parentName || "", parent: node.name && depth >= 2 ? parentName : "", rows: entries.map(standingRow).filter(Boolean) });
   }
-  for (const child of Array.isArray(node.children) ? node.children : []) standingGroups(child, out, node.name);
+  for (const child of Array.isArray(node.children) ? node.children : []) standingGroups(child, out, node.name, depth + 1);
   return out;
 }
 export function parseStandings(json, leagueKey) {

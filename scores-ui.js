@@ -41,6 +41,7 @@ const SCHEDULE_TTL_MS = 15 * 60_000;
 const TEAMS_TTL_MS = 6 * 3_600_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
 const TAB_KEY = "live-scores-tab-v1"; // per device: "mine" or a league key
+const FILTER_KEY = "live-scores-filter-v1"; // per device: { [leagueKey]: filter id }
 const MINE = "mine";
 const TABLE_TTL_MS = 10 * 60_000;
 const SEASON_TTL_MS = 5 * 60_000;
@@ -122,6 +123,78 @@ export function dayRange(todayKey, selectedKey, span = 21) {
   return out;
 }
 
+// ── Filter (Luke, 2026-11-21) ──
+// Per league, what the games list shows: every game (the default), a conference
+// or division from the league's table, or (college) the Top 25. Ids: "all",
+// "top25", "c:<conference>", "g:<division or conference>".
+export function filterOptions(leagueKey, standings) {
+  const league = LEAGUE_BY_KEY[leagueKey];
+  const out = [{ id: "all", label: "All games" }];
+  if (league?.college) out.push({ id: "top25", label: "Top 25" });
+  const groups = (standings?.groups || []).filter((g) => g.name);
+  const parents = [...new Set(groups.map((g) => g.parent).filter(Boolean))];
+  for (const p of parents) out.push({ id: `c:${p}`, label: p, kind: "conference" });
+  if (groups.length > 1) for (const g of groups) out.push({ id: `g:${g.name}`, label: g.name, kind: parents.length ? "division" : "conference" });
+  return out;
+}
+// The games a filter keeps. A game stays when either side is in the group (or
+// ranked, for Top 25). Without the table yet, a group filter keeps everything.
+export function applyGameFilter(items, filterId, standings) {
+  if (!filterId || filterId === "all") return items;
+  if (filterId === "top25") return items.filter(({ game }) => [game.home, game.away].some((s) => s.rank && s.rank <= 25));
+  const [kind, name] = [filterId.slice(0, 1), filterId.slice(2)];
+  const groups = (standings?.groups || []).filter((g) => (kind === "c" ? g.parent === name : g.name === name));
+  if (!groups.length) return items;
+  const teams = groups.flatMap((g) => g.rows.map((r) => r.team));
+  const inGroup = (t) => teams.some((x) => sameTeam(x, t));
+  return items.filter(({ game }) => inGroup(game.home.team) || inGroup(game.away.team));
+}
+
+// ── Live games (Luke, 2026-11-21) — all from the scoreboard already fetched ──
+// The box score: one column per period with regulation always shown, then T.
+const REGULATION = { football: 4, hockey: 3, baseball: 9, soccer: 2 };
+export function periodLabels(game, count) {
+  const league = LEAGUE_BY_KEY[game.league];
+  const sport = game.sport || league?.sport;
+  const reg = sport === "basketball" ? (game.league === "ncaam" ? 2 : 4) : REGULATION[sport] || 4;
+  const n = Math.max(count, sport === "soccer" ? 0 : reg);
+  return Array.from({ length: n }, (_, i) => {
+    if (sport === "baseball") return String(i + 1);
+    if (sport === "soccer") return ["1H", "2H", "ET1", "ET2", "PK"][i] || String(i + 1);
+    if (i < reg) return String(i + 1);
+    if (sport === "hockey" && game.league === "nhl" && i === reg + 1) return "SO";
+    return i === reg ? "OT" : `${i - reg + 1}OT`;
+  });
+}
+export function boxScore(game) {
+  const a = game?.away?.lines || [], h = game?.home?.lines || [];
+  const count = Math.max(a.length, h.length);
+  if (!count || game.state === "pre") return null;
+  const labels = periodLabels(game, count);
+  const row = (lines) => labels.map((_, i) => (lines[i] ?? null));
+  return { labels, away: row(a), home: row(h) };
+}
+// Football: where the ball is, in yards from the away team's goal line (the
+// field's left end), which way the team with it is going, and the line to gain.
+export function fieldSpot(game) {
+  const live = game?.live;
+  if (!live?.spot || !game.possession) return null;
+  const m = String(live.spot).trim().match(/^(?:([A-Za-z.&]{1,6})\s+)?(\d{1,2})$/);
+  if (!m) return null;
+  const yd = Number(m[2]);
+  if (yd < 0 || yd > 50) return null;
+  const abbr = (m[1] || "").toUpperCase();
+  let x;
+  if (!abbr || yd === 50) x = 50;
+  else if (abbr === String(game.home.team.abbr).toUpperCase()) x = 100 - yd;
+  else if (abbr === String(game.away.team.abbr).toUpperCase()) x = yd;
+  else return null;
+  const dir = game.possession === "away" ? 1 : -1;
+  const gain = live.distance && live.distance > 0 ? x + dir * live.distance : null;
+  return { x, dir, firstDown: gain !== null && gain > 0 && gain < 100 ? gain : null };
+}
+
+const FILTER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>';
 const PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
 const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.6 9.7l5.8-.8z"/></svg>';
 const ARROW_UP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg>';
@@ -139,13 +212,23 @@ const CLOSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6
 // Services. "" when there's nothing to offer.
 // `always`: offer them for any game not yet over (Scores' open game, so where to
 // watch is a tap away — Luke, 2026-11-20), not only within the hour.
-export function gameWatchHtml(game, esc, services = [], { always = false } = {}) {
+// `links`: plain text links in a row, no "Watch" label (Scores' open game —
+// Luke, 2026-11-21: the buttons took too much room).
+export function gameWatchHtml(game, esc, services = [], { always = false, links = false } = {}) {
   if (always ? !(game?.state === "live" || game?.state === "pre") : !inWatchWindow(game)) return "";
   const opts = watchOptionsForGame(game, { services });
   if (!opts.length) return "";
+  const viaOf = (o) => (o.network && !o.label.toLowerCase().startsWith(o.network.toLowerCase()) ? o.network : "");
+  if (links) {
+    return `<div class="scores-watch-links" role="group" aria-label="Watch">${opts.map((o) => {
+      const via = viaOf(o);
+      const note = o.id === "xfinity" && via ? `Opening Xfinity Stream — ${via} is under Live TV` : "";
+      return `<button type="button" class="scores-watch-link${o.mine ? " is-mine" : ""}" ${linkOutAttrs({ ...o, note }, esc)} aria-label="Watch on ${esc(o.label)}${via ? ` (${esc(via)})` : ""}">${esc(o.label)}</button>`;
+    }).join('<span class="scores-watch-sep" aria-hidden="true">·</span>')}</div>`;
+  }
   const btns = opts.map((o) => {
     // The channel, when it isn't the app's own name ("FOX" on Xfinity, "NBC" on Peacock).
-    const via = o.network && !o.label.toLowerCase().startsWith(o.network.toLowerCase()) ? o.network : "";
+    const via = viaOf(o);
     const note = o.id === "xfinity" && via ? `Opening Xfinity Stream — ${via} is under Live TV` : "";
     return `<button type="button" class="game-watch-btn${o.mine ? " is-mine" : ""}" ${linkOutAttrs({ ...o, note }, esc)} aria-label="Watch on ${esc(o.label)}${via ? ` (${esc(via)})` : ""}">${PLAY}<span>${esc(o.label)}</span>${via ? `<small>${esc(via)}</small>` : ""}</button>`;
   }).join("");
@@ -179,7 +262,6 @@ export function createScoresModule(deps) {
   const errors = new Map();   // dateKey → message
   const inflight = new Set(); // dateKey
   const teamLists = new Map(); // leagueKey → { teams, loadedAt } | { error, loadedAt } | { loading: true }
-  const showAll = new Set();  // college leagues expanded to every game, for now
   let schedule = { key: "", loadedAt: 0, byToken: {}, loading: false };
   let selected = dateKeyOf();
   let lastToday = selected;
@@ -217,6 +299,17 @@ export function createScoresModule(deps) {
     tab = next;
     try { localStorage.setItem(TAB_KEY, tab); } catch { /* full */ }
   }
+  // Each league's filter (Luke, 2026-11-21): "all" unless the viewer chose one.
+  let filters = {};
+  try { filters = JSON.parse(localStorage.getItem(FILTER_KEY)) || {}; } catch { /* private mode */ }
+  const filterOf = (leagueKey) => filters[leagueKey] || "all";
+  function setFilter(leagueKey, id) {
+    if (id === "all") delete filters[leagueKey]; else filters[leagueKey] = id;
+    try { localStorage.setItem(FILTER_KEY, JSON.stringify(filters)); } catch { /* full */ }
+  }
+  const tableData = (leagueKey) => seeded?.tables?.[leagueKey] || tables.get(leagueKey)?.data || null;
+  let filterDialog = null;
+
   // News's top-left button shows ‹ while there's a page to go back to.
   const navListeners = new Set();
   const notifyNav = () => { for (const fn of navListeners) { try { fn(); } catch { /* a listener's own problem */ } } };
@@ -399,15 +492,15 @@ export function createScoresModule(deps) {
     const label = `${game.away.team.name} at ${game.home.team.name}, ${statusText(game, fmt())}`;
     let detail = "";
     if (open) {
-      // Where to watch is a button whenever an app can show it (Luke, 2026-11-20):
-      // the channels then leave the facts line, which keeps any the app can't open.
-      const watch = gameWatchHtml(game, esc, getState().mediaServices || [], { always: true });
-      const channels = watch ? game.broadcasts.filter((b) => !networkFor(b)) : game.broadcasts;
-      const facts = [LEAGUE_BY_KEY[game.league].short, game.note, game.venue, channels.join(", ")].filter(Boolean).map(esc).join(" · ");
+      // Where to watch: text links to the apps that can show it, whenever one can
+      // (Luke, 2026-11-20/21); the channels stay in the facts line.
+      const watch = gameWatchHtml(game, esc, getState().mediaServices || [], { always: true, links: true });
+      const facts = [LEAGUE_BY_KEY[game.league].short, game.note, game.venue, game.broadcasts.join(", ")].filter(Boolean).map(esc).join(" · ");
+      const page = game.link ? `<a class="scores-link" href="${esc(game.link)}" target="_blank" rel="noopener noreferrer">Game page</a>` : "";
       detail = `<div class="scores-detail">
+        ${liveHtml(game, order)}
         ${facts ? `<div class="scores-facts">${facts}</div>` : ""}
-        ${watch}
-        ${game.link ? `<div class="scores-actions scores-links"><a class="scores-link" href="${esc(game.link)}" target="_blank" rel="noopener noreferrer">Game page</a></div>` : ""}
+        ${watch || page ? `<div class="scores-detail-foot">${watch}${page}</div>` : ""}
       </div>`;
     }
     return `<article class="scores-game is-${game.state}${open ? " is-open" : ""}">
@@ -416,6 +509,73 @@ export function createScoresModule(deps) {
         <span class="scores-status"><span class="scores-state">${isLive(game) ? '<i class="scores-live-dot"></i>' : ""}${esc(statusText(game, fmt()))}</span>${sub ? `<small class="scores-sub">${esc(sub)}</small>` : ""}</span>
       </button>${detail}
     </article>`;
+  }
+
+  // ── Live details (box score, field, diamond, goals) ──
+  const abbrOf = (side) => side.team.abbr || side.team.short;
+  function liveHtml(game, order) {
+    const parts = [];
+    const box = boxScore(game);
+    if (box) {
+      const cell = (v) => `<td>${v === null ? "" : esc(String(v))}</td>`;
+      parts.push(`<table class="scores-box" aria-label="Score by period">
+        <thead><tr><th scope="col"><span class="visually-hidden">Team</span></th>${box.labels.map((l) => `<th scope="col">${esc(l)}</th>`).join("")}<th scope="col" class="scores-box-t">T</th></tr></thead>
+        <tbody>${order.map((w) => `<tr><th scope="row">${esc(abbrOf(game[w]))}</th>${box[w].map(cell).join("")}<td class="scores-box-t">${game[w].score ?? ""}</td></tr>`).join("")}</tbody>
+      </table>`);
+    }
+    const live = game.live;
+    if (game.state === "live" && live) {
+      if (game.sport === "football") parts.push(fieldHtml(game));
+      if (game.sport === "baseball" && (live.outs !== null || live.balls !== null)) parts.push(diamondHtml(game));
+      if (live.lastPlay) parts.push(`<p class="scores-lastplay"><b>Last play</b> ${esc(live.lastPlay)}</p>`);
+    }
+    if (live?.events?.length) {
+      const mark = { goal: "", pen: " (pen)", og: " (OG)", red: "" };
+      parts.push(`<ul class="scores-events">${live.events.map((e) => `<li class="is-${e.kind}"><span class="scores-ev-min">${esc(e.minute)}</span><span class="scores-ev-icon" aria-label="${e.kind === "red" ? "Red card" : "Goal"}"></span><span>${esc(e.who || "Goal")}${mark[e.kind]}</span><small>${esc(abbrOf(game[e.side]))}</small></li>`).join("")}</ul>`);
+    }
+    return parts.length ? `<div class="scores-live">${parts.join("")}</div>` : "";
+  }
+
+  // A football field: the away team's end zone on the left, the home team's on the
+  // right; the ball on its spot, the line of scrimmage and the line to gain.
+  function fieldHtml(game) {
+    const live = game.live;
+    const spot = fieldSpot(game);
+    const team = game.possession ? game[game.possession] : null;
+    const down = live.down ? `${["", "1st", "2nd", "3rd", "4th"][live.down]} & ${live.distance === 0 || (spot && spot.firstDown === null && live.distance) ? "Goal" : live.distance ?? ""}` : "";
+    const words = [team ? `${abbrOf(team)} ball` : "", down, live.spot ? `at ${live.spot}` : ""].filter(Boolean).join(" · ") || game.situation;
+    let svg = "";
+    if (spot) {
+      const X = (yd) => 10 + yd;
+      const lines = Array.from({ length: 9 }, (_, i) => `<line x1="${X((i + 1) * 10)}" y1="2" x2="${X((i + 1) * 10)}" y2="28" class="${i === 4 ? "fld-mid" : "fld-yd"}"/>`).join("");
+      const base = X(spot.x) + spot.dir * 3.4, tip = X(spot.x) + spot.dir * 7; // a small arrow just ahead of the ball
+      svg = `<svg class="scores-field" viewBox="0 0 120 30" role="img" aria-label="${esc(words)}">
+        <rect x="0" y="0" width="120" height="30" rx="2" class="fld-grass"/>
+        <rect x="0" y="0" width="10" height="30" class="fld-ez"${game.away.team.color ? ` style="fill:${esc(game.away.team.color)}"` : ""}/>
+        <rect x="110" y="0" width="10" height="30" class="fld-ez"${game.home.team.color ? ` style="fill:${esc(game.home.team.color)}"` : ""}/>
+        <text x="5" y="15" class="fld-ez-t" transform="rotate(-90 5 15)">${esc(abbrOf(game.away))}</text>
+        <text x="115" y="15" class="fld-ez-t" transform="rotate(90 115 15)">${esc(abbrOf(game.home))}</text>
+        ${lines}
+        ${spot.firstDown !== null ? `<line x1="${X(spot.firstDown)}" y1="1" x2="${X(spot.firstDown)}" y2="29" class="fld-gain"/>` : ""}
+        <line x1="${X(spot.x)}" y1="1" x2="${X(spot.x)}" y2="29" class="fld-los"/>
+        <path d="M${base} 12.6 L${tip} 15 L${base} 17.4 Z" class="fld-dir"/>
+        <ellipse cx="${X(spot.x)}" cy="15" rx="2.6" ry="1.6" class="fld-ball"/>
+      </svg>`;
+    }
+    return `<div class="scores-football">${svg}<p class="scores-sit">${esc(words)}${live.redZone ? ' <span class="scores-redzone">Red zone</span>' : ""}</p></div>`;
+  }
+
+  // Baseball: the bases (filled when someone's on), the count and the outs.
+  function diamondHtml(game) {
+    const l = game.live;
+    const [first, second, third] = l.bases || [];
+    const base = (x, y, on) => `<rect x="${x - 5}" y="${y - 5}" width="10" height="10" transform="rotate(45 ${x} ${y})" class="dia-base${on ? " is-on" : ""}"/>`;
+    const words = [`${l.balls ?? 0}-${l.strikes ?? 0}`, `${l.outs ?? 0} out${l.outs === 1 ? "" : "s"}`].join(" · ");
+    const runners = [first && "1st", second && "2nd", third && "3rd"].filter(Boolean);
+    return `<div class="scores-baseball">
+      <svg class="scores-diamond" viewBox="0 0 44 34" role="img" aria-label="${esc(runners.length ? `Runners on ${runners.join(", ")}` : "Bases empty")}">${base(22, 8, second)}${base(36, 21, first)}${base(8, 21, third)}</svg>
+      <div class="scores-count"><b>${esc(words)}</b>${l.batter ? `<span>At bat: ${esc(l.batter)}</span>` : ""}${l.pitcher ? `<span>Pitching: ${esc(l.pitcher)}</span>` : ""}</div>
+    </div>`;
   }
 
   function idleHtml(team) {
@@ -430,11 +590,18 @@ export function createScoresModule(deps) {
       : `<div class="scores-idle">${inner}</div>`;
   }
 
-  function daysHtml(today) {
-    return dayRange(today, selected).map((key) => {
-      const l = dayLabel(key, today);
-      return `<button type="button" class="scores-day${key === selected ? " is-selected" : ""}${key === today ? " is-today" : ""}" data-scores-day="${key}" aria-pressed="${key === selected}" aria-label="${esc(l.long)}"><span class="scores-day-dow">${esc(l.dow)}</span><span class="scores-day-date">${esc(l.date)}</span></button>`;
-    }).join("");
+  // The date (Luke, 2026-11-21): ‹ the chosen day › — today by default; a tap on
+  // the day opens a calendar (the device's own date picker) to jump to any day.
+  function dateNavHtml(today) {
+    const l = dayLabel(selected, today);
+    return `<div class="scores-date">
+      <button type="button" class="scores-date-step" data-scores-step="-1" aria-label="Previous day">‹</button>
+      <label class="scores-date-pick${selected === today ? " is-today" : ""}" title="Pick a date">
+        <span class="scores-day-dow">${esc(l.dow)}</span><span class="scores-day-date">${esc(l.date)}</span>
+        <input type="date" class="scores-date-input" data-scores-date value="${selected}" aria-label="${esc(l.long)} — pick a date" data-no-clear>
+      </label>
+      <button type="button" class="scores-date-step" data-scores-step="1" aria-label="Next day">›</button>
+    </div>`;
   }
 
   // The tab row (Luke, 2026-11-20): the Meal Plan's day tabs' look — ★, then the
@@ -459,11 +626,13 @@ export function createScoresModule(deps) {
     const league = LEAGUE_BY_KEY[cur];
     const sec = view.sections.find((x) => x.league.key === cur);
     if (!sec) return `<p class="news-empty">No ${esc(league.short)} games ${esc(dayWords)}.</p>`;
-    return `${sec.games.length ? `<div class="scores-list">${sec.games.map((t) => gameHtml(t, cur)).join("")}</div>` : `<p class="news-empty">No ranked teams or favorites playing.</p>`}
-      ${sec.hidden ? `<button type="button" class="scores-more" data-scores-showall="${cur}">Show all ${sec.games.length + sec.hidden} games</button>` : showAll.has(cur) ? `<button type="button" class="scores-more" data-scores-showall="${cur}">Show ranked teams and favorites only</button>` : ""}`;
+    const filter = filterOf(cur);
+    const opt = filterOptions(cur, tableData(cur)).find((o) => o.id === filter);
+    const games = applyGameFilter(sec.games, filter, tableData(cur));
+    const chip = filter !== "all" ? `<div class="scores-filter-chip">Showing ${esc(opt?.label || filter.slice(2))} <button type="button" class="scores-filter-clear" data-scores-filter-set="all" aria-label="Show all games">✕</button></div>` : "";
+    return `${chip}${games.length ? `<div class="scores-list">${games.map((t) => gameHtml(t, cur)).join("")}</div>` : `<p class="news-empty">No ${esc(opt?.label || "")} games ${esc(dayWords)}.</p>`}`;
   }
 
-  let stripFor = "";   // the day the strip was last centred on
   let tabsFor = "";    // the tab the tab row last brought into view
   function render() {
     if (!mountEl?.isConnected) return;
@@ -475,7 +644,9 @@ export function createScoresModule(deps) {
     const cur = currentTab();
     const board = seeded ? (seeded.days ? { ...seeded, games: seeded.days[selected] || [] } : seeded) : boards.get(selected);
     const loading = inflight.has(selected);
-    const view = board ? arrangeScores(board.games, p, { showAll }) : null;
+    // Every game in a league by default; the filter narrows it (Luke, 2026-11-21).
+    const view = board ? arrangeScores(board.games, p, { showAll: LEAGUES.map((l) => l.key) }) : null;
+    if (cur !== MINE && filterOf(cur).startsWith("c:") || cur !== MINE && filterOf(cur).startsWith("g:")) loadTable(cur);
     let body = "";
     if (!board) {
       body = `<p class="news-empty">${esc(loading ? "Loading scores…" : errors.get(selected) || "Loading scores…")}</p>`;
@@ -492,26 +663,18 @@ export function createScoresModule(deps) {
       body += `<div class="scores-foot">${foot.join(" · ")}</div>`;
     }
     const focus = focusSelector();
-    const oldStrip = mountEl.querySelector(".scores-days")?.scrollLeft;
     const oldTabs = mountEl.querySelector(".scores-tabs")?.scrollLeft;
     mountEl.innerHTML = `<div class="scores">
       <div class="scores-tabs" role="tablist" aria-label="Leagues">${tabsHtml(p, cur, view)}</div>
       <div class="scores-bar">
-        <div class="scores-days" aria-label="Days">${daysHtml(today)}</div>
+        ${dateNavHtml(today)}
+        <button type="button" class="icon-btn scores-sq scores-filter-btn${cur !== MINE && filterOf(cur) !== "all" ? " is-active" : ""}" data-scores-filter ${cur === MINE ? "disabled" : ""} aria-label="Filter ${cur === MINE ? "" : esc(LEAGUE_BY_KEY[cur].short)} games" title="Filter">${FILTER_ICON}</button>
         <button type="button" class="icon-btn scores-sq" data-scores-table="${cur === MINE ? "" : esc(cur)}" aria-label="League table" title="League table">${TABLE_ICON}</button>
         <button type="button" class="icon-btn scores-sq scores-mine-btn" data-scores-mine aria-label="My teams" title="My teams">${STAR}</button>
       </div>
       ${selected !== today ? `<button type="button" class="scores-today" data-scores-day="${today}">Back to today</button>` : ""}
       <div class="scores-body" data-scores-body>${body}</div>
     </div>`;
-    // The day strip keeps where it was scrolled; a newly chosen day is centred.
-    const strip = mountEl.querySelector(".scores-days");
-    const chosen = strip?.querySelector(".is-selected");
-    if (strip && chosen) {
-      if (stripFor === selected && typeof oldStrip === "number") strip.scrollLeft = oldStrip;
-      else strip.scrollLeft = chosen.offsetLeft - strip.offsetLeft - (strip.clientWidth - chosen.clientWidth) / 2;
-      stripFor = selected;
-    }
     const tabs = mountEl.querySelector(".scores-tabs");
     const active = tabs?.querySelector(".is-active");
     if (tabs && active) {
@@ -613,6 +776,18 @@ export function createScoresModule(deps) {
     if (seasonGame) { openGameDay(seasonGame.dataset.scoresSeasonGame); return; }
     const day = t.closest("[data-scores-day]");
     if (day) { selectDay(day.dataset.scoresDay); return; }
+    const step = t.closest("[data-scores-step]");
+    if (step) { selectDay(shiftDateKey(selected, Number(step.dataset.scoresStep))); return; }
+    const pick = t.closest(".scores-date-pick");
+    if (pick) {
+      // The date box covers the day, so a tap on the phone opens the device's own
+      // calendar; Chrome on a laptop needs showPicker for it.
+      try { pick.querySelector("[data-scores-date]").showPicker(); } catch { /* the tap itself opens it */ }
+      return;
+    }
+    if (t.closest("[data-scores-filter]")) { openFilter(); return; }
+    const setF = t.closest("[data-scores-filter-set]");
+    if (setF) { setFilter(currentTab(), setF.dataset.scoresFilterSet); expandedId = null; render(); return; }
     const ltab = t.closest("[data-scores-ltab]");
     if (ltab) { selectTab(ltab.dataset.scoresLtab); return; }
     if (t.closest("[data-scores-mine]")) { openMine(); return; }
@@ -620,13 +795,6 @@ export function createScoresModule(deps) {
     if (openBtn) { openDialog(openBtn.dataset.scoresOpen); return; }
     const follow = t.closest("[data-scores-follow]");
     if (follow) { toggleFollow(follow.dataset.scoresFollow, follow.dataset.league); return; }
-    const all = t.closest("[data-scores-showall]");
-    if (all) {
-      const key = all.dataset.scoresShowall;
-      if (showAll.has(key)) showAll.delete(key); else showAll.add(key);
-      render();
-      return;
-    }
     const game = t.closest("[data-scores-game]");
     if (game) { expandedId = expandedId === game.dataset.scoresGame ? null : game.dataset.scoresGame; render(); }
   }
@@ -708,7 +876,8 @@ export function createScoresModule(deps) {
     } catch {
       tables.set(leagueKey, { data: have?.data || null, error: true, loadedAt: Date.now() });
     }
-    if (route.view === "table" && route.league === leagueKey) render();
+    if ((route.view === "table" && route.league === leagueKey) || route.view === "day") render();
+    renderFilter();
   }
 
   const timeOf = (iso) => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(iso));
@@ -830,6 +999,56 @@ export function createScoresModule(deps) {
       scrollToNext = false;
       mountEl.querySelector(".scores-srow.is-next")?.scrollIntoView({ block: "center" });
     }
+  }
+
+  // ── Filter window (Luke, 2026-11-21) ──
+  // The league on show: every game, or a conference / division from its table,
+  // or (college) the Top 25. The choice is remembered per league on this device.
+  function openFilter() {
+    const leagueKey = currentTab();
+    if (leagueKey === MINE) return;
+    if (!filterDialog) {
+      filterDialog = document.createElement("dialog");
+      filterDialog.className = "recipe-dialog auth-dialog scores-dialog scores-filter-dialog";
+      filterDialog.id = "scoresFilterDialog";
+      filterDialog.addEventListener("click", (e) => {
+        const t = e.target;
+        if (t === filterDialog || t.closest("[data-scores-filter-close]")) { filterDialog.close(); return; }
+        const opt = t.closest("[data-scores-filter-opt]");
+        if (opt) {
+          setFilter(filterDialog.dataset.league, opt.dataset.scoresFilterOpt);
+          filterDialog.close();
+          expandedId = null;
+          render();
+        }
+      });
+      document.body.appendChild(filterDialog);
+    }
+    filterDialog.dataset.league = leagueKey;
+    renderFilter(true);
+    if (!filterDialog.open) filterDialog.showModal();
+    loadTable(leagueKey);
+  }
+
+  function renderFilter(force = false) {
+    if (!filterDialog || (!filterDialog.open && !force)) return;
+    const leagueKey = filterDialog.dataset.league;
+    const league = LEAGUE_BY_KEY[leagueKey];
+    const entry = seeded?.tables?.[leagueKey] ? { data: seeded.tables[leagueKey] } : tables.get(leagueKey);
+    const opts = filterOptions(leagueKey, entry?.data);
+    const cur = filterOf(leagueKey);
+    const row = (o) => `<button type="button" class="scores-filter-opt${o.kind === "division" ? " is-sub" : ""}" data-scores-filter-opt="${esc(o.id)}" aria-pressed="${o.id === cur}">${esc(o.label)}${o.id === cur ? '<span class="scores-filter-check" aria-hidden="true">✓</span>' : ""}</button>`;
+    const conf = opts.filter((o) => o.kind === "conference"), div = opts.filter((o) => o.kind === "division");
+    const loading = !entry?.data && (entry?.loading || !entry);
+    filterDialog.innerHTML = `<div class="recipe-form scores-dialog-form">
+      <div class="dialog-head"><h2>${esc(league?.short || "")} games</h2><button class="icon-btn" type="button" data-scores-filter-close aria-label="Close">${CLOSE}</button></div>
+      <div class="scores-dialog-body scores-filter-list">
+        ${opts.filter((o) => !o.kind).map(row).join("")}
+        ${conf.length ? `<div class="scores-dialog-label">Conferences</div>${conf.map(row).join("")}` : ""}
+        ${div.length ? `<div class="scores-dialog-label">Divisions</div>${div.map(row).join("")}` : ""}
+        ${loading ? `<p class="news-empty">Loading conferences…</p>` : !conf.length && !div.length ? `<p class="news-empty">${esc(league?.short || "This league")} has no conferences or divisions to sort by.</p>` : ""}
+      </div>
+    </div>`;
   }
 
   // ── My teams window (Luke, 2026-11-20) ──
@@ -994,11 +1213,6 @@ export function createScoresModule(deps) {
       body = `
         <div class="scores-dialog-label">Showing, in this order</div>
         <div class="scores-league-list">${on.map((l, i) => leagueRowHtml(l, { on: true, movable: true, first: i === 0, last: i === on.length - 1 })).join("") || `<p class="news-empty">No leagues switched on.</p>`}</div>
-        <div class="scores-dialog-label">College games</div>
-        <div class="scores-seg" role="group" aria-label="College games shown">
-          <button type="button" data-scores-college="ranked" aria-pressed="${p.collegeScope !== "all"}">Top 25 and my teams</button>
-          <button type="button" data-scores-college="all" aria-pressed="${p.collegeScope === "all"}">Every game</button>
-        </div>
         ${off.length ? `<div class="scores-dialog-label">More leagues</div>
         <div class="scores-league-list">${off.map((l) => leagueRowHtml(l, { on: false })).join("")}</div>` : ""}`;
     }
@@ -1025,8 +1239,7 @@ export function createScoresModule(deps) {
     if (follow) { toggleFollow(follow.dataset.scoresFollow, follow.dataset.league); return; }
     const move = t.closest("[data-scores-move]");
     if (move) { setPrefs(moveLeague(prefs(), move.dataset.league, Number(move.dataset.scoresMove))); renderDialog(); return; }
-    const college = t.closest("[data-scores-college]");
-    if (college) { setPrefs({ ...prefs(), collegeScope: college.dataset.scoresCollege }); showAll.clear(); renderDialog(); }
+
   }
 
   function onDialogChange(e) {
@@ -1046,6 +1259,7 @@ export function createScoresModule(deps) {
       el.addEventListener("touchcancel", () => { swipe = null; }, { passive: true });
       el.addEventListener("change", (e) => {
         if (e.target.id === "scoresTableLeague") { route = { view: "table", league: e.target.value }; render(); loadTable(route.league); }
+        if (e.target.matches?.("[data-scores-date]") && /^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) selectDay(e.target.value);
       });
     }
     if (!listening) { listening = true; document.addEventListener("visibilitychange", onVisibility); }

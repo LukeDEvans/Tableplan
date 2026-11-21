@@ -5,11 +5,17 @@
 //     in its usual place (after Culture); Sports has no Scores/Stories tabs
 //   - a tab row (★ then each league shown); a tab shows only its games; a swipe
 //     sideways on the games moves one tab
-//   - the day strip is three days wide (yesterday, today, tomorrow) and scrolls
-//   - the table and ★ buttons are squares the size of the ☰ button
+//   - the tab row scrolls sideways only (2026-11-21)
+//   - the date bar: ‹ the chosen day ›, today by default; a date box over the day
+//     (the device's calendar) jumps to any day
+//   - filter, table and ★ are squares the size of the ☰ button, filter first; the
+//     filter offers All games / conferences / divisions (college: Top 25) and
+//     narrows the league's games; it's off on ★
 //   - an open game: no Follow buttons, no schedule/table links, "Game page" with no
-//     arrow, Watch buttons for a game later today; Xfinity carries the phone's
-//     App Store fallback
+//     arrow, where-to-watch as text links (no "Watch" label) for a game later
+//     today; Xfinity carries the phone's App Store fallback
+//   - a live game's box score and, for football, the field with the ball on its
+//     spot; a soccer game's goals
 //   - a team's name opens its schedule; ☰ turns into ‹ and back again; the team
 //     card's star follows/unfollows; the card stays pinned while the season scrolls
 //   - ★ opens the My teams window; the gear menu has Scores (teams and leagues)
@@ -108,10 +114,17 @@ async function run(browser, { width, height }) {
     const later = new Date(Date.now() + 3 * 3600e3).toISOString();
     const season = Array.from({ length: 17 }, (_, i) => ({ id: `w${i}`, league: "nfl", start: new Date(Date.now() + (i - 10) * 7 * 86400e3).toISOString(), state: i < 10 ? "final" : "pre", detail: i < 10 ? "Final" : "", broadcasts: ["FOX"], away: { team: i % 2 ? gb : chi, score: i < 10 ? 10 + i : null }, home: { team: vik, score: i < 10 ? 20 : null } }));
     qa.scoresSetBoard({ date: key, days: { [key]: [
-      { id: "live-vik", league: "nfl", start, state: "live", detail: "3rd 5:21", broadcasts: ["FOX"], away: { team: gb, score: 7 }, home: { team: vik, score: 10 }, link: "https://www.espn.com/nfl/game/_/gameId/1" },
+      { id: "live-vik", league: "nfl", start, state: "live", detail: "3rd 5:21", broadcasts: ["FOX"], possession: "away", situation: "2nd & 7 at MIN 34",
+        live: { down: 2, distance: 7, spot: "MIN 34", redZone: false, lastPlay: "J. Love pass short right to J. Reed for 6 yards" },
+        away: { team: gb, score: 7, lines: [0, 7, 0] }, home: { team: vik, score: 10, lines: [3, 7, 0] }, link: "https://www.espn.com/nfl/game/_/gameId/1" },
       { id: "fin-chi", league: "nfl", start, state: "final", detail: "Final", broadcasts: ["CBS"], away: { team: chi, score: 3 }, home: { team: det, score: 20 } },
       { id: "wild", league: "nhl", start: later, state: "pre", detail: "", broadcasts: ["FanDuel SN North"], away: { team: stl, score: null }, home: { team: wild, score: null } },
-    ] }, seasons: { "nfl|espn:16": season } });
+      { id: "ajax", league: "eredivisie", start, state: "final", detail: "FT", broadcasts: ["ESPN+"], home: { team: t("AFC Ajax", "AJA", "139"), score: 2, lines: [1, 1] }, away: { team: t("PSV Eindhoven", "PSV", "148"), score: 1, lines: [0, 1] },
+        live: { events: [{ minute: "23'", side: "home", who: "B. Brobbey", kind: "goal" }, { minute: "61'", side: "away", who: "L. de Jong", kind: "pen" }, { minute: "88'", side: "home", who: "S. Berghuis", kind: "goal" }] } },
+    ] }, seasons: { "nfl|espn:16": season }, tables: { nfl: { season: "2026", groups: [
+      { name: "NFC North", parent: "National Football Conference", rows: [vik, gb, chi, det].map((team, i) => ({ team, rank: i + 1, stats: {} })) },
+      { name: "AFC East", parent: "American Football Conference", rows: [t("Buffalo Bills", "BUF", "2")].map((team) => ({ team, rank: 1, stats: {} })) },
+    ] } } });
     qa.showScoresForQa();
     return key;
   });
@@ -133,6 +146,26 @@ async function run(browser, { width, height }) {
   await page.waitForTimeout(200);
   const nfl = await page.$$eval(".scores-game", (els) => els.length);
   check(nfl === 2, `NFL tab shows the NFL games only (${nfl})`);
+
+  // ── Filter ──
+  const sqOrder = await page.$$eval(".scores-bar .scores-sq", (els) => els.map((e) => (e.matches("[data-scores-filter]") ? "filter" : e.matches("[data-scores-table]") ? "table" : "mine")).join(" "));
+  check(sqOrder === "filter table mine", `filter sits left of table and ★ (${sqOrder})`);
+  await page.click("[data-scores-filter]");
+  await page.waitForSelector("#scoresFilterDialog[open]", { timeout: 5000 });
+  const fopts = await page.$$eval("#scoresFilterDialog [data-scores-filter-opt]", (els) => els.map((e) => e.textContent.replace("✓", "").trim()));
+  check(fopts[0] === "All games" && fopts.includes("National Football Conference") && fopts.includes("NFC North") && fopts.includes("AFC East"), `NFL filter: ${fopts.join(" | ")}`);
+  if (OUT) await page.screenshot({ path: `${OUT}/scores-filter-${width}.png` });
+  await page.click('#scoresFilterDialog [data-scores-filter-opt="g:NFC North"]');
+  await page.waitForTimeout(200);
+  const filtered = await page.$$eval(".scores-game", (els) => els.length);
+  check(filtered === 2 && !!(await page.$(".scores-filter-btn.is-active")) && /NFC North/.test(await page.textContent(".scores-filter-chip")), `NFC North keeps the Vikings and Bears/Lions games (${filtered}), the button shows it's on`);
+  await page.click("[data-scores-filter]");
+  await page.click('#scoresFilterDialog [data-scores-filter-opt="g:AFC East"]');
+  await page.waitForTimeout(200);
+  check((await page.$$(".scores-game")).length === 0 && /No AFC East games/.test(await page.textContent("[data-scores-body]")), "AFC East: no games, and it says so");
+  await page.click(".scores-filter-clear");
+  await page.waitForTimeout(200);
+  check((await page.$$(".scores-game")).length === 2 && !(await page.$(".scores-filter-btn.is-active")), "✕ goes back to all games");
   await swipeAt(page, cdp, "[data-scores-body]", -140);
   const after = await page.$eval(".scores-tab.is-active", (e) => e.dataset.scoresLtab);
   check(after === tabs[2]?.key, `a swipe left on the games → the next tab (${after})`);
@@ -140,16 +173,32 @@ async function run(browser, { width, height }) {
   await swipeAt(page, cdp, "[data-scores-body]", 140);
   check(await page.$eval(".scores-tab.is-active", (e) => e.dataset.scoresLtab) === "mine", "two swipes right → back to ★");
 
-  const strip = await page.evaluate(() => {
-    const s = document.querySelector(".scores-days").getBoundingClientRect();
-    const full = [...document.querySelectorAll(".scores-day")].filter((d) => { const r = d.getBoundingClientRect(); return r.left >= s.left - 1 && r.right <= s.right + 1; });
-    return { visible: full.map((d) => d.querySelector(".scores-day-dow").textContent), scrolls: document.querySelector(".scores-days").scrollWidth > s.width + 10 };
-  });
-  check(strip.visible.length === 3 && strip.visible[1] === "Today", `three days in view, today in the middle (${strip.visible.join(" · ")})`);
-  check(strip.scrolls, "the strip scrolls to other days");
+  check(await page.$eval("[data-scores-filter]", (b) => b.disabled), "the filter is off on ★");
+  const tabsScroll = await page.$eval(".scores-tabs", (el) => { const s = getComputedStyle(el); return `${s.overflowX}/${s.overflowY}`; });
+  check(tabsScroll === "auto/hidden", `the tab row scrolls sideways only (${tabsScroll})`);
+
+  // ── Date bar ──
+  const dayText = () => page.$eval(".scores-date-pick", (el) => el.querySelector(".scores-day-dow").textContent);
+  const dayKey = () => page.$eval("[data-scores-date]", (i) => i.value);
+  const shift = (key, n) => { const d = new Date(`${key}T12:00:00`); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  check(await dayText() === "Today" && !!(await page.$(".scores-date-pick.is-today")), "the date bar opens on today");
+  await page.click('[data-scores-step="-1"]');
+  await page.waitForTimeout(150);
+  check(await dayKey() === shift(today, -1), `‹ goes to yesterday (${await dayKey()})`);
+  await page.click('[data-scores-step="1"]');
+  await page.click('[data-scores-step="1"]');
+  await page.waitForTimeout(150);
+  check(await dayKey() === shift(today, 1), `› › goes to tomorrow (${await dayKey()})`);
+  const covers = await page.evaluate(() => { const p = document.querySelector(".scores-date-pick").getBoundingClientRect(), i = document.querySelector("[data-scores-date]").getBoundingClientRect(); return Math.abs(p.width - i.width) <= 3 && Math.abs(p.height - i.height) <= 3; });
+  check(covers && await page.$eval("[data-scores-date]", (i) => i.type) === "date", "a date box covers the day, so a tap opens the calendar");
+  await page.$eval("[data-scores-date]", (i, v) => { i.value = v; i.dispatchEvent(new Event("change", { bubbles: true })); }, "2026-12-25");
+  await page.waitForTimeout(150);
+  check(/Dec 25/.test(await page.textContent(".scores-date-pick")) && !!(await page.$(".scores-today")), "picking a date jumps to it, with Back to today");
+  await page.click(".scores-today");
+  await page.waitForTimeout(150);
 
   const sizes = await page.evaluate(() => [...document.querySelectorAll("#newsSidebarToggle, .scores-sq")].map((b) => { const r = b.getBoundingClientRect(); return `${Math.round(r.width)}x${Math.round(r.height)}`; }));
-  check(new Set(sizes).size === 1 && sizes.length === 3, `table and ★ are the ☰ button's squares (${sizes.join(", ")})`);
+  check(new Set(sizes).size === 1 && sizes.length === 4, `filter, table and ★ are the ☰ button's squares (${sizes.join(", ")})`);
 
   // ── An open game ──
   await page.click('[data-scores-game="mine|live-vik"]');
@@ -158,16 +207,40 @@ async function run(browser, { width, height }) {
     follow: el.querySelectorAll("[data-scores-follow]").length,
     links: [...el.querySelectorAll(".scores-textlink")].map((b) => b.textContent),
     gamePage: el.querySelector(".scores-link")?.textContent || "",
-    watch: [...el.querySelectorAll(".game-watch-btn")].map((b) => ({ t: b.textContent.trim(), phone: b.dataset.outPhoneWeb || "" })),
+    watch: [...el.querySelectorAll(".scores-watch-link")].map((b) => ({ t: b.textContent.trim(), phone: b.dataset.outPhoneWeb || "", h: b.getBoundingClientRect().height })),
+    buttons: el.querySelectorAll(".game-watch-btn, .game-watch-label").length,
+    box: [...el.querySelectorAll(".scores-box tbody tr")].map((r) => [...r.children].map((c) => c.textContent.trim()).join(" ")),
+    field: !!el.querySelector(".scores-field .fld-ball"),
+    ballX: Number(el.querySelector(".scores-field .fld-ball")?.getAttribute("cx")),
+    gainX: Number(el.querySelector(".scores-field .fld-gain")?.getAttribute("x1")),
+    sit: el.querySelector(".scores-sit")?.textContent.trim() || "",
+    last: el.querySelector(".scores-lastplay")?.textContent || "",
   }));
   check(open.follow === 0 && open.links.length === 0, "no Follow buttons, schedule or table links in an open game");
   check(open.gamePage === "Game page", `"Game page" has no arrow (${JSON.stringify(open.gamePage)})`);
   check(open.watch.length >= 2 && /Xfinity/.test(open.watch[0].t) && /apps\.apple\.com/.test(open.watch[0].phone), `Watch: ${open.watch.map((w) => w.t).join(" | ")}; Xfinity's phone fallback is the App Store`);
+  check(open.buttons === 0 && open.watch.every((w) => w.h < 28), `where to watch is text links, no "Watch" label (${open.watch.map((w) => Math.round(w.h)).join(", ")}px tall)`);
+  check(open.box.length === 2 && open.box[0] === "GB 0 7 0  7" && open.box[1] === "MIN 3 7 0  10", `box score by quarter, the 4th still blank (${open.box.join(" / ")})`);
+  // MIN 34 with Green Bay (away) driving right: 66 yards from the left goal line → x = 10 + 66; line to gain 7 further.
+  check(open.field && open.ballX === 76 && open.gainX === 83, `the field: ball on the MIN 34 (x ${open.ballX}), line to gain at the 27 (x ${open.gainX})`);
+  check(/GB ball · 2nd & 7 · at MIN 34/.test(open.sit) && /J\. Love pass/.test(open.last), `down, distance and last play (${open.sit})`);
   if (OUT) await page.screenshot({ path: `${OUT}/scores-game-${width}.png` });
   await page.click('[data-scores-game="mine|wild"]');
   await page.waitForTimeout(250);
-  const later = await page.$$eval(".scores-game.is-open .game-watch-btn", (els) => els.map((e) => e.textContent.trim()));
+  const later = await page.$$eval(".scores-game.is-open .scores-watch-link", (els) => els.map((e) => e.textContent.trim()));
   check(later.length >= 1, `a game three hours out still offers where to watch (${later.join(" | ")})`);
+
+  // ── A soccer game's goals ──
+  await page.click('.scores-tab[data-scores-ltab="eredivisie"]');
+  await page.click('[data-scores-game="eredivisie|ajax"]');
+  await page.waitForTimeout(200);
+  const goals = await page.$$eval(".scores-game.is-open .scores-events li", (els) => els.map((e) => [...e.children].map((c) => c.textContent.trim()).filter(Boolean).join(" ")));
+  check(goals.length === 3 && /23' B\. Brobbey AJA/.test(goals[0]) && /\(pen\) PSV/.test(goals[1]), `goals: ${goals.join(" | ")}`);
+  if (OUT) await page.screenshot({ path: `${OUT}/scores-soccer-${width}.png` });
+  await page.click('.scores-tab[data-scores-ltab="mine"]');
+  await page.waitForTimeout(150);
+  await page.click('[data-scores-game="mine|wild"]');
+  await page.waitForTimeout(200);
 
   // ── A team's schedule ──
   check(!(await page.$eval("#newsSidebarToggle", (b) => b.classList.contains("is-back"))), "☰ before any page is opened");
