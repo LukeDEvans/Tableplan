@@ -17,6 +17,7 @@
 // default loader (used in the browser) fetches a developer token from the Netlify
 // apple-music-token function, loads the MusicKit v3 script, and configures it.
 
+import { pageParams } from "./music-search-best.js";
 import {
   CAP, PLAYBACK_STATE, makeCanonicalTrack, makeCanonicalAlbum,
   makeNowPlaying, makeAuthStatus, makeSubscriptionStatus, makeProviderRef,
@@ -25,6 +26,8 @@ import {
 const PROVIDER_ID = "applemusic";
 const MUSICKIT_SRC = "https://js-cdn.music.apple.com/musickit/v3/musickit.js";
 const DEFAULT_TOKEN_ENDPOINT = "/.netlify/functions/apple-music-token";
+const ARTIST_PAGE = 25;      // albums / singles per page on an artist page
+const SONG_ALBUMS_PAGE = 10; // albums expanded per "All songs" page
 
 const str = (v, d = "") => (v == null ? d : String(v));
 
@@ -33,6 +36,8 @@ function appleArtwork(art, size = 400) {
   if (!art || !art.url) return null;
   return str(art.url).replace("{w}", size).replace("{h}", size).replace("{f}", "jpg");
 }
+
+const foldName = (v) => str(v).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 function msFromMinutes(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : null; }
 
@@ -281,12 +286,30 @@ export function createAppleMusicProvider(config = {}, deps = {}) {
     const sf = storefrontOf(music);
     const songsOnly = (list) => (list || []).filter((r) => r && (!r.type || r.type === "songs" || r.type === "library-songs")).map(songToTrack);
     if (kind === "artist") {
-      const [info, top] = await Promise.all([
-        music.api.music(`/v1/catalog/${sf}/artists/${id}`).catch(() => null),
-        music.api.music(`/v1/catalog/${sf}/artists/${id}/view/top-songs`, { limit: 20 }),
+      // Top songs, plus everything else the artist has (LISTEN_SEARCH_DESIGN.md
+      // §3.3): albums, singles & EPs, and "All songs" built from their albums a
+      // page at a time (getArtistMore). Each extra call is isolated: a failed
+      // view leaves that section empty, never the page.
+      const base = `/v1/catalog/${sf}/artists/${id}`;
+      const [info, top, full, singles] = await Promise.all([
+        music.api.music(base).catch(() => null),
+        music.api.music(`${base}/view/top-songs`, { limit: 20 }),
+        music.api.music(`${base}/view/full-albums`, { limit: ARTIST_PAGE }).catch(() => null),
+        music.api.music(`${base}/view/singles`, { limit: ARTIST_PAGE }).catch(() => null),
       ]);
       const ar = info && info.data && info.data.data && info.data.data[0];
-      return { album: ar ? artistToAlbum(ar) : null, tracks: songsOnly(top && top.data && top.data.data) };
+      const albumsOf = (res) => ((res && res.data && res.data.data) || []).map(albumToAlbum);
+      const nextOf = (res) => (res && res.data && res.data.next) || null;
+      return {
+        album: ar ? artistToAlbum(ar) : null,
+        tracks: songsOnly(top && top.data && top.data.data),
+        artistPage: {
+          artistName: (ar && ar.attributes && ar.attributes.name) || null,
+          albums: albumsOf(full), albumsNext: nextOf(full),
+          singles: albumsOf(singles), singlesNext: nextOf(singles),
+          songs: [], songsNext: `${base}/albums?limit=${SONG_ALBUMS_PAGE}`,
+        },
+      };
     }
     if (id.startsWith("l.") || id.startsWith("p.")) {
       const coll = id.startsWith("l.") ? "albums" : "playlists";
@@ -315,15 +338,56 @@ export function createAppleMusicProvider(config = {}, deps = {}) {
     async search(query, o = {}) {
       const music = await getInstance();
       const limit = Math.min(25, o.limit || 25);
-      const res = await music.api.music(`/v1/catalog/${storefrontOf(music)}/search`, { term: query, types: "songs,albums,artists,playlists", limit });
+      // `with: topResults` adds Apple's own ranking of what the term most likely
+      // means; its first hit is marked `bestMatch` for the Best result card
+      // (LISTEN_SEARCH_DESIGN.md §3.2). The list order stays songs-first.
+      const res = await music.api.music(`/v1/catalog/${storefrontOf(music)}/search`, { term: query, types: "songs,albums,artists,playlists", limit, with: "topResults" });
       const results = (res && res.data && res.data.results) || {};
       const pick = (k, fn) => ((results[k] && results[k].data) || []).map(fn);
-      return [
+      const items = [
         ...pick("songs", songToTrack),
         ...pick("albums", albumToAlbum),
         ...pick("artists", artistToAlbum),
         ...pick("playlists", playlistToAlbum),
       ];
+      const top = ((results.top && results.top.data) || []).map(resourceToItem).filter(Boolean)[0];
+      if (top) {
+        const hit = items.find((i) => i.id === top.id);
+        if (hit) hit.bestMatch = true;
+        else items.unshift({ ...top, bestMatch: true });
+      }
+      return items;
+    },
+
+    // The next page of an artist page section (LISTEN_SEARCH_DESIGN.md §3.3).
+    // "albums" / "singles": { items, next }. "songs": the songs of the next
+    // SONG_ALBUMS_PAGE albums, newest album first, only tracks credited to the
+    // artist (a compilation's other artists are left out): { tracks, next }.
+    async getArtistMore(section, next, o = {}) {
+      const music = await getInstance();
+      const req = pageParams(next);
+      if (!req) return section === "songs" ? { tracks: [], next: null } : { items: [], next: null };
+      const res = await music.api.music(req.path, req.params);
+      const list = (res && res.data && res.data.data) || [];
+      const nextLink = (res && res.data && res.data.next) || null;
+      if (section !== "songs") return { items: list.map(albumToAlbum), next: nextLink };
+      const ids = list.map((a) => a && a.id).filter(Boolean);
+      if (!ids.length) return { tracks: [], next: nextLink };
+      const sf = storefrontOf(music);
+      const full = await music.api.music(`/v1/catalog/${sf}/albums`, { ids: ids.join(","), include: "tracks" });
+      const albums = ((full && full.data && full.data.data) || []).slice()
+        .sort((a, b) => str(b.attributes && b.attributes.releaseDate).localeCompare(str(a.attributes && a.attributes.releaseDate)));
+      const who = foldName(o.artistName);
+      const tracks = [];
+      for (const al of albums) {
+        const songs = (al.relationships && al.relationships.tracks && al.relationships.tracks.data) || [];
+        for (const sng of songs) {
+          if (sng.type && sng.type !== "songs") continue;
+          if (who && !foldName(sng.attributes && sng.attributes.artistName).includes(who)) continue;
+          tracks.push(songToTrack(sng));
+        }
+      }
+      return { tracks, next: nextLink };
     },
 
     async getItem(albumOrRef, o = {}) {
@@ -332,7 +396,8 @@ export function createAppleMusicProvider(config = {}, deps = {}) {
       const kind = (albumOrRef && albumOrRef.kind) || "album";
       const out = await expand(music, kind, id);
       // Keep the caller's header item when the endpoint didn't return one.
-      return { album: out.album || (albumOrRef && albumOrRef.entity === "album" ? albumOrRef : null), tracks: out.tracks };
+      const album = out.album || (albumOrRef && albumOrRef.entity === "album" ? albumOrRef : null);
+      return out.artistPage ? { album, tracks: out.tracks, artistPage: out.artistPage } : { album, tracks: out.tracks };
     },
 
     // A saved Apple ref never becomes a URL (DRM) — it resolves to an "owned"
