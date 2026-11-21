@@ -39,7 +39,7 @@ Status: **Built on branch `claude/listen-one-search` (2026-11-20). Asked for by 
 
 ## 4. Checks
 
-- `test/music-search-best.test.js` (17): best pick and fallbacks, name matching, merge without repeats, `next` link parsing, the provider's `topResults` marking, artist page loading, isolated failures, album paging, All songs (order, the artist's own songs only, music videos left out), bad links.
+- `test/music-search-best.test.js` (16): best pick and fallbacks, name matching, merge without repeats, `next` link parsing, the provider's `topResults` marking, artist page loading, isolated failures, album paging, All songs (order, the artist's own songs only, music videos left out), bad links.
 - `test/music-playback-races.test.js` (+1): Back never returns to a half-loaded page.
 - `npm run qa:listen-search` (headless Chrome at 390, 360 and 1280 px, Apple Music faked in the page): Best result first and not repeated; the order below; Music's bars hidden while searching; your podcasts & books and the Find row; artist page Top songs / See all / albums More / singles; All songs to the last song with a repeat shown once; a failed page stops and Try again resumes; Back from album → artist → results; clearing returns to Podcasts; Discover has no bar, Saved keeps its filter; "Search all music" fills the top bar; no sideways scroll; no page errors.
 - Full suite, `npm run check:boot`, `qa:listen-grid`, `qa:listen-queue`, `qa:music-shows`.
