@@ -16,8 +16,11 @@
 // `updateNews` call. Newsletter briefings (savedArticles "news-*") are not shown
 // in News at all — they live only in Listen (Luke, 2026-10-16).
 //
-// Sports has two tabs: Scores (scores-ui.js, mounted here through the injected
-// `scores` interface) and Stories (the section's articles, as everywhere else).
+// Scores (scores-ui.js, mounted here through the injected `scores` interface) is a
+// section of its own, one swipe right of the Front page (Luke, 2026-11-20); Sports
+// holds only the sports stories, in its place among the sections. While Scores
+// has a page to go back to (a table, a team), the top-left button is ‹ Back in
+// place of the Saved list's ☰.
 //
 // For you (NEWS_RANKING_DESIGN.md): a view ranked by the person's interests,
 // shown once the server says it can (`forYou` in the newsFeed reply). The ⋯ menu
@@ -38,7 +41,6 @@ const KEEP_DAYS = 3;          // matches the server's FRESH_DAYS
 const LEAD_WINDOW_MS = 36 * 3_600_000;
 const SIGNIN_RECHECK_MS = DAY_MS;
 const DEVICE_AUTO_CHECK_MS = 6 * 3_600_000;
-const SPORTS_TAB_KEY = "live-news-sports-tab-v1"; // per device: "scores" | "stories"
 
 export const NEWS_SECTIONS = [
   { key: "world", label: "World" },
@@ -91,13 +93,15 @@ export function articlesForView(articles, view, query = "") {
 
 // The section header (Luke, 2026-11-20): one centered title pinned at the top of
 // News. A swipe on it (or a sideways trackpad swipe, or ←/→) steps through these
-// views in order; a tap opens them as a menu. The Front page opens by default and
-// a swipe left goes to Sports. For you, while it is a view of its own, sits one
-// swipe right of the Front page so it doesn't come between Sports and the rest.
-export function headerViews({ forYou = false } = {}) {
+// views in order; a tap opens them as a menu. The Front page opens by default;
+// Scores sits just left of it (a swipe right), and the sections, Sports among
+// them in its usual place, follow it. For you, while it is a view of its own,
+// sits left of Scores so Scores stays next to the Front page.
+export function headerViews({ forYou = false, scores = false } = {}) {
   const out = forYou ? [{ kind: "foryou" }] : [];
-  out.push({ kind: "front" }, { kind: "section", key: "sports" });
-  for (const s of NEWS_SECTIONS) if (s.key !== "sports") out.push({ kind: "section", key: s.key });
+  if (scores) out.push({ kind: "scores" });
+  out.push({ kind: "front" });
+  for (const s of NEWS_SECTIONS) out.push({ kind: "section", key: s.key });
   return out;
 }
 const sameView = (a, b) => !!a && !!b && a.kind === b.kind && (a.key || "") === (b.key || "");
@@ -116,6 +120,7 @@ export function swipeStep(dx, dy, minPx = 40) {
 }
 export function viewLabel(v) {
   if (v?.kind === "foryou") return "For you";
+  if (v?.kind === "scores") return "Scores";
   if (v?.kind === "section") return SECTION_LABEL[v.key] || "Section";
   if (v?.kind === "paper") return PAPER[v.key]?.label || "Paper";
   if (v?.kind === "learned") return "What News has learned";
@@ -435,10 +440,7 @@ export function createNewsModule(deps) {
   const skipsReported = new Set();  // skips already sent this app session
   let seenObserver = null;
   const seenTimers = new Map();
-  // Sports opens on Scores; the choice between Scores and Stories is remembered.
-  let sportsTab = "scores";
-  try { if (localStorage.getItem(SPORTS_TAB_KEY) === "stories") sportsTab = "stories"; } catch { /* private mode */ }
-  const onScores = () => !!scores && view.kind === "section" && view.key === "sports" && sportsTab === "scores";
+  const onScores = () => !!scores && view.kind === "scores";
   let sectionMenuOpen = false;  // the header's menu of sections
   let slideDir = 0;             // the header title's slide on the next render (+1 / -1)
   let suppressTapUntil = 0;     // a swipe on the header isn't also a tap on it
@@ -491,6 +493,7 @@ export function createNewsModule(deps) {
   // Load (or refresh) the current view's first page, or with `more` its next page.
   async function load(force = false, { more = false } = {}) {
     if (view.kind === "learned") { loadLearned(force); return; }
+    if (view.kind === "scores") return; // Scores reads its own data
     const key = viewKey();
     const page = pages.get(key);
     if (seeded) {
@@ -788,6 +791,29 @@ export function createNewsModule(deps) {
         <button type="button" class="news-side-close" data-news-side-close aria-label="Close saved articles">×</button></div>
       ${saved ? `<div class="news-saved-mount" id="newsSavedMount"></div>` : `<p class="news-empty news-side-empty">Saved articles aren't available here.</p>`}`;
   }
+  // The top-left button (Luke, 2026-11-20): ☰ opens the Saved list; while there's
+  // somewhere to go back to — a Scores table or team page, What News has learned —
+  // it's a square ‹ that goes back. Once there's nowhere left, ☰ returns.
+  const MENU_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>';
+  const BACK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>';
+  const backAvailable = () => view.kind === "learned" || (onScores() && !!scores.canGoBack?.());
+  function updateTopButton() {
+    const btn = $("newsSidebarToggle");
+    if (!btn) return;
+    const back = backAvailable();
+    if (btn.classList.contains("is-back") === back && btn.firstElementChild) return;
+    btn.classList.toggle("is-back", back);
+    btn.innerHTML = back ? BACK_ICON : MENU_ICON;
+    btn.title = back ? "Back" : "Saved articles";
+    btn.setAttribute("aria-label", back ? "Back" : "Saved articles");
+    if (back) btn.removeAttribute("aria-expanded"); else btn.setAttribute("aria-expanded", String(sidebarOpen()));
+  }
+  function goBack() {
+    if (view.kind === "learned") { setView({ kind: blendAvailable ? "front" : "foryou" }); return; }
+    if (onScores() && scores.canGoBack?.()) scores.goBack();
+    updateTopButton();
+  }
+
   function openSidebar() {
     const sb = $("newsSidebar");
     if (!sb) return;
@@ -871,7 +897,7 @@ export function createNewsModule(deps) {
         <button type="button" class="news-more news-learned-reset${armed ? " is-armed" : ""}" data-news-reset>${armed ? "Tap again to reset" : "Reset what News has learned"}</button>`;
     }
     return `<div class="news-scroll">
-      <div class="news-head"><button type="button" class="news-back" data-news-back aria-label="Back to ${blendAvailable ? "the Front page" : "For you"}">‹</button><h2 class="news-title">What News has learned</h2></div>
+      <div class="news-head"><h2 class="news-title">What News has learned</h2></div>
       <div class="news-head-sub">Remove anything that's off. Your favorite teams come from Scores.</div>
       ${body}
     </div>`;
@@ -890,15 +916,8 @@ export function createNewsModule(deps) {
     return `<div class="news-banner">News collects articles only from papers you're signed in to. ${how} <button class="news-banner-btn" type="button" data-news-signin>Open Sync Settings</button></div>`;
   }
 
-  function sportsTabsHtml() {
-    if (!scores) return "";
-    const unread = counts?.section?.sports || 0;
-    const tab = (key, label, extra = "") => `<button type="button" role="tab" class="news-tab${sportsTab === key ? " is-active" : ""}" data-news-sports-tab="${key}" aria-selected="${sportsTab === key}">${label}${extra}</button>`;
-    return `<div class="news-tabs" role="tablist" aria-label="Sports">${tab("scores", "Scores")}${tab("stories", "Stories", unread ? `<span class="news-tab-count">${unread}</span>` : "")}</div>`;
-  }
-
   // ── The section header ──
-  const headerList = () => headerViews({ forYou: forYouAvailable && !blendAvailable });
+  const headerList = () => headerViews({ forYou: forYouAvailable && !blendAvailable, scores: !!scores });
   function sectionMenuHtml() {
     const item = (v, label, extra = "") => {
       const cur = sameView(v, view);
@@ -945,10 +964,10 @@ export function createNewsModule(deps) {
   function renderContent() {
     const el = $("newsContent");
     if (!el) return;
-    // Sports → Scores is its own view: it doesn't wait on (or need) the stories.
+    updateTopButton();
+    // Scores doesn't wait on (or need) the stories.
     if (onScores()) {
-      el.innerHTML = `${sectionBarHtml()}<div class="news-scroll">
-        ${sportsTabsHtml()}
+      el.innerHTML = `${sectionBarHtml()}<div class="news-scroll news-scores-scroll">
         <div class="news-scores" id="newsScoresMount"></div>
       </div>`;
       scores.mount($("newsScoresMount"));
@@ -1003,7 +1022,6 @@ export function createNewsModule(deps) {
     }
     el.innerHTML = `${sectionBarHtml()}<div class="news-scroll">
       ${view.kind === "front" ? signInBanner() : ""}
-      ${view.kind === "section" && view.key === "sports" ? sportsTabsHtml() : ""}
       ${body}
     </div>`;
     placeOpenMenu();
@@ -1075,11 +1093,14 @@ export function createNewsModule(deps) {
     const page = $("newsMainPage");
     if (!page) return;
     wired = true;
-    // The menu button opens the Saved list over the page, on every screen size.
+    // The menu button opens the Saved list over the page, on every screen size —
+    // or, while it shows ‹, goes back.
     $("newsSidebarToggle")?.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (backAvailable()) { goBack(); return; }
       if (sidebarOpen()) closeSidebar(); else openSidebar();
     });
+    scores?.onNavChange?.(updateTopButton);
     wirePullToRefresh($("newsContent"), refreshAll);
     // Search runs on the server (titles across the whole window), debounced.
     // The Saved list, once it has been opened, filters on the device as well.
@@ -1179,17 +1200,9 @@ export function createNewsModule(deps) {
         if (e.target.closest("[data-news-section-btn]")) { setSectionMenu(!sectionMenuOpen); return; }
         return;
       }
-      const sportsTabBtn = e.target.closest("[data-news-sports-tab]");
-      if (sportsTabBtn) {
-        sportsTab = sportsTabBtn.dataset.newsSportsTab === "stories" ? "stories" : "scores";
-        try { localStorage.setItem(SPORTS_TAB_KEY, sportsTab); } catch { /* private mode */ }
-        renderContent();
-        return;
-      }
       if (e.target.closest("#newsScoresMount")) return; // the Scores view handles its own taps
       if (e.target.closest("[data-news-signin]")) { openSignInSettings?.(); return; }
       if (e.target.closest("[data-news-learned]")) { setView({ kind: "learned" }); return; }
-      if (e.target.closest("[data-news-back]")) { setView({ kind: blendAvailable ? "front" : "foryou" }); return; }
       const forget = e.target.closest("[data-news-forget]");
       if (forget) { editLearned({ forget: [forget.dataset.newsForget] }); return; }
       const unmute = e.target.closest("[data-news-unmute]");
@@ -1293,14 +1306,10 @@ export function createNewsModule(deps) {
     if (view.kind !== kind || view.key !== key) setView({ kind, key });
   }
 
-  // Sports → Scores (the dock ticker opens a game there). Call after enter().
+  // The Scores section (the dock ticker opens a game there). Call after enter().
   function showScores() {
     if (!scores) return;
-    if (sportsTab !== "scores") {
-      sportsTab = "scores";
-      try { localStorage.setItem(SPORTS_TAB_KEY, sportsTab); } catch { /* private mode */ }
-    }
-    if (view.kind !== "section" || view.key !== "sports") setView({ kind: "section", key: "sports" });
+    if (view.kind !== "scores") setView({ kind: "scores" });
     else renderContent();
   }
 

@@ -24858,31 +24858,56 @@ body[data-theme="dark"] .news-card { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
 .news-learned-x { flex-shrink: 0; width: 26px; height: 26px; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); font-size: 1rem; line-height: 1; cursor: pointer; }
 .news-learned-reset.is-armed { border-color: var(--tomato); color: var(--tomato); }
 
-/* Sports: Scores | Stories tabs */
-.news-tabs { display: flex; gap: 6px; }
-.news-tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 99px; padding: 6px 16px; font-size: 0.86rem; font-weight: 700; }
-.news-tab:hover { border-color: var(--accent); }
-.news-tab.is-active { background: var(--ink); border-color: var(--ink); color: var(--surface); }
-.news-tab-count { font-size: 0.72rem; font-variant-numeric: tabular-nums; opacity: 0.8; }
+/* News fills its window edge to edge (Luke, 2026-11-20): no margin inside the
+   border; the top bar and the stories keep their own padding. */
+#newsMainPage { padding: 0; }
+#newsMainPage .news-topbar { padding: 10px 12px 8px; }
+/* The top-left button turns into a square ‹ while there's a page to go back to. */
+#newsSidebarToggle.is-back svg { stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ══ Scores view (scores-ui.js, SPORTS_SCORES_DESIGN.md) ════════════════════
-   Lives in News → Sports. Game cards in a responsive grid (one column on a
-   phone); the day strip scrolls sideways inside itself, never the page. */
-.scores { display: flex; flex-direction: column; gap: 16px; min-width: 0; --scores-live: #c8321e; }
+   News's Scores section. Game cards in a responsive grid (one column on a
+   phone); the tab row and the day strip scroll sideways inside themselves,
+   never the page. */
+.scores { display: flex; flex-direction: column; gap: 14px; min-width: 0; --scores-live: #c8321e; }
 body[data-theme="dark"] .scores { --scores-live: #ff7a66; }
+.news-scores-scroll { padding-top: 0; }
+.news-scores-scroll .scores-tabs { margin-top: 4px; }
 
-.scores-bar { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
-.scores-days { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+/* League tabs (Luke, 2026-11-20): the Meal Plan's day tabs — plain labels, the
+   chosen one in the accent colour over a 2px underline, a hairline under the row. */
+.scores-tabs {
+  display: flex; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+}
+.scores-tabs::-webkit-scrollbar { display: none; }
+.scores-tab {
+  position: relative; flex: 1 0 auto; min-width: 52px; min-height: 44px; padding: 6px 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  background: none; color: var(--muted); font-size: 0.8rem; font-weight: 850; letter-spacing: 0.02em; white-space: nowrap;
+  cursor: pointer; transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.scores-tab:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.scores-tab.is-active { color: var(--accent-dark, var(--accent)); border-bottom-color: currentColor; }
+.scores-tab.has-live::after { content: ""; position: absolute; top: 9px; right: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--scores-live); }
+.scores-tab-star { display: inline-flex; }
+.scores-tab-star svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+.scores-tab.is-active .scores-tab-star svg { fill: currentColor; }
+
+/* The day strip is three days wide (yesterday · today · tomorrow by default) and
+   scrolls for the rest; the table and My teams buttons are the ☰ button's squares. */
+.scores-bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.scores-days { flex: 0 1 204px; width: 204px; min-width: 0; margin-right: auto; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; scroll-snap-type: x proximity; }
 .scores-days::-webkit-scrollbar { display: none; }
-.scores-day { flex: 1 0 58px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 4px; border: 1px solid transparent; border-radius: 10px; background: none; color: var(--muted); line-height: 1.15; }
+.scores-day { flex: 0 0 calc((100% - 8px) / 3); scroll-snap-align: center; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 4px; border: 1px solid transparent; border-radius: 10px; background: none; color: var(--muted); line-height: 1.15; }
+.scores-sq svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.scores-mine-btn svg { width: 19px; height: 19px; }
 .scores-day:hover { border-color: var(--line); }
 .scores-day-dow { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; }
 .scores-day-date { font-size: 0.84rem; font-weight: 700; color: var(--ink); white-space: nowrap; }
 .scores-day.is-selected { background: linear-gradient(160deg, var(--news-sports1), var(--news-sports2)); border-color: var(--line); color: var(--news-lead-ink); }
 .scores-day.is-selected .scores-day-date { color: var(--news-lead-ink); }
-.scores-nav { flex: 0 0 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 1.15rem; line-height: 1; padding: 0; }
-.scores-nav:hover { border-color: var(--accent); }
-.scores-nav svg { width: 17px; height: 17px; }
 .scores-today { align-self: flex-start; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 5px 14px; font-size: 0.8rem; font-weight: 700; margin-top: -6px; }
 .scores-note { border: 1px solid color-mix(in srgb, #c9902b 45%, transparent); background: color-mix(in srgb, #f1cc54 18%, var(--surface)); border-radius: 12px; padding: 8px 12px; font-size: 0.82rem; }
 
@@ -24905,6 +24930,9 @@ body[data-theme="dark"] .scores { --scores-live: #ff7a66; }
 .scores-side { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 0.94rem; font-weight: 600; }
 .scores-team { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 1; }
 .scores-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A team's name on a scorecard opens its schedule (Luke, 2026-11-20). */
+.scores-name.is-link { cursor: pointer; text-underline-offset: 2px; }
+.scores-name.is-link:hover { text-decoration: underline; color: var(--accent-dark, var(--accent)); }
 .scores-rank { font-size: 0.7rem; font-weight: 700; color: var(--muted); }
 .scores-rec { font-size: 0.72rem; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .scores-pts { min-width: 1.6em; text-align: right; font-size: 1rem; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -24928,11 +24956,6 @@ body[data-theme="dark"] .scores { --scores-live: #ff7a66; }
 .scores-detail { display: flex; flex-direction: column; gap: 8px; padding: 9px 12px 11px; border-top: 1px solid var(--line); }
 .scores-facts { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
 .scores-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.scores-follow { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 5px 11px; font-size: 0.78rem; font-weight: 700; }
-.scores-follow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.scores-follow svg { flex-shrink: 0; width: 13px; height: 13px; }
-.scores-follow.is-on { border-color: #d9a300; }
-.scores-follow.is-on svg { fill: #d9a300; stroke: #d9a300; }
 .scores-link { margin-left: auto; font-size: 0.78rem; font-weight: 700; color: var(--accent-dark, var(--accent)); text-decoration: none; white-space: nowrap; }
 .scores-link:hover { text-decoration: underline; }
 
@@ -24955,8 +24978,6 @@ body[data-theme="dark"] .scores { --scores-live: #ff7a66; }
 
 /* Pages inside Scores: Back + title */
 .scores-subbar { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.scores-back { flex-shrink: 0; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 5px 12px; font-size: 0.82rem; font-weight: 700; }
-.scores-back:hover { border-color: var(--accent); }
 .scores-subtitle { margin: 0; font-size: 1rem; font-weight: 800; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scores-league-select { flex: 1; min-width: 0; max-width: 340px; padding: 7px 10px; border-radius: 10px; font-size: 0.9rem; font-weight: 700; }
 
@@ -24988,7 +25009,14 @@ body[data-theme="dark"] .scores { --scores-live: #ff7a66; }
 }
 
 /* Team page */
-.scores-teamhead { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: linear-gradient(135deg, color-mix(in srgb, var(--tc, var(--news-sports1)) 26%, var(--surface)), var(--surface) 70%); }
+/* A team's card stays pinned at the top while its season scrolls (Luke,
+   2026-11-20); its star (top right) follows the team. Opaque, so rows pass under. */
+.scores-teamhead { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); background-image: linear-gradient(135deg, color-mix(in srgb, var(--tc, var(--news-sports1)) 26%, var(--surface)), var(--surface) 70%); box-shadow: 0 6px 14px -10px color-mix(in srgb, var(--ink) 40%, transparent); }
+.scores-teamhead-star { align-self: flex-start; margin: -4px -6px 0 auto; flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.scores-teamhead-star svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
+.scores-teamhead-star:hover { color: #d9a300; }
+.scores-teamhead-star.is-on { color: #d9a300; }
+.scores-teamhead-star.is-on svg { fill: currentColor; }
 .scores-teamhead .scores-logo, .scores-teamhead .scores-logo img { width: 48px; height: 48px; }
 .scores-teamhead .scores-logo.is-missing i { font-size: 0.9rem; }
 .scores-teamhead-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -25019,6 +25047,18 @@ button.scores-idle:hover { background: color-mix(in srgb, var(--ink) 5%, transpa
 
 /* Teams & leagues dialog */
 .scores-dialog-form { gap: 12px; }
+/* My teams window: one row per followed team (today's game, or next and last). */
+.scores-mine-list { display: flex; flex-direction: column; gap: 2px; }
+.scores-mine-list .scores-idle { width: 100%; padding: 8px 6px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; color: var(--ink); text-align: left; }
+.scores-mine-list .scores-idle:last-child { border-bottom: 0; }
+.scores-mine-list button.scores-idle:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.scores-mine-list .scores-idle-name { width: 34%; }
+.scores-mine-row.is-live .scores-idle-lines span { color: var(--scores-live, #c8321e); font-weight: 700; display: inline-flex; align-items: center; gap: 5px; }
+.scores-mine-dialog .dialog-actions { display: flex; flex-direction: row; flex-wrap: nowrap; justify-content: space-between; gap: 10px; }
+.scores-mine-dialog .scores-dialog-body { min-height: 0; }
+.scores-mine-list .scores-idle-lines span { white-space: normal; }
+.scores-mine-dialog { --scores-live: #c8321e; }
+body[data-theme="dark"] .scores-mine-dialog { --scores-live: #ff7a66; }
 .scores-dialog-body { display: flex; flex-direction: column; gap: 8px; min-height: 240px; max-height: min(58dvh, 520px); overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
 .scores-dialog-label { margin-top: 6px; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
 .scores-seg { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-strong); }
@@ -25044,10 +25084,7 @@ button.scores-idle:hover { background: color-mix(in srgb, var(--ink) 5%, transpa
 .scores-move svg { width: 16px; height: 16px; }
 .scores-move:disabled { opacity: 0.3; cursor: default; }
 @media (max-width: 560px) {
-  /* The strip scrolls by touch and tapping an end day re-centres it. */
-  .scores-nav[data-scores-shift] { display: none; }
-  .scores-day { flex-basis: 48px; }
-  .scores-day-date { font-size: 0.78rem; }
+  .scores-day-date { font-size: 0.8rem; }
 }
 @media (max-width: 420px) {
   .scores-rec { display: none; }
