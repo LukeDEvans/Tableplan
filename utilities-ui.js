@@ -39,15 +39,33 @@ export function bindUtilitiesMenu({ button, menu, capabilities = () => ({}), act
     menu.innerHTML = visibleUtilityItems(capabilities()).map((it) => `<button type="button" role="menuitem" data-util="${it.id}">${esc(it.label)}</button>`).join("");
   }
 
+  // Any press outside the button and the list closes it (Luke, 2026-11-20: opening
+  // Settings left it open). Listened for in the capture phase, so another control
+  // that stops its own click from bubbling (the Settings button does) still closes it.
+  const ownerDoc = button.ownerDocument || document;
+  function onOutside(e) {
+    if (menu.hidden) return;
+    const t = e.target;
+    if (t instanceof Node && (button.contains(t) || menu.contains(t))) return;
+    close();
+  }
+  function onKey(e) { if (e.key === "Escape" && !menu.hidden) { close(); button.focus?.(); } }
+
   function open() {
     closeOtherMenus();
     render();
     menu.hidden = false;
     button.setAttribute("aria-expanded", "true");
+    ownerDoc.addEventListener("pointerdown", onOutside, true);
+    ownerDoc.addEventListener("focusin", onOutside, true);
+    ownerDoc.addEventListener("keydown", onKey, true);
   }
   function close() {
     menu.hidden = true;
     button.setAttribute("aria-expanded", "false");
+    ownerDoc.removeEventListener("pointerdown", onOutside, true);
+    ownerDoc.removeEventListener("focusin", onOutside, true);
+    ownerDoc.removeEventListener("keydown", onKey, true);
   }
   const toggle = () => (menu.hidden ? open() : close());
 
