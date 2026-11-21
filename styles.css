@@ -16850,6 +16850,45 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
 }
 #mediaSidebar .article-sidebar-icon,
 #watchSidebar .article-sidebar-icon { width: 22px; height: 22px; }
+/* Watch list folder (Luke, 2026-11-20): its tabs nest under it like Mail's
+   subfolders. The chevron fills the row's 20px left indent, so "Watch list"
+   lines up with YouTube and Archive; tab names line up with the parent's label. */
+.watch-side-folder { display: flex; flex-direction: column; flex-shrink: 0; }
+.watch-side-folder-row { display: flex; align-items: center; }
+.watch-side-chevron {
+  flex: 0 0 20px; width: 20px; height: 48px; padding: 0; margin: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer; border-radius: 4px; color: var(--muted, #888);
+}
+.watch-side-chevron:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.watch-side-chevron svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; fill: none; transition: transform 0.15s; }
+.watch-side-chevron[aria-expanded="true"] svg { transform: rotate(90deg); }
+#watchSidebar .watch-side-folder-row .watch-side-parent { flex: 1; min-width: 0; padding-left: 0; }
+/* With the tabs hidden (folder closed), the parent carries the highlight. */
+.watch-side-folder:not(.is-open) .watch-side-parent.is-parent-active {
+  background: color-mix(in srgb, var(--accent, #92400E) 14%, transparent);
+  font-weight: 600;
+}
+.watch-side-children { display: flex; flex-direction: column; }
+.watch-side-children[hidden] { display: none; }
+#watchSidebar .watch-side-child {
+  padding-left: 56px; /* 20px indent + 22px icon + 14px gap: under "Watch list" */
+  min-height: 42px; padding-top: 9px; padding-bottom: 9px;
+  font-size: 1rem;
+}
+#watchSidebar .watch-side-add { color: var(--muted, #888); }
+#watchSidebar .watch-side-child.watch-drop-over,
+#watchSidebar .watch-side-child.sortable-dropzone-over { background: color-mix(in srgb, var(--accent, #92400E) 22%, transparent); }
+.watch-side-new-form { margin: 4px 12px 4px 50px; }
+.watch-side-new-input {
+  width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px;
+  font: inherit; font-size: 1rem; color: var(--ink);
+  background: var(--paper, #fff);
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent); border-radius: 8px;
+}
+.watch-side-new-input:focus { outline: none; border-color: var(--accent, #92400E); }
+/* The tab's name heads the list, since the tabs now sit in the menu. */
+.watch-list-heading { margin: 2px 0 8px; padding-inline: 6px; font-size: 1.15rem; font-weight: 700; color: var(--ink); flex-shrink: 0; }
 .article-sidebar-divider {
   height: 1px;
   background: color-mix(in srgb, var(--ink) 8%, transparent);
@@ -17205,14 +17244,22 @@ body:has(#watchMainPage:not([hidden])) #watchMainPage { flex: 1; min-height: 0; 
   :is(#mediaMainPage, #exploreMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:hover { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
 
   /* Rail state (not hovered): icons only, centered; hide text and headers. */
-  :is(#mediaMainPage, #exploreMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
-  :is(#mediaMainPage, #exploreMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
-  :is(#mediaMainPage, #exploreMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
-  :is(#mediaMainPage, #exploreMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
+  :is(#mediaMainPage, #exploreMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover):not(.is-editing) .article-sidebar-tab > span,
+  :is(#mediaMainPage, #exploreMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover):not(.is-editing) .article-sidebar-section-label,
+  :is(#mediaMainPage, #exploreMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover):not(.is-editing) .article-sidebar-divider { display: none; }
+  :is(#mediaMainPage, #exploreMainPage, #watchMainPage, #documentsMainPage) .article-sidebar:not(:hover):not(.is-editing) .article-sidebar-tab {
     padding-left: 0; padding-right: 0; margin-right: 0; width: 100%; justify-content: center; gap: 0; border-radius: 0;
   }
   /* Explore rail: keep each category's folder ICON visible (like Mail); hide the
      labels and the individual trip rows until the rail is hovered open. */
+  /* Watch rail: just the Watch list icon (highlighted on the list); the chevron
+     and tabs show when the rail opens. Typing a new tab holds it open. */
+  #watchMainPage .article-sidebar.is-editing { width: 220px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+  #watchMainPage .article-sidebar:not(:hover):not(.is-editing) .watch-side-chevron,
+  #watchMainPage .article-sidebar:not(:hover):not(.is-editing) .watch-side-children { display: none; }
+  #watchMainPage .article-sidebar:not(:hover):not(.is-editing) .watch-side-parent.is-parent-active {
+    background: color-mix(in srgb, var(--accent, #92400E) 14%, transparent);
+  }
   #exploreMainPage .article-sidebar:not(:hover) .explore-cat-label,
   #exploreMainPage .article-sidebar:not(:hover) .explore-sidebar-empty { display: none; }
   #exploreMainPage .article-sidebar:not(:hover) .explore-cat-head { justify-content: center; padding-left: 0; padding-right: 0; gap: 0; }

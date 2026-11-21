@@ -2922,11 +2922,21 @@ function bindEvents() {
     else sb.classList.toggle("is-collapsed");
   });
   document.getElementById("watchSidebar")?.addEventListener("click", (e) => {
+    if (e.target.closest("#watchCategoryInlineForm")) return; // typing a new tab's name
+    if (e.target.closest("[data-watch-side-toggle]")) { toggleWatchSideFolder(); return; }
+    if (e.target.closest("[data-watch-category-add]")) { startWatchNewTab(null); return; }
+    const cat = e.target.closest("[data-watch-category]");
+    if (cat) {
+      if (window.innerWidth <= 680) document.getElementById("watchSidebar")?.classList.remove("is-expanded");
+      selectWatchCategory(cat.dataset.watchCategory);
+      return;
+    }
     const tab = e.target.closest("[data-watch-side]");
     if (!tab) return;
     if (window.innerWidth <= 680) document.getElementById("watchSidebar")?.classList.remove("is-expanded");
     if (tab.dataset.watchSide === "archive") { openWatchArchive(); return; }
-    setWatchSideView(tab.dataset.watchSide === "youtube" ? "youtube" : "list");
+    if (tab.dataset.watchSide === "list") { selectWatchCategory("all"); return; }
+    setWatchSideView("youtube");
   });
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
@@ -24393,94 +24403,15 @@ function renderWatchPlanner() {
   const keepEpisodesHeight = Math.max(0, ...[...elements.watchPlannerGrid.querySelectorAll("[data-watch-eps]")].map((el) => el.offsetHeight));
   watchListScrollReset = false;
   elements.watchPlannerGrid.innerHTML = `
-    <div class="watch-category-bar">
-      <div class="watch-category-tabs" role="tablist" aria-label="Watch categories">
-        <button class="watch-category-tab${activeWatchCategory === "all" ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeWatchCategory === "all"}" data-watch-category="all">All</button>
-        <button class="watch-category-tab${activeWatchCategory === "__upcoming" ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeWatchCategory === "__upcoming"}" data-watch-category="__upcoming">Upcoming</button>
-        <button class="watch-category-tab${activeWatchCategory === "__in-theaters" ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeWatchCategory === "__in-theaters"}" data-watch-category="__in-theaters">In Theaters</button>
-        ${categories.map((c) => `
-          <button class="watch-category-tab${activeWatchCategory === c.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeWatchCategory === c.id}" data-watch-category="${escapeHtml(c.id)}">${escapeHtml(c.name)}</button>
-        `).join("")}
-        ${watchCategoryInputActive
-          ? `<form class="watch-category-new-form" id="watchCategoryInlineForm">
-               <input class="watch-category-new-input" id="watchCategoryInlineInput" type="text" placeholder="Tab name" autocomplete="off" maxlength="32" />
-             </form>`
-          : `<button class="watch-category-tab watch-category-add-tab" type="button" data-watch-category-add title="Add tab">+</button>`
-        }
-      </div>
-    </div>
+    <h2 class="watch-list-heading">${escapeHtml(watchCategoryLabel(activeWatchCategory))}</h2>
     <section class="day-column planner-day-panel do-backlog-panel watch-list-panel" aria-label="Watch List">
       <div class="do-board">
         ${watchListTemplate()}
       </div>
     </section>
   `;
-
-  elements.watchPlannerGrid.querySelectorAll("[data-watch-category]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      activeWatchCategory = btn.dataset.watchCategory;
-      watchCategoryInputActive = false;
-      expandedWatchItemId = null;
-      watchListScrollReset = true;
-      renderWatchPlanner();
-    });
-    btn.addEventListener("dragover", (e) => {
-      if (!e.dataTransfer.types.includes("application/watch-item-id")) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-      btn.classList.add("watch-drop-over");
-    });
-    btn.addEventListener("dragleave", () => btn.classList.remove("watch-drop-over"));
-    btn.addEventListener("drop", (e) => handleWatchCategoryDrop(e, btn.dataset.watchCategory));
-  });
-
-  const addTabBtn = elements.watchPlannerGrid.querySelector("[data-watch-category-add]");
-  if (addTabBtn) {
-    addTabBtn.addEventListener("click", () => {
-      watchCategoryInputActive = true;
-      renderWatchPlanner();
-      elements.watchPlannerGrid.querySelector("#watchCategoryInlineInput")?.focus();
-    });
-  }
-
-  const inlineForm = elements.watchPlannerGrid.querySelector("#watchCategoryInlineForm");
-  const inlineInput = elements.watchPlannerGrid.querySelector("#watchCategoryInlineInput");
-  if (inlineForm && inlineInput) {
-    inlineInput.focus();
-    inlineForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const name = inlineInput.value.trim();
-      if (name) {
-        if (!state.watchSettings) state.watchSettings = { theaters: [], categories: [] };
-        if (!state.watchSettings.categories) state.watchSettings.categories = [];
-        const newCat = { id: createId("wcat"), name };
-        state.watchSettings.categories.push(newCat);
-        activeWatchCategory = newCat.id;
-        // "New tab…" from a show's Tabs popover files that show under it.
-        const forItem = watchNewTabFor && watchItemById(watchNewTabFor);
-        if (forItem) stampTab(forItem, newCat.id, true);
-        persist();
-      }
-      watchNewTabFor = null;
-      watchCategoryInputActive = false;
-      renderWatchPlanner();
-    });
-    inlineInput.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        watchCategoryInputActive = false;
-        watchNewTabFor = null;
-        renderWatchPlanner();
-      }
-    });
-    inlineInput.addEventListener("blur", () => {
-      setTimeout(() => {
-        if (!watchCategoryInputActive) return; // already submitted or cancelled
-        watchCategoryInputActive = false;
-        watchNewTabFor = null;
-        renderWatchPlanner();
-      }, 120);
-    });
-  }
+  // The tabs live in the Watch menu, nested under Watch list (Luke, 2026-11-20).
+  renderWatchSideTabs();
 
   // Shows are added from the page's search bar (the "+" was removed, Luke 2026-10-29).
   elements.watchPlannerGrid.querySelectorAll("[data-watch-focus-search]")
@@ -24518,6 +24449,143 @@ function renderWatchPlanner() {
   if (open) { ensureWatchNextSeasonLoaded(open); ensureWatchShownSeasonRuntimes(open); }
   // Week-old where-to-watch / season counts refresh, the open show first.
   if (!localDevMode || window.__liveQA?.watchRefreshInDev) refreshStaleWatchShows([open, ...watchVisibleItems()].filter(Boolean));
+}
+
+// ── Watch list tabs in the Watch menu (Luke, 2026-11-20) ──────────────────────
+// All / Upcoming / In Theaters and his own tabs nest under "Watch list" in the
+// three-bar menu, like Mail's subfolders under their parent. The folder's
+// open/closed state is this device's preference, never synced.
+const WATCH_SYSTEM_TABS = [["all", "All"], ["__upcoming", "Upcoming"], ["__in-theaters", "In Theaters"]];
+function watchCategoryLabel(id) {
+  const sys = WATCH_SYSTEM_TABS.find(([k]) => k === id);
+  if (sys) return sys[1];
+  return (state.watchSettings?.categories || []).find((c) => c.id === id)?.name || "All";
+}
+function watchSideFolderOpen() {
+  try { return localStorage.getItem("watchSideListOpen") !== "0"; } catch { return true; }
+}
+function toggleWatchSideFolder(force) {
+  const open = typeof force === "boolean" ? force : !watchSideFolderOpen();
+  try { localStorage.setItem("watchSideListOpen", open ? "1" : "0"); } catch { /* storage off: still toggles for now */ }
+  renderWatchSideTabs(open);
+}
+function selectWatchCategory(id) {
+  const changed = activeWatchCategory !== id;
+  activeWatchCategory = id;
+  watchCategoryInputActive = false;
+  watchNewTabFor = null;
+  if (changed) { expandedWatchItemId = null; watchListScrollReset = true; }
+  const input = document.getElementById("discoverSearchInput");
+  if (watchSideView !== "list" || input?.value) setWatchSideView("list"); // clears search, shows the list
+  else renderWatchPlanner();
+}
+// "New tab" — from the menu's own row, or "New tab…" in a show's Tabs popover
+// (itemId files that show under the new tab). Opens the menu so the box shows.
+let watchNewTabOpenedMenu = null; // "expanded" | "uncollapsed" — undone if the new tab is cancelled
+function startWatchNewTab(itemId) {
+  watchCategoryInputActive = true;
+  watchNewTabFor = itemId || null;
+  watchNewTabOpenedMenu = null;
+  const sb = document.getElementById("watchSidebar");
+  if (sb) {
+    if (window.innerWidth <= 680) {
+      if (!sb.classList.contains("is-expanded")) { sb.classList.add("is-expanded"); watchNewTabOpenedMenu = "expanded"; }
+    } else if (sb.classList.contains("is-collapsed")) { sb.classList.remove("is-collapsed"); watchNewTabOpenedMenu = "uncollapsed"; }
+  }
+  try { localStorage.setItem("watchSideListOpen", "1"); } catch { /* fine */ }
+  renderWatchSideTabs(true);
+}
+function endWatchNewTab() {
+  watchCategoryInputActive = false;
+  watchNewTabFor = null;
+  const sb = document.getElementById("watchSidebar");
+  if (watchNewTabOpenedMenu === "expanded") sb?.classList.remove("is-expanded");
+  if (watchNewTabOpenedMenu === "uncollapsed") sb?.classList.add("is-collapsed");
+  watchNewTabOpenedMenu = null;
+  renderWatchSideTabs();
+}
+function renderWatchSideTabs(openOverride) {
+  const folder = document.getElementById("watchSideFolder");
+  const box = document.getElementById("watchSideChildren");
+  if (!folder || !box) return;
+  const open = typeof openOverride === "boolean" ? openOverride : watchSideFolderOpen();
+  const onList = watchSideView === "list";
+  folder.classList.toggle("is-open", open);
+  const chev = folder.querySelector("[data-watch-side-toggle]");
+  if (chev) {
+    chev.setAttribute("aria-expanded", String(open));
+    chev.setAttribute("aria-label", `${open ? "Collapse" : "Expand"} Watch list tabs`);
+  }
+  const parent = folder.querySelector('[data-watch-side="list"]');
+  parent?.classList.toggle("is-parent-active", onList);
+  if (onList && !open) parent?.setAttribute("aria-current", "true"); else parent?.removeAttribute("aria-current");
+  document.getElementById("watchSidebar")?.classList.toggle("is-editing", watchCategoryInputActive);
+
+  const typed = box.querySelector("#watchCategoryInlineInput")?.value || ""; // survive a redraw mid-typing
+  const cats = state.watchSettings?.categories || [];
+  const row = (id, name) => {
+    const on = onList && activeWatchCategory === id;
+    return `<button class="article-sidebar-tab watch-side-child${on ? " is-active" : ""}" type="button" data-watch-category="${escapeHtml(id)}"${on ? ' aria-current="true"' : ""}><span>${escapeHtml(name)}</span></button>`;
+  };
+  box.hidden = !open;
+  box.innerHTML = !open ? "" : [
+    ...WATCH_SYSTEM_TABS.map(([id, name]) => row(id, name)),
+    ...cats.map((c) => row(c.id, c.name)),
+    watchCategoryInputActive
+      ? `<form class="watch-side-new-form" id="watchCategoryInlineForm"><input class="watch-side-new-input" id="watchCategoryInlineInput" type="text" placeholder="Tab name" autocomplete="off" maxlength="32" aria-label="New tab name" /></form>`
+      : `<button class="article-sidebar-tab watch-side-child watch-side-add" type="button" data-watch-category-add><span>+ New tab</span></button>`,
+  ].join("");
+
+  // Drag a show onto a tab to file it there (desktop HTML5 drag; the shared
+  // sortable finds these rows by [data-watch-category] anywhere on the page).
+  box.querySelectorAll("[data-watch-category]").forEach((btn) => {
+    btn.addEventListener("dragover", (e) => {
+      if (!e.dataTransfer.types.includes("application/watch-item-id")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      btn.classList.add("watch-drop-over");
+    });
+    btn.addEventListener("dragleave", () => btn.classList.remove("watch-drop-over"));
+    btn.addEventListener("drop", (e) => handleWatchCategoryDrop(e, btn.dataset.watchCategory));
+  });
+
+  const form = box.querySelector("#watchCategoryInlineForm");
+  const input = box.querySelector("#watchCategoryInlineInput");
+  if (!form || !input) return;
+  input.value = typed;
+  input.focus();
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const name = input.value.trim();
+    const forId = watchNewTabFor;
+    watchCategoryInputActive = false;
+    watchNewTabFor = null;
+    if (name) {
+      if (!state.watchSettings) state.watchSettings = { theaters: [], categories: [] };
+      if (!state.watchSettings.categories) state.watchSettings.categories = [];
+      const newCat = { id: createId("wcat"), name };
+      state.watchSettings.categories.push(newCat);
+      // "New tab…" from a show's Tabs popover files that show under it.
+      const forItem = forId && watchItemById(forId);
+      if (forItem) stampTab(forItem, newCat.id, true);
+      persist();
+      // Like picking a tab: the phone's menu closes onto the new tab.
+      if (window.innerWidth <= 680) document.getElementById("watchSidebar")?.classList.remove("is-expanded");
+      watchNewTabOpenedMenu = null;
+      selectWatchCategory(newCat.id);
+      return;
+    }
+    endWatchNewTab(); // empty name: same as cancelling
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); endWatchNewTab(); }
+  });
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      const live = document.getElementById("watchCategoryInlineInput");
+      if (watchCategoryInputActive && (!live || document.activeElement !== live)) endWatchNewTab();
+    }, 120);
+  });
 }
 
 function watchDayTabTemplate(day, isActive) {
@@ -25130,10 +25198,7 @@ function openWatchTabsMenu(btn, itemId, { alignRight = false } = {}) {
     }
     if (e.target.closest("[data-watch-tab-new]")) {
       closeFolderMenu();
-      watchCategoryInputActive = true;
-      watchNewTabFor = itemId;
-      renderWatchPlanner();
-      elements.watchPlannerGrid?.querySelector("#watchCategoryInlineInput")?.focus();
+      startWatchNewTab(itemId); // the new-tab box is in the Watch menu now
     }
   });
   document.body.append(menu);
@@ -31921,7 +31986,7 @@ function showWatchList() {
 // the in-app player. Which page is showing is this device's view, never saved.
 let watchSideView = "list"; // "list" | "youtube"
 function markWatchSide() {
-  document.querySelectorAll("#watchSidebar [data-watch-side]").forEach((b) => {
+  document.querySelectorAll("#watchSidebar [data-watch-side]:not(.watch-side-parent)").forEach((b) => {
     const on = b.dataset.watchSide === watchSideView;
     b.classList.toggle("is-active", on);
     if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
@@ -31934,6 +31999,7 @@ function markWatchSide() {
   document.getElementById("discoverResults")?.classList.toggle("is-youtube", watchSideView === "youtube");
   const filter = document.querySelector("#watchPagePanel .discover-filter");
   if (filter) filter.hidden = watchSideView === "youtube"; // the filter picks media types; YouTube is one
+  renderWatchSideTabs(); // Watch list's tabs: highlight follows the page shown
 }
 function setWatchSideView(view) {
   watchSideView = view;
