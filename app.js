@@ -13,6 +13,7 @@ import * as LiveFoodHealthChecklists from './food-health-checklists.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
 import { isFridayBeforeLastMeal } from './meal-plan-time.js';
 import { categoriesFor, categoryById, resolveGenreId, filterSavedLibrary, filterTracks, textMatches, entityText, greetingFor } from './music-discover.js';
+import { pickBestMusicResult, mergeArtistSongs } from './music-search-best.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
 import { ocrRowsFromObservations } from './receipt-reconcile.js';
 import * as NutritionDomain from './nutrition-domain.js';
@@ -4210,6 +4211,17 @@ function setupDiagnostics() {
       if (Array.isArray(podcasts)) state.podcasts = podcasts;
       if (Array.isArray(books)) state.readingItems = books;
       persist();
+      return true;
+    },
+    // Listen search (scripts/qa-listen-search.mjs, LISTEN_SEARCH_DESIGN.md): swap in
+    // an Apple Music provider driven by a fake MusicKit instance built in the page,
+    // so the search and artist pages run without Apple. Local dev only.
+    musicAppleFakeForQa: async (instance) => {
+      if (!localDevMode || !instance) return null;
+      const [stream, am] = await Promise.all([import("./music-streaming.js"), import("./music-provider-applemusic.js")]);
+      musicStreamMod = stream;
+      musicProviderRegistry = stream.createMusicProviderRegistry([am.createAppleMusicProvider({ storefront: "us" }, { getInstance: async () => instance })]);
+      musicItemCache.clear();
       return true;
     },
     // One Listen queue per person (scripts/qa-listen-queue.mjs, LISTEN_QUEUE_DESIGN.md):
@@ -31697,11 +31709,17 @@ function wireMediaTabs() {
     if (window.innerWidth <= 680) sidebar.classList.toggle("is-expanded");
     else sidebar.classList.toggle("is-collapsed");
   });
+  // The one Listen search (LISTEN_SEARCH_DESIGN.md §3.1): music from the
+  // catalog first, then your podcasts and books, then podcasts and radio online.
   const mediaSearchInput = document.getElementById("mediaSearchInput");
   mediaSearchInput?.addEventListener("input", () => {
     mediaSearchQuery = mediaSearchInput.value.trim();
-    if (mediaSearchQuery) renderMediaSearchResults();
+    if (mediaSearchQuery) runListenSearch(mediaSearchQuery);
     else exitMediaSearch();
+  });
+  mediaSearchInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && mediaSearchQuery) { e.preventDefault(); runListenSearch(mediaSearchQuery, { now: true }); mediaSearchInput.blur(); }
+    if (e.key === "Escape" && mediaSearchInput.value) { e.preventDefault(); mediaSearchInput.value = ""; mediaSearchQuery = ""; exitMediaSearch(); }
   });
   // Listen bell: music shows (AMPLIFIER_DESIGN.md).
   document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => musicShows.openPanel());
@@ -31835,13 +31853,12 @@ function switchMediaTab(tab) {
   if (allPanel) allPanel.hidden = true;
   if (musicPanel) musicPanel.hidden = true;
   if (radioPanel) radioPanel.hidden = true;
-  const searchPanel = document.getElementById("mediaSearchPanel");
-  if (searchPanel) searchPanel.hidden = true;
   // Leaving to a folder clears an active top-bar search.
-  if (mediaSearchQuery) {
+  if (mediaSearchQuery || listenSearchActive) {
     mediaSearchQuery = "";
     const si = document.getElementById("mediaSearchInput");
     if (si) si.value = "";
+    endListenSearch();
   }
 
   if (tab === "queue") {
@@ -32273,7 +32290,6 @@ const WATCH_SCOPE_KEY = "live_watch_search_scope";
 // Search is split per page (MEDIA_SPLIT_DESIGN.md, decision 5): Watch searches
 // films, shows and videos; Listen's top bar searches podcasts, music and radio.
 const WATCH_PAGE_SEARCH_TYPES = ["movtv", "video"];
-const LISTEN_PAGE_SEARCH_TYPES = ["music", "podcast", "radio"];
 function watchPageScopeTypes() {
   return getWatchSearchScope().types.filter((k) => WATCH_PAGE_SEARCH_TYPES.includes(k));
 }
@@ -32819,6 +32835,15 @@ let musicOpenToken = 0;        // guards openMusicItem against out-of-order getI
 let musicOpenItem = null;      // { album, tracks } expanded from a result
 let musicOpenItemLoading = false;
 const musicItemCache = new Map(); // albumId → { album, tracks } (metadata cache)
+// Items opened from inside another (an album from an artist page) — Back returns
+// to the one before instead of the results (LISTEN_SEARCH_DESIGN.md §3.3).
+let musicOpenStack = [];
+let musicArtistTopAll = false;     // the artist page's "See all" on Top songs
+const musicArtistLoading = new Set(); // artist page sections loading a page ("albums" | "singles" | "songs")
+// Listen's top search bar is the one search (LISTEN_SEARCH_DESIGN.md §3.1): while
+// it holds text, the Music panel shows its results (catalog first, then your
+// podcasts and books) whatever tab is open.
+let listenSearchActive = false;
 
 function initPodcastPanel() {
   wirePodcastPanel();
@@ -32958,23 +32983,74 @@ function renderActiveMediaView() {
   else if (tab === "podcasts") switchPodcastTab(activePodcastTab); // re-dispatch the active podcast sub-tab
 }
 
-// ── Media top-bar search: podcasts + books (articles are searched in News) ─────
+// ── Listen's top search bar (LISTEN_SEARCH_DESIGN.md §3.1) ─────────────────────
+// While it holds text, the Music panel shows the search: the catalog's results
+// (Best result, Songs, Artists, Albums, Playlists — the same rendering Music
+// used) in its body, then #listenSearchExtra with your own podcasts and books
+// and the "Find podcasts and radio" row. Clearing it returns to the tab you
+// were on. Articles are searched in News.
+const LISTEN_FIND_TYPES = ["podcast", "radio"]; // music is already searched above
+function runListenSearch(q, { now = false } = {}) {
+  const panel = document.getElementById("mediaMusicPanel");
+  if (!panel) return;
+  const starting = !listenSearchActive;
+  listenSearchActive = true;
+  if (starting) {
+    ["articleBooksPanel", "mediaPodcastsPanel", "mediaAllPanel", "mediaRadioPanel"]
+      .forEach((id) => { const el = document.getElementById(id); if (el) el.hidden = true; });
+    musicOpenItem = null;
+    musicOpenStack = [];
+    panel.hidden = false;
+    panel.classList.add("is-listen-search");
+    initMusicPanel(); // wires the panel the first time; renders through musicModeBodyHtml
+  } else if (musicOpenItem) {
+    // Typing again from an artist or album page goes back to the results.
+    musicOpenItem = null;
+    musicOpenStack = [];
+  }
+  renderListenSearchExtra(q);
+  updateMusicBody();
+  Promise.all([getMusicCanon(), getMusicProviders()]).then(() => {
+    if (!listenSearchActive || mediaSearchQuery !== q) return;
+    if (now) { clearTimeout(musicSearchDebounce); doMusicSearch(q); }
+    else queueMusicSearch(q);
+  }).catch((e) => { console.warn("music search load failed", e); updateMusicBody(); });
+}
+function endListenSearch() {
+  if (!listenSearchActive) return;
+  listenSearchActive = false;
+  clearTimeout(musicSearchDebounce);
+  musicSearchToken++; // a search still in flight is dropped
+  musicSearchQuery = "";
+  musicSearchResults = null;
+  musicSearchLoading = false;
+  musicOpenToken++;
+  musicOpenItem = null;
+  musicOpenStack = [];
+  const panel = document.getElementById("mediaMusicPanel");
+  panel?.classList.remove("is-listen-search");
+  const extra = document.getElementById("listenSearchExtra");
+  if (extra) { extra.hidden = true; extra.innerHTML = ""; }
+}
 function exitMediaSearch() {
-  const panel = document.getElementById("mediaSearchPanel");
-  if (panel) panel.hidden = true;
+  endListenSearch();
   switchMediaTab(activeMediaTab); // restore the active folder's panel
 }
-function renderMediaSearchResults() {
-  const listEl = document.getElementById("mediaSearchList");
-  const panel = document.getElementById("mediaSearchPanel");
-  if (!listEl || !panel) return;
-  // Show only the search panel.
-  ["articleBooksPanel", "mediaPodcastsPanel", "mediaAllPanel", "mediaMusicPanel", "mediaRadioPanel"]
-    .forEach((id) => { const el = document.getElementById(id); if (el) el.hidden = true; });
-  panel.hidden = false;
+// Search box text from elsewhere (Music's "Search all music for …", a favourite
+// work, a free-source category) goes into the one bar.
+function setListenSearchText(q) {
+  const input = document.getElementById("mediaSearchInput");
+  if (!input) return;
+  input.value = String(q || "").trim();
+  input.dispatchEvent(new Event("input", { bubbles: true })); // runs the search and shows the clear "x"
+  document.getElementById("mediaMainPage")?.scrollTo?.({ top: 0 });
+}
 
-  const q = mediaSearchQuery.toLowerCase();
-  const results = []; // { type, id, title, sub, art, icon }
+// Your podcast episodes and books whose title (or show / author) matches.
+function listenLibraryMatches(query) {
+  const q = String(query || "").toLowerCase();
+  const results = [];
+  if (!q) return results;
   for (const show of (state.podcasts || [])) {
     for (const ep of (show.episodes || [])) {
       if ((ep.title || "").toLowerCase().includes(q) || (show.title || "").toLowerCase().includes(q)) {
@@ -32988,16 +33064,16 @@ function renderMediaSearchResults() {
       results.push({ type: "book", id: b.id, title: b.title || "Book", sub: authors || "Book", art: b.cover || "", icon: "📚", date: b.createdAt });
     }
   }
-  results.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-
-  if (!results.length) {
-    listEl.innerHTML = `<div class="article-empty"><p>No media in your library matches “${escapeHtml(mediaSearchQuery)}”.</p></div>` +
-      topSearchDiscoverRowHtml(mediaSearchQuery);
-    wireTopSearchDiscoverRow(listEl, mediaSearchQuery);
-    return;
-  }
-  const TYPE_LABEL = { podcast: "Podcast", article: "Article", book: "Book" };
-  listEl.innerHTML = topSearchDiscoverRowHtml(mediaSearchQuery) + results.slice(0, 80).map((r) => `
+  return results.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+}
+// Drawn only when the query changes (not on every playback re-render), so the
+// "Find podcasts and radio" results it may hold aren't wiped while you look.
+function renderListenSearchExtra(query) {
+  const extra = document.getElementById("listenSearchExtra");
+  if (!extra) return;
+  const results = listenLibraryMatches(query);
+  const TYPE_LABEL = { podcast: "Podcast", book: "Book" };
+  const rows = results.slice(0, 40).map((r) => `
     <div class="article-row" data-media-search-type="${r.type}" data-media-search-id="${escapeHtml(r.id)}" role="button" tabindex="0">
       ${mediaRowArt(r.art, r.icon)}
       <div class="article-row-main">
@@ -33008,38 +33084,25 @@ function renderMediaSearchResults() {
         </div>
       </div>
     </div>`).join("");
-  listEl.querySelectorAll("[data-media-search-id]").forEach((row) => {
-    const open = () => {
-      const id = row.dataset.mediaSearchId;
-      if (row.dataset.mediaSearchType === "podcast") openPodcastEpisode(id);
-      else if (row.dataset.mediaSearchType === "article") openArticle(id, "mediaSearchList");
-      else if (row.dataset.mediaSearchType === "book") openMediaAllBook(id);
-    };
-    row.addEventListener("click", open);
-    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
-  });
-  wireTopSearchDiscoverRow(listEl, mediaSearchQuery);
-}
-
-// Bridge the fast local library search to universal Discover search: the top-bar
-// filters your OWN podcasts/articles/books; this row runs the same query across
-// every service in Discover. One query, two reaches — no duplicate search box.
-function topSearchDiscoverRowHtml(q) {
-  return `<button class="media-search-discover-row" type="button" data-discover-q="${escapeHtml(q)}">` +
+  extra.innerHTML = (rows ? `<h4 class="music-section-h">Your podcasts &amp; books</h4><div class="article-list">${rows}</div>` : "") +
+    `<button class="media-search-discover-row" type="button" data-discover-q="${escapeHtml(query)}">` +
     `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>` +
-    `<span>Find podcasts, music and radio for “${escapeHtml(q)}”</span></button>` +
+    `<span>Find podcasts and radio for “${escapeHtml(query)}”</span></button>` +
     `<div class="discover-results listen-discover-results" id="mediaDiscoverResults" hidden></div>`;
+  extra.hidden = !!musicOpenItem;
 }
-// The row searches online audio right here in Listen (search is split per page);
+function openListenLibraryMatch(type, id) {
+  if (type === "podcast") openPodcastEpisode(id);
+  else if (type === "book") openMediaAllBook(id);
+}
+// Podcasts and radio online, right here in Listen (search is split per page);
 // films and shows are the Watch page's own search.
-function wireTopSearchDiscoverRow(listEl, q) {
-  const row = listEl.querySelector(".media-search-discover-row");
-  row?.addEventListener("click", () => {
-    row.hidden = true;
-    const results = document.getElementById("mediaDiscoverResults");
-    if (results) { results.hidden = false; results.innerHTML = `<p class="discover-hint">Searching…</p>`; }
-    runDiscoverSearch(q, { resultsId: "mediaDiscoverResults", types: LISTEN_PAGE_SEARCH_TYPES });
-  });
+function runListenFindRow(row) {
+  const q = row.dataset.discoverQ || "";
+  row.hidden = true;
+  const results = document.getElementById("mediaDiscoverResults");
+  if (results) { results.hidden = false; results.innerHTML = `<p class="discover-hint">Searching…</p>`; }
+  runDiscoverSearch(q, { resultsId: "mediaDiscoverResults", types: LISTEN_FIND_TYPES });
 }
 // Universal Watch search for `q` (mediaApi.open).
 function goToDiscoverSearch(q) {
@@ -37078,9 +37141,28 @@ function initMusicPanel() {
       const workSearch = e.target.closest("[data-work-search]"); if (workSearch) { searchAllMusic(workSearch.dataset.workSearch); return; }
 
       // ── Discover actions ──
-      if (e.target.closest("[data-music-back]")) { closeMusicItem(); return; }
+      if (e.target.closest("[data-music-back]")) { closeMusicItem(); panel.scrollIntoView({ block: "start" }); return; }
       if (e.target.closest("[data-music-cat-back]")) { musicDiscoverCategory = null; updateMusicBody(); return; }
       if (e.target.closest("[data-music-am-signin]")) { signInAppleMusicFromDiscover(); return; }
+      const artistMore = e.target.closest("[data-artist-more]");
+      if (artistMore) { loadMoreArtist(artistMore.dataset.artistMore); return; }
+      if (e.target.closest("[data-artist-top-all]")) { musicArtistTopAll = !musicArtistTopAll; updateDiscoverResults(); return; }
+      if (e.target.closest("[data-artist-play-top]")) { const t = musicOpenItem?.tracks || []; if (t.length) playStreamingTrack(t[0], t.slice(1)); return; }
+      const bestPlay = e.target.closest("[data-best-play]");
+      if (bestPlay) {
+        e.stopPropagation();
+        const it = musicViewIndex.get(bestPlay.dataset.bestPlay);
+        if (!it) return;
+        if (it.entity === "track") playStreamingTrack(it, []);
+        else if (it.kind === "artist") playArtistTopSongs(it);
+        else queuedMusicItems({ kind: "album", item: it }).then((items) => { const t = items.map((x) => x.track).filter(Boolean); if (t.length) playStreamingTrack(t[0], t.slice(1)); }).catch((err) => console.warn("best play failed", err));
+        return;
+      }
+      // Your podcasts and books, and "Find podcasts and radio", under the search.
+      const libRow = e.target.closest("[data-media-search-id]");
+      if (libRow) { openListenLibraryMatch(libRow.dataset.mediaSearchType, libRow.dataset.mediaSearchId); return; }
+      const findRow = e.target.closest(".media-search-discover-row");
+      if (findRow) { runListenFindRow(findRow); return; }
       const browse = e.target.closest("[data-music-browse]");
       if (browse) { openMusicCategory(browse.dataset.musicBrowse); return; }
       const replay = e.target.closest("[data-music-replay]");
@@ -37099,7 +37181,10 @@ function initMusicPanel() {
         const id = streamRow.dataset.streamPlay;
         if (musicCurTrack && musicCurTrack.id === id && (musicAudio || musicPlaybackProvider)) { toggleMusicPlayPause(); return; }
         const t = musicViewIndex.get(id);
-        const rest = (musicOpenItem?.tracks || []).slice((musicOpenItem?.tracks || []).findIndex((x) => x.id === id) + 1);
+        // The rest of the list the row is in queues up: an artist page's All songs
+        // (as loaded) or its Top songs; otherwise the open album / playlist.
+        const from = streamRow.dataset.streamList === "all" ? (musicOpenItem?.artistPage?.songs || []) : (musicOpenItem?.tracks || []);
+        const rest = from.slice(from.findIndex((x) => x.id === id) + 1);
         if (t) playStreamingTrack(t, rest);
         return;
       }
@@ -37266,7 +37351,7 @@ function renderMusicPanel() {
   const panel = document.getElementById("mediaMusicPanel");
   if (!panel) return;
   if (!panel.querySelector("#musicModeBody")) {
-    panel.innerHTML = `<div class="podcast-playlist-bar music-bar" id="musicBar"></div><div id="musicSearchWrap"></div><div id="musicModeBody" class="music-mode-body"></div>`;
+    panel.innerHTML = `<div class="podcast-playlist-bar music-bar" id="musicBar"></div><div id="musicSearchWrap"></div><div id="musicModeBody" class="music-mode-body"></div><div id="listenSearchExtra" class="listen-search-extra" hidden></div>`;
   }
   // Don't redraw the tab strip under a half-typed playlist name (playback
   // state changes re-render the panel while the field is open).
@@ -37287,6 +37372,9 @@ function musicSearchPlaceholder() {
 function syncMusicSearchBar(panel) {
   const wrap = panel.querySelector("#musicSearchWrap");
   if (!wrap) return;
+  // Discover's catalog search is Listen's top bar now (LISTEN_SEARCH_DESIGN.md
+  // §3.1); Saved, Library and playlists keep this bar as a filter of their list.
+  wrap.hidden = musicTabMode === "discover";
   let input = wrap.querySelector("#musicSearchInput");
   if (!input) {
     wrap.innerHTML = `<div class="music-search-bar">
@@ -37311,13 +37399,7 @@ function clearMusicSearch() {
 }
 // Jump from a local tab (or a favourite work) to a catalog search in Discover.
 function searchAllMusic(q) {
-  const query = String(q || "").trim();
-  enterMusicMode("discover");
-  musicSearchQuery = query;
-  const input = document.getElementById("musicSearchInput");
-  if (input) input.value = query;
-  document.querySelector("#mediaMusicPanel [data-music-search-clear]")?.toggleAttribute("hidden", !query);
-  doMusicSearch(query);
+  setListenSearchText(q); // the one search bar (LISTEN_SEARCH_DESIGN.md §3.1)
 }
 
 // Redraw just the body for the current tab. Horizontal shelves keep their
@@ -37332,8 +37414,26 @@ function updateMusicBody() {
     const el = [...body.querySelectorAll("[data-shelf-key]")].find((x) => x.dataset.shelfKey === k);
     if (el) el.scrollLeft = left;
   }
+  const extra = document.getElementById("listenSearchExtra");
+  if (extra) extra.hidden = !listenSearchActive || !!musicOpenItem;
+  observeArtistSentinel(body);
+}
+
+// All songs on an artist page loads its next page when its button nears the
+// screen ("infinite scroll"); the button still works by tap. One observer,
+// re-pointed after each redraw; nothing runs while no artist page is open.
+let musicArtistObserver = null;
+function observeArtistSentinel(body) {
+  if (musicArtistObserver) musicArtistObserver.disconnect();
+  const el = body.querySelector("[data-artist-sentinel]");
+  if (!el || el.disabled || typeof IntersectionObserver !== "function") return;
+  musicArtistObserver = musicArtistObserver || new IntersectionObserver((entries) => {
+    if (entries.some((en) => en.isIntersecting)) loadMoreArtist("songs");
+  }, { rootMargin: "600px 0px" });
+  musicArtistObserver.observe(el);
 }
 function musicModeBodyHtml() {
+  if (listenSearchActive) return listenSearchBodyHtml();
   if (musicTabMode === "discover") return renderMusicDiscoverBody();
   if (musicTabMode === "saved") return renderMusicSavedBody();
   if (musicTabMode === "library") return renderMusicLibraryBody();
@@ -37601,6 +37701,7 @@ async function doMusicSearch(query) {
   const q = String(query || "");
   musicSearchQuery = q;
   musicOpenItem = null;
+  musicOpenStack = [];
   musicOpenToken++; // a pending openMusicItem must not re-open over the new search
   const token = ++musicSearchToken;
   if (!q.trim()) { musicSearchResults = null; musicSearchLoading = false; updateDiscoverResults(); return; }
@@ -37623,6 +37724,10 @@ async function openMusicItem(album) {
   if (!album) return;
   if (album.entity === "track") { playStreamingTrack(album, []); return; } // a track result plays directly
   const token = ++musicOpenToken; // a later open/close/search supersedes this one
+  // Only a fully loaded page goes on the Back stack (a half-loaded one would come
+  // back as "Loading…" forever, since its request was superseded).
+  if (musicOpenItem && musicOpenItem.album && musicOpenItem.album.id !== album.id && !musicOpenItemLoading) musicOpenStack.push(musicOpenItem);
+  musicArtistTopAll = false;
   if (musicItemCache.has(album.id)) { musicOpenItem = musicItemCache.get(album.id); musicOpenItemLoading = false; updateDiscoverResults(); return; }
   musicOpenItem = { album, tracks: null }; musicOpenItemLoading = true; updateDiscoverResults();
   try {
@@ -37638,7 +37743,13 @@ async function openMusicItem(album) {
     musicOpenItem = { album, tracks: [], error: "Couldn't load this item." };
   } finally { if (token === musicOpenToken) { musicOpenItemLoading = false; updateDiscoverResults(); } }
 }
-function closeMusicItem() { musicOpenToken++; musicOpenItem = null; musicOpenItemLoading = false; updateDiscoverResults(); }
+function closeMusicItem() {
+  musicOpenToken++;
+  musicOpenItem = musicOpenStack.pop() || null;
+  musicOpenItemLoading = false;
+  musicArtistTopAll = false;
+  updateDiscoverResults();
+}
 
 function replayMusicHistory(id) {
   const h = getRecentMedia({ kind: "music" }).find((x) => x.id === id);
@@ -37720,15 +37831,17 @@ function musicWorkGroupHtml(group) {
     </section>`;
 }
 
-function musicStreamTrackRow(track) {
+function musicStreamTrackRow(track, list = "") {
   indexMusicItem(track);
   const active = musicCurTrack && musicCurTrack.id === track.id;
   const playing = active && (musicPlaybackProvider ? !!(musicOwnedNP && musicOwnedNP.isPlaying) : (musicAudio && !musicAudio.paused && !musicAudio.ended));
   const dur = track.durationMs ? formatPodcastDuration(Math.round(track.durationMs / 1000)) : "";
-  const no = track.trackNo != null ? `<span class="music-row-no">${track.trackNo}</span>` : `<span class="music-row-no music-row-no--dot">•</span>`;
-  return `<div class="music-row${active ? " is-active" : ""}" data-stream-play="${escapeHtml(track.id)}" role="button" tabindex="0" aria-label="${escapeHtml(track.title)}">
+  // On an artist page songs come from many albums: no track numbers, the album underneath.
+  const no = track.trackNo != null && !list ? `<span class="music-row-no">${track.trackNo}</span>` : `<span class="music-row-no music-row-no--dot">•</span>`;
+  const sub = list ? track.album : track.movement;
+  return `<div class="music-row${active ? " is-active" : ""}" data-stream-play="${escapeHtml(track.id)}"${list ? ` data-stream-list="${list}"` : ""} role="button" tabindex="0" aria-label="${escapeHtml(track.title)}">
       <span class="music-row-icon" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : no}</span>
-      <span class="music-row-main"><span class="music-row-title">${escapeHtml(track.title)}</span>${track.movement ? `<span class="music-row-sub">${escapeHtml(track.movement)}</span>` : ""}</span>
+      <span class="music-row-main"><span class="music-row-title">${escapeHtml(track.title)}</span>${sub ? `<span class="music-row-sub">${escapeHtml(sub)}</span>` : ""}</span>
       ${dur ? `<span class="music-row-dur">${escapeHtml(dur)}</span>` : ""}
       ${musicAddBtn(track.id)}
       ${musicFavBtn("recording", canonicalRecordingFromView(track.id))}
@@ -37750,8 +37863,82 @@ function musicOpenItemHtml() {
     </div>`;
   if (musicOpenItemLoading && !tracks) return head + `<p class="music-status">Loading tracks…</p>`;
   if (error) return head + `<p class="music-status">${escapeHtml(error)}</p>`;
+  if (musicOpenItem.artistPage) return head + musicArtistPageHtml(musicOpenItem);
   if (!tracks || !tracks.length) return head + `<p class="music-status">No individually streamable tracks in this item.</p>`;
   return head + `<div class="music-list">${tracks.map(musicStreamTrackRow).join("")}</div>`;
+}
+
+// An artist's whole catalogue (LISTEN_SEARCH_DESIGN.md §3.3): Top songs (5, "See
+// all" for 20), Albums and Singles & EPs as card rows that page in more, then
+// All songs, which loads the next page as you scroll to the bottom.
+function musicArtistPageHtml(item) {
+  const page = item.artistPage;
+  const top = item.tracks || [];
+  const shownTop = musicArtistTopAll ? top : top.slice(0, 5);
+  const topHtml = top.length ? `<section class="md-sec music-artist-sec">
+      <div class="music-artist-sec-head"><h3 class="md-h">Top songs</h3>
+        <button class="music-chip" type="button" data-artist-play-top>▶ Play</button>
+        ${top.length > 5 ? `<button class="music-chip" type="button" data-artist-top-all>${musicArtistTopAll ? "Show fewer" : "See all"}</button>` : ""}</div>
+      <div class="music-list">${shownTop.map((t) => musicStreamTrackRow(t, "top")).join("")}</div>
+    </section>` : "";
+  const shelf = (title, section, list, next) => (list.length ? `<section class="md-sec music-artist-sec"><h3 class="md-h">${title}</h3>
+      <div class="music-shelf" data-shelf-key="artist:${section}">${list.map(musicShelfCard).join("")}${next
+        ? `<button class="music-card music-card--more" type="button" data-artist-more="${section}"${musicArtistLoading.has(section) ? " disabled" : ""}><span class="music-card-more-label">${musicArtistLoading.has(section) ? "Loading…" : "More"}</span></button>`
+        : ""}</div></section>` : "");
+  const songs = page.songs || [];
+  const songsLoading = musicArtistLoading.has("songs");
+  const more = page.songsNext
+    // After a failed page it stops loading by itself (no retry loop against
+    // Apple); the button stays, so a tap tries again.
+    ? `<button class="secondary-btn music-artist-more-songs" type="button" data-artist-more="songs"${page.songsError ? "" : " data-artist-sentinel"}${songsLoading ? " disabled" : ""}>${songsLoading ? "Loading songs…" : page.songsError ? "Try again" : songs.length ? "Load more songs" : "Show all songs"}</button>`
+    : (songs.length ? `<p class="music-status">That's every song.</p>` : "");
+  const allHtml = `<section class="md-sec music-artist-sec"><h3 class="md-h">All songs${songs.length ? ` <span class="music-artist-count">${songs.length}${page.songsNext ? "+" : ""}</span>` : ""}</h3>
+      ${songs.length ? `<div class="music-list">${songs.map((t) => musicStreamTrackRow(t, "all")).join("")}</div>` : ""}
+      ${page.songsError ? `<p class="music-status">Couldn't load more songs.</p>` : ""}${more}</section>`;
+  return `<div class="music-artist-page">${topHtml}${shelf("Albums", "albums", page.albums || [], page.albumsNext)}${shelf("Singles &amp; EPs", "singles", page.singles || [], page.singlesNext)}${allHtml}</div>`;
+}
+
+// Load the next page of an artist page section. One request at a time per
+// section; the artist page object in musicItemCache is updated in place, so
+// going back and forth keeps what's loaded.
+async function loadMoreArtist(section) {
+  const item = musicOpenItem;
+  const page = item && item.artistPage;
+  if (!page || musicArtistLoading.has(section)) return;
+  const next = section === "songs" ? page.songsNext : section === "albums" ? page.albumsNext : page.singlesNext;
+  if (!next) return;
+  musicArtistLoading.add(section);
+  updateDiscoverResults();
+  try {
+    const p = (await getMusicProviders()).get(item.album.provider);
+    if (!p || typeof p.getArtistMore !== "function") throw new Error("no paging");
+    const res = await p.getArtistMore(section, next, { artistName: page.artistName || item.album.title });
+    if (section === "songs") { page.songs = mergeArtistSongs(page.songs, res.tracks); page.songsNext = res.next || null; page.songsError = false; }
+    else if (section === "albums") { page.albums = [...page.albums, ...res.items]; page.albumsNext = res.next || null; }
+    else { page.singles = [...page.singles, ...res.items]; page.singlesNext = res.next || null; }
+  } catch (e) {
+    console.warn("artist page load failed", e);
+    if (section === "songs") page.songsError = true;
+  } finally {
+    musicArtistLoading.delete(section);
+    if (musicOpenItem === item) updateDiscoverResults();
+  }
+}
+
+// Play an artist's top songs (the Best result card's Play, the page's ▶ Play).
+async function playArtistTopSongs(artist) {
+  if (!artist) return;
+  try {
+    let detail = musicItemCache.get(artist.id);
+    if (!detail) {
+      const p = (await getMusicProviders()).get(artist.provider);
+      detail = p && p.getItem ? await p.getItem(artist) : null;
+      if (detail) musicItemCache.set(artist.id, detail);
+    }
+    const t = (detail && detail.tracks) || [];
+    if (t.length) playStreamingTrack(t[0], t.slice(1));
+    else showVoiceToast(`Nothing to play for ${artist.title}`);
+  } catch (e) { console.warn("artist play failed", e); showVoiceToast("Couldn't play that artist"); }
 }
 
 // ── Discover home (Apple Music / Spotify-style) ───────────────────────────────
@@ -37997,16 +38184,42 @@ function musicAppleResultsHtml(items) {
     const grouped = new Set(groups.flatMap((g) => g.items.map((i) => i.id)));
     rest = items.filter((i) => !grouped.has(i.id));
   }
+  // The Best result leads (LISTEN_SEARCH_DESIGN.md §3.2) and isn't repeated below.
+  const best = pickBestMusicResult(musicSearchQuery, items);
+  if (best) rest = rest.filter((i) => i.id !== best.id);
   const section = (title, list, cap) => list.length
     ? `<h4 class="music-section-h">${title}</h4><div class="music-results">${list.slice(0, cap).map(musicResultRow).join("")}</div>`
     : "";
   const of = (kind) => rest.filter((i) => i.entity === "album" && (i.kind || "album") === kind);
   return `<div class="music-apple-results">
+      ${best ? musicBestResultHtml(best) : ""}
       ${section("Songs", rest.filter((i) => i.entity === "track"), 10)}
       ${works ? `<h4 class="music-section-h">Works</h4>${works}` : ""}
-      ${section("Albums", of("album"), 10)}
       ${section("Artists", of("artist"), 5)}
+      ${section("Albums", of("album"), 10)}
       ${section("Playlists", of("playlist"), 8)}
+    </div>`;
+}
+
+// The Best result card: big artwork, what it is, and a Play button. Tapping the
+// card opens it (an artist's page, an album) or plays it (a song).
+function musicBestResultHtml(item) {
+  indexMusicItem(item);
+  const isTrack = item.entity === "track";
+  const sub = isTrack ? (item.artists?.[0]?.name || "") : (item.kind === "artist" ? "" : (item.artist || ""));
+  const round = item.kind === "artist" ? " music-best-art--round" : "";
+  const act = isTrack ? `data-best-play="${escapeHtml(item.id)}"` : `data-music-open="${escapeHtml(item.id)}"`;
+  const art = item.artworkUrl
+    ? `<img class="music-best-art${round}" src="${escapeHtml(item.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+    : `<span class="music-best-art music-thumb--ph${round}" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`;
+  return `<h4 class="music-section-h">Best result</h4>
+    <div class="music-best" ${act} role="button" tabindex="0" aria-label="${escapeHtml(`${musicItemKindLabel(item)}: ${item.title}`)}">
+      ${art}
+      <span class="music-best-main">
+        <span class="music-best-title">${escapeHtml(item.title)}</span>
+        <span class="music-best-sub">${escapeHtml([musicItemKindLabel(item), sub].filter(Boolean).join(" · "))}</span>
+      </span>
+      <button class="music-best-play" type="button" data-best-play="${escapeHtml(item.id)}" aria-label="Play ${escapeHtml(item.title)}">${MUSIC_PLAY_SVG}</button>
     </div>`;
 }
 
@@ -38017,7 +38230,13 @@ function renderMusicDiscoverBody() {
 // Discover's async loads (search, item expand, home shelves) redraw the body —
 // only while Discover is the visible tab.
 function updateDiscoverResults() {
-  if (musicTabMode === "discover") updateMusicBody();
+  if (musicTabMode === "discover" || listenSearchActive) updateMusicBody();
+}
+// The catalog part of Listen's search (the rest is #listenSearchExtra). Until the
+// first search answers it says "Searching…" rather than showing Discover's home.
+function listenSearchBodyHtml() {
+  const inner = (musicSearchResults || musicSearchLoading || musicOpenItem) ? discoverResultsHtml() : `<p class="music-status">Searching…</p>`;
+  return `<div class="music-discover"><div id="musicDiscoverResults" class="music-discover-results">${inner}</div></div>`;
 }
 
 // ── Saved (personal library: favourites + playlists + recently played) ─────────
