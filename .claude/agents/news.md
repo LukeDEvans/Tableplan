@@ -31,6 +31,11 @@ Scores. Scores has no menu entry of its own.
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
 - files: `news-*.js`, `scores-ui.js`, `sports-model.js`, `sports-watch.js`, `reader-return.js`, `article-native-reader.js`, `article-scan.js`, `import-canonical.js`, `netlify/functions/_news-*.js`, `netlify/functions/news-feeds.js`, `netlify/functions/scores.mjs`, `netlify/functions/_scores-*.mjs`, `netlify/functions/fetch-article.js`, `netlify/functions/save-article.js`, `netlify/functions/save-page-articles.js`, `netlify/functions/scan-article.js`, `netlify/functions/save-sync-cookie.js`, `netlify/functions/sync-saved-articles.js`, `netlify/functions/_article-extract.js`, `netlify/functions/_import-*.js`, `netlify/functions/import.js`, `netlify/functions/import-pdf-background.js`
+- **College teams are per sport** (2026-11-20): each college league is its own team
+  scope (`ncaaf`/`ncaam`/`ncaah`/`ncaaw`); old `college` favorites expand on read
+  (`expandLegacyFavorite`) and pick up provider ids later (`fillFavoriteRefs`).
+  `teamsForServer` collapses them back to one `college:` school for News ranking.
+  Use `teamLabel` wherever a college team is named (SPORTS_SCORES_DESIGN.md §3a).
 - state: `savedArticles`, `article*`, `readArticleIds`, `readPublications`, `sportsPrefs`
 
 ## Your scope (edit these)

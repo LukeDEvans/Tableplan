@@ -7,7 +7,8 @@ import {
   normalizeSportsPrefs, isLeagueOn, enabledLeagueKeys, leaguesToRequest, addFavorite, removeFavorite,
   isFavorite, setLeagueOn, moveLeague, arrangeScores, shiftDateKey, dateStrip, dayLabel, isDateKey,
   formatStart, statusText, resultLine, fixtureLine, nextRefreshMs, scoreboardCacheSeconds, LIVE_POLL_MS, MAX_FAVORITE_TEAMS,
-  cleanStandings, standingsColumns, standingsLegend, orderStandingsGroups, arrangeTeamSchedule, teamRecordFrom, STANDING_STAT_KEYS
+  cleanStandings, standingsColumns, standingsLegend, orderStandingsGroups, arrangeTeamSchedule, teamRecordFrom, STANDING_STAT_KEYS,
+  teamLabel, fillFavoriteRefs, expandLegacyFavorite, isCollegeScope
 } from "../sports-model.js";
 import { seasonRow, teamRef, scheduleToken } from "../scores-ui.js";
 
@@ -68,8 +69,8 @@ describe("sameTeam — a favorite outlives its provider", () => {
   it("the provider's id decides when both sides have one", () => {
     expect(sameTeam(ajaxEspn, cleanTeam({ name: "AFC Ajax", refs: { espn: "139" } }, "soccer"))).toBe(true);
     // Two schools with the same short name are different teams.
-    const miamiFl = cleanTeam({ name: "Miami Hurricanes", short: "Miami", refs: { espn: "2390" } }, "college");
-    const miamiOh = cleanTeam({ name: "Miami RedHawks", short: "Miami", refs: { espn: "193" } }, "college");
+    const miamiFl = cleanTeam({ name: "Miami Hurricanes", short: "Miami", refs: { espn: "2390" } }, "ncaaf");
+    const miamiOh = cleanTeam({ name: "Miami RedHawks", short: "Miami", refs: { espn: "193" } }, "ncaaf");
     expect(sameTeam(miamiFl, miamiOh)).toBe(false);
   });
   it("falls back to the name when the other side comes from a different provider", () => {
@@ -162,7 +163,7 @@ describe("arrangeScores", () => {
     const base = arrangeScores(games, prefs).sections.find((s) => s.league.key === "ncaaf");
     expect(base.games.map((t) => t.game.id)).toEqual(["cfb1"]);
     expect(base.hidden).toBe(2);
-    const withGophers = addFavorite(prefs, cleanTeam({ name: "Minnesota Golden Gophers" }, "college"), "ncaaf");
+    const withGophers = addFavorite(prefs, cleanTeam({ name: "Minnesota Golden Gophers" }, "ncaaf"), "ncaaf");
     expect(arrangeScores(games, withGophers).sections.find((s) => s.league.key === "ncaaf").games.map((t) => t.game.id).sort()).toEqual(["cfb1", "cfb2"]);
     const all = arrangeScores(games, { ...prefs, collegeScope: "all" }).sections.find((s) => s.league.key === "ncaaf");
     expect(all.games).toHaveLength(3);
@@ -330,5 +331,74 @@ describe("a team's season", () => {
     expect(teamRef({ refs: {} })).toBe("");
     expect(scheduleToken({ league: "nfl", refs: { espn: "16" } })).toBe("nfl:espn:16");
     expect(scheduleToken({ refs: { espn: "16" } })).toBe("");
+  });
+});
+
+describe("college sports are separate teams (Luke, 2026-11-20)", () => {
+  const gophers = (scope, refs = {}) => cleanTeam({ name: "Minnesota Golden Gophers", short: "Minnesota", refs }, scope);
+  const day = [
+    game("cfb", "ncaaf", "Minnesota Golden Gophers", "Iowa Hawkeyes"),
+    game("cbb", "ncaam", "Minnesota Golden Gophers", "Purdue Boilermakers"),
+    game("chk", "ncaah", "Wisconsin Badgers", "Minnesota Golden Gophers"),
+  ].map((g) => ({ ...g, home: { ...g.home, team: { ...g.home.team, short: g.home.team.name.split(" ")[0] } }, away: { ...g.away, team: { ...g.away.team, short: g.away.team.name.split(" ")[0] } } }));
+
+  it("each college league has its own scope, so the same school is three teams", () => {
+    expect(new Set(["ncaaf", "ncaam", "ncaah", "ncaaw"].map((k) => LEAGUE_BY_KEY[k].scope)).size).toBe(4);
+    expect(sameTeam(gophers("ncaaf"), gophers("ncaah"))).toBe(false);
+    expect(isCollegeScope("ncaah")).toBe(true);
+    expect(isCollegeScope("college")).toBe(true);
+    expect(isCollegeScope("nhl")).toBe(false);
+  });
+
+  it("following the football team doesn't follow the hockey team", () => {
+    const p = addFavorite(normalizeSportsPrefs(), gophers("ncaaf"), "ncaaf");
+    const a = arrangeScores(cleanGames(day), p);
+    expect(a.myTeams.map((t) => t.game.id)).toEqual(["cfb"]);
+  });
+
+  it("all three followed: every game shows, and an idle sport still gets its own row", () => {
+    let p = normalizeSportsPrefs();
+    for (const k of ["ncaaf", "ncaam", "ncaah"]) p = addFavorite(p, gophers(k), k);
+    expect(p.teams.map((t) => t.league)).toEqual(["ncaaf", "ncaam", "ncaah"]);
+    const a = arrangeScores(cleanGames(day), p);
+    expect(a.myTeams.map((t) => t.game.id).sort()).toEqual(["cbb", "cfb", "chk"]);
+    // Football plays, hockey doesn't: hockey is idle on its own (it used to hide behind football).
+    const b = arrangeScores(cleanGames(day.filter((g) => g.id !== "chk")), p);
+    expect(b.idle.map((t) => t.league)).toEqual(["ncaah"]);
+    expect(leaguesToRequest({ ...p, leagues: { ncaaf: false, ncaam: false, ncaah: false } })).toEqual(expect.arrayContaining(["ncaaf", "ncaam", "ncaah"]));
+  });
+
+  it("an old one-school favorite becomes football, basketball and hockey, in its place", () => {
+    const legacy = { name: "Minnesota Golden Gophers", short: "Minnesota", scope: "college", league: "ncaam", refs: { espn: "135" }, addedAt: "2026-10-01" };
+    const p = normalizeSportsPrefs({ teams: [cleanTeam({ name: "Minnesota Vikings" }, "nfl"), legacy, cleanTeam({ name: "Minnesota Wild" }, "nhl")] });
+    expect(p.teams.map((t) => t.key)).toEqual([
+      "nfl:minnesota-vikings",
+      "ncaam:minnesota-golden-gophers", "ncaaf:minnesota-golden-gophers", "ncaah:minnesota-golden-gophers",
+      "nhl:minnesota-wild",
+    ]);
+    expect(p.teams.map((t) => t.league)).toEqual(["", "ncaam", "ncaaf", "ncaah", ""]);
+    // The sport it was followed from keeps the id; the others match by name until filled.
+    expect(p.teams[1].refs).toEqual({ espn: "135" });
+    expect(p.teams[2].refs).toEqual({});
+    expect(normalizeSportsPrefs(p)).toEqual(p); // stable once migrated
+    expect(expandLegacyFavorite({ ...legacy, scope: "college-w", league: "" }).map((t) => t.scope)).toEqual(["ncaaw"]);
+    // Matches every sport's game, by name where there's no id yet.
+    expect(arrangeScores(cleanGames(day), p).myTeams.map((t) => t.game.id).sort()).toEqual(["cbb", "cfb", "chk"]);
+  });
+
+  it("fillFavoriteRefs gives a name-only favorite the id seen in a game, once", () => {
+    const p = normalizeSportsPrefs({ teams: [{ name: "Minnesota Golden Gophers", short: "Minnesota", scope: "college", league: "ncaaf", refs: { espn: "135" } }] });
+    const seen = [gophers("ncaah", { espn: "61" }), cleanTeam({ name: "Wisconsin Badgers", refs: { espn: "275" } }, "ncaah")];
+    const next = fillFavoriteRefs(p, seen);
+    expect(next.teams.find((t) => t.scope === "ncaah").refs).toEqual({ espn: "61" });
+    expect(next.teams.find((t) => t.scope === "ncaam").refs).toEqual({});
+    expect(next.teams.find((t) => t.scope === "ncaaf").refs).toEqual({ espn: "135" });
+    expect(fillFavoriteRefs(next, seen)).toBe(next); // nothing new → same object
+  });
+
+  it("teamLabel names the sport for college teams only", () => {
+    expect(teamLabel(gophers("ncaah"))).toBe("Minnesota Hockey");
+    expect(teamLabel(gophers("ncaaf"), { full: true })).toBe("Minnesota Golden Gophers Football");
+    expect(teamLabel(cleanTeam({ name: "Minnesota Wild", short: "Wild" }, "nhl"))).toBe("Wild");
   });
 });
