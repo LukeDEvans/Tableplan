@@ -8,7 +8,7 @@ const team = (scope, name, short) => cleanTeam({ name, short }, scope);
 const vikings = team("nfl", "Minnesota Vikings", "Vikings");
 const twins = team("mlb", "Minnesota Twins", "Twins");
 const wild = team("nhl", "Minnesota Wild", "Wild");
-const gophers = team("college", "Minnesota Golden Gophers", "Minnesota");
+const gophers = team("ncaaf", "Minnesota Golden Gophers", "Minnesota");
 const packers = team("nfl", "Green Bay Packers", "Packers");
 const blues = team("nhl", "St. Louis Blues", "Blues");
 const game = (home, away, state, start) => ({ id: `${home.key}-${away.key}`, state, start, home: { team: home }, away: { team: away } });
@@ -90,6 +90,10 @@ describe("stored prefs", () => {
     expect(normalizeDisplayPrefs({}).holidays).toBe(false);
     expect(normalizeDisplayPrefs({ name: "x".repeat(80) }).name).toHaveLength(40);
     expect(cleanGamedayTeams("nope")).toEqual([]);
+    // A school switched on before each college sport was its own team stays on in every sport.
+    expect(cleanGamedayTeams(["nfl:minnesota-vikings", "college:minnesota-golden-gophers", "college-w:minnesota-golden-gophers"])).toEqual([
+      "nfl:minnesota-vikings", "ncaaf:minnesota-golden-gophers", "ncaam:minnesota-golden-gophers", "ncaah:minnesota-golden-gophers", "ncaaw:minnesota-golden-gophers",
+    ]);
   });
   it("gives secondary views their own name and switches, but the person's teams", () => {
     const viewPrefs = cleanViewDisplayPrefs({ business: { name: "Urban Greens", gameday: true, junk: 1 } }, { modes: ["light"], themes: ["urbangreens"] });

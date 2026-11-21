@@ -305,9 +305,21 @@ export function teamsSignature(teams) {
   return (Array.isArray(teams) ? teams : []).map((t) => String(t?.key || "")).filter(Boolean).sort().join("|");
 }
 // What a favourite looks like on the wire (_news-rank.js cleanTeams).
+// Stories are about a school, not one of its teams, so a college followed in
+// several sports (each its own favorite since 2026-11-20) goes as one school, in
+// the "college" scope the ranking already knows (_news-rank.js).
+const SCHOOL_SCOPE = { ncaaf: "college", ncaam: "college", ncaah: "college", ncaaw: "college-w" };
 export function teamsForServer(teams) {
-  return (Array.isArray(teams) ? teams : []).filter((t) => t?.key).slice(0, 20)
-    .map((t) => ({ key: t.key, scope: t.scope || "", name: t.name || "", short: t.short || "", league: t.league || "" }));
+  const out = [];
+  for (const t of Array.isArray(teams) ? teams : []) {
+    if (!t?.key) continue;
+    const school = SCHOOL_SCOPE[t.scope];
+    const key = school ? `${school}:${String(t.key).split(":").slice(1).join(":")}` : t.key;
+    if (out.some((x) => x.key === key)) continue;
+    out.push({ key, scope: school || t.scope || "", name: t.name || "", short: t.short || "", league: t.league || "" });
+    if (out.length >= 20) break;
+  }
+  return out;
 }
 // For you stories seen on screen but not opened → the skip decisions to send
 // (at most `max`, never one already reported this session).

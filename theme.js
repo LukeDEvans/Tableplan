@@ -184,11 +184,19 @@ export function cleanViewExtras(p) {
 
 // The favorite teams (sports-model.js team keys) the person switched on for
 // game days. Their rank is the order of the favorites, not this list.
+// A key saved before each college sport became its own team ("college:…",
+// 2026-11-20) stands for the school in every sport, as the favorite itself now
+// does (sports-model.js LEGACY_COLLEGE_SCOPES, kept in step by hand).
+const LEGACY_COLLEGE_KEYS = { college: ["ncaaf", "ncaam", "ncaah"], "college-w": ["ncaaw"] };
 export function cleanGamedayTeams(list) {
   const out = [];
   for (const k of Array.isArray(list) ? list : []) {
-    const key = String(k || "").slice(0, 140);
-    if (/^[a-z0-9-]+:[a-z0-9-]+$/.test(key) && !out.includes(key)) out.push(key);
+    const raw = String(k || "").slice(0, 140);
+    if (!/^[a-z0-9-]+:[a-z0-9-]+$/.test(raw)) continue;
+    const [scope, slug] = raw.split(":");
+    for (const key of (LEGACY_COLLEGE_KEYS[scope] || [scope]).map((s) => `${s}:${slug}`)) {
+      if (!out.includes(key) && out.length < 30) out.push(key);
+    }
     if (out.length >= 30) break;
   }
   return out;
