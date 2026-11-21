@@ -432,11 +432,11 @@ try {
     check(!/__expanded|selected/.test(savedOpen), "picking a season isn't saved", savedOpen);
     if (SHOT) await page.screenshot({ path: `${SHOT}-tracker-${width}.png` });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "nothing scrolls sideways");
-    const bars = await page.evaluate(() => [".watch-list-panel", ".watch-category-tabs"].map((q) => {
+    const bars = await page.evaluate(() => [".watch-list-panel"].map((q) => {
       const e = document.querySelector(`#watchPagePanel ${q}`);
       return { q, bar: getComputedStyle(e).scrollbarWidth, gutter: e.offsetWidth - e.clientWidth };
     }));
-    check(bars.every((b) => b.bar === "none" && b.gutter <= 2), "no scroll bar on the list or the tab strip", bars);
+    check(bars.every((b) => b.bar === "none" && b.gutter <= 2), "no scroll bar on the list", bars);
     await page.setViewportSize({ width, height: 844 });
 
     // Link a plain title.
@@ -459,8 +459,40 @@ try {
     check(linked?.tmdbId === 111 && linked?.title === "Some Title From Notes", "the tapped result links that show (same entry)", linked && { tmdbId: linked.tmdbId, title: linked.title });
 
     // No "+" to add a show: the search bar does that (Luke, 2026-10-29). The tab "+" stays.
-    check(await page.locator(".watch-category-bar [data-open-watch-search], .watch-corner-btn").count() === 0, "no '+' to add a show beside the tabs");
-    check(await page.locator(".watch-category-bar [data-watch-category-add]").count() === 1, "…the '+' that adds a tab is still there");
+    check(await page.locator("[data-open-watch-search], .watch-corner-btn").count() === 0, "no '+' to add a show");
+
+    // The tabs live in the three-bar menu, nested under Watch list like Mail's
+    // subfolders (Luke, 2026-11-20) — no tab strip above the list.
+    check(await page.locator("#watchPlannerGrid .watch-category-tabs, #watchPlannerGrid .watch-category-bar").count() === 0, "no tab strip above the list");
+    await page.locator("#watchSidebarToggle").tap();
+    await page.waitForTimeout(300);
+    const menu = await page.evaluate(() => {
+      const kids = [...document.querySelectorAll("#watchSideChildren [data-watch-category]")].map((b) => b.textContent.trim());
+      const order = [...document.querySelectorAll("#watchSidebar [data-watch-side], #watchSideChildren [data-watch-category]")].map((b) => b.dataset.watchSide || "tab");
+      const parent = document.querySelector('#watchSidebar [data-watch-side="list"] .article-sidebar-icon').getBoundingClientRect();
+      const kid = document.querySelector('#watchSideChildren [data-watch-category="all"] span').getBoundingClientRect();
+      const label = document.querySelector('#watchSidebar [data-watch-side="list"] span').getBoundingClientRect();
+      return { kids, order, indented: kid.left > parent.right, aligned: Math.abs(kid.left - label.left) <= 2, add: !!document.querySelector("#watchSideChildren [data-watch-category-add]") };
+    });
+    check(menu.kids.slice(0, 3).join() === "All,Upcoming,In Theaters" && menu.kids.includes("Date night"), "the menu lists All · Upcoming · In Theaters and his own tabs", menu.kids);
+    check(menu.order.join().startsWith("list,tab,tab,tab") && menu.order.indexOf("youtube") > menu.order.lastIndexOf("tab"), "…nested under Watch list, above YouTube", menu.order);
+    check(menu.indented && menu.aligned, "…indented to line up under the Watch list label", menu);
+    check(menu.add, "…with a row to add a tab");
+    if (SHOT) await page.screenshot({ path: `${SHOT}-menu-${width}.png` });
+    await page.locator('#watchSideChildren [data-watch-category="__upcoming"]').tap();
+    await page.waitForTimeout(300);
+    const picked = await page.evaluate(() => ({ open: document.getElementById("watchSidebar").classList.contains("is-expanded"), head: document.querySelector(".watch-list-heading")?.textContent.trim() }));
+    check(!picked.open && picked.head === "Upcoming", "picking a tab closes the menu and heads the list with its name", picked);
+    await page.locator("#watchSidebarToggle").tap();
+    await page.waitForTimeout(300);
+    await page.locator("[data-watch-side-toggle]").tap();
+    await page.waitForTimeout(150);
+    check(await page.locator("#watchSideChildren [data-watch-category]").count() === 0, "the chevron folds the tabs away");
+    await page.locator("[data-watch-side-toggle]").tap();
+    await page.waitForTimeout(150);
+    check(await page.locator("#watchSideChildren [data-watch-category]").count() >= 4, "…and opens them again");
+    await page.locator('#watchSideChildren [data-watch-category="all"]').tap();
+    await page.waitForTimeout(300);
 
     // A short list starts at the top of the list area, not the middle (Luke, 2026-10-29).
     for (const [label, kinds] of [["TV only", ["tv", "tv", "tv"]], ["movies and TV", ["movie", "tv", "movie", "tv"]]]) {
@@ -602,10 +634,15 @@ try {
     const provCalls = [];
     page.on("request", (req) => { if (/tmdb-watch-providers/.test(req.url())) provCalls.push(req.url()); });
     await page.evaluate((items) => { window.__liveQA.watchSeedForQa(items); window.__liveQA.watchRefreshInDev = true; }, seedFor(R));
-    await page.locator('[data-watch-category="all"]').tap();
+    const pickAll = async () => { // the tabs are in the Watch menu now
+      await page.locator("#watchSidebarToggle").tap();
+      await page.waitForTimeout(300);
+      await page.locator('#watchSideChildren [data-watch-category="all"]').tap();
+    };
+    await pickAll();
     await page.waitForTimeout(1200);
     const firstRound = provCalls.length;
-    await page.locator('[data-watch-category="all"]').tap();
+    await pickAll();
     await page.waitForTimeout(800);
     const refreshed = await page.evaluate(() => window.__liveQA.watchItemsForQa().filter((i) => i.providersUpdatedAt).length);
     check(firstRound >= 5 && provCalls.length === firstRound && refreshed >= 5, "week-old shows refresh on view, once each a session", { firstRound, total: provCalls.length, refreshed });

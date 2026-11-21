@@ -32,6 +32,7 @@ const DEVICE_NEUTRAL_KEYS = new Set([
   "live_migrated_personal", "live-dock-slide-v2",
   "live-link-test-v1", // admin Link Test results — which streaming apps open on this phone; no account data
   "liveMessageTab", // Message page: last tab picked (Messages / Mail) on this device; no account data
+  "watchSideListOpen", // Watch menu: whether the Watch list folder's tabs are shown on this device; no account data
 ]);
 
 describe("clearLocalAccountState — account-transition boundary", () => {
