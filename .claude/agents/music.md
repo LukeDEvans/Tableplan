@@ -44,7 +44,7 @@ There are **two unrelated "music" things** in this repo:
   `music-source-resolver.js`, `music-tags.js`, `music-jellyfin.js`,
   `media-provider-music.js`.
 - **`app.js`:** the Media-hub music sections — `activeAppArea === "media"`, music
-  tab. Search: `renderMusicPanel`, `doMusicSearch`, `getMusicProviders`,
+  tab. Search: `renderMusicPanel`, `doMusicSearch`, `runListenSearch`, `getMusicProviders`,
   `startOwnedMusicTrack`, `musicLibrary`.
 - **Apple Music is always on** (Luke, 2026-10-14). It is the app's only streaming
   service: no on/off switch and no Settings panel. `musicAppleEnabled()` is
@@ -64,6 +64,22 @@ There are **two unrelated "music" things** in this repo:
   with Apple Music connected they only slowed results. They stay registered so music
   already saved from them still opens and plays. He may revisit leaving Apple Music
   in about a year; until then don't add free sources back to search.
+- **One search bar in Listen; Best result; full artist pages** (Luke, 2026-11-20;
+  LISTEN_SEARCH_DESIGN.md): Listen's top bar (`#mediaSearchInput`) is the only
+  catalog search. While it holds text (`listenSearchActive`), the Music panel shows
+  the results whatever tab is open (`runListenSearch` / `endListenSearch`;
+  `#listenSearchExtra` holds your podcasts & books and "Find podcasts and radio").
+  Music › Discover has **no** search bar of its own; Saved / Library / playlists
+  keep theirs as a filter, and "Search all music" (`searchAllMusic`) fills the top
+  bar. Music results always come before podcasts and books. A **Best result** card
+  leads the results: Apple's first `topResults` hit (`bestMatch`, set in
+  `music-provider-applemusic.js` `search`), else `pickBestMusicResult`
+  (`music-search-best.js`: an artist named like the query, an album, the first
+  song) — never a fixed type order. Artist pages show Top songs (5, See all),
+  Albums and Singles & EPs (paged by Apple's `next`), and All songs built from the
+  artist's albums a page at a time (`getArtistMore`), loading as you scroll and
+  stopping after a failed page until "Try again". Back walks `musicOpenStack`
+  (an album opened from an artist page returns to it). QA: `npm run qa:listen-search`.
 
 ## Domain landmines (do NOT change without flagging)
 - **Playback engine & media hub are SHARED infra**, not yours: `playback-engine.js`,
