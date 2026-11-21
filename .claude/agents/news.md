@@ -1,16 +1,16 @@
 ---
 name: news
-description: Use for changes scoped to the News page — paper stories and sections, the For you ranking (NEWS_RANKING_DESIGN.md), the Saved articles list and the article reader (now hosted in News), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), Scores (News → Sports → Scores; back in News since 2026-10-20), and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" and "scores" areas of app.js.
+description: Use for changes scoped to the News page — paper stories and sections, the For you ranking (NEWS_RANKING_DESIGN.md), the pinned section header, the Saved list (the News sidebar) and the article reader (now hosted in News), the blended Front page (Top stories + For you), newspaper sign-ins (Sync Settings), article intake (extension, URL, scan, PDF), Scores (its own News section since 2026-11-20), and the dock's headlines-and-scores ticker. Owns news-ui.js, news-ticker.js, scores-ui.js, sports-model.js, news-device-signin.js, reader-return.js, the news/scores Netlify functions, and the "news" and "scores" areas of app.js.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
 You are the **News** domain agent for **Live / Tableplan** — a single-page,
 vanilla-ESM web app whose UI mostly lives in one large `app.js`. Make focused
-changes to the News page (including Scores) only. **Scores is back in News
-(Luke, 2026-10-20):** News → Sports has two tabs, **Scores** (scores, schedules and
-tables) and **Stories**. It was its own page under Recreate from 10-17 to 10-20; that
-page is gone — `showScoresApp` and the `#scores` route now open News → Sports →
-Scores. Scores has no menu entry of its own.
+changes to the News page (including Scores) only. **Scores is its own News
+section (Luke, 2026-11-20):** one swipe right of the Front page (`{ kind: "scores" }`);
+Sports holds only stories, after Culture. (Sports had Scores / Stories tabs from
+10-20; a page under Recreate 10-17…10-20.) `showScoresApp` and the `#scores` route
+open News → Scores. Scores has no menu entry of its own.
 
 ## Read first
 - Root **CLAUDE.md** and **ARCHITECTURE.md** (§4 boundaries, §5 data, §7
@@ -31,20 +31,29 @@ Scores. Scores has no menu entry of its own.
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
 - files: `news-*.js`, `scores-ui.js`, `sports-model.js`, `sports-watch.js`, `reader-return.js`, `article-native-reader.js`, `article-scan.js`, `import-canonical.js`, `netlify/functions/_news-*.js`, `netlify/functions/news-feeds.js`, `netlify/functions/scores.mjs`, `netlify/functions/_scores-*.mjs`, `netlify/functions/fetch-article.js`, `netlify/functions/save-article.js`, `netlify/functions/save-page-articles.js`, `netlify/functions/scan-article.js`, `netlify/functions/save-sync-cookie.js`, `netlify/functions/sync-saved-articles.js`, `netlify/functions/_article-extract.js`, `netlify/functions/_import-*.js`, `netlify/functions/import.js`, `netlify/functions/import-pdf-background.js`
+- **College teams are per sport** (2026-11-20): each college league is its own team
+  scope (`ncaaf`/`ncaam`/`ncaah`/`ncaaw`); old `college` favorites expand on read
+  (`expandLegacyFavorite`) and pick up provider ids later (`fillFavoriteRefs`).
+  `teamsForServer` collapses them back to one `college:` school for News ranking.
+  Use `teamLabel` wherever a college team is named (SPORTS_SCORES_DESIGN.md §3a).
 - state: `savedArticles`, `article*`, `readArticleIds`, `readPublications`, `sportsPrefs`
 
 ## Your scope (edit these)
 - **`news-ui.js`** — `createNewsModule(deps)` (instantiated in app.js as `_news`):
-  the page shell (top bar, sidebar directory: For you · Front page · Saved ·
-  sections · papers), story lists and the story ⋯ menu (**Save, Open, Listen, Share,
+  the page shell (top bar; a centered **section header pinned above the stories** —
+  swipe it, ←/→ or a sideways trackpad swipe to change section, tap it for the menu of
+  sections with papers and "What News has learned" at its foot; a **sidebar that is
+  only the Saved list**, opened over the page by the menu button), story lists and the story ⋯ menu (**Save, Open, Listen, Share,
   More like this, Less like this, Mute topic, Hide** — the middle three only once the
   server has For you), For you's "What News has learned" view, Sync Settings for paper sign-ins, and the mount for the injected `saved`
   interface. Pure helpers are exported top-level (`articlesForView`,
-  `arrangeFront`, `isNewsletterBriefing`, `paperStatus`, `applyLocalDecisions`, …) and tested
-  in `test/news-ui.test.js`.
-- **Scores** (News → Sports → Scores): `scores-ui.js` (`createScoresModule`,
+  `arrangeFront`, `isNewsletterBriefing`, `paperStatus`, `applyLocalDecisions`, `headerViews`,
+  `stepView`, `swipeStep`, …) and tested in `test/news-ui.test.js` and
+  `test/news-section-header.test.js`.
+- **Scores** (News → Scores): `scores-ui.js` (`createScoresModule`,
   mounted by News through the injected `scores` interface into `#newsScoresMount`;
-  News's `showScores()` opens it), `sports-model.js` (pure
+  News's `showScores()` opens it; `canGoBack` / `goBack` / `onNavChange` drive the
+  top-left ‹), `sports-model.js` (pure
   league catalog, canonical Game/Team, favorites, arrangement — shared with the server),
   `netlify/functions/scores.mjs` with adapters `_scores-espn.mjs` /
   `_scores-thesportsdb.mjs` behind `_scores-providers.mjs`.
@@ -111,6 +120,25 @@ Scores. Scores has no menu entry of its own.
   feeds, at most once in 10 minutes for everyone, claimed in the row before any fetch); it
   stores stories without topics and the hourly job tags them (`untaggedRecentIds`). Kill
   switches: `NEWS_NPR_DISABLED`, `NEWS_OPEN_CHECK_DISABLED`.
+- **Section header and Saved sidebar (Luke, 2026-11-20; NEWS_PAGE_DESIGN.md):** the
+  section name is centered on the window and pinned; no "N stories · N unread" line.
+  Swipe order (revised the same evening when Scores became a section): **Scores** ·
+  **Front page (default)** · World · U.S. · Politics · Minnesota · Business · Science &
+  Health · Opinion · Culture · Sports · More — a swipe right from the Front page goes
+  to Scores; no wrap-around. Sections and papers left the sidebar; it holds
+  only the Saved list (the Saved view is gone; old links open the sidebar). QA:
+  `npm run qa:news-header`.
+- **Front page + For you, blended (Luke, 2026-11-20; NEWS_FRONT_PAGE_DESIGN.md §12):**
+  one page — **Top stories** chosen by importance (`rankFrontFor`: the angle the person
+  reads most stands for an event; up to 2 near-misses with strong interest lifted, a
+  lift replacing only a marginal must-read; muted small events out), then **For you**
+  (`arrangeBlendedFront`: importance + interests + freshness, variety rules, muted out).
+  Stories opened or scrolled past on an earlier visit sink in both parts. Opt-in with
+  `newsFeed { blend: true }`; paging, search, older builds and the ticker get the plain
+  Front page. The app keeps For you as a section until a reply says `blend: true`; after
+  that For you is not a section and "What News has learned" is in the section menu.
+  With no interests `rankFrontFor` must pick exactly what `rankFront` picks. QA:
+  `npm run qa:news-blend`.
 - **For you (Luke, 2026-10-27; NEWS_RANKING_DESIGN.md):** a view ranked per person by
   content (paper, section, AI topics, entities, teams, keywords), learning from Open,
   Listen, Save, Hide and the ⋯ menu's More / Less like this and Mute topic; weights
@@ -139,8 +167,8 @@ Scores. Scores has no menu entry of its own.
 - Papers: **NYT, Economist, Star Tribune, The Athletic.** A signed-in session proves
   a subscription. The Front page leads with each paper's main-newsletter lead story,
   then newest first. Stories stay **3 days**.
-- **"Save", one Saved view.** The ⋯ menu says Save (then "Saved ✓"); there is a
-  single **Saved** view holding stories saved from News, newsletters, the extension,
+- **"Save", one Saved list.** The ⋯ menu says Save (then "Saved ✓"); there is a
+  single **Saved** list (the News sidebar, since 2026-11-20) holding stories saved from News, newsletters, the extension,
   URLs, scans and PDFs (no separate Sent view — an old link to it opens Saved). Mail's
   action is **Save to News**. Saved articles still join Listen's queue for read-aloud.
 - **Opening or listening to a story doesn't save it (Luke, 2026-10-21).** Only ⋯ →
@@ -169,19 +197,32 @@ Scores. Scores has no menu entry of its own.
   cookies saved before stay in `state.articleSync` and still count. In a browser,
   Sync Settings just points to the iPhone app. **No Publications** item in the gear
   menu (removed 2026-10-14) — News' sections and Sync Settings cover it.
+- **Scores section layout (Luke, 2026-11-20; SPORTS_SCORES_DESIGN.md top block):**
+  News has no margin inside its border. Top-left ☰ (Saved) becomes a square ‹ while
+  Scores can go back (team/table page) and ☰ returns after. Under the header: a tab
+  row in the Meal Plan's day-tab look — ★ (my teams' games on the chosen day only),
+  then each league shown; a sideways swipe on the games changes tab. A day strip three
+  wide (yesterday · today · tomorrow, scrolls), then two ☰-style squares: league table
+  and ★ My teams (window: today's game or start time, else next/last). Teams &
+  leagues live in the gear menu › **Scores**; no sliders button. An open game: no
+  Follow / "<team> schedule" / "<league> table"; "Game page" with no arrow; Watch
+  buttons for any game not yet over. Team names on scorecards open the schedule; the
+  team page's card is pinned with a star (filled = following) at its top right.
+  Xfinity on the iPhone falls back to Xfinity Stream's App Store page, never
+  xfinity.com (the Xfinity account app claims it). QA: `npm run qa:news-scores`.
 - **Scores works like the ESPN app's Scores tab**: a broad board plus per-user
   favorites the app puts first. It must survive losing ESPN — **only an adapter may
   know a vendor's URLs or JSON**; everything else speaks the canonical model.
 - **Scores covers league tables and full team schedules** (2026-10-15), "unless it
   becomes a data problem": both go through the scores function (CDN-cached, trimmed),
-  never Supabase. Tables and team pages live inside the Scores view with ‹ Back. A
+  never Supabase. Tables and team pages live inside the Scores view; back is News's top-left ‹. A
   soccer team's page spans **every competition**. The **UEFA Conference League** is
   in the catalog and on by default.
 - **Dock ticker** (2026-10-14): above the weather / player slides, **a third of the
   dock's height**, **one item at a time**. **News first** (the Front page's lead
   stories), **then scores**: every game of a followed team on the days in view —
   **before noon, yesterday's and today's; from noon, today's and tomorrow's**. A tap
-  opens the story in the reader, or the game in News → Sports → Scores on its day
+  opens the story in the reader, or the game in News → Scores (★ tab) on its day
   (Personal; Household and Business show a small game card).
   Light mode: white background, dock-blue text; team logos beside abbreviations.
 - Google sign-in refuses in-app browsers; Apple sign-in is the supported path in the

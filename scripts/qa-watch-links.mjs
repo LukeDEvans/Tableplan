@@ -71,6 +71,7 @@ async function run(browser, { width, height, dark }) {
   check(opened.length === 1 && opened[0] === "https://www.foxone.com/", `web opens the website: ${opened.join(", ")}`);
   check(await page.$('.scores-game.is-open') !== null, "tapping a Watch button doesn't collapse the game");
 
+  await page.click('.scores-tab[data-scores-ltab="nfl"]'); // a game without my teams is on its league's tab
   await page.click('[data-scores-game$="fin-chi"]');
   await page.waitForTimeout(300);
   check((await page.$$(".scores-game.is-open .game-watch-btn")).length === 0, "final game: no Watch buttons");

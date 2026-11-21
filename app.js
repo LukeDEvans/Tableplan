@@ -36,7 +36,7 @@ import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions, n
 import { normalizeCards as normalizeLanguageCards, mergeCards as mergeLanguageCards } from './language-srs.js';
 import { normalizeUserLessons, normalizeUserWords, mergeUserLessons, mergeUserWords } from './language-words.js';
 import { createNewsTickerModule } from './news-ticker.js';
-import { normalizeSportsPrefs, dateKeyOf, shiftDateKey } from './sports-model.js';
+import { normalizeSportsPrefs, dateKeyOf, shiftDateKey, teamLabel } from './sports-model.js';
 import { dynamicTheme, rankedGamedayTeams, nextGamedayCheckMs, teamTheme, nextHoliday } from './theme-dynamic.js';
 import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanViewName, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
@@ -1233,6 +1233,7 @@ const elements = {
   menuPodcastSettingsBtn: document.querySelector("#menuPodcastSettingsBtn"),
   menuPodcastPriorityBtn: document.querySelector("#menuPodcastPriorityBtn"),
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
+  menuScoresBtn: document.querySelector("#menuScoresBtn"),
   contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
   contextSettingsTitle: document.querySelector("#contextSettingsTitle"),
   contextSettingsBody: document.querySelector("#contextSettingsBody"),
@@ -1925,9 +1926,10 @@ const _weather = createWeatherModule({
 const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport, renderWeatherTicker, ensureLocationConsent, searchWeatherLocations } = _weather;
 
 // ── Scores (scores-ui.js, SPORTS_SCORES_DESIGN.md) ─────────────────────
-// The Scores view, back in News → Sports since 2026-10-20 (its own page under
-// Recreate 10-17…10-20). Reads only the app's own scores function; favorites and
-// league choices are this user's state.sportsPrefs. News mounts it.
+// The Scores view: a section of News of its own since 2026-11-20 (News → Sports
+// → Scores from 10-20; a page under Recreate 10-17…10-20). Reads only the app's own
+// scores function; favorites and league choices are this user's state.sportsPrefs,
+// set in News's gear menu › Scores. News mounts it.
 const _scores = createScoresModule({
   escapeHtml: (...a) => escapeHtml(...a),
   showToast: (...a) => showMailToast(...a),
@@ -1937,7 +1939,7 @@ const _scores = createScoresModule({
   isNativeApp: () => isNativeApp(),
   getActiveAppArea: () => activeAppArea,
 });
-const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed: seedScores, getBoard: getScoresBoard, showGame: showScoresGame } = _scores;
+const { mount: mountScores, unmount: unmountScores, refresh: refreshScores, seed: seedScores, getBoard: getScoresBoard, showGame: showScoresGame, openSettings: openScoresSettings } = _scores;
 // The game-day theme reads today's board through here (theme-dynamic.js); set
 // now, because applyThemeMode first runs at module load, before this factory.
 refreshGamedayTheme.getBoard = (...a) => getScoresBoard(...a);
@@ -1972,8 +1974,12 @@ const _news = createNewsModule({
   openSignInSettings: () => openContextSettingsDialog("read-sync"),
   // The phone's own newspaper sign-ins (news-device-signin.js), or null in a
   // browser. Deferred: the plugin is looked up when News needs it, not at load.
-  // News → Sports → Scores (scores-ui.js): scores, schedules and tables.
-  scores: { mount: (...a) => mountScores(...a), unmount: (...a) => unmountScores(...a), refresh: (...a) => refreshScores(...a) },
+  // News → Scores (scores-ui.js): scores, schedules and tables. Its back stack
+  // drives News's top-left ‹ button.
+  scores: {
+    mount: (...a) => mountScores(...a), unmount: (...a) => unmountScores(...a), refresh: (...a) => refreshScores(...a),
+    canGoBack: (...a) => _scores.canGoBack(...a), goBack: (...a) => _scores.goBack(...a), onNavChange: (...a) => _scores.onNavChange(...a),
+  },
   getDeviceSignIn: () => {
     const reader = nativeArticleReader();
     if (!reader || typeof reader.cookieNames !== "function") return null;
@@ -2902,6 +2908,8 @@ function bindEvents() {
   elements.menuPodcastSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("podcasts")));
   elements.menuPodcastPriorityBtn.addEventListener("click", () => openSettingsMenuDialog(showPodcastPriorityModal));
   elements.menuReadSyncBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("read-sync")));
+  // News's gear menu › Scores (Luke, 2026-11-20): the teams followed and the leagues shown.
+  elements.menuScoresBtn.addEventListener("click", () => openSettingsMenuDialog(() => openScoresSettings("teams")));
   elements.menuWatchServicesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch-services")));
   elements.menuWatchTheatersBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch")));
   elements.menuMailAutomationBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("mail-ai")));
@@ -9604,9 +9612,9 @@ function showRecreateApp(event) {
   closeAppMenu();
 }
 
-// Scores (scores-ui.js, SPORTS_SCORES_DESIGN.md): scores, schedules and tables,
-// back in News → Sports since 2026-10-20. The #scores route, the ticker and any
-// old link land there.
+// Scores (scores-ui.js, SPORTS_SCORES_DESIGN.md): scores, schedules and tables —
+// News's Scores section (2026-11-20; News → Sports → Scores from 10-20). The
+// #scores route, the ticker and any old link land there.
 function showScoresApp(event) {
   showNewsApp(event);
   showNewsScores();
@@ -19042,6 +19050,7 @@ function updateSettingsMenuOptions() {
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
   elements.menuReadSyncBtn.hidden = activeAppArea !== "news"; // newspaper sign-ins: News, not Media
+  elements.menuScoresBtn.hidden = activeAppArea !== "news";
   elements.menuPodcastSettingsBtn.hidden = activeAppArea !== "media";
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
   // Mail's AI features live in Mail's own gear menu as "Automation" (Luke, 2026-10-15).
@@ -19322,11 +19331,11 @@ function displaySettingsTemplate() {
   const onTeams = new Set(prefs.gamedayTeams || []);
   const next = nextHoliday(now);
   const shown = applyThemeMode.shown;
-  const nowLine = shown?.reason === "game" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} colors — ${escapeHtml(shown.team?.short || shown.team?.name || "")} are playing.`
+  const nowLine = shown?.reason === "game" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} colors — ${escapeHtml(shown.team ? teamLabel(shown.team) : "")} are playing.`
     : shown?.reason === "holiday" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} today.` : "";
   const teamRows = sports.teams.map((t, i) => {
     const theme = teamTheme(t);
-    const label = escapeHtml(t.name || t.short);
+    const label = escapeHtml(teamLabel(t, { full: true }));
     return `
           <li class="display-team${theme ? "" : " is-unthemed"}" data-display-team="${escapeHtml(t.key)}">
             <span class="display-team-rank">${i + 1}</span>
