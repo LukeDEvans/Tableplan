@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { emailReceiptPdf, wrapLines, toWinAnsiBytes, LINE_CHARS } from "../email-receipt-pdf.js";
-import { receiptFromFinanceInbox, receiptForSameOrder, normalizeReceipt, receiptForFinance } from "../receipt-domain.js";
+import { receiptFromFinanceInbox, normalizeReceipt, receiptForFinance } from "../receipt-domain.js";
 import { scoreReceiptTxn } from "../receipt-matcher.js";
 
 const require = createRequire(import.meta.url);
@@ -44,13 +44,6 @@ describe("into the receipts list", () => {
   it("an inbox receipt without the new fields is unchanged", () => {
     const r = receiptFromFinanceInbox({ id: "m1", merchant: "Aldi", date: "2026-11-01", total: 30, items: [] }, createId);
     expect(r).toMatchObject({ paymentLast4: "", orderNumber: "", view: "", tax: 0 });
-  });
-  it("finds a receipt for the same order, however the number is written", () => {
-    const list = [normalizeReceipt({ id: "a", orderNumber: "#112-334-55", total: 9 }), normalizeReceipt({ id: "b", total: 9 })];
-    expect(receiptForSameOrder(list, "11233455")?.id).toBe("a");
-    expect(receiptForSameOrder(list, "112 334 55", "a")).toBeNull(); // itself
-    expect(receiptForSameOrder(list, "")).toBeNull();
-    expect(receiptForSameOrder(list, "12")).toBeNull(); // too short to trust
   });
 });
 

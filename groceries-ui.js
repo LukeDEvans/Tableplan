@@ -13,6 +13,7 @@ import { isGroceryReceipt, receiptIntoPantry, undoPantry, PANTRY_ROOMS } from ".
 import * as LiveGroceryCatalog from './grocery-catalog.js';
 import * as LiveGrocerySources from './grocery-sources.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
+import { findDuplicate, duplicateMap, mergeKeeper, mergeReceipts, keepBoth } from './receipt-duplicates.js';
 import * as ReceiptQueue from './receipt-scan-queue.js';
 import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
@@ -457,6 +458,7 @@ export function baseGroceryItemKey(item) {
 export function createGroceriesModule(deps) {
   const canMarkPersonal = deps.canMarkPersonal || (() => false);
   const showPersonalReceipts = deps.showPersonalReceipts || (() => true);
+  const onReceiptsMerged = deps.onReceiptsMerged || (() => {});
   const {
     state, elements, persist, meals, prepDays, getActiveAppArea, getAuthSession, getPendingMealIngredientSelection, getPendingAutoRuleIngredientSelection, clearPendingMealIngredientSelection, clearPendingAutoRuleIngredientSelection, activeRecipes, applyScanImageAction, canUseLocalBackend, isLocalDevHost, chooseIngredientForPendingAutoRule, chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu, closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey, dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent, groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients, openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot, recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits, scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast, showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState, inventoryItemList, renderInventoryPage, isNativeApp, getHomeLocation, getFreshAccessToken, recognizeReceiptText, isStateReady, handOff,
   } = deps;
@@ -1351,6 +1353,7 @@ function openReceiptEditView(receiptId) {
   }
   elements.editReceiptLineList.innerHTML = "";
   (receipt.lineItems || []).forEach((line) => addEditReceiptLine(line));
+  renderReceiptDuplicateBanner(receipt);
   elements.shopReceiptsListView.hidden = true;
   elements.shopReceiptsEditView.hidden = false;
   if (elements.receiptEditForm && !elements.receiptEditForm.dataset.reconcileWired) {
@@ -1361,6 +1364,89 @@ function openReceiptEditView(receiptId) {
     elements.receiptEditForm.addEventListener("click", (e) => { if (e.target.closest("[data-remove-receipt-line]")) refresh(); });
   }
   refreshEditReceiptValidation();
+}
+
+// ── Possible duplicates (receipt-duplicates.js; Luke, 2026-11-22) ──────────
+// The same purchase saved twice (scanned twice, emailed and scanned, shared and
+// emailed). The app always asks: Merge or Keep both, never on its own.
+function visibleReceipts() {
+  return (state.receipts || []).filter((r) => r.view !== "personal" || showPersonalReceipts());
+}
+function receiptDuplicateOf(receipt) {
+  return receipt ? findDuplicate(visibleReceipts(), receipt) : null;
+}
+function receiptLabel(r) {
+  const date = r.purchaseDate ? new Date(`${r.purchaseDate}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+  const total = Number(r.total) ? Number(r.total).toLocaleString("en-US", { style: "currency", currency: "USD" }) : "";
+  const how = { email: "from email", share: "shared order", extension: "online order", manual: "entered by hand" }[r.source] || "scanned";
+  return [r.storeName || "Receipt", date, total, how].filter(Boolean).join(" · ");
+}
+function renderReceiptDuplicateBanner(receipt) {
+  const el = document.getElementById("editReceiptDuplicateBanner");
+  if (!el) return;
+  const twin = receiptDuplicateOf(receipt);
+  el.hidden = !twin;
+  if (!twin) { el.innerHTML = ""; return; }
+  const lines = (r) => (r.lineItems || []).length;
+  el.innerHTML = `<div class="receipt-dup-head">Possible duplicate</div>
+    <div class="receipt-dup-text">This looks like the same purchase as another receipt: ${escapeHtml(receiptLabel(twin))}${lines(twin) ? ` (${lines(twin)} item${lines(twin) === 1 ? "" : "s"})` : ""}.</div>
+    <div class="receipt-dup-actions">
+      <button class="primary-btn compact-btn" type="button" data-dup-merge>Merge into one</button>
+      <button class="secondary-btn compact-btn" type="button" data-dup-keep>Keep both</button>
+      <button class="secondary-btn compact-btn" type="button" data-dup-open>Open the other</button>
+    </div>
+    <div class="receipt-dup-hint">Merging keeps the more detailed read, with the charge link and categories; Document keeps one file.</div>`;
+  el.querySelector("[data-dup-merge]").onclick = () => {
+    const kept = mergeReceiptPair(receipt.id, twin.id);
+    if (kept) { showMailToast("Merged into one receipt."); openReceiptEditView(kept); renderShopReceipts(); }
+  };
+  el.querySelector("[data-dup-keep]").onclick = () => { keepReceiptsApart(receipt.id, twin.id); el.hidden = true; showMailToast("Kept both receipts."); renderShopReceipts(); };
+  el.querySelector("[data-dup-open]").onclick = () => openReceiptEditView(twin.id);
+}
+
+// Merges two receipts into one; → the kept receipt's id, or "".
+// hasFile(id) (optional) says whether Document holds a file for that receipt.
+function mergeReceiptPair(aId, bId, { hasFile } = {}) {
+  const list = state.receipts || [];
+  const a = list.find((r) => r.id === aId), b = list.find((r) => r.id === bId);
+  if (!a || !b || a.id === b.id) return "";
+  const keep = mergeKeeper(a, b, hasFile);
+  const other = keep === a ? b : a;
+  const merged = LiveReceiptDomain.normalizeReceipt(mergeReceipts(keep, other), createId);
+  const surviving = new Set((merged.lineItems || []).map((l) => l.id));
+  const goneLines = new Set([...(a.lineItems || []), ...(b.lineItems || [])].map((l) => l.id).filter((id) => !surviving.has(id)));
+  const goneHistory = receiptPriceHistory().filter((ph) => goneLines.has(ph.sourceReceiptLineItemId));
+  goneHistory.forEach((ph) => recordDeletion("priceHistory", ph.id));
+  if (goneHistory.length) {
+    state.priceHistory = normalizePriceHistory(receiptPriceHistory().filter((ph) => !goneLines.has(ph.sourceReceiptLineItemId)), groceryStores());
+  }
+  recordDeletion("receipts", other.id);
+  state.receipts = normalizeReceipts(list.filter((r) => r.id !== other.id).map((r) => (r.id === keep.id ? merged : r)));
+  persist();
+  try { onReceiptsMerged(keep.id, other.id); } catch { /* Document follows best-effort */ }
+  return keep.id;
+}
+
+function keepReceiptsApart(aId, bId) {
+  const list = state.receipts || [];
+  const a = list.find((r) => r.id === aId), b = list.find((r) => r.id === bId);
+  if (!a || !b) return;
+  const [na, nb] = keepBoth(a, b);
+  state.receipts = normalizeReceipts(list.map((r) => (r.id === a.id ? na : r.id === b.id ? nb : r)));
+  persist();
+}
+
+// After receipts arrive (a scan read, an email, a shared order): if one is a
+// possible duplicate, say so with a Review button that opens it.
+// → the ids among them that are possible duplicates.
+function noticeReceiptDuplicates(addedIds) {
+  const ids = new Set(addedIds || []);
+  if (!ids.size) return [];
+  const dupes = [...duplicateMap(visibleReceipts()).keys()].filter((id) => ids.has(id));
+  if (!dupes.length) return [];
+  showMailToast(dupes.length === 1 ? "A new receipt looks like one you already have." : `${dupes.length} new receipts look like ones you already have.`,
+    () => { openShopReceiptsDialog(); openReceiptEditView(dupes[0]); }, { actionLabel: "Review", durationMs: 8000 });
+  return dupes;
 }
 
 function closeReceiptEditView() {
@@ -1873,10 +1959,14 @@ function importScannedReceipts(imports, attach = []) {
   renderShopReceipts();
   if (added.length) {
     renderGroceries();
-    showMailToast(ReceiptQueue.resultsToast(added));
+    // A possible duplicate is said instead of the usual "is in" line, and its
+    // items wait for the answer rather than going into Inventory twice.
+    const dupes = noticeReceiptDuplicates(added.map((r) => r.id));
+    if (!dupes.length) showMailToast(ReceiptQueue.resultsToast(added));
     // Groceries that read cleanly go into Inventory (after the results toast, so
     // its Undo is the one left on screen).
-    if (ready.length) setTimeout(() => addReceiptsToPantry(ready.map((r) => r.id)), 2500);
+    const toPantry = ready.filter((r) => !dupes.includes(r.id));
+    if (toPantry.length) setTimeout(() => addReceiptsToPantry(toPantry.map((r) => r.id)), 2500);
   }
   return added;
 }
@@ -2253,6 +2343,7 @@ function saveReviewedReceipt(event) {
   const receipt = markReceiptReviewed(reviewedReceiptFromForm());
   if (!receipt.storeName || !receipt.purchaseDate || !receipt.lineItems.length) return;
   state.receipts = normalizeReceipts([...(state.receipts || []), receipt]);
+  noticeReceiptDuplicates([receipt.id]);
   state.receiptItemMappings = LiveReceiptDomain.correctedMappingsFromReceipt(receipt, receiptItemMappings());
   state.priceHistory = normalizePriceHistory([
     ...receiptPriceHistory(),
@@ -5755,6 +5846,7 @@ function renderShopReceipts() {
     el.innerHTML = `<div class="empty-state">No receipts yet. Scan a receipt to start tracking prices.</div>`;
     return;
   }
+  const dupes = duplicateMap(receipts);
   el.innerHTML = queued + receipts.map((r) => {
     const date = r.purchaseDate
       ? new Date(r.purchaseDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
@@ -5767,6 +5859,7 @@ function renderShopReceipts() {
         <div class="shop-receipt-store">${escapeHtml(r.storeName || "Unknown store")}</div>
         <div class="shop-receipt-meta">
           ${sourceTag ? `<span class="shop-receipt-source">${sourceTag}</span>` : ""}
+          ${dupes.has(r.id) ? `<span class="shop-receipt-source is-check">Possible duplicate</span>` : ""}
           ${r.extraction?.status === "check" ? `<span class="shop-receipt-source is-check">Needs a look</span>` : ""}
           ${r.financeTxnId ? `<span class="shop-receipt-source">In Finance</span>` : ""}
           ${date ? `<span>${escapeHtml(date)}</span>` : ""}
@@ -5796,7 +5889,7 @@ function renderShopReceipts() {
   // list once; a receipt deleted here stays deleted (tombstone check).
   // Returns how many receipts were added or upgraded (share-sheet re-reads —
   // LiveReceiptDomain.shareReceiptUpgrade).
-  function importFinanceInboxReceipts(inbound) {
+  function importFinanceInboxReceipts(inbound, { quiet = false } = {}) {
     const byId = new Map((state.receipts || []).map((r) => [r.id, r]));
     const deleted = new Set((state.tombstones?.receipts || []).map(String));
     const incoming = (Array.isArray(inbound) ? inbound : [])
@@ -5816,6 +5909,7 @@ function renderShopReceipts() {
       ...fresh,
     ]);
     persist();
+    if (!quiet) noticeReceiptDuplicates(fresh.map((r) => r.id));
     return fresh.length + upgrades.size;
   }
   function linkReceiptToFinanceTxn(receiptId, txnId) {
@@ -5913,6 +6007,9 @@ function renderShopReceipts() {
     linkReceiptToFinanceTxn,
     openReceiptDetail,
     openShopReceiptsDialog,
+    mergeReceiptPair,
+    keepReceiptsApart,
+    receiptDuplicateOf,
     receiptItemMappings,
     receiptPriceHistory,
     refreshReceiptValidation,

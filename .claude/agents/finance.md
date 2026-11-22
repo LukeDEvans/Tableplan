@@ -21,7 +21,7 @@ all your work is there. Make focused changes to the Finance domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `email-receipt-pdf.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
+- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `email-receipt-pdf.js`, `receipt-duplicates.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
 - state: `finance*`
 
 ## Your scope (edit these)
@@ -58,6 +58,12 @@ all your work is there. Make focused changes to the Finance domain only.
   email for an order already saved). `receipt-matcher.js` lets an online order (source
   email / extension / share) match a charge up to **14 days** after its date — past 5
   days only as "likely", never linked on its own.
+- **Possible duplicates** (Luke, 2026-11-22: always ask, never merge on its own):
+  `receipt-duplicates.js` (pure, tested) — `sameReceipt` / `findDuplicate` /
+  `duplicateMap` / `mergeKeeper` / `mergeReceipts` / `keepBoth` /
+  `mergedReceiptFileActions`. Finance's `financeReceiptInfo` reports status
+  `duplicate` ("Possible duplicate") to Document; the Merge / Keep both buttons are in
+  Shop's receipt editor. Receipts linked to two different charges are never duplicates.
 - **Receipts are Shop's** (`state.receipts`, one list for Shop and Finance — RECEIPTS.md);
   Finance reads them only through the injected `receiptsForFinance` /
   `linkReceiptToFinanceTxn` / `openReceiptDetail` interface.

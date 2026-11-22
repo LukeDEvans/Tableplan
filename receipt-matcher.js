@@ -136,7 +136,8 @@ export function receiptStatus(receipt, fit = null) {
   if (fit?.confidence === "linked" && items.length && items.every((i) => i.category)) return "itemized";
   return fit ? "matched" : "unmatched";
 }
-export const RECEIPT_STATUS_LABEL = { reading: "Reading…", "needs-look": "Needs a look", itemized: "Itemized", matched: "Matched", unmatched: "Unmatched" };
+// "duplicate" (Possible duplicate) is decided by receipt-duplicates.js, not here.
+export const RECEIPT_STATUS_LABEL = { reading: "Reading…", "needs-look": "Needs a look", itemized: "Itemized", matched: "Matched", unmatched: "Unmatched", duplicate: "Possible duplicate" };
 
 // The split a matched receipt can fill in on its own: every line has a category,
 // the categories add up to the charge (±2¢), and the transaction hasn't been

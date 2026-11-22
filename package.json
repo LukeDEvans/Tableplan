@@ -16,6 +16,7 @@
     "qa:mail-menus": "node scripts/qa-mail-menus.mjs",
     "qa:p0p1": "node scripts/qa-p0p1.mjs",
     "qa:receipts": "node scripts/qa-receipts.mjs",
+    "qa:receipt-duplicates": "node scripts/qa-receipt-duplicates.mjs",
     "qa:p0p1-extended": "node scripts/qa-p0p1-extended.mjs",
     "qa:reminders": "node scripts/qa-reminders.mjs",
     "qa:recipe-photos": "node scripts/qa-recipe-photos.mjs",

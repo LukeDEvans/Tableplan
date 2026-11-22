@@ -2093,6 +2093,7 @@ const _groceries = createGroceriesModule({
   // one, and the Household view never lists them.
   canMarkPersonal: () => currentViewList().includes("personal"),
   showPersonalReceipts: () => currentViewKey() === "personal",
+  onReceiptsMerged: (...a) => relinkMergedReceiptFiles(...a),
   handOff: (...a) => handOff(...a),
   getHomeLocation: () => homeLocation(),
   getActiveAppArea: () => activeAppArea,
@@ -2191,6 +2192,9 @@ const {
   importFinanceInboxReceipts,
   linkReceiptToFinanceTxn,
   openReceiptDetail,
+  mergeReceiptPair,
+  keepReceiptsApart,
+  receiptDuplicateOf,
   receiptItemMappings,
   receiptPriceHistory,
   refreshReceiptValidation,
@@ -12281,6 +12285,8 @@ const mailReceipts = createMailReceiptModule({
   queueReceiptFile: (...a) => queueReceiptForDocuments(...a),
   openReceiptDetail: (...a) => openReceiptDetail(...a),
   canMarkPersonal: () => currentViewList().includes("personal"),
+  receiptDuplicateOf: (...a) => receiptDuplicateOf(...a),
+  keepReceiptsApart: (...a) => keepReceiptsApart(...a),
 });
 
 // ── Send to Explore: interpret a travel email/thread into structured info ─────
@@ -18969,6 +18975,32 @@ function fileWaitingReceipts(scope) {
     });
   })().finally(() => { receiptFiling = null; });
   return receiptFiling;
+}
+
+// Two duplicate receipts merged into one (receipt-duplicates.js): the dropped
+// receipt's Document file points at the kept one, or goes to Recently deleted
+// when the kept receipt already has a file, so Document keeps one file per receipt.
+// Best-effort, in the household's and this person's own Document.
+async function relinkMergedReceiptFiles(keptId, droppedId) {
+  const uid = authSession?.user?.id;
+  if (localDevMode || !uid || !userGroup?.id || !isPageEnabled("documents") || !keptId || !droppedId) return;
+  try {
+    const [{ createEverydayLibrary }, { createDocumentsStorage, edgePresigner }, { createRestTransport }] = await Promise.all([
+      import("./documents/everyday.js"), import("./documents/storage.js"), import("./messaging/server.js"),
+    ]);
+    const library = createEverydayLibrary({
+      transport: createRestTransport({ baseUrl: () => supabaseBaseUrl(), headers: () => supabaseHeaders() }),
+      storage: createDocumentsStorage({ presign: edgePresigner({ functionsUrl: `${supabaseBaseUrl()}/functions/v1`, getToken: async () => authSession?.access_token || "" }), tier: "everyday" }),
+    });
+    const { mergedReceiptFileActions } = await import("./receipt-duplicates.js");
+    for (const scope of [userGroup.id, `u-${uid}`]) {
+      const files = await library.files(scope).catch(() => []);
+      for (const act of mergedReceiptFileActions(files, keptId, droppedId)) {
+        if (act.action === "relink") await library.relinkReceipt(scope, act.id, keptId).catch(() => {});
+        else await library.trash(scope, act.id).catch(() => {});
+      }
+    }
+  } catch { /* the merged receipt stands on its own */ }
 }
 
 // Personal receipts folder (Luke, 2026-11-12): a receipt marked Personal has its
