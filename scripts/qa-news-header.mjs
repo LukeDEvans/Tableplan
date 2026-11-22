@@ -2,8 +2,9 @@
 // against the local dev server (npm run dev:local) with a seeded feed:
 //   - opens on the Front page; the title is centered on the window; no
 //     "N stories · N unread" line
-//   - a touch swipe left on the header goes to Sports, right comes back; a swipe
-//     right from the Front page goes to For you; a sideways trackpad swipe steps too
+//   - a touch swipe left on the header goes to World, right comes back; a swipe
+//     right from the Front page goes to Scores, then For you (2026-11-20 order);
+//     a sideways trackpad swipe steps too
 //   - a tap on the title opens the section menu (current one marked, papers at the
 //     foot); picking a section opens it; Escape / a tap outside closes the menu
 //   - the header stays pinned while the stories scroll
@@ -72,15 +73,18 @@ async function run(browser, { width, height }) {
   if (touch) {
     const cdp = await ctx.newCDPSession(page);
     await swipe(page, cdp, -120);
-    check((await title(page)) === "Sports", `swipe left → Sports (${await title(page)})`);
+    check((await title(page)) === "World", `swipe left → World (${await title(page)})`);
     if (OUT) await page.screenshot({ path: `${OUT}/header-sports-${width}.png` });
     await swipe(page, cdp, 120);
     check((await title(page)) === "Front page", `swipe right → back to Front page (${await title(page)})`);
     await swipe(page, cdp, 120);
-    check((await title(page)) === "For you", `swipe right from Front page → For you (${await title(page)})`);
+    check((await title(page)) === "Scores", `swipe right from Front page → Scores (${await title(page)})`);
+    await swipe(page, cdp, 120);
+    check((await title(page)) === "For you", `swipe right from Scores → For you (${await title(page)})`);
     await swipe(page, cdp, 120);
     check((await title(page)) === "For you", "no step past the first section");
     check(!(await page.$(".news-section-menu")), "a swipe doesn't open the menu");
+    await swipe(page, cdp, -120);
     await swipe(page, cdp, -120);
     await swipe(page, cdp, -20);
     check((await title(page)) === "Front page", "a short drag doesn't step");
@@ -88,7 +92,7 @@ async function run(browser, { width, height }) {
     await page.mouse.move(c.mid, (await page.$eval("[data-news-section-bar]", (el) => el.getBoundingClientRect().top + 20)));
     for (let i = 0; i < 6; i++) await page.mouse.wheel(30, 0);
     await page.waitForTimeout(350);
-    check((await title(page)) === "Sports", `trackpad swipe → Sports (${await title(page)})`);
+    check((await title(page)) === "World", `trackpad swipe → World (${await title(page)})`);
     await page.waitForTimeout(700);
     for (let i = 0; i < 6; i++) await page.mouse.wheel(-30, 0);
     await page.waitForTimeout(350);
@@ -96,7 +100,7 @@ async function run(browser, { width, height }) {
     await page.focus("[data-news-section-btn]");
     await page.keyboard.press("ArrowRight");
     await page.waitForTimeout(200);
-    check((await title(page)) === "Sports", "→ key steps to Sports");
+    check((await title(page)) === "World", "→ key steps to World");
     await page.keyboard.press("ArrowLeft");
     await page.waitForTimeout(200);
   }
@@ -104,7 +108,7 @@ async function run(browser, { width, height }) {
   // Menu
   await page.click("[data-news-section-btn]");
   const items = await page.$$eval(".news-section-menu [data-news-pick]", (els) => els.map((e) => `${e.dataset.newsPick}${e.dataset.newsKey ? ":" + e.dataset.newsKey : ""}`));
-  check(items.slice(0, 3).join() === "foryou,front,section:sports", `menu order (${items.slice(0, 3).join()})`);
+  check(items.slice(0, 4).join() === "foryou,scores,front,section:world", `menu order (${items.slice(0, 4).join()})`);
   check(items.some((i) => i.startsWith("paper:")), "papers at the foot of the menu");
   const cur = await page.$eval(".news-section-item.is-current", (e) => e.textContent.trim());
   check(cur === "Front page", `current section marked (${cur})`);
