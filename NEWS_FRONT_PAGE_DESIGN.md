@@ -142,3 +142,43 @@ The page that follows a check is 1–3 s slower, at most once in 10 minutes.
 **Checks (§9–§11):** `test/news-signals.test.js` (21: NPR links, sections and users; signal parsing, merging and rows; the hourly job writes the row without reading it and tags what the open check stored; the open check's feeds, claim-first order, 10-minute spacing across warm functions, no re-insert, dead feeds, kill switch, no read of a user's state), 7 more in `test/news-front.test.js` (signals in the ranking and in the Front page read), one request-level test in `test/mail-news-feed.test.js`. Full suite passes (304 files, 3,824 tests).
 
 **Not verified:** every new feed URL from Netlify; the reader on an NPR page; timing of the open check against the real feeds; anything on the phone.
+
+## 12. Front page + For you, blended (Luke, 2026-11-20)
+
+One page: **Top stories**, then **For you**. For you is no longer a section once the
+server answers with the blend; "What News has learned" moved to the foot of the
+section menu.
+
+**Top stories** (`_news-front.js` `rankFrontFor`) are still chosen by importance
+(§3; with no interests it picks exactly what `rankFront` picks), with three personal
+touches:
+- **Angle.** Within an event, among stories within 1 point of its best (never a
+  live-blog update; opinion only if the best is opinion), the one the person's
+  interests favour stands for it. A live blog itself always stands for its event.
+- **Lift.** Up to 2 stories under the bar (score 3–4.5) with interest ≥ 3 (a favourite
+  team alone is 4) join after the must-reads, labelled "For you". In a full block a
+  lift replaces only a must-read that barely cleared the bar (< 5.5, not a big event).
+- **Muted.** A muted event leaves the block unless it is big (heat ≥ 3).
+
+**For you** (`_news-store.js` `arrangeBlendedFront`): every other Front page story,
+scored `0.6 × importance + scoreStory(interests, freshness, newsletter lead)`, where
+importance is the story's event score + section prior (half the event score if that
+event is already on top, so its other stories don't crowd the list). Ordered with For
+you's variety rules and its 1-in-8 "Something different". Muted stories are left out.
+A card says why it's there when interest is ≥ 1.5.
+
+**Seen stories sink.** A story opened, or left on screen unopened for 1.5 s on an earlier
+visit (the app reports it as `skip`, as For you did), goes after the ones new to the
+person — within Top stories and within For you. The top rows are re-read fresh, so this
+counts from the next visit.
+
+**Compatibility.** Only builds that send `blend: true` get it (`newsFeed`); paging,
+search, older builds and the dock ticker get the plain Front page. A failed blend
+falls back to the plain page. The app keeps For you as a section until a reply says
+`blend: true`, so a TestFlight build that lands before the deploy loses nothing.
+
+**Cost.** No new tables, no AI, no timer. The 24 h pool read adds `topics` (kept
+5 minutes per warm function, like §5), and the first Front page adds `topics,skips`:
+roughly +25 MB a month at today's use.
+
+Checks: `test/news-front-blend.test.js`, `scripts/qa-news-blend.mjs`.
