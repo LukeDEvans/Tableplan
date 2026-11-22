@@ -29,6 +29,21 @@ const enc = encodeURIComponent;
 
 const GRANT_COLS = "vault_id,key_version,device_id,sealed,granter_user_id,granter_device_id,granter_sig";
 const FILE_KEY_COLS = "id,wrapped_key,key_version";
+const LOGIN_COLS = "id,key_version,enc,created_by,updated_at,deleted_at";
+
+const B64_RE = /^[A-Za-z0-9_-]+$/;
+function loginRow(row) {
+  if (typeof row.enc !== "string" || !B64_RE.test(row.enc)) throw new Error("documents server: bad login");
+  return { id: uuid(row.id, "login"), scope: scopeId(row.scope), key_version: version(row.key_version), enc: row.enc };
+}
+// Only these columns can change (the grants say the same).
+function loginPatch(patch) {
+  const out = {};
+  if ("enc" in patch) { if (typeof patch.enc !== "string" || !B64_RE.test(patch.enc)) throw new Error("documents server: bad login"); out.enc = patch.enc; }
+  if ("key_version" in patch) out.key_version = version(patch.key_version);
+  if ("deleted_at" in patch) out.deleted_at = patch.deleted_at;
+  return out;
+}
 
 export function createDocumentsServer(transport) {
   return {
@@ -99,10 +114,21 @@ export function createDocumentsServer(transport) {
     purgeFolder: (id) => transport.rpc("doc_purge_folder", { p_id: uuid(id, "folder") }),
     usage: (scope) => transport.rpc("doc_usage", { p_scope: scopeId(scope) }),
 
+    // ---- passwords (PASSWORDS_DESIGN.md §4) -------------------------------------------------------
+    // Changed since `since` (ISO time), or everything. Bounded by the scope.
+    logins: (scope, since = null) => transport.select("safe_logins",
+      `scope=eq.${enc(scopeId(scope))}${since ? `&updated_at=gt.${enc(since)}` : ""}&select=${LOGIN_COLS}&order=updated_at`),
+    addLogin: (row) => transport.insert("safe_logins", [loginRow(row)]),
+    addLogins: (rows) => rows.length ? transport.insert("safe_logins", rows.map(loginRow)) : Promise.resolve(null),
+    updateLogin: (id, patch) => transport.update("safe_logins", `id=eq.${uuid(id, "login")}`, loginPatch(patch)),
+    purgeLogin: (id) => transport.rpc("safe_purge_login", { p_id: uuid(id, "login") }),
+
     // ---- re-wrapping on rotation ---------------------------------------------------------------------
     fileKeys: (scope) => transport.select("doc_files", `scope=eq.${enc(scopeId(scope))}&select=${FILE_KEY_COLS}`),
     rewrapFile: (id, wrapped, v) => transport.update("doc_files", `id=eq.${uuid(id, "file")}`, { wrapped_key: wrapped, key_version: version(v) }),
     folderNames: (scope) => transport.select("doc_folders", `scope=eq.${enc(scopeId(scope))}&select=id,enc_name,key_version`),
     rewrapFolder: (id, encName, v) => transport.update("doc_folders", `id=eq.${uuid(id, "folder")}`, { enc_name: encName, key_version: version(v) }),
+    loginKeys: (scope) => transport.select("safe_logins", `scope=eq.${enc(scopeId(scope))}&select=id,enc,key_version`),
+    rewrapLogin: (id, encLogin, v) => transport.update("safe_logins", `id=eq.${uuid(id, "login")}`, { enc: encLogin, key_version: version(v) }),
   };
 }

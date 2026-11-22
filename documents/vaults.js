@@ -40,6 +40,7 @@
 import { toB64, fromB64, equalBytes } from "../messaging/crypto/bytes.js";
 import {
   generateVaultKey, rotateVault, unlockKeyring, unwrapFileKey, wrapFileKey, decryptFolderName, encryptFolderName,
+  deriveLoginsKey, encryptLogin, decryptLogin,
   generateBoxKey, signBoxKey, verifyBoxKey, createGrant, openGrant, verifyGrantSignature,
   signVaultSettled, verifyVaultSettled, signRecoveryPub, verifyRecoveryPub,
   generateRecoveryCode, deriveRecoveryKeys, wrapAnchor, sealToRecovery, restoreVaultKey,
@@ -257,8 +258,8 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
   // The highest key version anything on the server shows: the vault's hint, file and
   // folder rows. (A server that hides rows hides their documents anyway.)
   async function highestSeen(vault, scope) {
-    const [files, folders] = await Promise.all([server.fileKeys(scope), server.folderNames(scope)]);
-    return Math.max(vault.key_version || 0, ...files.map((f) => f.key_version), ...folders.map((f) => f.key_version));
+    const [files, folders, logins] = await Promise.all([server.fileKeys(scope), server.folderNames(scope), server.loginKeys ? server.loginKeys(scope) : []]);
+    return Math.max(vault.key_version || 0, ...files.map((f) => f.key_version), ...folders.map((f) => f.key_version), ...logins.map((l) => l.key_version));
   }
 
   async function status(scope) {
@@ -416,6 +417,20 @@ export function createDocumentsVaults({ server, store, account, userId, scopeMem
           const name = decryptFolderName(ring.get(f.key_version), fromB64(f.enc_name), { vaultId: v.vaultId, scope, folderId: f.id, keyVersion: f.key_version });
           await server.rewrapFolder(f.id, toB64(encryptFolderName(newKey, name, { vaultId: v.vaultId, scope, folderId: f.id, keyVersion: r.version })), r.version);
         } catch { skipped++; }
+      }
+      // Passwords (PASSWORDS_DESIGN.md §4): each login re-sealed under the logins key
+      // derived from the new vault key; its contents (and rev) don't change.
+      if (server.loginKeys) {
+        const lkey = (n, k) => deriveLoginsKey(k, { vaultId: v.vaultId, scope, keyVersion: n });
+        const newLoginsKey = lkey(r.version, newKey);
+        for (const l of await server.loginKeys(scope)) {
+          if (l.key_version === r.version) continue;
+          try {
+            const old = ring.get(l.key_version);
+            const login = decryptLogin(lkey(l.key_version, old), fromB64(l.enc), { vaultId: v.vaultId, scope, loginId: l.id, keyVersion: l.key_version });
+            await server.rewrapLogin(l.id, toB64(encryptLogin(newLoginsKey, login, { vaultId: v.vaultId, scope, loginId: l.id, keyVersion: r.version })), r.version);
+          } catch { skipped++; }
+        }
       }
       r.skipped = skipped;
       r.step = 3; await store.set(`rotation:${scope}`, r);

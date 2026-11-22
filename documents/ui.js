@@ -33,6 +33,8 @@ import { createDocumentsStorage, edgePresigner } from "./storage.js";
 import { createDocumentsLibrary, RECENTLY_DELETED_DAYS } from "./library.js";
 import { createPasskeyLock, copyStore, WEB_LOCKED_DB } from "./web-lock.js";
 import { createBlobCache } from "./blob-cache.js";
+import { createLoginsLibrary } from "./passwords/library.js";
+import { createPasswordsPane, PASSWORDS_ICON } from "./passwords/ui.js";
 import { deleteMessagingStore } from "../messaging/keystore.js";
 
 export const DOCUMENTS_DB = "live-documents";
@@ -78,7 +80,7 @@ export async function mountDocuments(root, deps) {
   let passkeySupported = false;
   passkey?.supported().then((ok) => { passkeySupported = ok; if (ui.panel === "settings") draw(); }).catch(() => {});
   let session = null; // { backend } while unlocked
-  let store = null, vaults = null, library = null;
+  let store = null, vaults = null, library = null, logins = null;
   let unlocking = null;
 
   const transport = createRestTransport({ baseUrl: deps.baseUrl, headers: deps.headers });
@@ -124,6 +126,7 @@ export async function mountDocuments(root, deps) {
         scopeMembers: async (scope) => { const h = household(); return h && h.scope === scope ? h.members.map((m) => m.user_id) : []; },
       });
       library = createDocumentsLibrary({ server, storage, vaults, store, userId, blobCache: createBlobCache(s) });
+      logins = createLoginsLibrary({ server, vaults, store });
       session = { backend };
     })().finally(() => { unlocking = null; });
     return unlocking;
@@ -153,7 +156,7 @@ export async function mountDocuments(root, deps) {
     for (const url of thumbs.values()) if (url) URL.revokeObjectURL(url);
     thumbs.clear();
     texts.clear();
-    session = null; store = null; vaults = null; library = null; unlocking = null;
+    session = null; store = null; vaults = null; library = null; logins = null; unlocking = null;
     if (!nativeLock) lockPlugin = passkey?.configured() ? passkey : null;
     ui.files = []; ui.folders = []; ui.banners = []; ui.busy = ""; ui.panel = null; ui.code = null;
     if (visible) { ui.view = "locked"; ui.lockError = ""; draw(); } else root.innerHTML = "";
@@ -178,6 +181,7 @@ export async function mountDocuments(root, deps) {
     thumbs.clear();
     thumbQueue = [];
     texts.clear();
+    pw.clear(); // decrypted passwords leave memory with the keys
     ui.files = []; ui.folders = []; ui.banners = []; ui.busy = ""; ui.devices = []; ui.staleDevices = [];
     // A recovery code on screen is already in force: keep it (in memory only) so it's
     // shown again after unlocking, rather than lost unseen.
@@ -198,6 +202,28 @@ export async function mountDocuments(root, deps) {
   };
   let visible = false;
   let gen = 0; // a show() for another scope makes older loads stop drawing
+
+  // Passwords (PASSWORDS_DESIGN.md §5): an entry in this sidebar, behind the same lock.
+  const pw = createPasswordsPane({
+    root, esc, userId, isNative: deps.isNative,
+    toast: (t) => deps.toast?.(t),
+    draw: () => draw(),
+    run: (label, fn) => run(label, (scope, my) => fn(scope, () => my === gen)),
+    logins: () => { if (!logins) throw new Error("Locked"); return logins; },
+    store: () => { if (!store) throw new Error("Locked"); return store; },
+    scope: () => ui.scope,
+    kind: () => ui.kind,
+    otherScope: () => {
+      const personal = deps.personalScope?.();
+      const house = deps.household?.()?.scope;
+      if (ui.kind === "household" && personal) return { scope: personal, label: "Personal" };
+      if (ui.kind === "personal" && house) return { scope: house, label: "Household" };
+      return null;
+    },
+    nameOf: (uid) => nameOf(uid),
+    busy: () => ui.busy,
+    error: () => ui.error,
+  });
   const thumbs = new Map(); // fileId → object URL (this session)
   let viewerUrl = null;
 
@@ -254,6 +280,7 @@ export async function mountDocuments(root, deps) {
     await checkBanners(my);
     if (my !== gen) return;
     draw();
+    if (ui.folder === "passwords") pw.load();
   }
 
   async function refresh(my = gen, scope = ui.scope) {
@@ -480,6 +507,7 @@ export async function mountDocuments(root, deps) {
   function sidebar() {
     const tab = (key, icon, label, extra = "") => `<button class="article-sidebar-tab${ui.folder === key ? " is-active" : ""}" type="button" data-folder="${esc(key)}"${ui.folder === key ? ' aria-current="true"' : ""}${extra}>${icon}<span>${esc(label)}</span></button>`;
     return `<nav class="article-sidebar docs-sidebar" id="docsSidebar" aria-label="${esc(ui.title)} folders">
+      ${tab("passwords", PASSWORDS_ICON, "Passwords")}
       ${tab("all", ICON.all, "All documents")}
       ${ui.folders.filter((f) => !movedOut(f) || ui.files.some((x) => !x.deletedAt && x.folderId === f.id)).map((f) => tab(f.id, f.kind === "receipts" ? ICON.receipt : ICON.folder, f.name)).join("")}
       <button class="article-sidebar-tab" type="button" data-act="new-folder">${ICON.plus}<span>New folder</span></button>
@@ -499,7 +527,16 @@ export async function mountDocuments(root, deps) {
       <span class="docs-file-meta">${esc(meta)}${folder ? ` · ${esc(folder)}` : ""}${who}</span></span></button></li>`;
   }
 
+  const menuButton = () => `<button class="icon-btn mail-sidebar-toggle" type="button" data-act="toggle-sidebar" title="Folders" aria-label="Show folders" aria-controls="docsSidebar">${ICON.menu}</button>`;
+
   function libraryView() {
+    if (ui.folder === "passwords") {
+      return `<div class="article-layout watch-layout docs-layout">
+        ${sidebar()}
+        ${pw.render({ menuButton: menuButton(), banners: ui.banners.map((b) => `<p class="msg-banner${b.warn ? " msg-banner-warn" : ""}">${b.html}</p>`).join("") + busyNote() + errorNote() })}
+        ${ui.panel === "settings" ? settingsView() : ""}
+      </div>`;
+    }
     const list = visibleFiles();
     const folder = ui.folders.find((f) => f.id === ui.folder);
     const heading = ui.folder === "all" ? "All documents" : ui.folder === "trash" ? "Recently deleted" : folder?.name || "";
@@ -1136,8 +1173,10 @@ export async function mountDocuments(root, deps) {
       ui.folder = folderBtn.dataset.folder;
       root.querySelector("#docsSidebar")?.classList.remove("is-expanded");
       draw();
+      if (ui.folder === "passwords" && session) pw.load();
       return;
     }
+    if (ui.folder === "passwords" && ui.view === "library" && session && await pw.onClick(t)) return;
     const openBtn = t.closest("[data-open]");
     if (openBtn) { openFile(openBtn.dataset.open); return; }
     const ok = t.closest("[data-approve]");
@@ -1201,6 +1240,7 @@ export async function mountDocuments(root, deps) {
   });
 
   root.addEventListener("submit", (e) => {
+    if (e.target.matches?.("[data-pw-form]")) { e.preventDefault(); pw.onSubmit(e.target); return; }
     const form = e.target.closest("[data-form]");
     if (!form) return;
     e.preventDefault();
@@ -1210,6 +1250,7 @@ export async function mountDocuments(root, deps) {
   });
 
   root.addEventListener("input", (e) => {
+    if (pw.onInput(e.target)) return;
     if (!e.target.matches("[data-search]")) return;
     ui.query = e.target.value;
     const pos = e.target.selectionStart;
@@ -1220,6 +1261,7 @@ export async function mountDocuments(root, deps) {
   });
 
   root.addEventListener("change", (e) => {
+    if (ui.folder === "passwords" && session) { pw.onChange(e.target); if (e.target.matches("[data-pw-file], [data-pw-gen-symbols], [data-pw-gen-digits]")) return; }
     if (e.target.matches("[data-file-input]")) { addFiles(e.target.files); e.target.value = ""; }
   });
 
@@ -1235,6 +1277,7 @@ export async function mountDocuments(root, deps) {
   root.addEventListener("drop", (e) => {
     if (ui.view !== "library" || !e.dataTransfer?.files?.length) return;
     e.preventDefault();
+    if (ui.folder === "passwords") { pw.importFiles(e.dataTransfer.files); return; } // a dropped export imports; it's never stored as a document
     root.querySelector("[data-drop]")?.classList.remove("is-drop-target");
     addFiles(e.dataTransfer.files);
   });
