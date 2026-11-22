@@ -79,7 +79,7 @@ describe("espn adapter", () => {
   it("college football: ranks (99 means unranked), and who has the ball", () => {
     const [uga, gophers, live] = cleanGames(parseScoreboard(ESPN_NCAAF_SCOREBOARD, "ncaaf"));
     expect([uga.home.rank, uga.away.rank]).toEqual([2, null]);
-    expect(uga.home.team.key).toBe("college:georgia-bulldogs");
+    expect(uga.home.team.key).toBe("ncaaf:georgia-bulldogs");
     expect(gophers.home.rank).toBeNull();
     expect(live).toMatchObject({ situation: "2nd & 7", possession: "home" });
   });
