@@ -45,7 +45,7 @@ describe.each(CONTRACT_CASES)("provider contract: %s", (_name, parse, count) => 
     }
   });
   it("carries nothing but the model's fields", () => {
-    const keys = ["away", "broadcasts", "detail", "home", "id", "league", "link", "neutral", "note", "possession", "situation", "sport", "start", "state", "venue"];
+    const keys = ["away", "broadcasts", "detail", "home", "id", "league", "link", "live", "neutral", "note", "possession", "situation", "sport", "start", "state", "venue"];
     for (const g of games) expect(Object.keys(g).sort()).toEqual(keys);
   });
 });

@@ -70,6 +70,25 @@ describe("openOutLink", () => {
     expect(await openOutLink({ appUrls: ["nflx://"], webUrl: "javascript:alert(1)" }, { windowOpen })).toBe("none");
     expect(windowOpen).not.toHaveBeenCalled();
   });
+  it("Xfinity on the iPhone: if Xfinity Stream doesn't open, its App Store page — not xfinity.com, which the Xfinity account app claims (Luke, 2026-11-20)", async () => {
+    const spec = targetHandoff("xfinity");
+    expect(spec.phoneWebUrl).toMatch(/^https:\/\/apps\.apple\.com\/.*id731629156/);
+    const linkOut = { open: vi.fn(async () => ({ opened: "web" })) };
+    await openOutLink(spec, { linkOut, windowOpen: vi.fn() });
+    expect(linkOut.open).toHaveBeenCalledWith({ appUrls: ["xfinitystream://"], webUrl: spec.phoneWebUrl });
+    // The web app still goes to the website.
+    const windowOpen = vi.fn();
+    await openOutLink(spec, { linkOut: null, windowOpen });
+    expect(windowOpen).toHaveBeenCalledWith("https://www.xfinity.com/stream/live");
+  });
+  it("a game's Xfinity button carries the phone's fallback through its attributes", () => {
+    const [x] = watchOptionsForGame({ broadcasts: ["FDSN North"] }, { services: ["xfinity"] });
+    expect(x.id).toBe("xfinity");
+    const html = `<button ${linkOutAttrs(x, esc)}>`;
+    const el = { dataset: {} };
+    for (const [, k, v] of html.matchAll(/data-out-([a-z-]+)="([^"]*)"/g)) el.dataset[`out${k.split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join("")}`] = v;
+    expect(linkOutFromElement(el).phoneWebUrl).toBe(x.phoneWebUrl);
+  });
   it("attributes round-trip", () => {
     const html = `<button ${linkOutAttrs({ appUrls: ["a://", "https://b.test/x"], webUrl: "https://b.test/", label: "B", note: "hi" }, esc)}>`;
     const el = { dataset: {} };
@@ -133,6 +152,14 @@ describe("watch options for a game", () => {
     expect(html).toContain("FOX is under Live TV");
     expect(gameWatchHtml({ state: "final", broadcasts: ["FOX"] }, esc, [])).toBe("");
     expect(gameWatchHtml({ state: "live", broadcasts: [] }, esc, [])).toBe("");
+  });
+  it("an open game in Scores offers where to watch any time before it ends (Luke, 2026-11-20)", () => {
+    const tonight = { state: "pre", start: new Date(Date.now() + 8 * 3600e3).toISOString(), broadcasts: ["ESPN2"] };
+    expect(gameWatchHtml(tonight, esc, ["xfinity"])).toBe(""); // the dock's card: the hour before only
+    const html = gameWatchHtml(tonight, esc, ["xfinity"], { always: true });
+    expect(html).toContain("Xfinity Stream");
+    expect(html).toContain("ESPN");
+    expect(gameWatchHtml({ state: "final", broadcasts: ["ESPN2"] }, esc, ["xfinity"], { always: true })).toBe("");
   });
 });
 
