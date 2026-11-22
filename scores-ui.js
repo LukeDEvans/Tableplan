@@ -23,7 +23,8 @@ import {
   LEAGUES, LEAGUE_BY_KEY, LEAGUE_GROUPS, cleanGames, cleanGame, cleanTeam, normalizeSportsPrefs, leaguesToRequest,
   arrangeScores, addFavorite, removeFavorite, isFavorite, setLeagueOn, moveLeague, isLeagueOn, enabledLeagueKeys,
   dateKeyOf, shiftDateKey, dateStrip, dayLabel, statusText, resultLine, fixtureLine, nextRefreshMs, isLive, normName,
-  cleanStandings, standingsColumns, standingsLegend, orderStandingsGroups, arrangeTeamSchedule, teamRecordFrom, sameTeam
+  cleanStandings, standingsColumns, standingsLegend, orderStandingsGroups, arrangeTeamSchedule, teamRecordFrom, sameTeam,
+  teamLabel, teamSportOf, fillFavoriteRefs, isCollegeScope
 } from './sports-model.js';
 
 const FRESH_MS = 15_000;            // a tap within this long reuses what's shown
@@ -221,6 +222,7 @@ export function createScoresModule(deps) {
     try {
       const body = await request({ action: "scoreboard", date: dateKey, leagues: requestKey });
       boards.set(dateKey, { games: cleanGames(body?.games), leagues: body?.leagues || {}, loadedAt: Date.now(), requestKey });
+      fillRefsFrom(boards.get(dateKey).games.flatMap((g) => [g.home.team, g.away.team]));
       errors.delete(dateKey);
       failures = 0;
     } catch {
@@ -261,9 +263,32 @@ export function createScoresModule(deps) {
     if (today !== lastToday) { if (selected === lastToday) selected = today; lastToday = today; }
   }
 
+  // A favorite with no provider id yet (a college followed in every sport before
+  // each sport became its own team) takes one from teams seen here, so its
+  // schedule and season page work. Saved once found; never asked for again.
+  function fillRefsFrom(teams) {
+    const p = prefs();
+    const next = fillFavoriteRefs(p, teams);
+    if (next !== p) setPrefs(next);
+  }
+  // Idle favorites still without an id: look them up in their league's team
+  // list (the CDN-cached teams action), then fill.
+  const refLookups = new Set(); // leagueKey, once per session
+  async function lookUpMissingRefs(idle) {
+    for (const league of new Set(idle.filter((t) => !teamRef(t) && t.league).map((t) => t.league))) {
+      if (refLookups.has(league)) continue;
+      refLookups.add(league);
+      await loadTeams(league);
+      const entry = teamLists.get(league);
+      if (entry?.loading) { refLookups.delete(league); continue; } // the dialog's load is under way; next render tries again
+      if (entry?.teams?.length) { fillRefsFrom(entry.teams); render(); }
+    }
+  }
+
   // The next and last game of favorites that aren't playing today.
   async function loadSchedule(idle) {
     if (seeded) return;
+    lookUpMissingRefs(idle);
     const tokens = idle.map(scheduleToken).filter(Boolean).slice(0, 12).sort();
     const key = tokens.join(",");
     if (!key || schedule.loading) return;
@@ -331,7 +356,9 @@ export function createScoresModule(deps) {
     const open = expandedId === domId;
     // Soccer lists the home side first; North American sports list the visitor first.
     const order = game.sport === "soccer" ? ["home", "away"] : ["away", "home"];
-    const sub = game.state === "live" && game.situation ? game.situation : game.state === "final" ? "" : game.broadcasts[0] || "";
+    const situation = game.state === "live" && game.situation ? game.situation : game.state === "final" ? "" : game.broadcasts[0] || "";
+    // My Teams mixes leagues (and a school's several teams), so say which.
+    const sub = where === "mine" ? [LEAGUE_BY_KEY[game.league]?.short, situation].filter(Boolean).join(" · ") : situation;
     const label = `${game.away.team.name} at ${game.home.team.name}, ${statusText(game, fmt())}`;
     let detail = "";
     if (open) {
@@ -363,9 +390,9 @@ export function createScoresModule(deps) {
     if (sched?.next) lines.push(`<span><b>Next</b> ${esc(fixtureLine(sched.next, team, fmt()))}${sched.next.broadcasts[0] ? ` · ${esc(sched.next.broadcasts[0])}` : ""}</span>`);
     if (sched?.last) { const r = resultLine(sched.last, team); if (r) lines.push(`<span><b>Last</b> ${esc(r)}</span>`); }
     if (!lines.length) lines.push(`<span>${schedule.loading ? "Checking the schedule…" : "No game today"}</span>`);
-    const inner = `${logoHtml(team)}<span class="scores-idle-name">${esc(team.short)}</span><span class="scores-idle-lines">${lines.join("")}</span>`;
+    const inner = `${logoHtml(team)}<span class="scores-idle-name">${esc(team.short)}${teamSportOf(team) ? `<small>${esc(teamSportOf(team))}</small>` : ""}</span><span class="scores-idle-lines">${lines.join("")}</span>`;
     return teamRef(team) && team.league
-      ? `<button type="button" class="scores-idle" data-scores-team="${esc(team.key)}" data-league="${esc(team.league)}" aria-label="${esc(team.name)} schedule">${inner}</button>`
+      ? `<button type="button" class="scores-idle" data-scores-team="${esc(team.key)}" data-league="${esc(team.league)}" aria-label="${esc(teamLabel(team, { full: true }))} schedule">${inner}</button>`
       : `<div class="scores-idle">${inner}</div>`;
   }
 
@@ -499,12 +526,12 @@ export function createScoresModule(deps) {
     const team = findTeam(teamKey, leagueKey);
     if (!team) return;
     const p = prefs();
-    if (isFavorite(p, team)) { setPrefs(removeFavorite(p, team)); showToast?.(`Stopped following ${team.short}.`); }
+    if (isFavorite(p, team)) { setPrefs(removeFavorite(p, team)); showToast?.(`Stopped following ${teamLabel(team)}.`); }
     else {
       const next = addFavorite(p, team, leagueKey);
       if (next.teams.length === p.teams.length) { showToast?.("That's the most teams you can follow."); return; }
       setPrefs(next);
-      showToast?.(LEAGUE_BY_KEY[leagueKey]?.scope === "college" ? `Following ${team.short} in every college sport.` : `Following ${team.short}.`);
+      showToast?.(`Following ${teamLabel(team)}.`);
     }
     render();
     renderDialog();
@@ -805,13 +832,13 @@ export function createScoresModule(deps) {
       const options = LEAGUE_GROUPS.map((g) => `<optgroup label="${esc(g.label)}">${LEAGUES.filter((l) => l.group === g.key).map((l) => `<option value="${l.key}"${l.key === dialogLeague ? " selected" : ""}>${esc(l.label)}</option>`).join("")}</optgroup>`).join("");
       body = `
         <div class="scores-dialog-label">Following</div>
-        ${p.teams.length ? `<div class="scores-chips">${p.teams.map((t) => `<span class="scores-chip">${logoHtml(t)}<span>${esc(t.short)}</span><button type="button" data-scores-follow="${esc(t.key)}" data-league="${esc(t.league)}" aria-label="Stop following ${esc(t.name)}">${CLOSE}</button></span>`).join("")}</div>` : `<p class="news-empty">No teams yet. Star a team below.</p>`}
+        ${p.teams.length ? `<div class="scores-chips">${p.teams.map((t) => `<span class="scores-chip">${logoHtml(t)}<span>${esc(teamLabel(t))}</span><button type="button" data-scores-follow="${esc(t.key)}" data-league="${esc(t.league)}" aria-label="Stop following ${esc(teamLabel(t, { full: true }))}">${CLOSE}</button></span>`).join("")}</div>` : `<p class="news-empty">No teams yet. Star a team below.</p>`}
         <div class="scores-dialog-label">Add a team</div>
         <div class="scores-pick-controls">
           <select id="scoresLeagueSelect" aria-label="League">${options}</select>
           <input id="scoresTeamSearch" type="search" placeholder="Search teams" aria-label="Search teams" value="${esc(dialogQuery)}">
         </div>
-        ${league?.scope === "college" ? `<p class="scores-hint">Following a college follows it in football, basketball and hockey.</p>` : league?.sport === "soccer" ? `<p class="scores-hint">Following a soccer team follows it in every competition you show.</p>` : ""}
+        ${isCollegeScope(league?.scope) ? `<p class="scores-hint">Each college sport is its own team: follow a school in each sport you want.</p>` : league?.sport === "soccer" ? `<p class="scores-hint">Following a soccer team follows it in every competition you show.</p>` : ""}
         <div class="scores-pick-list" id="scoresTeamList">${teamListHtml()}</div>`;
     } else {
       const on = enabledLeagueKeys(p).map((k) => LEAGUE_BY_KEY[k]);
@@ -932,6 +959,7 @@ export function createScoresModule(deps) {
     seededDate = board?.date || dateKeyOf();
     seeded = board ? { games: cleanGames(board.games || board.days?.[seededDate]), leagues: board.leagues || {}, loadedAt: Date.now() } : null;
     if (seeded && board.days) seeded.days = Object.fromEntries(Object.entries(board.days).map(([k, v]) => [k, cleanGames(v)]));
+    if (seeded) fillRefsFrom([seeded.games, ...Object.values(seeded.days || {})].flat().flatMap((g) => [g.home.team, g.away.team]));
     if (board?.date) selected = board.date;
     if (board?.schedule) schedule = { key: "seed", loadedAt: Date.now(), byToken: board.schedule, loading: false };
     if (seeded && board.tables) seeded.tables = Object.fromEntries(Object.entries(board.tables).map(([k, v]) => [k, cleanStandings({ league: k, ...v })]));

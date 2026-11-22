@@ -36,7 +36,7 @@ import { normalizeWordStats, normalizeSessions, mergeWordStats, mergeSessions, n
 import { normalizeCards as normalizeLanguageCards, mergeCards as mergeLanguageCards } from './language-srs.js';
 import { normalizeUserLessons, normalizeUserWords, mergeUserLessons, mergeUserWords } from './language-words.js';
 import { createNewsTickerModule } from './news-ticker.js';
-import { normalizeSportsPrefs, dateKeyOf, shiftDateKey } from './sports-model.js';
+import { normalizeSportsPrefs, dateKeyOf, shiftDateKey, teamLabel } from './sports-model.js';
 import { dynamicTheme, rankedGamedayTeams, nextGamedayCheckMs, teamTheme, nextHoliday } from './theme-dynamic.js';
 import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanViewName, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
@@ -19332,11 +19332,11 @@ function displaySettingsTemplate() {
   const onTeams = new Set(prefs.gamedayTeams || []);
   const next = nextHoliday(now);
   const shown = applyThemeMode.shown;
-  const nowLine = shown?.reason === "game" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} colors — ${escapeHtml(shown.team?.short || shown.team?.name || "")} are playing.`
+  const nowLine = shown?.reason === "game" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} colors — ${escapeHtml(shown.team ? teamLabel(shown.team) : "")} are playing.`
     : shown?.reason === "holiday" ? `Showing ${escapeHtml(THEMES[shown.theme]?.label || "")} today.` : "";
   const teamRows = sports.teams.map((t, i) => {
     const theme = teamTheme(t);
-    const label = escapeHtml(t.name || t.short);
+    const label = escapeHtml(teamLabel(t, { full: true }));
     return `
           <li class="display-team${theme ? "" : " is-unthemed"}" data-display-team="${escapeHtml(t.key)}">
             <span class="display-team-rank">${i + 1}</span>

@@ -42,8 +42,10 @@ international soccer), with each person's favorite teams pinned first. **Stories
   Tapping a game opens its day in Scores; ‹ Back returns.
 - **Teams & leagues dialog:** favorites (add from a league's team list or from any
   game; remove), which leagues show and in what order, the college choice.
-- **Following** a soccer team follows it in every competition shown; following a
-  college follows it in football, basketball and hockey (§3, `scope`).
+- **Following** a soccer team follows it in every competition shown. **Each college
+  sport is its own team** (Luke, 2026-11-20): the Gophers' football, basketball and
+  hockey teams are followed separately, each shows its own games in My Teams, and
+  each idle one gets its own next/last row (§3a).
 
 ## 3. The app's own model (`sports-model.js`)
 
@@ -62,6 +64,33 @@ the function; pure; tested (`test/sports-model.test.js`).
   trims (https-only links and images); the function and the client both run it.
 - **View logic:** `arrangeScores`, `nextRefreshMs`, `scoreboardCacheSeconds`,
   date and status formatting.
+
+### 3a. College teams per sport (2026-11-20)
+
+Luke: "the app only shows me the next game either of these three teams play, not
+all three." Until then a school was one favorite in a shared `college` scope, homed
+in the league it was followed from, so My Teams asked only that league for its
+next game, and a football game hid the hockey team's.
+
+- Each college league is its own scope (`ncaaf`, `ncaam`, `ncaah`, `ncaaw`), so team
+  keys are `ncaah:minnesota-golden-gophers` and `sameTeam` never crosses sports.
+- **Migration, on read** (`expandLegacyFavorite` in `normalizeSportsPrefs`): a saved
+  `college` favorite becomes football, basketball and hockey (`college-w` → women's
+  basketball), in its place in the ranking. The sport it was followed from keeps its
+  provider id; the others carry the name only, because a provider's id for a school
+  isn't promised to match across sports. No schema bump; stable once saved.
+- **Filling ids:** a name-only favorite takes the id of a matching team from a loaded
+  day's games, or (when idle) from its league's team list, once per session
+  (`fillFavoriteRefs`, `scores-ui.js lookUpMissingRefs`), then is saved. Until then it
+  matches games by name.
+- **Game-day colors:** a stored `college:…` key in `gamedayTeams` reads as all three
+  sports (`theme.js cleanGamedayTeams`).
+- **News ranking** still thinks in schools: `teamsForServer` (news-ui.js) sends a
+  school followed in several sports once, as `college:…`, so `_news-rank.js` and the
+  server's stored favorites are unchanged.
+- Labels: `teamLabel` adds the sport where a school's name is ambiguous ("Minnesota
+  Hockey") — favorites chips, toasts, Display's team list; idle rows put the sport on
+  a second line; My Teams rows show the league (`NCAAH · BTN`).
 
 ## 4. Server (`netlify/functions/scores.mjs`)
 
