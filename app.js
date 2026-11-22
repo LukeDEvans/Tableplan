@@ -39,6 +39,7 @@ import { createNewsTickerModule } from './news-ticker.js';
 import { normalizeSportsPrefs, dateKeyOf, shiftDateKey, teamLabel } from './sports-model.js';
 import { dynamicTheme, rankedGamedayTeams, nextGamedayCheckMs, teamTheme, nextHoliday } from './theme-dynamic.js';
 import { THEMES, THEME_CHOICES, THEME_GROUPS, cleanViewName, cleanDisplayPrefs, normalizeDisplayPrefs, resolveTheme, applyResolvedTheme, seasonalTheme, seasonalSummary } from './theme.js';
+import { createMailReceiptModule } from './mail-receipt-ui.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, financeNudgeInstance, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
@@ -12087,6 +12088,10 @@ function showMailMoreMenu(thread, lastMsg) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
       Send to Explore
     </button>
+    <button class="mail-more-option" type="button" data-action="send-to-finance">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12v20l-3-2-3 2-3-2-3 2z"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
+      Send to Finance
+    </button>
     <div class="mail-more-divider"></div>
     <button class="mail-more-option" type="button" data-action="label">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
@@ -12106,6 +12111,7 @@ function showMailMoreMenu(thread, lastMsg) {
     else if (action === "create-event") createEventFromEmail(lastMsg?.subject || "");
     else if (action === "move-to-media") moveMailToMedia(thread, lastMsg);
     else if (action === "send-to-explore") sendMailToExplore(thread, lastMsg);
+    else if (action === "send-to-finance") mailReceipts.sendMailToFinance(thread, lastMsg);
     else if (action === "label") showMailMovePicker(thread);
   });
   btn.closest(".mail-more-wrap").appendChild(menu);
@@ -12263,6 +12269,19 @@ async function moveMailToMedia(thread, lastMsg) {
   showMailToast("Saved to News.");
   callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["TRASH"], removeLabelIds: removeIds });
 }
+
+// ── Send to Finance: an emailed receipt / order into Finance (mail-receipt-ui.js) ─
+const mailReceipts = createMailReceiptModule({
+  state,
+  escapeHtml: (...a) => escapeHtml(...a),
+  showMailToast: (...a) => showMailToast(...a),
+  callGmailApi: (...a) => callGmailApi(...a),
+  getLastGmailApiError: () => lastGmailApiError,
+  importFinanceInboxReceipts: (...a) => importFinanceInboxReceipts(...a),
+  queueReceiptFile: (...a) => queueReceiptForDocuments(...a),
+  openReceiptDetail: (...a) => openReceiptDetail(...a),
+  canMarkPersonal: () => currentViewList().includes("personal"),
+});
 
 // ── Send to Explore: interpret a travel email/thread into structured info ─────
 // Provider-agnostic: the whole thread is interpreted server-side into normalized

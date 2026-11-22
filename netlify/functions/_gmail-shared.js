@@ -414,28 +414,37 @@ async function loadReceiptContext(serviceKey, userId, mailAi) {
 }
 
 async function extractReceipt(anthropicKey, { subject, from, date, bodyText, categories }) {
+  const cats = Array.isArray(categories) ? categories : [];
   const system = [
     "You extract purchase receipts / order confirmations from emails for a household budget app.",
     'Reply with ONLY valid JSON, no markdown: {"receipt": {...}} or {"receipt": null}.',
     "Return null unless the email contains an itemized purchase with a charged total.",
-    'Receipt shape: {"merchant": "...", "date": "YYYY-MM-DD", "total": 12.34, "items": [{"name": "...", "price": 1.23, "category": "<key>" or null}]}',
-    "total = the amount actually charged (after tax, shipping, discounts).",
-    "Assign each item the best-fitting budget category key from this list; use null when unsure:",
-    categories.map((c) => `${c.key} = ${c.name}`).join("\n")
+    'Receipt shape: {"merchant": "...", "date": "YYYY-MM-DD", "subtotal": 10.00, "tax": 0.80, "total": 12.34, "cardLast4": "1234" or null, "orderNumber": "..." or null, "items": [{"name": "...", "price": 1.23, "category": "<key>" or null}]}',
+    "total = the amount actually charged (after tax, shipping, discounts). date = the order or purchase date.",
+    "cardLast4 = the last 4 digits of the payment card only when the email prints them; orderNumber = the store's order number when shown.",
+    cats.length ? "Assign each item the best-fitting budget category key from this list; use null when unsure:" : "Use null for every item's category.",
+    cats.map((c) => `${c.key} = ${c.name}`).join("\n")
   ].join("\n");
   const user = `Subject: ${subject}\nFrom: ${from}\nDate: ${date}\n\n${(bodyText || "").slice(0, 9000)}`;
-  const text = await claudeCall(anthropicKey, { system, user, maxTokens: 1500 });
-  const m = text.match(/\{[\s\S]*\}/);
+  const text = await claudeCall(anthropicKey, { system, user, maxTokens: 1800 });
+  return parseReceiptReply(text, cats);
+}
+
+// The reader's JSON reply → a receipt for the finreceipts_ inbox, or null.
+// Pure (no network), so tests can check it.
+function parseReceiptReply(text, categories = []) {
+  const m = String(text || "").match(/\{[\s\S]*\}/);
   if (!m) return null;
   let parsed;
   try { parsed = JSON.parse(m[0]); } catch { return null; }
-  const r = parsed.receipt;
+  const r = parsed && parsed.receipt;
   if (!r || !Number(r.total)) return null;
+  const money = (v) => Math.round((Number(v) || 0) * 100) / 100;
   const validKeys = new Set(categories.map((c) => c.key));
   const items = (Array.isArray(r.items) ? r.items : []).slice(0, 60).map((it) => ({
-    name: String(it.name || "").slice(0, 80),
-    price: Math.round((Number(it.price) || 0) * 100) / 100,
-    category: validKeys.has(it.category) ? it.category : ""
+    name: String(it?.name || "").slice(0, 80),
+    price: money(it?.price),
+    category: validKeys.has(it?.category) ? it.category : ""
   }));
   // Portions = per-category item sums; uncategorized items plus the
   // tax/shipping remainder form one unlabeled portion for the user to assign.
@@ -449,10 +458,15 @@ async function extractReceipt(anthropicKey, { subject, from, date, bodyText, cat
   const portions = Object.entries(byCat).map(([label, amount]) => ({ label, amount }));
   const remainder = Math.round((Number(r.total) - assigned) * 100) / 100;
   if (remainder > 0.02) portions.push({ label: "", amount: remainder });
+  const last4 = String(r.cardLast4 ?? "").replace(/\D/g, "");
   return {
     merchant: String(r.merchant || "").slice(0, 60),
     date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : "",
-    total: Math.round(Number(r.total) * 100) / 100,
+    subtotal: Math.max(0, money(r.subtotal)),
+    tax: Math.max(0, money(r.tax)),
+    total: money(r.total),
+    cardLast4: last4.length === 4 ? last4 : "",
+    orderNumber: String(r.orderNumber ?? "").trim().slice(0, 60),
     items,
     portions,
     at: new Date().toISOString()
@@ -986,5 +1000,9 @@ module.exports = {
   saveSnoozes,
   findOrCreateSnoozedLabel,
   modifyWholeThread,
-  processDueSnoozes
+  processDueSnoozes,
+  RECEIPT_HINT_RE,
+  loadReceiptContext,
+  extractReceipt,
+  parseReceiptReply
 };
