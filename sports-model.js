@@ -18,18 +18,22 @@ export const SCORES_MODEL_VERSION = 1;
 
 // ── League catalog ───────────────────────────────────────────────────────────
 // `scope` is the namespace a team's identity lives in. A soccer club or national
-// side is one team across every competition ("soccer"); a college is one school
-// across football, basketball and hockey ("college"); the pro leagues are their
-// own. `on` is the default for a user who hasn't chosen.
+// side is one team across every competition ("soccer"); the pro leagues are their
+// own. Each college sport is its own scope (Luke, 2026-11-20): the Gophers'
+// football, basketball and hockey teams are three teams, each followed, shown and
+// scheduled on its own. (Until then a school was one "college" team across every
+// sport; normalizeSportsPrefs migrates those favorites.) `teamSport` names the
+// sport after a school's name where it would be ambiguous ("Minnesota Hockey").
+// `on` is the default for a user who hasn't chosen.
 export const LEAGUES = Object.freeze([
   { key: "nfl", label: "NFL", short: "NFL", sport: "football", scope: "nfl", group: "pro", on: true },
   { key: "nba", label: "NBA", short: "NBA", sport: "basketball", scope: "nba", group: "pro", on: true },
   { key: "nhl", label: "NHL", short: "NHL", sport: "hockey", scope: "nhl", group: "pro", on: true },
   { key: "mls", label: "MLS", short: "MLS", sport: "soccer", scope: "soccer", group: "club", on: true },
   { key: "eredivisie", label: "Eredivisie", short: "Eredivisie", sport: "soccer", scope: "soccer", group: "club", on: true },
-  { key: "ncaaf", label: "College Football", short: "NCAAF", sport: "football", scope: "college", group: "college", college: true, on: true },
-  { key: "ncaam", label: "Men's College Basketball", short: "NCAAM", sport: "basketball", scope: "college", group: "college", college: true, on: true },
-  { key: "ncaah", label: "Men's College Hockey", short: "NCAAH", sport: "hockey", scope: "college", group: "college", college: true, on: true },
+  { key: "ncaaf", label: "College Football", short: "NCAAF", sport: "football", scope: "ncaaf", teamSport: "Football", group: "college", college: true, on: true },
+  { key: "ncaam", label: "Men's College Basketball", short: "NCAAM", sport: "basketball", scope: "ncaam", teamSport: "Basketball", group: "college", college: true, on: true },
+  { key: "ncaah", label: "Men's College Hockey", short: "NCAAH", sport: "hockey", scope: "ncaah", teamSport: "Hockey", group: "college", college: true, on: true },
   { key: "nations-league", label: "UEFA Nations League", short: "Nations League", sport: "soccer", scope: "soccer", group: "intl", on: true },
   { key: "world-cup", label: "FIFA World Cup", short: "World Cup", sport: "soccer", scope: "soccer", group: "intl", on: true },
   { key: "wcq-uefa", label: "World Cup Qualifying (UEFA)", short: "WCQ UEFA", sport: "soccer", scope: "soccer", group: "intl", on: true },
@@ -54,7 +58,7 @@ export const LEAGUES = Object.freeze([
   { key: "womens-world-cup", label: "FIFA Women's World Cup", short: "Women's World Cup", sport: "soccer", scope: "soccer-w", group: "intl", on: false },
   { key: "mlb", label: "MLB", short: "MLB", sport: "baseball", scope: "mlb", group: "pro", on: false },
   { key: "wnba", label: "WNBA", short: "WNBA", sport: "basketball", scope: "wnba", group: "pro", on: false },
-  { key: "ncaaw", label: "Women's College Basketball", short: "NCAAW", sport: "basketball", scope: "college-w", group: "college", college: true, on: false },
+  { key: "ncaaw", label: "Women's College Basketball", short: "NCAAW", sport: "basketball", scope: "ncaaw", teamSport: "Women's Basketball", group: "college", college: true, on: false },
 ].map(Object.freeze));
 
 export const LEAGUE_BY_KEY = Object.freeze(Object.fromEntries(LEAGUES.map((l) => [l.key, l])));
@@ -67,6 +71,27 @@ export const LEAGUE_GROUPS = Object.freeze([
 export const GAME_STATES = Object.freeze(["pre", "live", "final", "postponed", "canceled", "delayed"]);
 export const COLLEGE_SCOPES = Object.freeze(["ranked", "all"]);
 export const MAX_FAVORITE_TEAMS = 60;
+
+// The scopes a school's teams lived in before each college sport became its own
+// (2026-11-20), and the sport scopes each one now stands for. A favorite saved
+// under an old scope becomes one favorite per sport (normalizeSportsPrefs).
+export const LEGACY_COLLEGE_SCOPES = Object.freeze({
+  college: Object.freeze(["ncaaf", "ncaam", "ncaah"]),
+  "college-w": Object.freeze(["ncaaw"]),
+});
+const COLLEGE_SPORT_SCOPES = new Set(LEAGUES.filter((l) => l.college).map((l) => l.scope));
+export const isCollegeScope = (scope) => COLLEGE_SPORT_SCOPES.has(scope) || !!LEGACY_COLLEGE_SCOPES[scope];
+
+// How a team is named where the school's name alone would be ambiguous (My
+// Teams, the favorites list, Display's team list): "Minnesota Hockey". Other
+// teams keep their name. `full` uses the full name ("Minnesota Golden Gophers
+// Hockey") instead of the short one.
+export const teamSportOf = (team) => LEAGUES.find((l) => l.college && l.scope === team?.scope)?.teamSport || "";
+export function teamLabel(team, { full = false } = {}) {
+  const base = (full ? team?.name || team?.short : team?.short || team?.name) || "";
+  const sport = teamSportOf(team);
+  return sport ? `${base} ${sport}` : base;
+}
 export const TOP_RANK = 25;
 
 // ── Small pure utilities ─────────────────────────────────────────────────────
@@ -212,10 +237,26 @@ export function cleanFavorite(raw) {
   return { ...team, league: league && league.scope === team.scope ? league.key : "", addedAt: str(raw.addedAt, 40) };
 }
 
+// A favorite saved before each college sport was its own team → one favorite per
+// sport, in its place. The sport it was followed from keeps the provider id; the
+// others carry the name only (a provider's id for a school isn't promised to be
+// the same in every sport), so they match by name until the Scores view fills in
+// their id (fillFavoriteRefs). Anything else passes through.
+export function expandLegacyFavorite(raw) {
+  const sports = LEGACY_COLLEGE_SCOPES[raw?.scope];
+  if (!sports) return [raw];
+  const from = LEAGUE_BY_KEY[raw.league]?.scope;
+  const order = sports.includes(from) ? [from, ...sports.filter((s) => s !== from)] : sports;
+  return order.map((scope) => {
+    const league = LEAGUES.find((l) => l.scope === scope);
+    return { ...raw, scope, league: league?.key || "", refs: scope === from ? raw.refs : {} };
+  });
+}
+
 export function normalizeSportsPrefs(raw) {
   const p = raw && typeof raw === "object" ? raw : {};
   const teams = [];
-  for (const t of Array.isArray(p.teams) ? p.teams : []) {
+  for (const t of (Array.isArray(p.teams) ? p.teams : []).flatMap(expandLegacyFavorite)) {
     const fav = cleanFavorite(t);
     if (fav && !teams.some((x) => sameTeam(x, fav)) && teams.length < MAX_FAVORITE_TEAMS) teams.push(fav);
   }
@@ -254,6 +295,23 @@ export function addFavorite(prefs, team, leagueKey, nowIso = new Date().toISOStr
   if (!fav || base.teams.some((t) => sameTeam(t, fav)) || base.teams.length >= MAX_FAVORITE_TEAMS) return base;
   return { ...base, teams: [...base.teams, fav] };
 }
+// Favorites that have no provider id yet (a migrated college sport, above) take
+// one from `teams` — a day's games or a league's team list — where the name
+// matches. Returns the same prefs object when nothing changed, so a caller can
+// tell whether to save.
+export function fillFavoriteRefs(prefs, teams) {
+  const base = normalizeSportsPrefs(prefs);
+  let changed = false;
+  const next = base.teams.map((fav) => {
+    if (Object.keys(fav.refs).length) return fav;
+    const match = (teams || []).find((t) => t && Object.keys(t.refs || {}).length && sameTeam(fav, t));
+    if (!match) return fav;
+    changed = true;
+    return { ...fav, refs: { ...match.refs }, logo: fav.logo || match.logo, logoDark: fav.logoDark || match.logoDark, color: fav.color || match.color };
+  });
+  return changed ? { ...base, teams: next } : prefs;
+}
+
 export function removeFavorite(prefs, team) {
   const base = normalizeSportsPrefs(prefs);
   return { ...base, teams: base.teams.filter((t) => !sameTeam(t, team)) };

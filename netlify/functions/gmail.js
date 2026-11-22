@@ -112,7 +112,10 @@ exports.handler = async (event) => {
     // app knows whether to send its Scores favourites.
     const forYou = await NewsStore.forYouReady(serviceKey).catch(() => false);
     if (view.kind === "foryou" && !forYou) view.kind = "front";
-    const wantsWeights = forYou && view.kind === "foryou" && !q;
+    // The blended Front page (NEWS_FRONT_PAGE_DESIGN.md §12): builds that ask for
+    // it get Top stories + For you in one list; paging and search stay newest first.
+    const blend = forYou && body.blend === true && view.kind === "front" && !before && !NewsStore.searchTerm(q);
+    const wantsWeights = forYou && (view.kind === "foryou" || blend) && !q;
     const interest = forYou ? await NewsStore.loadInterest(serviceKey, userId, { cols: wantsWeights ? "all" : "teams" }).catch(() => null) : null;
     // Opening the Front page (or the app: its dock ticker asks for the Front page)
     // checks the papers' top feeds if nothing has in the last ten minutes, so a
@@ -124,7 +127,11 @@ exports.handler = async (event) => {
         new Promise((resolve) => setTimeout(resolve, 3500))
       ]);
     }
-    const pageP = wantsWeights && interest
+    const plainPage = () => NewsStore.loadFeedPage(serviceKey, userId, { view: view.kind === "foryou" ? { kind: "front" } : view, before, q, limit: body.limit, athleticTagged: forYou });
+    const pageP = blend && interest
+      // A failed blend falls back to the plain Front page, never an error.
+      ? NewsStore.loadBlendedFront(serviceKey, userId, interest, { limit: body.limit }).catch((e) => { console.warn("[news] blend:", e.message); return plainPage(); })
+      : wantsWeights && interest
       ? NewsStore.loadForYou(serviceKey, userId, interest)
       : NewsStore.loadFeedPage(serviceKey, userId, { view: view.kind === "foryou" ? { kind: "front" } : view, before, q, limit: body.limit, athleticTagged: forYou });
     const [page, counts, signIns] = await Promise.all([
