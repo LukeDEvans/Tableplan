@@ -78,18 +78,38 @@ describe("the PDF", () => {
   it("writes quotes and dashes in WinAnsi and drops emoji", () => {
     expect(toWinAnsiBytes("“Hi” – café 🎉")).toEqual([0x93, 0x48, 0x69, 0x94, 0x20, 0x96, 0x20, 0x63, 0x61, 0x66, 0xe9, 0x20]);
   });
-  it("is a valid PDF whose text reads back", () => {
+  const sample = () => {
     const text = ["Order #1185520", "Kirkland Paper Towels (12)   $24.99", "Subtotal $80.00", "Tax $4.10", "Total $84.10 (paren) back\\slash", ...Array.from({ length: 120 }, (_, i) => `line ${i}`)].join("\n");
-    const pdf = emailReceiptPdf({ subject: "Your Costco order", from: "Costco <orders@costco.com>", date: "Thu, 19 Nov 2026", text });
+    return emailReceiptPdf({ subject: "Your Costco order", from: "Costco <orders@costco.com>", date: "Thu, 19 Nov 2026", text });
+  };
+  it("has a correct cross-reference table and three pages", () => {
+    const pdf = sample();
+    const str = Buffer.from(pdf).toString("latin1");
+    expect(str.startsWith("%PDF-1.4\n")).toBe(true);
+    expect(str.trimEnd().endsWith("%%EOF")).toBe(true);
+    const startxref = Number(str.match(/startxref\n(\d+)\n%%EOF/)[1]);
+    expect(str.slice(startxref, startxref + 4)).toBe("xref");
+    const [, count] = str.slice(startxref).match(/^xref\n0 (\d+)\n/);
+    const rows = str.slice(startxref).split("\n").slice(3, 2 + Number(count));
+    rows.forEach((row, i) => {
+      const at = Number(row.slice(0, 10));
+      expect(str.slice(at, at + String(i + 1).length + 6)).toBe(`${i + 1} 0 obj`);
+    });
+    expect(str).toContain("/Count 3");
+    expect(str).toContain("(Kirkland Paper Towels \\(12\\)   $24.99) Tj");
+    expect(str).toContain("back\\\\slash");
+  });
+  const haveTools = (() => { try { execFileSync("qpdf", ["--version"]); execFileSync("pdftotext", ["-v"], { stdio: "ignore" }); return true; } catch { return false; } })();
+  it.runIf(haveTools)("passes qpdf's check and its text reads back (where qpdf and pdftotext are installed)", () => {
     const dir = mkdtempSync(join(tmpdir(), "erpdf-"));
     const file = join(dir, "r.pdf");
-    writeFileSync(file, pdf);
+    writeFileSync(file, sample());
     execFileSync("qpdf", ["--check", file]); // throws on a broken file
     const out = execFileSync("pdftotext", ["-layout", file, "-"]).toString();
     expect(out).toContain("Your Costco order");
     expect(out).toContain("Kirkland Paper Towels (12)   $24.99");
     expect(out).toContain("Total $84.10 (paren) back\\slash");
-    expect(out).toContain("line 119"); // onto page 2
+    expect(out).toContain("line 119");
     expect(execFileSync("qpdf", ["--show-npages", file]).toString().trim()).toBe("3");
   });
 });
