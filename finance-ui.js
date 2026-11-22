@@ -9,6 +9,7 @@ import { createIdbStorage, createMemoryStorage } from './content-store/storage.j
 import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 import { linkOutAttrs } from './link-out.js';
 import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
+import { duplicateMap } from './receipt-duplicates.js';
 import { financeOwedBalances } from './finance-settle.js';
 import { subscriptionReview, cashForecast, everydaySpendPerDay, goalProgress } from './finance-plan.js';
 import { TAX_KINDS, taxLabel, taxTagFor, taxYearSummary, taxYearCsv, tripCandidates, tripCharges } from './finance-tags.js';
@@ -1083,6 +1084,16 @@ function financeReceiptForTxn(t) {
   return financeReceiptFits().byTxn.get(t.id)?.receipt || null;
 }
 
+// Receipts that look like the same purchase saved twice (receipt-duplicates.js),
+// worked out once per set of receipts; shown as "Possible duplicate" in Document.
+let financeReceiptDupCache = null;
+function financeReceiptDuplicates() {
+  const list = financeReceiptList();
+  const sig = list.map((r) => `${r.id}:${r.total}:${r.date}:${r.financeTxnId || ""}:${(r.notDuplicateOf || []).length}`).join("|");
+  if (financeReceiptDupCache?.sig !== sig) financeReceiptDupCache = { sig, map: duplicateMap(list) };
+  return financeReceiptDupCache.map;
+}
+
 // What Document shows on a receipt's file: what was read, and its charge.
 function financeReceiptInfo(receiptId) {
   const list = financeReceiptList();
@@ -1091,11 +1102,11 @@ function financeReceiptInfo(receiptId) {
   const haveTxns = Boolean(financeLive?.accounts?.length);
   const fit = haveTxns ? financeReceiptFits().byReceipt.get(receiptId) || null : null;
   // Before Finance has loaded this visit, only a saved link is known.
-  const status = !haveTxns && r.financeTxnId ? "matched" : receiptStatus(r, fit);
+  const status = financeReceiptDuplicates().has(r.id) ? "duplicate" : !haveTxns && r.financeTxnId ? "matched" : receiptStatus(r, fit);
   return {
     id: r.id, store: r.merchant || "", date: r.date || "", total: Number(r.total) || 0, tip: Number(r.tip) || 0,
     source: r.source || "scan", status, statusLabel: RECEIPT_STATUS_LABEL[status] || "",
-    known: haveTxns || Boolean(r.financeTxnId),
+    known: haveTxns || Boolean(r.financeTxnId) || status === "duplicate",
     items: (r.items || []).map((i) => ({ name: i.name || "", price: Number(i.price) || 0, category: i.category ? financeTxnLabelName(i.category) || "" : "" })),
     txn: fit?.txn ? { id: fit.txn.id, posted: fit.txn.posted || "", name: fit.txn.displayName || fit.txn.description || "", account: fit.txn.account || "", amount: Number(fit.txn.amount) || 0 } : null,
   };

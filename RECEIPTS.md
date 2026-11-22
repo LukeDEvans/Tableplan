@@ -29,6 +29,17 @@ extraction. Added for Finance:
 | `externalId` | Gmail message id for `email` receipts (for the "Email" link) |
 | `financeTxnId` | the transaction it was itemized against, once linked |
 | `orderNumber` | the store's order number when an emailed order printed one (Send to Finance) |
+| `notDuplicateOf` | receipts the user said are separate purchases ("Keep both") |
+
+**Possible duplicates (Luke, 2026-11-22: the app always asks).** `receipt-duplicates.js`
+treats two receipts as the same purchase when they print the same order number, or when the
+totals agree (±2¢), the dates are at most 2 days apart and the store names start with the
+same word. Receipts linked to two different charges, or marked Keep both, never are. A new
+receipt with a twin gets a toast with **Review** (and waits before going into Inventory);
+Shop's list and Document show **Possible duplicate**; the receipt editor offers **Merge into
+one** (the more detailed read, the charge link and categories kept; Document keeps one file:
+the dropped receipt's is relinked, or goes to Recently deleted when the kept one has its own)
+or **Keep both**. Send to Finance asks before saving.
 
 **Send to Finance (Luke, 2026-11-22).** In Mail, an open email's ⋯ menu → *Send to
 Finance* reads that one email (`gmail.js` `readReceipt`, the sweep's `extractReceipt`),

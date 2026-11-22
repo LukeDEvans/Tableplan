@@ -106,6 +106,9 @@ return {
       // The store's order number, when an emailed order confirmation printed one
       // (Send to Finance spots a second email about an order already saved).
       orderNumber: text(receipt?.orderNumber).slice(0, 60),
+      // Receipts the user said are separate purchases ("Keep both" on a possible
+      // duplicate — receipt-duplicates.js), so the pair isn't asked about again.
+      notDuplicateOf: [...new Set((Array.isArray(receipt?.notDuplicateOf) ? receipt.notDuplicateOf : []).map(text).filter(Boolean))].slice(-20),
       // The Finance transaction this receipt was itemized against, once linked.
       financeTxnId: text(receipt?.financeTxnId),
       lineItems
@@ -340,6 +343,9 @@ return {
       financeTxnId: receipt.financeTxnId || "",
       tip: number(receipt.tip),
       last4: receipt.paymentLast4 || "",
+      orderNumber: receipt.orderNumber || "",
+      notDuplicateOf: receipt.notDuplicateOf || [],
+      createdAt: receipt.createdAt || "",
       view: receipt.view || "",
       returnBy: receipt.returnBy || "",
       warrantyUntil: receipt.warrantyUntil || "",
@@ -372,6 +378,7 @@ return {
       paymentLast4: text(inbound?.cardLast4 || inbound?.last4),
       orderNumber: text(inbound?.orderNumber),
       view: text(inbound?.view),
+      notDuplicateOf: Array.isArray(inbound?.notDuplicateOf) ? inbound.notDuplicateOf : [],
       lineItems: (Array.isArray(inbound?.items) ? inbound.items : []).map((it, i) => ({
         id: `${id}-line-${i}`,
         rawText: text(it?.name),
@@ -403,16 +410,6 @@ return {
     });
   }
 
-  // A receipt already in the list for the same store order (Send to Finance):
-  // same order number, ignoring case, spaces, dashes and a leading "#".
-  // Returns that receipt or null. Receipts without an order number never match.
-  function receiptForSameOrder(receipts, orderNumber, exceptId = "") {
-    const key = (v) => text(v).toLowerCase().replace(/^#/, "").replace(/[\s-]/g, "");
-    const want = key(orderNumber);
-    if (want.length < 4) return null;
-    return (Array.isArray(receipts) ? receipts : []).find((r) => r && r.id !== exceptId && key(r.orderNumber) === want) || null;
-  }
-
   function defaultId(prefix) {
     return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
@@ -434,6 +431,5 @@ export {
     receiptFinancePortions,
     receiptForFinance,
     receiptFromFinanceInbox,
-    receiptForSameOrder,
     RECEIPT_SOURCES
   };

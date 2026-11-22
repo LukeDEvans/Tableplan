@@ -156,6 +156,12 @@ as security-critical. Everything below about vaults, keys and the lock is the Sa
   100 / 80 MB / 60 days); opening Household Documents files them into Receipts
   ("<store> · <date>" from the receipt's read, one PDF for several JPEG pages).
 - An entry leaves the outbox only after it's stored. Sign-out deletes the outbox.
+- Other routes file the same way (2026-11-22): Mail's Send to Finance queues the email's
+  text as a PDF (`email-receipt-pdf.js`). When two duplicate receipts are merged
+  (receipt-duplicates.js), app.js `relinkMergedReceiptFiles` points the dropped receipt's
+  file at the kept one with `everyday.relinkReceipt` (updates `source` only), or trashes
+  it (Recently deleted) when the kept receipt already has a file. Document shows
+  "Possible duplicate" from `receiptInfo().status === "duplicate"` (`.docs-chip.is-duplicate`).
 
 ## The web lock, sign-out, Quick Look, cache (DOCUMENTS_DESIGN.md §24)
 - **Web lock (Luke, 2026-11-03: passkey, real encryption):** `documents/web-lock.js`. A

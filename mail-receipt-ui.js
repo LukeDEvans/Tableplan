@@ -4,16 +4,18 @@
 // receipt in the one receipts list (state.receipts, RECEIPTS.md) through Shop's
 // importFinanceInboxReceipts — the same door the inbox sweep's email receipts
 // use, with the same id (the Gmail message id), so one email never makes two
-// receipts. The email's text is filed in Document › Receipts as a PDF pointing
+// receipts. A receipt for the same purchase already saved (scanned, shared,
+// emailed — receipt-duplicates.js) is shown first, and saving anyway means
+// "Keep both". The email's text is filed in Document › Receipts as a PDF pointing
 // at the receipt (email-receipt-pdf.js), replacing the screenshot.
 // Manual only: nothing is read or saved without the tap.
 import { emailReceiptPdf } from "./email-receipt-pdf.js";
-import { receiptForSameOrder } from "./receipt-domain.js";
 
 export function createMailReceiptModule(deps) {
   const {
     state, escapeHtml, showMailToast, callGmailApi, getLastGmailApiError,
     importFinanceInboxReceipts, queueReceiptFile, openReceiptDetail, canMarkPersonal,
+    receiptDuplicateOf, keepReceiptsApart,
   } = deps;
 
   const money = (n) => `$${(Math.round((Number(n) || 0) * 100) / 100).toFixed(2)}`;
@@ -71,7 +73,11 @@ export function createMailReceiptModule(deps) {
   function showReview(d, body, receipt, meta, text) {
     const date = receipt.date || headerDay(meta.date);
     const items = Array.isArray(receipt.items) ? receipt.items : [];
-    const sameOrder = receiptForSameOrder(receiptsList(), receipt.orderNumber);
+    // The same purchase already saved some other way (receipt-duplicates.js): ask.
+    const sameOrder = receiptDuplicateOf({
+      id: receiptIdFor(receipt.id), storeName: receipt.merchant, purchaseDate: date,
+      total: receipt.total, orderNumber: receipt.orderNumber, createdAt: new Date().toISOString(),
+    });
     const row = (label, value) => value ? `<div class="ingest-field"><span class="ingest-field-label">${escapeHtml(label)}</span><span class="ingest-field-value">${escapeHtml(value)}</span></div>` : "";
     const shown = items.slice(0, 8);
     const itemList = items.length
@@ -91,13 +97,13 @@ export function createMailReceiptModule(deps) {
         `</div>` +
         itemList +
         (canMarkPersonal() ? `<label class="mail-receipt-personal"><span>Personal purchase <span class="hint">only in your Personal view</span></span><input type="checkbox" class="live-toggle" data-personal /></label>` : "") +
-        (sameOrder ? `<div class="ingest-conflict-banner"><div class="ingest-conflict-head">Same order as a receipt already saved</div>` +
+        (sameOrder ? `<div class="ingest-conflict-banner"><div class="ingest-conflict-head">Looks like a receipt you already have</div>` +
           `${escapeHtml([sameOrder.storeName, shortDate(sameOrder.purchaseDate), money(sameOrder.total)].filter(Boolean).join(" · "))}. ` +
-          `Save this one too only if it was charged separately (a split shipment).</div>` : "") +
+          `Keep both only if this was a separate charge (a split shipment, or the same thing bought twice).</div>` : "") +
         `<p class="ingest-intro mail-receipt-note">The email is kept in Document › Receipts as a PDF.</p>` +
         `<div class="ingest-actions">` +
           (sameOrder
-            ? `<button class="primary-btn compact-btn" data-open-same type="button">Open saved receipt</button><button class="secondary-btn compact-btn" data-save type="button">Save as another</button>`
+            ? `<button class="primary-btn compact-btn" data-open-same type="button">Open saved receipt</button><button class="secondary-btn compact-btn" data-save type="button">Keep both</button>`
             : `<button class="primary-btn compact-btn" data-save type="button">Save receipt</button>`) +
           `<button class="secondary-btn compact-btn" data-cancel type="button">Cancel</button>` +
         `</div>` +
@@ -106,7 +112,8 @@ export function createMailReceiptModule(deps) {
     body.querySelector("[data-open-same]")?.addEventListener("click", () => { d.close(); openReceiptDetail(sameOrder.id); });
     body.querySelector("[data-save]").addEventListener("click", () => {
       const personal = Boolean(body.querySelector("[data-personal]")?.checked);
-      const saved = saveReceipt({ ...receipt, date, view: personal ? "personal" : "" }, meta, text);
+      const saved = saveReceipt({ ...receipt, date, view: personal ? "personal" : "", ...(sameOrder ? { notDuplicateOf: [sameOrder.id] } : {}) }, meta, text);
+      if (saved && sameOrder) { try { keepReceiptsApart(saved, sameOrder.id); } catch { /* the receipt is saved either way */ } }
       d.close();
       if (saved) showMailToast(personal ? "Receipt saved to Finance (Personal)." : "Receipt saved to Finance.", () => openReceiptDetail(saved), { actionLabel: "Open", durationMs: 5000 });
       else showMailToast("Couldn't save that receipt — it may have been deleted before.");
@@ -115,7 +122,7 @@ export function createMailReceiptModule(deps) {
 
   // → the receipt's id, or "" when it wasn't added (deleted earlier: tombstoned).
   function saveReceipt(receipt, meta, text) {
-    importFinanceInboxReceipts([{ ...receipt, source: "email" }]);
+    importFinanceInboxReceipts([{ ...receipt, source: "email" }], { quiet: true }); // this sheet already asked about duplicates
     const id = receiptIdFor(receipt.id);
     if (!receiptsList().some((r) => r?.id === id)) return "";
     try {
