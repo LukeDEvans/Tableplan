@@ -28,6 +28,17 @@ extraction. Added for Finance:
 | `source` | `scan` (default) · `email` · `extension` · `manual` |
 | `externalId` | Gmail message id for `email` receipts (for the "Email" link) |
 | `financeTxnId` | the transaction it was itemized against, once linked |
+| `orderNumber` | the store's order number when an emailed order printed one (Send to Finance) |
+
+**Send to Finance (Luke, 2026-11-22).** In Mail, an open email's ⋯ menu → *Send to
+Finance* reads that one email (`gmail.js` `readReceipt`, the sweep's `extractReceipt`),
+shows it for a check (with a Personal purchase switch), and on Save adds it through
+`importFinanceInboxReceipts` as `source: "email"` with the Gmail message id — the same id
+the sweep's automatic `receiptExtract` uses, so the two never make two receipts. The
+email's text is filed in Document › Receipts as a PDF (`email-receipt-pdf.js`) pointing
+at the receipt. Manual only. Emailed, shared and extension receipts may match a charge
+up to 14 days after their date (online orders charge at shipping); past 5 days only as
+"likely" (`receipt-matcher.js`).
 
 Only `scan`/`manual` receipts feed grocery price history, item mappings and the
 grocery catalog (`feedsPriceHistory`). Amazon-style email orders do not.

@@ -8375,7 +8375,7 @@ textarea {
   text-align: center;
 }
 
-.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row):not(.grocery-store-instacart-row):not(.page-access-row) {
+.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row):not(.grocery-store-instacart-row):not(.page-access-row):not(.mail-receipt-personal) {
   display: grid;
   gap: 6px;
   color: #4f493f;
@@ -18976,6 +18976,16 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 .ingest-trip-choice { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 10px; background: var(--surface); cursor: pointer; text-align: left; color: var(--ink); font-size: 0.9rem; }
 .ingest-trip-choice:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .ingest-trip-dates { font-size: 0.76rem; color: var(--muted); }
+/* Mail › Send to Finance (mail-receipt-ui.js) */
+.mail-receipt-items { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); display: flex; flex-direction: column; gap: 3px; font-size: 0.82rem; max-height: 30vh; overflow-y: auto; }
+.mail-receipt-items li { display: flex; justify-content: space-between; gap: 10px; min-width: 0; }
+.mail-receipt-items li span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.mail-receipt-items li span:last-child { flex: none; font-variant-numeric: tabular-nums; }
+.mail-receipt-items .mail-receipt-more { color: var(--muted); }
+.mail-receipt-personal { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; font-size: 0.86rem; }
+.mail-receipt-personal .hint { display: block; font-size: 0.74rem; color: var(--muted); }
+.mail-receipt-note { margin: 12px 0 0; }
+.mail-receipt-dialog .ingest-conflict-banner { margin: 12px 0 0; }
 
 /* Explore review inbox (proposed changes) */
 .explore-proposals { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }

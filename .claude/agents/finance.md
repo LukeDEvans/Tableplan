@@ -21,7 +21,7 @@ all your work is there. Make focused changes to the Finance domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
+- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `email-receipt-pdf.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
 - state: `finance*`
 
 ## Your scope (edit these)
@@ -49,6 +49,15 @@ all your work is there. Make focused changes to the Finance domain only.
   Refresh); the server caps every pull at `SIMPLEFIN_PULL_DAYS` = **44** (`_finance-ingest.js`)
   — 45 triggers SimpleFIN's range-warning banner, so don't raise it.
   Server changes here need a Netlify deploy.
+- **Emailed receipts by hand** (Luke, 2026-11-22): Mail's ⋯ → Send to Finance
+  (`mail-receipt-ui.js`, mail-owned) adds an email receipt through
+  `importFinanceInboxReceipts`; the email's text is filed in Document › Receipts as a
+  text PDF by `email-receipt-pdf.js` (finance-owned, pure, tested). The reader now also
+  returns subtotal, tax, card last 4 and order number (`receiptFromFinanceInbox` carries
+  them; `orderNumber` is a receipt field; `receiptForSameOrder` warns about a second
+  email for an order already saved). `receipt-matcher.js` lets an online order (source
+  email / extension / share) match a charge up to **14 days** after its date — past 5
+  days only as "likely", never linked on its own.
 - **Receipts are Shop's** (`state.receipts`, one list for Shop and Finance — RECEIPTS.md);
   Finance reads them only through the injected `receiptsForFinance` /
   `linkReceiptToFinanceTxn` / `openReceiptDetail` interface.

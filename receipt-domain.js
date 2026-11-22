@@ -103,6 +103,9 @@ return {
       source: RECEIPT_SOURCES.includes(text(receipt?.source)) ? text(receipt.source) : "scan",
       // The source's own id (Gmail message id for email receipts) — for links.
       externalId: text(receipt?.externalId),
+      // The store's order number, when an emailed order confirmation printed one
+      // (Send to Finance spots a second email about an order already saved).
+      orderNumber: text(receipt?.orderNumber).slice(0, 60),
       // The Finance transaction this receipt was itemized against, once linked.
       financeTxnId: text(receipt?.financeTxnId),
       lineItems
@@ -363,6 +366,12 @@ return {
       source,
       externalId: source === "email" ? externalId : "",
       createdAt: text(inbound?.at),
+      // Read from an emailed order when printed (all optional).
+      subtotal: number(inbound?.subtotal),
+      tax: number(inbound?.tax),
+      paymentLast4: text(inbound?.cardLast4 || inbound?.last4),
+      orderNumber: text(inbound?.orderNumber),
+      view: text(inbound?.view),
       lineItems: (Array.isArray(inbound?.items) ? inbound.items : []).map((it, i) => ({
         id: `${id}-line-${i}`,
         rawText: text(it?.name),
@@ -394,6 +403,16 @@ return {
     });
   }
 
+  // A receipt already in the list for the same store order (Send to Finance):
+  // same order number, ignoring case, spaces, dashes and a leading "#".
+  // Returns that receipt or null. Receipts without an order number never match.
+  function receiptForSameOrder(receipts, orderNumber, exceptId = "") {
+    const key = (v) => text(v).toLowerCase().replace(/^#/, "").replace(/[\s-]/g, "");
+    const want = key(orderNumber);
+    if (want.length < 4) return null;
+    return (Array.isArray(receipts) ? receipts : []).find((r) => r && r.id !== exceptId && key(r.orderNumber) === want) || null;
+  }
+
   function defaultId(prefix) {
     return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
@@ -415,5 +434,6 @@ export {
     receiptFinancePortions,
     receiptForFinance,
     receiptFromFinanceInbox,
+    receiptForSameOrder,
     RECEIPT_SOURCES
   };
