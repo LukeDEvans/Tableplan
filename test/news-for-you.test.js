@@ -112,6 +112,18 @@ describe("weights and scoring", () => {
     expect(R.teamsSignature(clean)).toBe(uiSig(teamsForServer(TEAMS)));
     expect(R.teamsSignature([])).toBe("");
   });
+  it("a school followed in several sports goes to the server as one school", () => {
+    const sent = teamsForServer([
+      { key: "ncaaf:minnesota-golden-gophers", scope: "ncaaf", name: "Minnesota Golden Gophers", short: "Minnesota", league: "ncaaf" },
+      { key: "ncaah:minnesota-golden-gophers", scope: "ncaah", name: "Minnesota Golden Gophers", short: "Minnesota", league: "ncaah" },
+      { key: "ncaaw:minnesota-golden-gophers", scope: "ncaaw", name: "Minnesota Golden Gophers", short: "Minnesota", league: "ncaaw" },
+      { key: "nhl:minnesota-wild", scope: "nhl", name: "Minnesota Wild", short: "Wild", league: "nhl" },
+    ]);
+    expect(sent.map((t) => [t.key, t.scope])).toEqual([
+      ["college:minnesota-golden-gophers", "college"], ["college-w:minnesota-golden-gophers", "college-w"], ["nhl:minnesota-wild", "nhl"],
+    ]);
+    expect(R.cleanTeams(sent)).toHaveLength(3);
+  });
   it("The Athletic per person: favourites' team-feed stories and stories naming them; everything when no favourites", () => {
     const cards = [
       { id: "1", paper: "athletic", title: "Edwards to have knee surgery", teamKeys: ["nba:minnesota-timberwolves"] },

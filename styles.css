@@ -24940,6 +24940,7 @@ body[data-theme="dark"] .scores { --scores-live: #ff7a66; }
 .scores-idles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: 4px 8px; }
 .scores-idle { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 2px; font-size: 0.82rem; }
 .scores-idle-name { font-weight: 700; flex-shrink: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scores-idle-name small { display: block; font-size: 0.7rem; font-weight: 600; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 .scores-idle-lines { display: flex; flex-direction: column; min-width: 0; color: var(--muted); font-size: 0.78rem; line-height: 1.3; }
 .scores-idle-lines span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scores-idle-lines b { font-weight: 700; color: var(--ink); }

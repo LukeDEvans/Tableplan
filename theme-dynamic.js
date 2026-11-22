@@ -60,7 +60,7 @@ export const TEAM_THEMES = Object.freeze([
   Object.freeze({ theme: "wolves", scopes: ["wnba"], names: ["Minnesota Lynx", "Lynx"] }),
   Object.freeze({ theme: "wild", scopes: ["nhl"], names: ["Minnesota Wild", "Wild"] }),
   Object.freeze({ theme: "twins", scopes: ["mlb"], names: ["Minnesota Twins", "Twins"] }),
-  Object.freeze({ theme: "gophers", scopes: ["college", "college-w"], names: ["Minnesota Golden Gophers", "Golden Gophers", "Minnesota"] }),
+  Object.freeze({ theme: "gophers", scopes: ["ncaaf", "ncaam", "ncaah", "ncaaw", "college", "college-w"], names: ["Minnesota Golden Gophers", "Golden Gophers", "Minnesota"] }),
   Object.freeze({ theme: "ajax", scopes: ["soccer"], names: ["AFC Ajax", "Ajax", "Ajax Amsterdam"] }),
   Object.freeze({ theme: "mnufc", scopes: ["soccer"], names: ["Minnesota United FC", "Minnesota United"] }),
 ]);
