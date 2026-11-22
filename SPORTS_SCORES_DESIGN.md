@@ -11,6 +11,72 @@ Recreate menu group (`showScoresApp`, route `#scores`). News → Sports keeps on
 stories; a ticker game opens on the Scores page. Everything below about the view
 itself still holds; read "News → Sports opens on Scores" as "the Scores page".
 
+**Its own News section 2026-11-20 (Luke):** Scores is a section of News one swipe
+right of the Front page (`{ kind: "scores" }` in `headerViews`); **Sports** holds
+only the stories, in its place among the sections (after Culture). The view:
+
+- **Tabs** under the header, in the Meal Plan's day-tab look: **★** (my teams' games
+  on the chosen day — no idle rows), then each league shown, in the user's order. A
+  tab shows only its games; a sideways swipe on the games moves one tab. The tab is
+  remembered per device (`live-scores-tab-v1`). League sections no longer collapse.
+- **Days:** a strip three days wide (yesterday · today · tomorrow by default) that
+  scrolls three weeks either way (`dayRange`, stretched to a day picked further
+  out); no ‹ › buttons. Beside it two squares in the ☰ button's style: the
+  **league table** (the tab's league) and **★ My teams** — a window with every
+  followed team: today's game (start time, or the score while it's on and once it's
+  over), or the next and last game for a team that doesn't play today. A game
+  there opens on today's board; a team opens its schedule; **Edit teams** opens the
+  teams dialog.
+- **Teams & leagues** moved to News's gear menu › **Scores** (the same dialog); the
+  sliders button is gone.
+- **An open game** shows league, round, venue, **Watch buttons for any game not yet
+  over** (not only within the hour; channels the app can't open stay as text) and
+  "Game page" (no arrow). No Follow buttons, no "<team> schedule" or "<league>
+  table" links.
+- **A team's name** on a scorecard opens its schedule. The **team page's card is
+  pinned** at the top while the season scrolls, with a **star** at its top right
+  (filled = following; tap to follow / unfollow). Its "Follow" and "<league>
+  table" buttons are gone.
+- **Back** is News's top-left button: ☰ (Saved) becomes a square **‹** while a
+  table or team page (or a game opened from one) can go back, and ☰ returns when
+  there's nowhere left (`canGoBack` / `goBack` / `onNavChange`). Scores has no
+  ‹ Back of its own.
+- **Xfinity:** if Xfinity Stream's own link doesn't open, the iPhone goes to its App
+  Store page (`phoneWeb` in `link-out.js`) — `www.xfinity.com` links open the
+  Xfinity account app instead, which is how a Wild game "opened the wrong Xfinity
+  app". The web app still opens the website.
+
+**Revised 2026-11-21 (Luke):**
+
+- **Filter** (a ☰-style square left of the table button; off on ★): per league, per
+  device (`live-scores-filter-v1`). Default **All games** — every league, college
+  too, shows every game (the old "Top 25 and my teams" college default and its
+  Leagues-dialog switch are gone; `collegeScope` stays in state, unused). Options
+  come from the league's table (already fetched for the table view, CDN-cached):
+  conferences (a division's `parent`, new in the standings parse) and divisions /
+  conferences (leaf groups); college adds **Top 25**. A chip above the games shows
+  an active filter, ✕ clears it.
+- **Date:** ‹ the chosen day › (today by default), replacing the scrolling strip. A
+  tap on the day opens the device's own calendar (an invisible `<input type="date">`
+  over it; `showPicker()` on a laptop).
+- **The tab row** scrolls sideways only (`overflow-y: hidden; touch-action: pan-x`).
+- **Where to watch** in an open game: text links in a row ("Xfinity Stream · Fox
+  One"), no "Watch" label. (The dock's game card keeps its buttons.)
+- **Live details, from the scoreboard already fetched — no new requests, nothing
+  in Supabase** (Luke: fewer features over strain on the free tiers). The adapter
+  keeps each side's per-period `lines` and a small `live` object (`cleanLive`):
+  football down/distance/spot/red zone/last play; baseball count, outs, runners,
+  batter, pitcher; soccer goals and red cards (also on finished matches). The open
+  game shows a **box score** (regulation columns always, OT/SO when played), a
+  **football field** (away end zone left, ball on its spot, line of scrimmage and
+  line to gain, arrow for direction), a **diamond** with the count, and a **goals**
+  list. Only the scoreboard response grows (a few hundred bytes per live game); the
+  refresh cadence is unchanged. Play-by-play, player box scores and win
+  probability would need ESPN's per-game summary call — deliberately not built.
+
+Where §2 below disagrees (My Teams section, collapsible leagues, Follow buttons,
+schedule/table links, ‹ Back, the college default), these blocks win. QA: `npm run qa:news-scores`.
+
 ## 1. Intent
 
 News → Sports opens on **Scores**: a day's games across the leagues Luke follows
@@ -143,8 +209,10 @@ None is sent by default (ESPN refused a custom one); `SCORES_USER_AGENT` sets on
 ## 5. Client
 
 - **`scores-ui.js`** — `createScoresModule(deps)`. Talks only to the scores
-  function. `news-ui.js` mounts it in the Sports section through an injected
-  `scores` interface (`mount`, `unmount`, `refresh`).
+  function. `news-ui.js` mounts it as its Scores section through an injected
+  `scores` interface (`mount`, `unmount`, `refresh`, and `canGoBack` / `goBack` /
+  `onNavChange` for News's top-left ‹ button). app.js wires `openSettings` to the
+  gear menu's Scores item.
 - **Favorites are per user:** `state.sportsPrefs = { teams, leagues, leagueOrder,
   collegeScope }` in the **`recreate`** section, which is always personal
   (`u-<user>:recreate`). Tracked in `settings-sync.js` as `"fields"`, so each of the

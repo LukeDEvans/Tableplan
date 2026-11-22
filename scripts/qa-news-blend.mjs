@@ -65,7 +65,7 @@ async function run(browser, { width, height }) {
   await page.click("[data-news-section-btn]");
   const items = await page.$$eval(".news-section-menu [data-news-pick]", (els) => els.map((e) => e.dataset.newsPick));
   check(!items.includes("foryou"), "For you is no longer a section");
-  check(items[0] === "front" && items.at(-1) === "learned", `What News has learned at the foot (${items[0]} … ${items.at(-1)})`);
+  check(items[0] === "scores" && items[1] === "front" && items.at(-1) === "learned", `Scores, then the Front page; What News has learned at the foot (${items[0]}, ${items[1]} … ${items.at(-1)})`);
   if (OUT) { await page.waitForTimeout(250); await page.screenshot({ path: `${OUT}/blend-menu-${width}.png` }); }
   await page.keyboard.press("Escape");
 
@@ -80,9 +80,11 @@ async function run(browser, { width, height }) {
   const sent = await page.evaluate(() => window.__liveQA.newsDecisions());
   const skips = sent.filter((d) => d.decision === "skip").map((d) => d.id);
   check(skips.includes("t1") && !skips.includes("t2"), `seen stories reported on leaving the Front page, not the saved one (${skips.join(",")})`);
-  await page.click("[data-news-back]");
+  check(await page.$eval("#newsSidebarToggle", (b) => b.classList.contains("is-back")), "the top-left button is ‹ in What News has learned");
+  await page.click("#newsSidebarToggle");
   await page.waitForTimeout(250);
-  check((await page.textContent("[data-news-section-btn]")).trim() === "Front page", "back arrow returns to the Front page");
+  check((await page.textContent("[data-news-section-btn]")).trim() === "Front page", "‹ returns to the Front page");
+  check(!(await page.$eval("#newsSidebarToggle", (b) => b.classList.contains("is-back"))), "…and ☰ comes back");
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check(overflow <= 0, `no sideways scroll (${overflow}px)`);
