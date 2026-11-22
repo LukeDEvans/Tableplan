@@ -20,4 +20,7 @@ export {
   wrapAnchor, sealToRecovery, restoreVaultKey,
 } from "./recovery.js";
 export { newRecoveryParams, encodeRecoveryParams, decodeRecoveryParams, DEFAULT_PARAMS as RECOVERY_DEFAULT_PARAMS } from "./recovery-params.js";
+export {
+  deriveLoginsKey, encryptLogin, decryptLogin, parseLogin, cleanSite, encryptBackup, decryptBackup, LOGIN_LIMITS, LOGIN_KINDS,
+} from "./logins.js";
 export { signVaultSettled, verifyVaultSettled, signRecoveryPub, verifyRecoveryPub } from "./statements.js";
