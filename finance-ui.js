@@ -10,8 +10,8 @@ import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 import { linkOutAttrs } from './link-out.js';
 import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
 import { duplicateMap } from './receipt-duplicates.js';
-import { merchantDecision, guessForMerchant, guessForLine, splitFromLines, addCount, itemKey, ITEM_PREFIX, AI_PREFIX } from './finance-guess.js';
-import { financeOwedBalances } from './finance-settle.js';
+import { financeOwedLedger, suggestSettlement, oweLabel, owedByLabel } from './finance-settle.js';
+import { merchantDecision, guessForMerchant, guessForLine, splitFromLines, addCount, itemKey, cleanMerchantName, ITEM_PREFIX, AI_PREFIX } from './finance-guess.js';
 import { subscriptionReview, cashForecast, everydaySpendPerDay, goalProgress } from './finance-plan.js';
 import { TAX_KINDS, taxLabel, taxTagFor, taxYearSummary, taxYearCsv, tripCandidates, tripCharges } from './finance-tags.js';
 import { upcomingReturns, returnReminderInstances } from './receipt-returns.js';
@@ -302,7 +302,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, setReceiptLineCategories, openReceiptDetail, queueReceiptFile, onFinanceCountChanged, memberName, currentViewKey } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, setReceiptLineCategories, openReceiptDetail, queueReceiptFile, onFinanceCountChanged, memberName, currentViewKey, householdMemberList } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -1397,7 +1397,11 @@ function financeLabeledTxns() {
     // merchant's majority note (financeSuggestedNote), the same "sender
     // usually goes to X" fallback the Mail page uses for folder suggestions.
     const merchantKey = financeMerchantKey(t.description);
-    const merchantPart = names[merchantKey] || t.description;
+    // Your own name for the store wins; otherwise a readable version of the
+    // bank's text ("TARGET T-2177 MPLS" → "Target"). A linked receipt's store
+    // name is used at render time (financeTxnRowName).
+    t.nameIsCustom = Boolean(names[merchantKey]);
+    const merchantPart = names[merchantKey] || cleanMerchantName(t.description) || t.description;
     const hasOverride = Object.prototype.hasOwnProperty.call(noteOverrides, t.id);
     const note = hasOverride ? noteOverrides[t.id] : financeSuggestedNote(noteCounts[merchantKey]);
     t.noteIsOverride = hasOverride;
@@ -1577,8 +1581,8 @@ let financeManualForm = null;
 
 function openManualTxnForm(existing) {
   financeManualForm = existing
-    ? { id: existing.id, date: (existing.posted || "").slice(0, 10), desc: existing.description || "", amount: String(existing.amount ?? ""), account: existing.account || "", label: (state.financeTxnLabels || {})[existing.id] || "" }
-    : { id: null, date: dateKeyFromDate(new Date()), desc: "", amount: "", account: "", label: "" };
+    ? { id: existing.id, date: (existing.posted || "").slice(0, 10), desc: existing.description || "", amount: String(existing.amount ?? ""), account: existing.account || "", label: (state.financeTxnLabels || {})[existing.id] || "", paidBy: (state.financeManualTxns || []).find((m) => m.id === existing.id)?.paidBy || "" }
+    : { id: null, date: dateKeyFromDate(new Date()), desc: "", amount: "", account: "", label: "", paidBy: "" };
   financeTab = "transactions"; financeExpanded.add("card:txns");
   renderFinancePage();
 }
@@ -1598,7 +1602,9 @@ function saveManualTxnForm(fields) {
     posted: /^\d{4}-\d{2}-\d{2}$/.test(fields.date) ? `${fields.date}T12:00:00.000Z` : new Date().toISOString(),
     amount,
     description: desc,
-    account: String(fields.account || "").trim().slice(0, 60) || "Cash"
+    account: String(fields.account || "").trim().slice(0, 60) || "Cash",
+    // Paid with this person's own money for the household: the household owes them.
+    ...(fields.paidBy ? { paidBy: String(fields.paidBy) } : {}),
   };
   const i = state.financeManualTxns.findIndex((m) => m.id === entry.id);
   if (i >= 0) state.financeManualTxns[i] = entry; else state.financeManualTxns.unshift(entry);
@@ -1650,10 +1656,24 @@ function financeTxnPortions(t) {
   return [{ label: t.label, amount: isIncome ? (t.amount || 0) : -(t.amount || 0) }];
 }
 
+// Household members an item can belong to (Luke, 2026-11-23: Luke and Marijane).
+function financeMembers() {
+  try { return (householdMemberList?.() || []).filter((m) => m && m.id); } catch { return []; }
+}
+function financeMemberFirstName(uid) {
+  const m = financeMembers().find((x) => x.id === uid);
+  return String(m?.name || "").trim().split(/\s+/)[0] || "Someone";
+}
+// Personal items exist only in the household's books: an item paid with household
+// money that belongs to one person (label "owe:<uid>").
+const financeOwesAllowed = () => currentViewKey?.() !== "personal";
+
 function financeTxnLabelName(key) {
   if (key === "income") return "Income";
   if (key === "mgmt") return "Account mgmt";
   const k = String(key || "");
+  const owner = owedByLabel(k);
+  if (owner) return `${financeMemberFirstName(owner)}'s · personal`;
   if (k.startsWith("income:")) {
     const p = (state.financePeople || []).find((x) => x.id === k.slice(7));
     return p ? `Income · ${p.name}` : "Income";
@@ -1697,7 +1717,14 @@ function financeTxnLabelOptionsHtml(selected) {
           const key = `cat:${g.id}:${c.id}`;
           return `<option value="${key}" ${selected === key ? "selected" : ""}>${escapeHtml(c.name)}</option>`;
         }).join("")}
-      </optgroup>`).join("")}`;
+      </optgroup>`).join("")}
+    ${financeOwesAllowed() && financeMembers().length ? `
+    <optgroup label="Someone's own (paid by the household)">
+      ${financeMembers().map((m) => {
+        const key = oweLabel(m.id);
+        return `<option value="${escapeHtml(key)}" ${selected === key ? "selected" : ""}>${escapeHtml(financeMemberFirstName(m.id))}'s</option>`;
+      }).join("")}
+    </optgroup>` : ""}`;
 }
 
 // ── Recurring charges ────────────────────────────────────────────────────────
@@ -1819,12 +1846,20 @@ function financeUpcomingBills(now = new Date()) {
 // Spending trend from the persisted monthly snapshots (financeMonthActuals):
 // total spend for the last 6 months + the categories that moved most vs their
 // 3-month average. Pure derivation from data we already keep — no new state.
-function financeSpendTrends(viewMonth) {
+// uncatByMonth (financeUncategorizedByMonth): money out with no category is added
+// to each month's bar, so the trend shows everything that left the accounts
+// (2026-11-23); the category rows below still compare categories only.
+function financeSpendTrends(viewMonth, uncatByMonth = new Map()) {
   const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
-  const monthSpend = (m) => { const e = ma[m]; if (!e || !e.cats) return null; return Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0); };
+  const monthSpend = (m) => {
+    const e = ma[m];
+    const uncat = uncatByMonth.get(m)?.spend || 0;
+    if (!e || !e.cats) return uncat > 0 ? uncat : null;
+    return Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0) + uncat;
+  };
   const months = [];
   for (let i = 5; i >= 0; i--) months.push(monthKeyOffset(viewMonth, -i));
-  const series = months.map((m) => ({ month: m, spend: monthSpend(m) }));
+  const series = months.map((m) => ({ month: m, spend: monthSpend(m), uncat: uncatByMonth.get(m)?.spend || 0 }));
   const priorMonths = months.slice(2, 5); // the 3 months before the viewed one
   const curCats = ma[viewMonth]?.cats || {};
   const keys = new Set(Object.keys(curCats));
@@ -1870,16 +1905,20 @@ function financeSetCategoryBudget(c, target) {
   else c.items[0].amount = target;
 }
 
-// Cash flow (money in vs out) for the last 6 months, from the monthly snapshots.
-function financeCashFlow(viewMonth) {
+// Cash flow (money in vs out) for the last 6 months, from the monthly snapshots
+// plus spending that has no category yet (uncatByMonth), so money out is all of
+// it, not only what's been categorized (2026-11-23).
+function financeCashFlow(viewMonth, uncatByMonth = new Map()) {
   const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
   const months = [];
   for (let i = 5; i >= 0; i--) months.push(monthKeyOffset(viewMonth, -i));
   const series = months.map((m) => {
     const e = ma[m];
     const income = e && e.income != null ? Math.abs(Number(e.income) || 0) : null;
-    const spend = e && e.cats ? Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0) : null;
-    return { month: m, income, spend };
+    const uncat = uncatByMonth.get(m)?.spend || 0;
+    const catSpend = e && e.cats ? Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0) : null;
+    const spend = catSpend == null && !uncat ? null : (catSpend || 0) + uncat;
+    return { month: m, income, spend, uncat };
   });
   return { series, hasData: series.some((s) => s.income != null || s.spend != null) };
 }
@@ -1919,8 +1958,15 @@ function financeRecurringAlerts() {
 // recurring bill stops coming back once it's been approved twice the same way
 // (financeTxnRuleGuess), and "Approve suggested" clears guessed cards in one tap.
 // The merchant key is kept on each entry for skip and snooze.
+// A skipped store is stored with the day it was skipped. Skips saved before
+// 2026-11-23 were plain `true`; Luke chose to bring all of those back (the review
+// card now arrives with a guess), so only dated skips count. Nothing is deleted,
+// so a device holding an old copy can't bring the old skips back either.
+const financeMerchantSkipped = (v) => typeof v === "string" && v.length > 0;
+
 function financeUnlabeledByMerchant(txns) {
-  const skips = (state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {};
+  const allSkips = (state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {};
+  const skips = Object.fromEntries(Object.entries(allSkips).filter(([, v]) => financeMerchantSkipped(v)));
   const snoozes = (state.financeLabelSnoozes && typeof state.financeLabelSnoozes === "object") ? state.financeLabelSnoozes : {};
   const dismissed = (state.financeNotifDismissed && typeof state.financeNotifDismissed === "object") ? state.financeNotifDismissed : {};
   const today = dateKeyFromDate(new Date());
@@ -2258,6 +2304,67 @@ function financeTxnFactsLine(t) {
   return facts + (t.signFlipped ? " · sign corrected" : "");
 }
 
+let financeSettleFormBy = ""; // whose Settle up form is open
+function financeOwedLedgerNow(allTxns) {
+  return financeOwedLedger({ txns: allTxns, portionsOf: financeTxnPortions, receipts: financeReceiptList(), manual: state.financeManualTxns || [], settlements: state.financeSettlements || [] });
+}
+function financeOwedBlockHtml(allTxns) {
+  const ledger = financeOwedLedgerNow(allTxns);
+  const rows = [...ledger.entries()].filter(([by, e]) => Math.abs(e.net) >= 0.01 || financeExpanded.has(`owed:${by}`) || financeSettleFormBy === by);
+  const html = rows.map(([by, e]) => {
+    const name = escapeHtml(financeMemberFirstName(by));
+    const owes = e.net > 0;
+    const open = financeExpanded.has(`owed:${by}`);
+    const suggestion = suggestSettlement(e.net, allTxns, state.financeSettlements || []);
+    const itemCount = e.items.filter((i) => i.kind === "owes" || i.kind === "owed").length;
+    const items = e.items.slice(0, 40).map((it) => `
+        <div class="fin-owed-item">
+          <span class="fin-owed-date">${it.date ? escapeHtml(new Date(it.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })) : ""}</span>
+          <span class="fin-owed-name">${escapeHtml(it.name)}</span>
+          <span class="fin-owed-amt ${it.kind === "owes" || it.kind === "paid-out" ? "is-owes" : "is-owed"}">${it.kind === "owes" || it.kind === "paid-out" ? "+" : "−"}${formatFinMoney(it.amount)}</span>
+        </div>`).join("");
+    return `
+      <div class="fin-truth-row fin-owed-row">
+        <button class="fin-owed-toggle" type="button" data-fin-action="toggle-owed" data-by="${escapeHtml(by)}" aria-expanded="${open}">
+          <span class="fin-truth-name">${Math.abs(e.net) < 0.01 ? `${name} and the household are even` : owes ? `${name} owes the household` : `The household owes ${name}`}<span class="fin-of"> · ${itemCount} item${itemCount === 1 ? "" : "s"}</span></span>
+          <span class="fin-truth-amt">${Math.abs(e.net) < 0.01 ? "" : formatFinMoney(Math.abs(e.net))}</span>
+        </button>
+        ${Math.abs(e.net) >= 0.01 ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-open" data-by="${escapeHtml(by)}">Settle up</button>` : ""}
+      </div>
+      ${suggestion ? `
+      <div class="fin-truth-row fin-owed-suggest">
+        <span class="fin-truth-name">Looks like ${escapeHtml(new Date(suggestion.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" }))}'s ${formatFinMoney(Math.abs(suggestion.amount))} ${suggestion.amount > 0 ? "transfer in" : "transfer out"} settled this</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-confirm" data-by="${escapeHtml(by)}" data-txn="${escapeHtml(suggestion.id)}" data-amount="${e.net}">Confirm</button>
+      </div>` : ""}
+      ${financeSettleFormBy === by ? `
+      <div class="fin-truth-row fin-owed-form">
+        <span class="fin-truth-name">${owes ? `${name} paid the household` : `The household paid ${name}`}</span>
+        <input class="fin-item-amount" type="text" inputmode="decimal" value="${Math.abs(e.net).toFixed(2)}" data-fin-settle-amount aria-label="Amount paid" />
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-cancel">Cancel</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-save" data-by="${escapeHtml(by)}" data-dir="${owes ? "1" : "-1"}">Save</button>
+      </div>` : ""}
+      ${open ? `<div class="fin-owed-items">${items || `<div class="fin-hint">Nothing yet.</div>`}<div class="fin-hint">+ adds to what ${name} owes · − adds to what the household owes ${name}</div></div>` : ""}`;
+  }).join("");
+  const add = financeMembers().length ? `
+      <div class="fin-truth-row fin-owed-add">
+        <span class="fin-truth-name fin-of">Paid for something of the household's with your own money?</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="paid-personally">Add it</button>
+      </div>` : "";
+  return html + add;
+}
+
+// A row's name: your own rename, else a linked receipt's store name, else the
+// cleaned bank text (financeLabeledTxns), with the purchase note after it.
+const FIN_RECEIPT_ICON = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.5 1.5h9v13l-1.5-1-1.5 1-1.5-1-1.5 1-1.5-1-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.5 5h5M5.5 7.5h5M5.5 10h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`;
+function financeTxnRowName(t, receiptFits) {
+  if (t.nameIsCustom) return t.displayName;
+  const fit = receiptFits?.get(t.id);
+  const store = fit && fit.fit.confidence !== "likely" ? String(fit.receipt?.merchant || "").trim() : "";
+  if (!store) return t.displayName;
+  const note = t.displayName.includes(" - ") ? t.displayName.slice(t.displayName.indexOf(" - ")) : "";
+  return store + note;
+}
+
 // ── Review card: choosing categories (Luke, 2026-11-23) ─────────────────────
 // A charge with a receipt is categorized item by item, with "All one category"
 // to mark the whole receipt instead. A charge without one gets a single choice.
@@ -2283,6 +2390,7 @@ function financeReviewLines(receipt) {
   // spread over the categories when the charge is split.
   return items.filter((i) => Number(i.price) > 0).map((i, n) => {
     const g = guessForLine({ name: i.name, readCategory: i.category, rules, categories: choices });
+    if (i.owedBy && financeOwesAllowed()) return { id: i.id || `line-${n}`, name: i.name || "Item", price: Number(i.price) || 0, label: oweLabel(i.owedBy), source: "yours" };
     return { id: i.id || `line-${n}`, name: i.name || "Item", price: Number(i.price) || 0, label: g?.label || "", source: g?.source || "" };
   });
 }
@@ -2307,7 +2415,10 @@ function financeReviewOneHtml(t, frequent) {
   // then the ones used most overall.
   const storeCounts = state.financeTxnRules?.[financeMerchantKey(t.description)] || {};
   const storeLabels = Object.entries(storeCounts).filter(([k, c]) => Number(c) > 0 && financeTxnLabelName(k)).sort((a, b) => b[1] - a[1]).map(([k]) => k);
-  const chips = [...new Set([selected, ...storeLabels, ...frequent].filter(Boolean))].slice(0, 4);
+  const chips = [...new Set([selected, ...storeLabels, ...frequent].filter((k) => k && !owedByLabel(k)))].slice(0, 4);
+  // Whose it is: a personal item on a household card leaves the household budget
+  // and goes on that person's balance (Luke, 2026-11-23).
+  const people = financeOwesAllowed() ? financeMembers().map((m) => oweLabel(m.id)) : [];
   const hint = guess?.mixed
     ? `<div class="fin-review-guess is-mixed">Mixed store: you've used more than one category here, so check this one.</div>`
     : guess ? `<div class="fin-review-guess">${escapeHtml(FIN_GUESS_HINT[guess.source] || "Suggested")}</div>` : "";
@@ -2319,7 +2430,8 @@ function financeReviewOneHtml(t, frequent) {
       </select>
     </label>
     ${hint}
-    ${chips.length ? `<div class="fin-review-chips" role="group" aria-label="Quick categories">${chips.map((k) => `<button type="button" class="fin-review-chip${k === selected ? " is-on" : ""}" data-review-chip="${escapeHtml(k)}">${escapeHtml(financeTxnLabelShortName(k))}</button>`).join("")}</div>` : ""}`;
+    ${chips.length ? `<div class="fin-review-chips" role="group" aria-label="Quick categories">${chips.map((k) => `<button type="button" class="fin-review-chip${k === selected ? " is-on" : ""}" data-review-chip="${escapeHtml(k)}">${escapeHtml(financeTxnLabelShortName(k))}</button>`).join("")}</div>` : ""}
+    ${people.length ? `<div class="fin-review-chips fin-review-whose" role="group" aria-label="Someone's own"><span class="fin-review-whose-label">Someone's own:</span>${people.map((k) => `<button type="button" class="fin-review-chip${k === selected ? " is-on" : ""}" data-review-chip="${escapeHtml(k)}">${escapeHtml(financeMemberFirstName(owedByLabel(k)))}'s</button>`).join("")}</div>` : ""}`;
 }
 
 function financeReviewLinesHtml(lines, receipt) {
@@ -2373,6 +2485,7 @@ function financeReviewCardChoice(card) {
 }
 
 function financeTxnLabelShortName(key) {
+  if (owedByLabel(key)) return `${financeMemberFirstName(owedByLabel(key))}'s`;
   const full = financeTxnLabelName(key) || "";
   return full.split("·").pop().trim() || full;
 }
@@ -2394,7 +2507,7 @@ function renderFinanceReviewDeck() {
     const facts = financeTxnFactsLine(t);
     const receipt = financeReceiptForTxn(t);
     // A matched receipt's store name reads better than the bank's text.
-    const merchantTitle = nameVal || receipt?.merchant || t.description || "Transaction";
+    const merchantTitle = nameVal || receipt?.merchant || cleanMerchantName(t.description) || t.description || "Transaction";
     const showRaw = merchantTitle !== t.description; // renamed → surface the original bank text
     const lines = financeReviewLines(receipt);
     const choose = lines.length ? financeReviewLinesHtml(lines, receipt) : financeReviewOneHtml(t, frequent);
@@ -3718,7 +3831,7 @@ function renderFinancePage() {
   // Money out with no category in the viewed month: what every total leaves out.
   const uncatByMonth = financeUncategorizedByMonth(allTxns);
   const uncatThis = uncatByMonth.get(monthKey) || { spend: 0, count: 0 };
-  const skippedMerchants = Object.values((state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {}).filter(Boolean).length;
+  const skippedMerchants = Object.values((state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {}).filter(financeMerchantSkipped).length;
   // A past month shows its saved totals. When stored history covers the whole
   // month and adds up differently (something was categorized later), offer to
   // update the saved totals. Never automatic: saved history only changes by hand.
@@ -4251,6 +4364,7 @@ function renderFinancePage() {
       </div>
     </div>`;
   };
+  const receiptFits = financeReceiptFits().byTxn;
   const txnRow = (t, { compact = false, dupCount = 1, grouped = false } = {}) => {
     // When the detail card is open for this txn, the rename UI lives there
     // instead of swapping the row, so the row stays a normal clickable row.
@@ -4296,7 +4410,8 @@ function renderFinancePage() {
       ${financeTxnNeedsConfirm(t)
         ? `<button class="fin-txn-dot fin-txn-dot--confirm" type="button" data-fin-action="confirm-txn" data-id="${escapeHtml(t.id)}" title="Skipped in notifications — click to confirm" aria-label="Confirm this transaction"></button>`
         : (!t.label ? `<span class="fin-txn-dot" title="Needs a label" aria-label="Needs a label"></span>` : "")}
-      <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(t.displayName)}</span>
+      <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(financeTxnRowName(t, receiptFits))}</span>
+      ${receiptFits.get(t.id) && (receiptFits.get(t.id).fit.confidence !== "likely") ? `<span class="fin-txn-receipt" title="Has a receipt" aria-label="Has a receipt">${FIN_RECEIPT_ICON}</span>` : ""}
       ${t.isManual ? `<span class="fin-txn-flag fin-txn-flag--manual" title="Manually entered">manual</span>` : ""}
       ${t.pending ? `<span class="fin-txn-flag fin-txn-flag--pending" title="Pending — the amount may still change">pending</span>` : ""}
       ${labelPill}
@@ -4546,6 +4661,13 @@ function renderFinancePage() {
         <option value="">label…</option>
         ${financeTxnLabelOptionsHtml(financeManualForm.label)}
       </select>
+      ${financeOwesAllowed() && financeMembers().length ? `
+      <label class="fin-manual-paidby">Paid with
+        <select data-fin-manual="paidBy" aria-label="Whose money paid for it">
+          <option value="">household money</option>
+          ${financeMembers().map((m) => `<option value="${escapeHtml(m.id)}" ${financeManualForm.paidBy === m.id ? "selected" : ""}>${escapeHtml(financeMemberFirstName(m.id))}'s own money</option>`).join("")}
+        </select>
+      </label>` : ""}
       <div class="fin-item-row fin-item-row--tools">
         <span class="fin-hint">Negative = spent, positive = received</span>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-cancel">Cancel</button>
@@ -4661,22 +4783,12 @@ function renderFinancePage() {
         </span>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="close-month">${closeChecks.every((c) => c.ok) ? "Close" : "Close anyway"}</button>
       </div>`;
-  // Personal items the household paid for, by person (finance-settle.js). The
-  // Household view lists everyone who owes; the Personal view only you.
-  const meId = getAuthSession()?.user?.id || "";
-  const inPersonalView = currentViewKey?.() === "personal";
-  const owedRows = [...financeOwedBalances(financeReceiptList(), state.financeSettlements || []).entries()]
-    .filter(([by, p]) => p.balance > 0 && (!inPersonalView || by === meId));
-  const owedBlock = owedRows.map(([by, p]) => {
-    const who = memberName ? memberName(by) : "";
-    const label = who === "You" || by === meId ? "You owe the household" : `${escapeHtml(who || "A household member")} owes the household`;
-    return `
-      <div class="fin-truth-row">
-        <span class="fin-truth-name">${label}<span class="fin-of"> · ${p.items.length} personal item${p.items.length === 1 ? "" : "s"} on household receipts</span></span>
-        <span class="fin-truth-amt">${formatFinMoney(p.balance)}</span>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-owed" data-by="${escapeHtml(by)}" data-amount="${p.balance}">Paid back</button>
-      </div>`;
-  }).join("");
+  // Who owes whom (finance-settle.js financeOwedLedger; Luke, 2026-11-23): one net
+  // balance per person — personal items paid with household money one way,
+  // household things paid with a person's own money the other — with the items
+  // behind it, Settle up, and a matching transfer offered as the settle-up. Kept in
+  // the household's books, so it shows in the Household view.
+  const owedBlock = financeOwesAllowed() ? financeOwedBlockHtml(allTxns) : "";
   const truthCard = (monthLine || closeBlock || owedBlock || (showActuals && (uncatThis.count || staleSaved || skippedMerchants))) ? `
     <div class="fin-card fin-truth-card" data-fin-card="truth">
       ${monthLine}
@@ -4824,7 +4936,7 @@ function renderFinancePage() {
         </div>` : ""}
       ` : `<div class="fin-hint">No upcoming recurring bills for the rest of this month${!financeLinkStatus?.connected ? " — connect a bank so recurring charges can be detected" : ""}.</div>`}
     </div>`;
-  const trends = financeSpendTrends(monthKey);
+  const trends = financeSpendTrends(monthKey, uncatByMonth);
   const trendMax = Math.max(1, ...trends.series.map((s) => s.spend || 0));
   const trendsCard = trends.hasData ? `
     <div class="fin-card fin-insights-card">
@@ -4848,10 +4960,10 @@ function renderFinancePage() {
               : `<span class="fin-mover-delta is-over">new</span>`}
           </div>`).join("")}` : ""}
     </div>` : "";
-  const cashflow = financeCashFlow(monthKey);
+  const cashflow = financeCashFlow(monthKey, uncatByMonth);
   const cfMax = Math.max(1, ...cashflow.series.flatMap((s) => [s.income || 0, s.spend || 0]));
   const cfIn = showActuals ? incomeActual : null;
-  const cfOut = monthActualSpend;
+  const cfOut = monthActualSpend != null ? monthActualSpend + (uncatThis.spend || 0) : null;
   const cfNet = (cfIn != null && cfOut != null) ? cfIn - cfOut : null;
   const cfUncat = cashflow.series.reduce((s, m) => s + (uncatByMonth.get(m.month)?.spend || 0), 0);
   const cashFlowCard = cashflow.hasData ? `
@@ -4874,7 +4986,7 @@ function renderFinancePage() {
           </div>`).join("")}
       </div>
       <div class="fin-cf-legend"><span class="fin-cf-key in">Money in</span><span class="fin-cf-key out">Money out</span></div>
-      ${cfUncat > 0 ? `<p class="fin-hint">Money out counts categorized spending. Not counted over these months: ${formatFinMoney(cfUncat)} uncategorized.</p>` : ""}
+      ${cfUncat > 0 ? `<p class="fin-hint">Money out includes ${formatFinMoney(cfUncat)} not categorized yet over these months.</p>` : ""}
     </div>` : "";
   // Subscriptions: every recurring charge with its yearly cost, a price change,
   // a possible duplicate, and where to cancel (finance-plan.js).
@@ -5433,6 +5545,53 @@ function onFinanceGridClick(e) {
   }
   if (action === "txn-tag-trip") { financeTagTrip(btn.dataset.id, btn.dataset.trip || ""); renderFinancePage(); return; }
   if (action === "export-tax-year") { exportFinanceTaxYear(Number(btn.dataset.year) || new Date().getFullYear()); return; }
+  // Who owes whom (Luke, 2026-11-23).
+  if (action === "toggle-owed") {
+    const key = `owed:${btn.dataset.by || ""}`;
+    if (financeExpanded.has(key)) financeExpanded.delete(key); else financeExpanded.add(key);
+    renderFinancePage();
+    return;
+  }
+  if (action === "settle-open" || action === "settle-cancel") {
+    financeSettleFormBy = action === "settle-open" ? (btn.dataset.by || "") : "";
+    renderFinancePage();
+    if (financeSettleFormBy) setTimeout(() => document.querySelector("[data-fin-settle-amount]")?.focus(), 0);
+    return;
+  }
+  if (action === "settle-save" || action === "settle-confirm") {
+    // amount > 0: the person paid the household; < 0: the household paid the person.
+    const by = btn.dataset.by || "";
+    let amount;
+    if (action === "settle-save") {
+      const raw = parseFinAmount(btn.closest(".fin-owed-form")?.querySelector("[data-fin-settle-amount]")?.value || "");
+      amount = Math.round(Math.abs(Number(raw) || 0) * 100) / 100 * (btn.dataset.dir === "-1" ? -1 : 1);
+    } else {
+      amount = Math.round((Number(btn.dataset.amount) || 0) * 100) / 100;
+    }
+    if (!by || !amount) return;
+    if (!Array.isArray(state.financeSettlements)) state.financeSettlements = [];
+    const txnId = action === "settle-confirm" ? (btn.dataset.txn || "") : "";
+    state.financeSettlements.push({ id: createId("settle"), by, amount, at: new Date().toISOString(), ...(txnId ? { txnId } : {}) });
+    // The matched transfer is money moving between your own accounts, not income
+    // or spending: file it as Account management unless it already has a label.
+    if (txnId && !(state.financeTxnLabels || {})[txnId]) {
+      if (!state.financeTxnLabels || typeof state.financeTxnLabels !== "object") state.financeTxnLabels = {};
+      state.financeTxnLabels[txnId] = "mgmt";
+      invalidateFinanceLabeled();
+      updateFinanceMonthActuals();
+    }
+    financeSettleFormBy = "";
+    persist();
+    renderFinancePage();
+    showMailToast("Settled up.");
+    return;
+  }
+  if (action === "paid-personally") {
+    openManualTxnForm(null);
+    if (financeManualForm) { financeManualForm.paidBy = getAuthSession()?.user?.id || ""; financeManualForm.account = "Own money"; }
+    renderFinancePage();
+    return;
+  }
   if (action === "settle-owed") {
     // Records that the person paid the household back what they owed right now.
     const by = btn.dataset.by || "";
@@ -5465,7 +5624,7 @@ function onFinanceGridClick(e) {
   }
   if (action === "skip-label-group") {
     if (!state.financeLabelSkips || typeof state.financeLabelSkips !== "object") state.financeLabelSkips = {};
-    if (btn.dataset.key) state.financeLabelSkips[btn.dataset.key] = true;
+    if (btn.dataset.key) state.financeLabelSkips[btn.dataset.key] = dateKeyFromDate(new Date());
     btn.closest(".fin-notif-labelrow")?.remove(); // clear it right away, don't wait on the re-render
     invalidateFinanceLabeled();
     persist();
@@ -5525,7 +5684,7 @@ function onFinanceGridClick(e) {
   if (action === "manual-txn-save") {
     const box = btn.closest(".fin-split-editor");
     const field = (name) => box?.querySelector(`[data-fin-manual="${name}"]`)?.value || "";
-    saveManualTxnForm({ id: financeManualForm?.id || null, date: field("date"), desc: field("desc"), amount: field("amount"), account: field("account"), label: field("label") });
+    saveManualTxnForm({ id: financeManualForm?.id || null, date: field("date"), desc: field("desc"), amount: field("amount"), account: field("account"), label: field("label"), paidBy: field("paidBy") });
     return;
   }
   if (action.startsWith("recurring-")) {

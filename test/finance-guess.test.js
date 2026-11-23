@@ -121,3 +121,20 @@ it("addCount doesn't mutate", () => {
   expect(addCount(a, BOOZE)).toEqual({ [FOOD]: 1, [BOOZE]: 1 });
   expect(a).toEqual({ [FOOD]: 1 });
 });
+
+import { cleanMerchantName } from "../finance-guess.js";
+describe("cleanMerchantName", () => {
+  it.each([
+    ["TARGET T-2177 MPLS", "Target"],
+    ["SQ *DANGEROUS MAN BREW", "Dangerous Man Brew"],
+    ["TRADER JOE S #710", "Trader Joe's"],
+    ["TST* BLACK SHEEP PIZZA", "Black Sheep Pizza"],
+    ["COSTCO WHSE #1021 MINNEAPOLIS", "Costco"],
+    ["AMZN Mktp US*2K4", "Amazon"],
+    ["HOLIDAY STATIONSTORES", "Holiday"],
+    ["POS PURCHASE JMK ENTERPRISES", "Jmk Enterprises"],
+    ["SPYHOUSE COFFEE", "Spyhouse Coffee"],
+    ["Blue Door Pub", "Blue Door Pub"],
+    ["", ""],
+  ])("%s → %s", (raw, want) => expect(cleanMerchantName(raw)).toBe(want));
+});

@@ -23268,6 +23268,26 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-raw { font-size: 0.76rem; color: var(--muted); opacity: 0.85; }
 /* Choosing categories (Luke, 2026-11-23): a guess, its source, quick chips; a
    receipt's lines each with their own category, or "All one category". */
+/* Who owes whom (Luke, 2026-11-23): one net row per person, the items behind it,
+   a suggested settle-up and an inline Settle up form. */
+.fin-owed-row { gap: 8px; }
+.fin-owed-toggle { flex: 1; min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; background: none; border: none; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.fin-owed-suggest .fin-truth-name { font-size: 0.85rem; color: var(--muted); }
+.fin-owed-form { gap: 8px; flex-wrap: wrap; }
+.fin-owed-form .fin-truth-name { flex: 1 0 100%; }
+.fin-owed-form .fin-item-amount { margin-right: auto; }
+.fin-owed-form .fin-item-amount { width: 96px; flex: 0 0 auto; }
+.fin-owed-items { padding: 4px 0 10px; display: flex; flex-direction: column; gap: 2px; }
+.fin-owed-item { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 8px; font-size: 0.84rem; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.fin-owed-date { color: var(--muted); }
+.fin-owed-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-owed-amt { font-variant-numeric: tabular-nums; font-weight: 700; }
+.fin-owed-amt.is-owed { color: var(--muted); }
+.fin-owed-add .fin-truth-name { font-size: 0.84rem; }
+.fin-manual-paidby { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
+.fin-review-whose { align-items: center; }
+.fin-review-whose-label { font-size: 0.78rem; font-weight: 700; color: var(--muted); margin-right: 2px; }
+.fin-txn-receipt { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--muted); margin-left: 4px; }
 .fin-review-guess { max-width: 360px; width: 100%; font-size: 0.78rem; line-height: 1.35; color: var(--muted); text-align: left; }
 .fin-review-guess.is-mixed { color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 9px; padding: 7px 10px; }
 .fin-review-chips { display: flex; flex-wrap: wrap; gap: 6px; max-width: 360px; width: 100%; }

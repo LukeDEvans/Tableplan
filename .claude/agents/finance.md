@@ -21,7 +21,7 @@ all your work is there. Make focused changes to the Finance domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `email-receipt-pdf.js`, `receipt-duplicates.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
+- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/_receipt-link.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `email-receipt-pdf.js`, `receipt-duplicates.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
 - state: `finance*`
 
 ## Your scope (edit these)
@@ -80,6 +80,28 @@ all your work is there. Make focused changes to the Finance domain only.
   `financeTxnRules` (merchant keys, `item:<name>` for receipt lines, `ai:<merchant>`
   for AI answers — no new synced key). Line categories are written back through the
   injected `setReceiptLineCategories`.
+- **Personal items and who owes whom (Luke, 2026-11-23).** Decisions: an item or
+  charge can belong to the Household, Luke or Marijane (household members, not
+  Sophia); a personal item paid with household money **leaves the household budget**
+  and goes on that person's balance (label `owe:<uid>`, also as split portions; a
+  receipt line keeps its category and gets `owedBy`); household things paid with a
+  person's own money go the other way (a household manual transaction with
+  `paidBy`, counted in the household budget); **one net balance per person**;
+  settling up is **suggested from a matching transfer and confirmed with a tap**
+  (the transfer is then filed as Account management), with **Settle up** for
+  anything else (settlement amount > 0 person→household, < 0 household→person).
+  Pure logic: `financeOwedLedger` / `suggestSettlement` in `finance-settle.js`.
+  Shown only in the Household view (the balance lives in the household's books).
+- **Skipped stores (Luke, 2026-11-23):** all 138 old skips were brought back — only
+  skips stored with a date (`financeMerchantSkipped`) count; old `true` values are
+  ignored, so no device can restore them.
+- **Readable names:** rows show your rename, else a linked receipt's store, else
+  `cleanMerchantName` of the bank text; a receipt mark shows on rows with a receipt.
+  Cash flow and the spending trend include uncategorized spending.
+- **Nightly receipt linking:** `netlify/functions/_receipt-link.js`, run by the
+  `finance-nightly` Edge Function after the ingest, links "sure" fits in
+  `fin_receipts` (household + each owner's Personal scope). Rebuild the bundle with
+  `npm run build:finance-nightly`; redeploy the Edge Function to make it live.
 - **Month history (Luke, 2026-11-23):** past months with no saved totals that stored
   history covers are filled automatically (`financeMonthsToBackfill`) and marked
   `rebuilt: true`; those keep following stored history; months saved any other way

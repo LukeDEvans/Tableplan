@@ -394,7 +394,7 @@ var require_finance_ingest = __commonJS({
   "netlify/functions/_finance-ingest.js"(exports, module) {
     var DEFAULT_SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
     var MAX_ROWS = 5e3;
-    var DAY_MS2 = 864e5;
+    var DAY_MS3 = 864e5;
     var _pure = null;
     async function pure() {
       if (!_pure) _pure = await Promise.resolve().then(() => (init_finance_transactions(), finance_transactions_exports));
@@ -405,7 +405,7 @@ var require_finance_ingest = __commonJS({
     }
     async function storeNeedsBackfill2({ serviceKey, groupId, supabaseUrl = DEFAULT_SUPABASE_URL, fetchImpl = fetch, now = Date.now() }) {
       try {
-        const cutoff = new Date(now - 60 * DAY_MS2).toISOString();
+        const cutoff = new Date(now - 60 * DAY_MS3).toISOString();
         const res = await fetchImpl(
           `${supabaseUrl}/rest/v1/finance_transactions?group_id=eq.${encodeURIComponent(groupId)}&origin=eq.simplefin&posted=lt.${encodeURIComponent(cutoff)}&select=id&limit=1`,
           { headers: headers(serviceKey), cache: "no-store" }
@@ -434,7 +434,7 @@ var require_finance_ingest = __commonJS({
       result.upserted = rows.length;
       const earliest = rows.reduce((m, r) => r.posted && (!m || r.posted < m) ? r.posted : m, null);
       if (earliest) {
-        const since = new Date(new Date(earliest).getTime() - 8 * DAY_MS2).toISOString();
+        const since = new Date(new Date(earliest).getTime() - 8 * DAY_MS3).toISOString();
         const res = await fetchImpl(
           `${supabaseUrl}/rest/v1/finance_transactions?group_id=eq.${encodeURIComponent(groupId)}&origin=eq.simplefin&status=in.(active,superseded)&or=(posted.gte."${encodeURIComponent(since)}",posted.is.null)&select=id,account_id,amount,description,posted,pending,status,superseded_by,first_seen_at&limit=${MAX_ROWS}`,
           { headers: headers(serviceKey), cache: "no-store" }
@@ -495,7 +495,7 @@ var require_finance_ingest = __commonJS({
       return (h >>> 0).toString(36).slice(0, 6);
     }
     function trimAccountsToDays2(accounts, days, now = Date.now()) {
-      const cutoff = now - days * DAY_MS2;
+      const cutoff = now - days * DAY_MS3;
       return (Array.isArray(accounts) ? accounts : []).map((a) => ({
         ...a,
         transactions: (a.transactions || []).filter((t) => !t.posted || new Date(t.posted).getTime() >= cutoff)
@@ -569,9 +569,166 @@ var require_finance_split = __commonJS({
 // netlify/functions/_finance-nightly.js
 var import_finance_ingest = __toESM(require_finance_ingest());
 var import_finance_split = __toESM(require_finance_split());
+
+// receipt-matcher.js
+init_finance_transactions();
+var DAY_MS2 = 864e5;
+var CENTS = 0.02;
+var RECEIPT_MATCH_DAYS_BEFORE = 1;
+var RECEIPT_MATCH_DAYS_AFTER = 5;
+var RECEIPT_MATCH_DAYS_AFTER_ONLINE = 14;
+var ONLINE_SOURCES = /* @__PURE__ */ new Set(["email", "extension", "share"]);
+var RECEIPT_TIP_MAX = 0.3;
+var num = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+var dayOf = (iso) => {
+  const s = String(iso || "");
+  const t = /^\d{4}-\d{2}-\d{2}$/.test(s) ? Date.parse(`${s}T12:00:00`) : Date.parse(s);
+  return Number.isFinite(t) ? t : null;
+};
+function storeWords(text) {
+  return financeMerchantTokens(text).filter((w) => w.length >= 3);
+}
+function receiptStoreMatches(merchant, description) {
+  const a = storeWords(merchant);
+  if (!a.length) return false;
+  const b = storeWords(description);
+  return a.some((x) => b.some((y) => x === y || Math.min(x.length, y.length) >= 4 && (x.startsWith(y) || y.startsWith(x))));
+}
+function scoreReceiptTxn(receipt, txn) {
+  const total = num(receipt?.total);
+  const charge = -num(txn?.amount);
+  if (!(total > 0) || !(charge > 0)) return null;
+  const tip = Math.max(0, num(receipt?.tip));
+  const store = receiptStoreMatches(receipt?.merchant, txn?.description);
+  let amount = "";
+  if (Math.abs(charge - total) <= CENTS) amount = "exact";
+  else if (tip > 0 && Math.abs(charge - (total + tip)) <= CENTS) amount = "tip";
+  else if (!tip && store && charge > total + CENTS && charge <= total * (1 + RECEIPT_TIP_MAX) + CENTS) amount = "tip-guess";
+  if (!amount) return null;
+  const rDay = dayOf(receipt?.date);
+  const tDay = dayOf(txn?.posted);
+  let dayGap = null;
+  if (rDay != null && tDay != null) {
+    dayGap = Math.round((tDay - rDay) / DAY_MS2);
+    const after = ONLINE_SOURCES.has(String(receipt?.source || "")) ? RECEIPT_MATCH_DAYS_AFTER_ONLINE : RECEIPT_MATCH_DAYS_AFTER;
+    if (dayGap < -RECEIPT_MATCH_DAYS_BEFORE || dayGap > after) return null;
+  }
+  const late = dayGap != null && dayGap > RECEIPT_MATCH_DAYS_AFTER;
+  const last4 = String(receipt?.last4 || "").replace(/\D/g, "");
+  const card = last4.length === 4 && String(txn?.account || "").includes(last4);
+  let score = amount === "tip-guess" ? 1 : 3;
+  if (store) score += 2;
+  if (card) score += 1;
+  if (dayGap != null) score += dayGap >= 0 && dayGap <= 3 ? 2 : 1;
+  const confidence = amount !== "tip-guess" && store && dayGap != null && !late ? "sure" : "likely";
+  return { score, confidence, amount, dayGap };
+}
+function matchReceipts(receipts, txns) {
+  const out = /* @__PURE__ */ new Map();
+  const byId = new Map((txns || []).map((t) => [t.id, t]));
+  const taken = /* @__PURE__ */ new Set();
+  const open = [];
+  for (const r of receipts || []) {
+    if (!r?.id) continue;
+    const linked = r.financeTxnId && byId.get(r.financeTxnId);
+    if (linked) {
+      out.set(r.id, { txn: linked, confidence: "linked", amount: "exact", dayGap: null });
+      taken.add(linked.id);
+    } else if (r.financeTxnId) taken.add(r.financeTxnId);
+    else open.push(r);
+  }
+  const pairs = [];
+  for (const r of open) {
+    for (const t of txns || []) {
+      if (!t?.id || taken.has(t.id) || !(num(t.amount) < 0)) continue;
+      const fit = scoreReceiptTxn(r, t);
+      if (fit) pairs.push({ r, t, ...fit });
+    }
+  }
+  pairs.sort((a, b) => b.score - a.score || Math.abs(a.dayGap ?? 9) - Math.abs(b.dayGap ?? 9) || String(a.t.id).localeCompare(String(b.t.id)));
+  const best = /* @__PURE__ */ new Map();
+  const ties = /* @__PURE__ */ new Map();
+  for (const p of pairs) {
+    if (!best.has(p.r.id)) {
+      best.set(p.r.id, p.score);
+      ties.set(p.r.id, 1);
+    } else if (best.get(p.r.id) === p.score) ties.set(p.r.id, ties.get(p.r.id) + 1);
+  }
+  for (const p of pairs) {
+    if (out.has(p.r.id) || taken.has(p.t.id)) continue;
+    const tied = p.score === best.get(p.r.id) && ties.get(p.r.id) > 1;
+    out.set(p.r.id, { txn: p.t, confidence: p.confidence === "sure" && tied ? "likely" : p.confidence, amount: p.amount, dayGap: p.dayGap });
+    taken.add(p.t.id);
+  }
+  return out;
+}
+
+// netlify/functions/_receipt-link.js
+var SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+var WINDOW_DAYS = 120;
+var SCOPE_RE = /^[A-Za-z0-9_-]{1,80}$/;
+function receiptForMatching(row) {
+  const d = row?.data || {};
+  return {
+    id: row?.id,
+    merchant: d.storeName || "",
+    date: d.purchaseDate || "",
+    total: Number(d.total) || 0,
+    tip: Number(d.tip) || 0,
+    source: d.source || "",
+    last4: d.paymentLast4 || "",
+    financeTxnId: d.financeTxnId || ""
+  };
+}
+function receiptsToLink(rows, txns) {
+  const list = (rows || []).filter((r) => r?.id && !r.deleted_at).map(receiptForMatching);
+  const fits = matchReceipts(list, txns);
+  const out = [];
+  for (const r of list) {
+    const fit = fits.get(r.id);
+    if (!r.financeTxnId && fit?.confidence === "sure") out.push({ id: r.id, txnId: fit.txn.id });
+  }
+  return out;
+}
+async function linkReceiptsForScope({ serviceKey, scope, now = Date.now() }) {
+  if (!SCOPE_RE.test(String(scope || ""))) return { scope: "skipped", linked: 0 };
+  const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json", "content-type": "application/json" };
+  const since = new Date(now - WINDOW_DAYS * 864e5).toISOString();
+  const enc = encodeURIComponent;
+  const rRes = await fetch(`${SUPABASE_URL}/rest/v1/fin_receipts?scope=eq.${enc(scope)}&deleted_at=is.null&select=id,data,deleted_at&limit=1000`, { headers });
+  if (!rRes.ok) throw new Error(`receipts ${rRes.status}`);
+  const rows = await rRes.json() || [];
+  const recent = rows.filter((r) => {
+    const day = String(r?.data?.purchaseDate || "");
+    return r?.data?.financeTxnId || !day || day >= since.slice(0, 10);
+  });
+  if (!recent.some((r) => !r?.data?.financeTxnId)) return { linked: 0, open: 0 };
+  const tRes = await fetch(`${SUPABASE_URL}/rest/v1/finance_transactions?group_id=eq.${enc(scope)}&superseded_by=is.null&amount=lt.0&posted=gte.${enc(since)}&select=id,amount,description,posted,account_id&limit=5000`, { headers });
+  if (!tRes.ok) throw new Error(`transactions ${tRes.status}`);
+  const txns = (await tRes.json() || []).map((t) => ({ id: t.id, amount: Number(t.amount) || 0, description: t.description || "", posted: t.posted, account: t.account_id || "" }));
+  const toLink = receiptsToLink(recent, txns);
+  let linked = 0;
+  for (const { id, txnId } of toLink) {
+    const row = recent.find((r) => r.id === id);
+    const data = { ...row?.data || {}, financeTxnId: txnId };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/fin_receipts?id=eq.${enc(id)}&scope=eq.${enc(scope)}&or=(data->>financeTxnId.is.null,data->>financeTxnId.eq.)`, {
+      method: "PATCH",
+      headers: { ...headers, prefer: "return=minimal" },
+      body: JSON.stringify({ data, updated_at: (/* @__PURE__ */ new Date()).toISOString() })
+    });
+    if (res.ok) linked += 1;
+    else console.error(`[receipt-link] save ${res.status}`);
+  }
+  return { linked, open: recent.filter((r) => !r?.data?.financeTxnId).length };
+}
+
+// netlify/functions/_finance-nightly.js
 var { ingestFeed, storeNeedsBackfill, trimAccountsToDays, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } = import_finance_ingest.default;
 var { personalScopeId, loadAccountViews, splitAccounts } = import_finance_split.default;
-var SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+var SUPABASE_URL2 = "https://noyocjcltrenwdovqrql.supabase.co";
 function dateKey(d) {
   return d.toISOString().slice(0, 10);
 }
@@ -601,7 +758,7 @@ var numOrNull = (v) => {
 async function snapshotFinanceBalances(serviceKey, { bridgeTimeoutMs = 1e5 } = {}) {
   const headers = sbHeaders(serviceKey);
   const runs = [];
-  const linkRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=like.simplefin*&select=id,state`, { headers });
+  const linkRes = await fetch(`${SUPABASE_URL2}/rest/v1/tableplan_states?id=like.simplefin*&select=id,state`, { headers });
   if (!linkRes.ok) throw new Error(`simplefin rows ${linkRes.status}`);
   for (const linkRow of await linkRes.json()) {
     const groupId = linkRow.id.replace(/^simplefin_/, "");
@@ -656,7 +813,7 @@ async function snapshotFinanceBalances(serviceKey, { bridgeTimeoutMs = 1e5 } = {
         }));
         const errors = bridgeErrorsForDisplay(data.errors);
         const { household, byOwner } = splitAccounts(normalized, views.map);
-        const warm = (id, accts) => fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+        const warm = (id, accts) => fetch(`${SUPABASE_URL2}/rest/v1/tableplan_states?on_conflict=id`, {
           method: "POST",
           headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
           body: JSON.stringify({ id, state: { accounts: trimAccountsToDays(accts, 45), errors, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() }, updated_at: (/* @__PURE__ */ new Date()).toISOString() })
@@ -685,6 +842,14 @@ async function snapshotFinanceBalances(serviceKey, { bridgeTimeoutMs = 1e5 } = {
               console.error("[fin-ingest] personal failed", e.message || "error");
             }
           }
+          run.receiptsLinked = 0;
+          for (const scope of [groupId, ...Object.keys(byOwner).map(personalScopeId)]) {
+            try {
+              run.receiptsLinked += (await linkReceiptsForScope({ serviceKey, scope })).linked || 0;
+            } catch (e) {
+              console.error("[receipt-link] failed", e.message || "error");
+            }
+          }
         }
       }
       const history = Array.isArray(data?.accounts);
@@ -704,7 +869,7 @@ async function snapshotFinanceBalances(serviceKey, { bridgeTimeoutMs = 1e5 } = {
   return runs;
 }
 async function snapshotScope(headers, scopeId, liveById, counts, { history = true } = {}) {
-  const finRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(scopeId + ":finance")}&select=state`, { headers });
+  const finRes = await fetch(`${SUPABASE_URL2}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(scopeId + ":finance")}&select=state`, { headers });
   const finRows = finRes.ok ? await finRes.json() : [];
   try {
     await backupFinanceSection(headers, scopeId, finRows[0]?.state);
@@ -726,13 +891,13 @@ async function snapshotScope(headers, scopeId, liveById, counts, { history = tru
   }
   if (!any) return;
   const histId = `finhist_${scopeId}`;
-  const histRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(histId)}&select=state`, { headers });
+  const histRes = await fetch(`${SUPABASE_URL2}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(histId)}&select=state`, { headers });
   const histRows = histRes.ok ? await histRes.json() : [];
   const days = histRows[0]?.state?.days && typeof histRows[0].state.days === "object" ? histRows[0].state.days : {};
   days[dateKey(/* @__PURE__ */ new Date())] = { netWorth: Math.round(netWorth * 100) / 100, balances };
   const keys = Object.keys(days).sort();
   for (let i = 0; i < keys.length - 730; i++) delete days[keys[i]];
-  const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+  const up = await fetch(`${SUPABASE_URL2}/rest/v1/tableplan_states?on_conflict=id`, {
     method: "POST",
     headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify({ id: histId, state: { days }, updated_at: (/* @__PURE__ */ new Date()).toISOString() })
@@ -768,7 +933,7 @@ function financeRichness(fin) {
 async function backupFinanceSection(headers, groupId, finState) {
   if (!finState || typeof finState !== "object") return;
   const id = `finbackup_${groupId}`;
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(id)}&select=state`, { headers, cache: "no-store" });
+  const res = await fetch(`${SUPABASE_URL2}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(id)}&select=state`, { headers, cache: "no-store" });
   const rows = res.ok ? await res.json() : [];
   const snaps = rows[0]?.state?.snapshots && typeof rows[0].state.snapshots === "object" ? rows[0].state.snapshots : {};
   const newestKey = Object.keys(snaps).sort().at(-1);
@@ -781,7 +946,7 @@ async function backupFinanceSection(headers, groupId, finState) {
   const today = dateKey(/* @__PURE__ */ new Date());
   snaps[today] = finState;
   for (const k of Object.keys(snaps).sort().slice(0, -21)) delete snaps[k];
-  const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+  const up = await fetch(`${SUPABASE_URL2}/rest/v1/tableplan_states?on_conflict=id`, {
     method: "POST",
     headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify({ id, state: { snapshots: snaps }, updated_at: (/* @__PURE__ */ new Date()).toISOString() })

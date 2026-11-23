@@ -13,6 +13,7 @@
 
 import financeIngest from "./_finance-ingest.js";
 import financeSplit from "./_finance-split.js";
+import { linkReceiptsForScope } from "./_receipt-link.js";
 const { ingestFeed, storeNeedsBackfill, trimAccountsToDays, bridgeErrorsForDisplay, SIMPLEFIN_PULL_DAYS } = financeIngest;
 const { personalScopeId, loadAccountViews, splitAccounts } = financeSplit;
 
@@ -141,6 +142,13 @@ export async function snapshotFinanceBalances(serviceKey, { bridgeTimeoutMs = 10
           for (const [owner, own] of Object.entries(byOwner)) {
             try { await ingestFeed({ serviceKey, groupId: personalScopeId(owner), accounts: own }); }
             catch (e) { console.error("[fin-ingest] personal failed", e.message || "error"); }
+          }
+          // Link receipts that surely fit a charge (FINANCE_JOURNEY_AUDIT R1):
+          // the household's, then each owner's Personal receipts.
+          run.receiptsLinked = 0;
+          for (const scope of [groupId, ...Object.keys(byOwner).map(personalScopeId)]) {
+            try { run.receiptsLinked += (await linkReceiptsForScope({ serviceKey, scope })).linked || 0; }
+            catch (e) { console.error("[receipt-link] failed", e.message || "error"); }
           }
         }
       }
