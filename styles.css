@@ -8375,7 +8375,7 @@ textarea {
   text-align: center;
 }
 
-.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row):not(.grocery-store-instacart-row):not(.page-access-row) {
+.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row):not(.grocery-store-instacart-row):not(.page-access-row):not(.mail-receipt-personal) {
   display: grid;
   gap: 6px;
   color: #4f493f;
@@ -19023,6 +19023,22 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 .ingest-trip-choice { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 10px; background: var(--surface); cursor: pointer; text-align: left; color: var(--ink); font-size: 0.9rem; }
 .ingest-trip-choice:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .ingest-trip-dates { font-size: 0.76rem; color: var(--muted); }
+/* Possible duplicate receipts (receipt-duplicates.js) */
+.receipt-dup-banner { border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
+.receipt-dup-head { font-weight: 700; font-size: 0.86rem; color: var(--ink); }
+.receipt-dup-text { font-size: 0.84rem; color: var(--ink); line-height: 1.4; overflow-wrap: anywhere; }
+.receipt-dup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.receipt-dup-hint { font-size: 0.74rem; color: var(--muted); }
+/* Mail › Send to Finance (mail-receipt-ui.js) */
+.mail-receipt-items { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); display: flex; flex-direction: column; gap: 3px; font-size: 0.82rem; max-height: 30vh; overflow-y: auto; }
+.mail-receipt-items li { display: flex; justify-content: space-between; gap: 10px; min-width: 0; }
+.mail-receipt-items li span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.mail-receipt-items li span:last-child { flex: none; font-variant-numeric: tabular-nums; }
+.mail-receipt-items .mail-receipt-more { color: var(--muted); }
+.mail-receipt-personal { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; font-size: 0.86rem; }
+.mail-receipt-personal .hint { display: block; font-size: 0.74rem; color: var(--muted); }
+.mail-receipt-note { margin: 12px 0 0; }
+.mail-receipt-dialog .ingest-conflict-banner { margin: 12px 0 0; }
 
 /* Explore review inbox (proposed changes) */
 .explore-proposals { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
@@ -23297,8 +23313,51 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-merchant { font-size: 1.25rem; font-weight: 800; color: var(--ink); line-height: 1.25; }
 .fin-review-meta, .fin-review-facts { font-size: 0.85rem; font-weight: 600; color: var(--muted); }
 .fin-review-raw { font-size: 0.76rem; color: var(--muted); opacity: 0.85; }
-/* Merchant-grouping callout — explains "approve labels the whole group". */
-.fin-review-group { max-width: 360px; width: 100%; font-size: 0.8rem; line-height: 1.35; color: var(--ink); background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 10px; padding: 8px 12px; margin-top: 2px; }
+/* Choosing categories (Luke, 2026-11-23): a guess, its source, quick chips; a
+   receipt's lines each with their own category, or "All one category". */
+/* Who owes whom (Luke, 2026-11-23): one net row per person, the items behind it,
+   a suggested settle-up and an inline Settle up form. */
+.fin-owed-row { gap: 8px; }
+.fin-owed-toggle { flex: 1; min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; background: none; border: none; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.fin-owed-suggest .fin-truth-name { font-size: 0.85rem; color: var(--muted); }
+.fin-owed-form { gap: 8px; flex-wrap: wrap; }
+.fin-owed-form .fin-truth-name { flex: 1 0 100%; }
+.fin-owed-form .fin-item-amount { margin-right: auto; }
+.fin-owed-form .fin-item-amount { width: 96px; flex: 0 0 auto; }
+.fin-owed-items { padding: 4px 0 10px; display: flex; flex-direction: column; gap: 2px; }
+.fin-owed-item { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 8px; font-size: 0.84rem; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.fin-owed-date { color: var(--muted); }
+.fin-owed-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-owed-amt { font-variant-numeric: tabular-nums; font-weight: 700; }
+.fin-owed-amt.is-owed { color: var(--muted); }
+.fin-owed-add .fin-truth-name { font-size: 0.84rem; }
+.fin-manual-paidby { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
+.fin-review-whose { align-items: center; }
+.fin-review-whose-label { font-size: 0.78rem; font-weight: 700; color: var(--muted); margin-right: 2px; }
+.fin-txn-receipt { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--muted); margin-left: 4px; }
+.fin-review-guess { max-width: 360px; width: 100%; font-size: 0.78rem; line-height: 1.35; color: var(--muted); text-align: left; }
+.fin-review-guess.is-mixed { color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 9px; padding: 7px 10px; }
+.fin-review-chips { display: flex; flex-wrap: wrap; gap: 6px; max-width: 360px; width: 100%; }
+.fin-review-chip { padding: 7px 12px; font-size: 0.82rem; font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 999px; cursor: pointer; font-family: inherit; }
+.fin-review-chip.is-on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+.fin-review-lines-head { max-width: 360px; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.8rem; font-weight: 700; color: var(--muted); text-align: left; }
+.fin-review-allone-btn { flex: 0 0 auto; padding: 6px 11px; font-size: 0.78rem; font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 999px; cursor: pointer; font-family: inherit; }
+.fin-review-allone-btn[aria-pressed="true"] { color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 32%, transparent); }
+.fin-review-card:not(.is-allone) .fin-review-allone-field { display: none; }
+.fin-review-card.is-allone .fin-review-lines { opacity: 0.45; pointer-events: none; }
+.fin-review-lines { max-width: 360px; width: 100%; display: flex; flex-direction: column; border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.fin-review-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name price" "cat cat"; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); text-align: left; }
+.fin-review-line-name { grid-area: name; font-size: 0.88rem; font-weight: 650; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-review-line-price { grid-area: price; font-size: 0.88rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.fin-review-line-cat { grid-area: cat; width: 100%; font-size: 0.88rem; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent) 8%, var(--window-bg)); color: var(--ink); font-family: inherit; }
+.fin-review-line-cat.is-empty { background: var(--window-bg); border-style: dashed; color: var(--muted); }
+.fin-review-card.fin-review-need-cat .fin-review-line-cat.is-empty { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* "Approve N suggested": a thin bar under the window's title, shown when 2+
+   cards have guesses the app is fairly sure of. */
+.fin-review-bulk { flex: 0 0 auto; display: flex; justify-content: center; padding: 8px 16px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.fin-review-bulk[hidden] { display: none; }
+.fin-review-suggested { padding: 8px 16px; font-size: 0.85rem; font-weight: 800; color: var(--on-accent); background: var(--accent); border: none; border-radius: 999px; cursor: pointer; font-family: inherit; white-space: nowrap; }
+.fin-review-count { white-space: nowrap; }
 .fin-review-field { max-width: 360px; width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); text-align: left; margin-top: 4px; }
 .fin-review-label, .fin-review-input { width: 100%; font-size: 1rem; padding: 11px 13px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); border-radius: 9px; background: var(--input-bg, var(--window-bg)); color: var(--ink); font-family: inherit; text-transform: none; letter-spacing: normal; }
 .fin-review-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 360px; width: 100%; margin-top: 14px; }
@@ -26187,6 +26246,7 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
 .docs-chip { flex: none; align-self: center; margin-left: 8px; padding: 2px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
 .docs-chip.is-matched, .docs-chip.is-itemized { background: color-mix(in srgb, #1e7a46 14%, transparent); color: #17603a; }
 .docs-chip.is-needs-look { background: color-mix(in srgb, #b3261e 12%, transparent); color: #8c1d18; }
+.docs-chip.is-duplicate { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--ink); }
 .docs-receipt { flex: none; max-height: 40%; overflow: auto; padding: 10px 14px; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); font-size: 0.88rem; }
 .docs-receipt-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .docs-receipt-total { margin-left: auto; font-weight: 800; }
@@ -26204,6 +26264,39 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
 .docs-view-text { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem; margin: 0; }
 .docs-viewer-foot { border-top: 1px solid var(--line); padding: 10px 14px; max-height: 45%; overflow-y: auto; }
 .docs-edit { max-width: 520px; }
+/* Passwords in the Safe (PASSWORDS_DESIGN.md §5) */
+.pw-chips { display: flex; gap: 6px; overflow-x: auto; padding: 6px 0 8px; scrollbar-width: none; }
+.pw-chip { flex: none; appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 0.85rem; cursor: pointer; white-space: nowrap; }
+.pw-chip.is-active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.pw-avatar { width: 40px; height: 40px; border-radius: 10px; font-size: 1rem; color: var(--ink); }
+.pw-warn { color: var(--tomato); font-weight: 600; }
+.pw-sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 24px; display: flex; flex-direction: column; gap: 10px; max-width: 640px; width: 100%; box-sizing: border-box; margin: 0 auto; }
+.pw-field { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "name actions" "value actions"; gap: 2px 10px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; min-width: 0; }
+.pw-field-name { grid-area: name; font-size: 0.78rem; color: var(--muted); }
+.pw-field-value { grid-area: value; overflow-wrap: anywhere; min-width: 0; }
+.pw-field-actions { grid-area: actions; display: flex; gap: 10px; align-items: center; }
+.pw-field .pw-sites, .pw-field .pw-notes { grid-column: 1 / -1; }
+.pw-mono { font-family: ui-monospace, Menlo, monospace; letter-spacing: 0.02em; }
+.pw-totp { font-size: 1.25rem; font-weight: 700; }
+.pw-sites { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.pw-sites a { color: var(--accent); }
+.pw-notes { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.pw-history ul { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pw-history h3 { margin: 0; font-size: 0.9rem; }
+.pw-actions { flex-wrap: wrap; gap: 14px; align-items: center; }
+.pw-danger { color: var(--tomato); }
+.pw-strength { margin: -4px 0 0 4px; }
+.pw-form { display: flex; flex-direction: column; gap: 10px; }
+.pw-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); }
+.pw-form input[type="text"], .pw-form input[type="password"], .pw-form textarea { font: inherit; font-size: 1rem; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; box-sizing: border-box; width: 100%; }
+.pw-form label.pw-toggle-row, .pw-gen label.pw-toggle-row { flex-direction: row; align-items: center; gap: 10px; color: var(--ink); }
+.pw-pass-row { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.pw-pass-row input { flex: 1; font-family: ui-monospace, Menlo, monospace; }
+.pw-hint { margin: -6px 0 0 4px; font-size: 0.8rem; }
+.pw-gen { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 10px; }
+.pw-gen label { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); }
+.pw-gen[hidden] { display: none; }
+.pw-import-sum { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
 .docs-settings .msg-pane { flex: 1; }
 .docs-code { font-family: ui-monospace, Menlo, monospace; font-size: 1.15rem; font-weight: 600; letter-spacing: 0.06em; overflow-wrap: anywhere; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 4px 0; user-select: all; }
 #documentsMainPage .article-layout { position: relative; }
@@ -26923,3 +27016,30 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
 .shazam-row .shazam-pill.is-ghost { background: #2c2c2e; }
 .shazam-row .shazam-saved { padding: 4px 0; font-size: 0.85rem; color: #8e8e93; }
 .shazam-empty { color: #8e8e93; text-align: center; padding: 40px 0; }
+
+/* ── Listen: one search bar, Best result, artist pages (LISTEN_SEARCH_DESIGN.md) ── */
+#mediaMusicPanel.is-listen-search #musicBar,
+#mediaMusicPanel.is-listen-search #musicSearchWrap { display: none; }
+.listen-search-extra { padding: 4px 12px 16px; }
+.listen-search-extra .music-section-h { margin-left: 2px; margin-right: 2px; }
+.listen-search-extra .article-list { margin-bottom: 10px; }
+.music-best { display: flex; align-items: center; gap: 14px; margin: 4px 12px 8px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); cursor: pointer; min-width: 0; }
+.music-best:hover { border-color: var(--accent); }
+.music-best:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.music-best-art { flex: 0 0 auto; width: 88px; height: 88px; border-radius: 10px; object-fit: cover; background: var(--accent-soft); display: inline-flex; align-items: center; justify-content: center; }
+.music-best-art--round { border-radius: 50%; }
+.music-best-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.music-best-title { font-weight: 700; font-size: 1.15rem; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.music-best-sub { font-size: 0.84rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-best-play { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--accent); color: var(--on-accent); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.music-best-play:hover { filter: brightness(1.06); }
+.music-artist-sec-head { display: flex; align-items: center; gap: 8px; padding-right: 12px; }
+.music-artist-sec-head .md-h { margin-right: auto; }
+.music-artist-count { font-weight: 500; color: var(--muted); font-size: 0.85em; }
+.music-card--more { border: 1px dashed var(--line); background: var(--surface); color: var(--ink); height: 128px; align-items: center; justify-content: center; font: inherit; font-weight: 600; }
+.music-card--more:disabled { opacity: .6; cursor: default; }
+.music-artist-more-songs { display: block; margin: 10px auto 18px; }
+/* While searching, the results and "your podcasts & books" scroll as one page. */
+#mediaMusicPanel.is-listen-search { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+#mediaMusicPanel.is-listen-search .music-mode-body { flex: none; overflow: visible; }
+#mediaMusicPanel.is-listen-search .listen-search-extra { flex: none; }

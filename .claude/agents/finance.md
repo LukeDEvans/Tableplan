@@ -21,7 +21,7 @@ all your work is there. Make focused changes to the Finance domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
+- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/_receipt-link.js`, `netlify/functions/receipt-link-nightly.mjs`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `email-receipt-pdf.js`, `receipt-duplicates.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
 - state: `finance*`
 
 ## Your scope (edit these)
@@ -49,9 +49,67 @@ all your work is there. Make focused changes to the Finance domain only.
   Refresh); the server caps every pull at `SIMPLEFIN_PULL_DAYS` = **44** (`_finance-ingest.js`)
   — 45 triggers SimpleFIN's range-warning banner, so don't raise it.
   Server changes here need a Netlify deploy.
+- **Emailed receipts by hand** (Luke, 2026-11-22): Mail's ⋯ → Send to Finance
+  (`mail-receipt-ui.js`, mail-owned) adds an email receipt through
+  `importFinanceInboxReceipts`; the email's text is filed in Document › Receipts as a
+  text PDF by `email-receipt-pdf.js` (finance-owned, pure, tested). The reader now also
+  returns subtotal, tax, card last 4 and order number (`receiptFromFinanceInbox` carries
+  them; `orderNumber` is a receipt field; `receiptForSameOrder` warns about a second
+  email for an order already saved). `receipt-matcher.js` lets an online order (source
+  email / extension / share) match a charge up to **14 days** after its date — past 5
+  days only as "likely", never linked on its own.
+- **Possible duplicates** (Luke, 2026-11-22: always ask, never merge on its own):
+  `receipt-duplicates.js` (pure, tested) — `sameReceipt` / `findDuplicate` /
+  `duplicateMap` / `mergeKeeper` / `mergeReceipts` / `keepBoth` /
+  `mergedReceiptFileActions`. Finance's `financeReceiptInfo` reports status
+  `duplicate` ("Possible duplicate") to Document; the Merge / Keep both buttons are in
+  Shop's receipt editor. Receipts linked to two different charges are never duplicates.
+- **Categorizing (Luke, 2026-11-23 — FINANCE_JOURNEY_AUDIT.md §5).** Decisions:
+  (1) **item by item**: a charge with a receipt is categorized per line on the review
+  card, with **All one category** to mark the whole receipt (one category → a plain
+  label, several → a split, tax spread in proportion); (2) **a choice on one charge
+  never changes another** — one review card per charge (no merchant grouping, no
+  "applies to all"), and approved labels are never touched by later choices;
+  (3) **mixed stores** (any store with more than one approved category, e.g. Trader
+  Joe's food and booze) are never filed on their own, only guessed, and are left out
+  of "Approve suggested"; a consistent store files itself after 2 approvals; one
+  approval only guesses; (4) **AI guesses** for merchants never seen (rules first,
+  one call per merchant, `simplefin` action `guessMerchants` — needs the deploy);
+  (5) a guess you never touched is not saved when the window closes.
+  `finance-guess.js` (pure, tested) holds the rules; memory stays in
+  `financeTxnRules` (merchant keys, `item:<name>` for receipt lines, `ai:<merchant>`
+  for AI answers — no new synced key). Line categories are written back through the
+  injected `setReceiptLineCategories`.
+- **Personal items and who owes whom (Luke, 2026-11-23).** Decisions: an item or
+  charge can belong to the Household, Luke or Marijane (household members, not
+  Sophia); a personal item paid with household money **leaves the household budget**
+  and goes on that person's balance (label `owe:<uid>`, also as split portions; a
+  receipt line keeps its category and gets `owedBy`); household things paid with a
+  person's own money go the other way (a household manual transaction with
+  `paidBy`, counted in the household budget); **one net balance per person**;
+  settling up is **suggested from a matching transfer and confirmed with a tap**
+  (the transfer is then filed as Account management), with **Settle up** for
+  anything else (settlement amount > 0 person→household, < 0 household→person).
+  Pure logic: `financeOwedLedger` / `suggestSettlement` in `finance-settle.js`.
+  Shown only in the Household view (the balance lives in the household's books).
+- **Skipped stores (Luke, 2026-11-23):** all 138 old skips were brought back — only
+  skips stored with a date (`financeMerchantSkipped`) count; old `true` values are
+  ignored, so no device can restore them.
+- **Readable names:** rows show your rename, else a linked receipt's store, else
+  `cleanMerchantName` of the bank text; a receipt mark shows on rows with a receipt.
+  Cash flow and the spending trend include uncategorized spending.
+- **Nightly receipt linking:** `netlify/functions/_receipt-link.js`, run by the
+  scheduled Netlify function `receipt-link-nightly.mjs` at 12:10 UTC (after the
+  `finance-nightly` Edge Function saves the day's transactions), links "sure" fits in
+  `fin_receipts` (household + each owner's Personal scope). Kept out of the Edge
+  Function so it ships with a normal deploy.
+- **Month history (Luke, 2026-11-23):** past months with no saved totals that stored
+  history covers are filled automatically (`financeMonthsToBackfill`) and marked
+  `rebuilt: true`; those keep following stored history; months saved any other way
+  still change only by Update; closed months never.
 - **Receipts are Shop's** (`state.receipts`, one list for Shop and Finance — RECEIPTS.md);
   Finance reads them only through the injected `receiptsForFinance` /
-  `linkReceiptToFinanceTxn` / `openReceiptDetail` interface.
+  `linkReceiptToFinanceTxn` / `setReceiptLineCategories` / `openReceiptDetail` interface.
 - **`app.js` (minimal, shared-glue only):** `showFinanceApp` (nav/router entry — it
   calls the module's `resetFinanceViewMonth()` + `onEnterFinancePage()`), the
   `createFinanceModule({...})` instantiation + destructure (above `render()`), and the

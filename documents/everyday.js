@@ -144,6 +144,8 @@ export function createEverydayLibrary({ transport, storage, now = () => Date.now
   const setTags = (scope, id, tags) => patch(scope, id, { tags: cleanTags(tags) });
   const setDocumentDate = (scope, id, date) => patch(scope, id, { doc_date: isoDate(date) });
   const trash = (scope, id) => patch(scope, id, { deleted_at: new Date(now()).toISOString() });
+  // A receipt file pointed at another receipt (two duplicate receipts merged into one).
+  const relinkReceipt = (scope, id, receiptId) => patch(scope, id, { source: { receiptId: String(receiptId || "") } });
   const restore = (scope, id) => patch(scope, id, { deleted_at: null });
 
   // Names, tags and the text read from the pages, searched by the database; at most 100.
@@ -201,7 +203,7 @@ export function createEverydayLibrary({ transport, storage, now = () => Date.now
 
   return {
     folders, addFolder, ensureStartingFolders, folderNamed, renameFolder, deleteFolder,
-    files, has, addFile, open, thumbnail, rename, move, setTags, setDocumentDate, trash, restore,
+    files, has, addFile, open, thumbnail, rename, move, setTags, setDocumentDate, trash, restore, relinkReceipt,
     search, purge, purgeExpired, usage, dropMovedReceipt,
   };
 }

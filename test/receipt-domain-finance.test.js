@@ -42,7 +42,8 @@ describe("finance view", () => {
   it("maps a receipt to the shape Finance matches on", () => {
     const f = D.receiptForFinance({ ...scanned(), financeTxnId: "t1" });
     expect(f).toMatchObject({ merchant: "Lunds", date: "2026-10-01", total: 10, source: "scan", financeTxnId: "t1" });
-    expect(f.items[0]).toEqual({ name: "Milk", price: 4, category: "cat:food:groc" });
+    expect(f.items[0]).toMatchObject({ name: "Milk", price: 4, category: "cat:food:groc" });
+    expect(typeof f.items[0].id).toBe("string");
   });
 });
 

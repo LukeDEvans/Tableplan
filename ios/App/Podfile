@@ -21,4 +21,14 @@ end
 
 post_install do |installer|
   assertDeploymentTarget(installer)
+  # Xcode 27 rejects pod targets below its supported minimum (the Capacitor
+  # podspecs still say iOS 13/14). Lift every pod to the app's own minimum.
+  installer.pods_project.build_configurations.each do |config|
+    config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '26.0'
+  end
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '26.0'
+    end
+  end
 end
