@@ -23266,8 +23266,31 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-merchant { font-size: 1.25rem; font-weight: 800; color: var(--ink); line-height: 1.25; }
 .fin-review-meta, .fin-review-facts { font-size: 0.85rem; font-weight: 600; color: var(--muted); }
 .fin-review-raw { font-size: 0.76rem; color: var(--muted); opacity: 0.85; }
-/* Merchant-grouping callout — explains "approve labels the whole group". */
-.fin-review-group { max-width: 360px; width: 100%; font-size: 0.8rem; line-height: 1.35; color: var(--ink); background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 10px; padding: 8px 12px; margin-top: 2px; }
+/* Choosing categories (Luke, 2026-11-23): a guess, its source, quick chips; a
+   receipt's lines each with their own category, or "All one category". */
+.fin-review-guess { max-width: 360px; width: 100%; font-size: 0.78rem; line-height: 1.35; color: var(--muted); text-align: left; }
+.fin-review-guess.is-mixed { color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 9px; padding: 7px 10px; }
+.fin-review-chips { display: flex; flex-wrap: wrap; gap: 6px; max-width: 360px; width: 100%; }
+.fin-review-chip { padding: 7px 12px; font-size: 0.82rem; font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 999px; cursor: pointer; font-family: inherit; }
+.fin-review-chip.is-on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+.fin-review-lines-head { max-width: 360px; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.8rem; font-weight: 700; color: var(--muted); text-align: left; }
+.fin-review-allone-btn { flex: 0 0 auto; padding: 6px 11px; font-size: 0.78rem; font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 999px; cursor: pointer; font-family: inherit; }
+.fin-review-allone-btn[aria-pressed="true"] { color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 32%, transparent); }
+.fin-review-card:not(.is-allone) .fin-review-allone-field { display: none; }
+.fin-review-card.is-allone .fin-review-lines { opacity: 0.45; pointer-events: none; }
+.fin-review-lines { max-width: 360px; width: 100%; display: flex; flex-direction: column; border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.fin-review-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name price" "cat cat"; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); text-align: left; }
+.fin-review-line-name { grid-area: name; font-size: 0.88rem; font-weight: 650; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-review-line-price { grid-area: price; font-size: 0.88rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.fin-review-line-cat { grid-area: cat; width: 100%; font-size: 0.88rem; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent) 8%, var(--window-bg)); color: var(--ink); font-family: inherit; }
+.fin-review-line-cat.is-empty { background: var(--window-bg); border-style: dashed; color: var(--muted); }
+.fin-review-card.fin-review-need-cat .fin-review-line-cat.is-empty { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* "Approve N suggested": a thin bar under the window's title, shown when 2+
+   cards have guesses the app is fairly sure of. */
+.fin-review-bulk { flex: 0 0 auto; display: flex; justify-content: center; padding: 8px 16px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.fin-review-bulk[hidden] { display: none; }
+.fin-review-suggested { padding: 8px 16px; font-size: 0.85rem; font-weight: 800; color: var(--on-accent); background: var(--accent); border: none; border-radius: 999px; cursor: pointer; font-family: inherit; white-space: nowrap; }
+.fin-review-count { white-space: nowrap; }
 .fin-review-field { max-width: 360px; width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); text-align: left; margin-top: 4px; }
 .fin-review-label, .fin-review-input { width: 100%; font-size: 1rem; padding: 11px 13px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); border-radius: 9px; background: var(--input-bg, var(--window-bg)); color: var(--ink); font-family: inherit; text-transform: none; letter-spacing: normal; }
 .fin-review-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 360px; width: 100%; margin-top: 14px; }

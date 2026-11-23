@@ -130,6 +130,9 @@ history is built then). `extraction.status` lives inside `extraction`, which old
   unlabeled remainder (`receiptFinancePortions`).
 - `importFinanceInboxReceipts(list)`, `linkReceiptToFinanceTxn(receiptId, txnId)`,
   `openReceiptDetail(receiptId)` (opens the receipt in Shop).
+- `setReceiptLineCategories(receiptId, { lineId: label })` (2026-11-23): Finance's
+  review card categorizes a receipt item by item and saves each line's budget
+  category here. `items` carry each line's `id` for this.
 
 Matching (`financeReceiptForTxn`): use the receipt linked to the transaction if there is
 one. Otherwise use an unlinked receipt with the same total (±2¢) dated within 4 days.

@@ -246,6 +246,24 @@ export function financeTxnsCoverMonth(txns, month, currentMonth) {
   return Boolean(earliest && earliest <= `${month}-01`);
 }
 
+// Past months with no saved totals that stored history fully covers: filled in
+// from the stored transactions (Luke, 2026-11-23). Moving accounts to Personal
+// clears saved totals so they can be rebuilt, and the feed-window rebuild only
+// ever reached the current month. Filled months are marked { rebuilt: true } and
+// keep following stored history as charges are categorized later; a month whose
+// totals were saved any other way still changes only by hand (Update), and a
+// closed month never. → ["YYYY-MM", …] oldest first.
+export function financeMonthsToBackfill(txns, saved, currentMonth, isClosed = () => false) {
+  const have = saved && typeof saved === "object" ? saved : {};
+  const months = new Set();
+  for (const t of txns || []) {
+    if (t?.isManual) continue;
+    const m = (t?.posted || "").slice(0, 7);
+    if (m && m < currentMonth) months.add(m);
+  }
+  return [...months].sort().filter((m) => (!have[m] || have[m].rebuilt === true) && !isClosed(m) && financeTxnsCoverMonth(txns, m, currentMonth));
+}
+
 // ── Spending that is in no category ─────────────────────────────────────────
 // Money that left an account and has no label at all: not a category, not a
 // transfer, not income. Every spending total is built from categories, so this is

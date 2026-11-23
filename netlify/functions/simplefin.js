@@ -165,6 +165,55 @@ exports.handler = async (event) => {
       return cors(json(200, { ok: true, receipt: { merchant: receipt.merchant, date: receipt.date, total: receipt.total, items: receipt.items.length } }));
     }
 
+    if (action === "guessMerchants") {
+      // A first guess for merchants the app has never seen (FINANCE_JOURNEY_AUDIT.md,
+      // Luke 2026-11-23): bank text in, a budget category key (or null) out. Only
+      // asked for merchants with no history and no built-in match; the app keeps
+      // the answers, so each merchant is asked once. Nothing is filed from this:
+      // it only pre-fills the review card.
+      const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+      if (!anthropicKey) return cors(json(200, { guesses: {} }));
+      const merchants = (Array.isArray(body.merchants) ? body.merchants : []).slice(0, 20)
+        .map((m) => ({ key: String(m?.key || "").slice(0, 80), text: String(m?.text || "").slice(0, 120) }))
+        .filter((m) => m.key && m.text);
+      if (!merchants.length) return cors(json(200, { guesses: {} }));
+      const categories = await loadFinanceCategories(serviceKey, groupId);
+      if (!categories.length) return cors(json(200, { guesses: {} }));
+      const prompt = [
+        "Each line below is a card or bank charge's description from a US household's statement (Minneapolis).",
+        "Pick the budget category key it most likely belongs to, or null when you can't tell (a person's name, a generic payment, an unknown business).",
+        'Reply with JSON only: {"<id>": "<category key>" or null, ...}',
+        "",
+        "Categories:",
+        categories.map((c) => `${c.key} = ${c.name}`).join("\n"),
+        "",
+        "Charges:",
+        merchants.map((m, i) => `${i + 1}. ${m.text}`).join("\n"),
+        "",
+        "Use the charge numbers as ids.",
+      ].join("\n");
+      const ai = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: process.env.ANTHROPIC_RECEIPT_SCAN_MODEL || "claude-haiku-4-5-20251001",
+          max_tokens: 800,
+          temperature: 0,
+          messages: [{ role: "user", content: [{ type: "text", text: prompt }] }]
+        })
+      });
+      if (!ai.ok) return cors(json(200, { guesses: {} }));
+      const valid = new Set(categories.map((c) => c.key));
+      let parsed = {};
+      try { parsed = JSON.parse((String(await modelText(ai)).match(/\{[\s\S]*\}/) || ["{}"])[0]) || {}; } catch { parsed = {}; }
+      const guesses = {};
+      merchants.forEach((m, i) => {
+        const k = parsed[String(i + 1)];
+        guesses[m.key] = typeof k === "string" && valid.has(k) ? k : null;
+      });
+      return cors(json(200, { guesses }));
+    }
+
     if (action === "receipts") {
       // Email receipts extracted by the mail sweep (finreceipts_ is a
       // service-only row; this is the sole client-facing read path).

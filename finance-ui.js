@@ -1,5 +1,5 @@
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
-import { financeMonthsToSnapshot, financeOffsettingPairIds, financeTransferPairIds, financePendingDuplicates, localMonthKey, monthKeyOffset, financeMonthEntry, financeMonthEntryTotals, financeMonthEntriesMatch, financeTxnsCoverMonth, financeUncategorizedByMonth, financeProjectedSpend } from './finance-actuals.js';
+import { financeMonthsToSnapshot, financeOffsettingPairIds, financeTransferPairIds, financePendingDuplicates, localMonthKey, monthKeyOffset, financeMonthEntry, financeMonthEntryTotals, financeMonthEntriesMatch, financeTxnsCoverMonth, financeUncategorizedByMonth, financeProjectedSpend, financeMonthsToBackfill } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport, findDuplicateCsvAccount } from './finance-csv.js';
 import { saveFile } from './save-file.js';
@@ -10,6 +10,7 @@ import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 import { linkOutAttrs } from './link-out.js';
 import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
 import { duplicateMap } from './receipt-duplicates.js';
+import { merchantDecision, guessForMerchant, guessForLine, splitFromLines, addCount, itemKey, ITEM_PREFIX, AI_PREFIX } from './finance-guess.js';
 import { financeOwedBalances } from './finance-settle.js';
 import { subscriptionReview, cashForecast, everydaySpendPerDay, goalProgress } from './finance-plan.js';
 import { TAX_KINDS, taxLabel, taxTagFor, taxYearSummary, taxYearCsv, tripCandidates, tripCharges } from './finance-tags.js';
@@ -301,7 +302,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail, queueReceiptFile, onFinanceCountChanged, memberName, currentViewKey } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, setReceiptLineCategories, openReceiptDetail, queueReceiptFile, onFinanceCountChanged, memberName, currentViewKey } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -1280,16 +1281,18 @@ function financeSuggestedNote(counts) {
   return (n >= 2 && n / total >= 0.6) ? best : "";
 }
 
+// A merchant's charges are filed on their own only when the store is consistent:
+// approved 2+ times and never as anything else. One approval, or a store that has
+// had more than one category (Trader Joe's: food and booze), only gives a guess
+// on the review card (finance-guess.js; Luke, 2026-11-23).
 function financeTxnRuleGuess(desc) {
   const key = financeMerchantKey(desc);
-  const counts = key && state.financeTxnRules?.[key];
-  if (!counts || typeof counts !== "object") return null;
-  let best = null, n = 0, total = 0;
-  for (const [k, c] of Object.entries(counts)) {
-    total += Number(c) || 0;
-    if (Number(c) > n) { n = Number(c); best = k; }
-  }
-  return (n >= 2 && n / total >= 0.6) ? best : null;
+  return merchantDecision(key ? state.financeTxnRules?.[key] : null).auto;
+}
+
+// Every budget category as { key, name } ("Needs · Food"), for guesses.
+function financeCategoryChoices() {
+  return (state.financeBudgetGroups || []).flatMap((g) => (g.categories || []).map((c) => ({ key: `cat:${g.id}:${c.id}`, name: `${g.label} · ${c.name}` })));
 }
 
 const FIN_MGMT_KEYWORDS = /payment thank you|autopay|auto pay|online payment|internet transfer|online transfer|transfer (to|from)|crcardpmt|epay/i;
@@ -1433,6 +1436,15 @@ function financeLabeledTxns() {
         t.label = ""; t.labelSource = ""; delete t.split;
       }
     }
+  }
+
+  // A first guess for every charge still without a category (shown on the
+  // review card; never counted until approved).
+  const choices = financeCategoryChoices();
+  const rules = state.financeTxnRules || {};
+  for (const t of txns) {
+    if (t.label) { delete t.guess; continue; }
+    t.guess = guessForMerchant({ description: t.description, merchantKey: financeMerchantKey(t.description), rules, categories: choices });
   }
 
   // Linked returns: a manually-confirmed return→purchase link (financeTxnLinks)
@@ -1901,12 +1913,12 @@ function financeRecurringAlerts() {
   return out;
 }
 
-// Unlabeled transactions collapsed to one row per merchant. A recurring debit
-// (e.g. a monthly loan withdrawal) otherwise shows up as one nag per month —
-// eight "electronic withdrawal firstmark" lines when it should be a single
-// "label this merchant" prompt. Labeling the representative learns a merchant
-// rule (recordFinanceTxnLabel) that auto-labels every sibling, so the whole
-// group clears at once. The newest posting represents the group.
+// Charges still waiting for a category, one entry per charge, newest first. (Until
+// 2026-11-23 these were collapsed per merchant and one approval was meant to clear
+// the group; Luke decided a choice on one charge must never change another.) A
+// recurring bill stops coming back once it's been approved twice the same way
+// (financeTxnRuleGuess), and "Approve suggested" clears guessed cards in one tap.
+// The merchant key is kept on each entry for skip and snooze.
 function financeUnlabeledByMerchant(txns) {
   const skips = (state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {};
   const snoozes = (state.financeLabelSnoozes && typeof state.financeLabelSnoozes === "object") ? state.financeLabelSnoozes : {};
@@ -1919,12 +1931,11 @@ function financeUnlabeledByMerchant(txns) {
     const k = financeMerchantKey(t.description) || `id:${t.id}`;
     if (skips[k]) continue; // user chose to skip labeling this merchant's charges
     if (snoozes[k] === today) continue; // snoozed for today — returns tomorrow
-    const g = byKey.get(k);
-    if (!g) { byKey.set(k, { key: k, rep: t, count: 1 }); continue; }
-    g.count++;
-    if ((t.posted || "") > (g.rep.posted || "")) g.rep = t;
+    // One card per charge (Luke, 2026-11-23): a choice on one charge never
+    // changes another, so charges are no longer grouped by merchant.
+    byKey.set(t.id, { key: k, rep: t, count: 1 });
   }
-  return [...byKey.values()];
+  return [...byKey.values()].sort((a, b) => (b.rep.posted || "").localeCompare(a.rep.posted || ""));
 }
 function financeUnlabeledCount() {
   return financeUnlabeledByMerchant(financeDeckWindow(financeLabeledTxns())).length;
@@ -2089,6 +2100,7 @@ function openFinanceTxnReview() {
         <span class="fin-review-count" data-fin-review-count aria-live="polite"></span>
         <button class="fin-review-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
+      <div class="fin-review-bulk" data-fin-review-bulk hidden><button class="fin-review-suggested" type="button" data-fin-review-suggested></button></div>
       <div class="fin-review-deck" data-fin-review-deck tabindex="0"></div>
     </div>`;
   document.body.appendChild(overlay);
@@ -2114,6 +2126,56 @@ function openFinanceTxnReview() {
   renderFinanceReviewDeck();
   wireFinanceReviewDeck(overlay);
   overlay.querySelector("[data-fin-review-deck]")?.focus();
+  requestFinanceAiGuesses(overlay).catch(() => {});
+}
+
+// Merchants the app has never seen and the built-in list doesn't know get one
+// small AI call (Luke, 2026-11-12/23: AI is fine, your own choices come first).
+// The answer is kept (ai:<merchant> in the rules map) so each is asked once, and
+// it only pre-fills cards you haven't touched. Asked at most once per merchant
+// per session even when the server can't answer (before the deploy).
+const financeAiAsked = new Set();
+async function requestFinanceAiGuesses(overlay) {
+  const deck = overlay?.querySelector("[data-fin-review-deck]");
+  if (!deck) return;
+  const rules = state.financeTxnRules || {};
+  const want = new Map();
+  for (const card of deck.querySelectorAll('.fin-review-card[data-mode="one"]')) {
+    const key = card.dataset.reviewKey || "";
+    const sel = card.querySelector("[data-review-label]");
+    if (!key || key.startsWith("id:") || sel?.value || financeAiAsked.has(key) || rules[AI_PREFIX + key] || rules[key]) continue;
+    if (!want.has(key)) want.set(key, card.dataset.desc || "");
+    if (want.size >= 20) break;
+  }
+  if (!want.size) return;
+  for (const k of want.keys()) financeAiAsked.add(k);
+  const data = await callNetlifyFunction("simplefin", { action: "guessMerchants", merchants: [...want].map(([key, text]) => ({ key, text })) });
+  const guesses = data?.guesses && typeof data.guesses === "object" ? data.guesses : {};
+  let saved = 0;
+  if (!state.financeTxnRules || typeof state.financeTxnRules !== "object") state.financeTxnRules = {};
+  for (const [key, label] of Object.entries(guesses)) {
+    if (!want.has(key) || typeof label !== "string" || !financeTxnLabelName(label)) continue;
+    state.financeTxnRules[AI_PREFIX + key] = { [label]: 1 };
+    saved += 1;
+  }
+  if (!saved) return;
+  trimFinanceRules();
+  invalidateFinanceLabeled();
+  persist();
+  if (!overlay.isConnected) return;
+  // Fill the cards still untouched; anything you've already picked stays yours.
+  for (const card of deck.querySelectorAll('.fin-review-card[data-mode="one"]')) {
+    const label = guesses[card.dataset.reviewKey || ""];
+    const sel = card.querySelector("[data-review-label]");
+    if (!label || !sel || sel.value || card.dataset.touched === "1" || !financeTxnLabelName(label)) continue;
+    sel.value = label;
+    card.dataset.suggest = "1";
+    const hint = card.querySelector(".fin-review-guess");
+    if (hint) hint.textContent = FIN_GUESS_HINT.ai;
+    else sel.closest(".fin-review-field")?.insertAdjacentHTML("afterend", `<div class="fin-review-guess">${escapeHtml(FIN_GUESS_HINT.ai)}</div>`);
+    card.querySelectorAll("[data-review-chip]").forEach((c) => c.classList.toggle("is-on", c.dataset.reviewChip === label));
+  }
+  updateFinanceReviewProgress(deck);
 }
 
 // Non-transaction notifications rendered as their own (non-swipeable) cards at
@@ -2196,6 +2258,125 @@ function financeTxnFactsLine(t) {
   return facts + (t.signFlipped ? " · sign corrected" : "");
 }
 
+// ── Review card: choosing categories (Luke, 2026-11-23) ─────────────────────
+// A charge with a receipt is categorized item by item, with "All one category"
+// to mark the whole receipt instead. A charge without one gets a single choice.
+// Every choice starts from a guess (finance-guess.js); nothing is saved until
+// Approve, and a choice on one charge never changes another.
+
+// The categories used most often, for the quick chips under a single choice.
+function financeFrequentLabels() {
+  const counts = new Map();
+  for (const v of Object.values(state.financeTxnLabels || {})) {
+    if (typeof v === "string" && v.startsWith("cat:") && financeTxnLabelName(v)) counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k).slice(0, 6);
+}
+
+// A receipt's priced lines with a guess for each.
+function financeReviewLines(receipt) {
+  const items = Array.isArray(receipt?.items) ? receipt.items : [];
+  if (!items.some((i) => Number(i.price) > 0)) return [];
+  const choices = financeCategoryChoices();
+  const rules = state.financeTxnRules || {};
+  // Discount and coupon lines (negative) aren't categorized; like tax, they are
+  // spread over the categories when the charge is split.
+  return items.filter((i) => Number(i.price) > 0).map((i, n) => {
+    const g = guessForLine({ name: i.name, readCategory: i.category, rules, categories: choices });
+    return { id: i.id || `line-${n}`, name: i.name || "Item", price: Number(i.price) || 0, label: g?.label || "", source: g?.source || "" };
+  });
+}
+
+// The category that covers the most money on the receipt (the "All one" default).
+function financeReviewTopLabel(lines) {
+  const by = new Map();
+  for (const l of lines) if (l.label) by.set(l.label, (by.get(l.label) || 0) + Math.abs(l.price));
+  return [...by.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
+
+const FIN_GUESS_HINT = {
+  yours: "From your past choices",
+  common: "Suggested for this kind of store",
+  ai: "Suggested by AI",
+};
+
+function financeReviewOneHtml(t, frequent) {
+  const guess = t.guess || null;
+  const selected = guess?.label || "";
+  // The store's own past categories come first (a mixed store's alternatives),
+  // then the ones used most overall.
+  const storeCounts = state.financeTxnRules?.[financeMerchantKey(t.description)] || {};
+  const storeLabels = Object.entries(storeCounts).filter(([k, c]) => Number(c) > 0 && financeTxnLabelName(k)).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const chips = [...new Set([selected, ...storeLabels, ...frequent].filter(Boolean))].slice(0, 4);
+  const hint = guess?.mixed
+    ? `<div class="fin-review-guess is-mixed">Mixed store: you've used more than one category here, so check this one.</div>`
+    : guess ? `<div class="fin-review-guess">${escapeHtml(FIN_GUESS_HINT[guess.source] || "Suggested")}</div>` : "";
+  return `
+    <label class="fin-review-field">Category
+      <select class="fin-review-label" data-review-label aria-label="Budget category">
+        <option value="">Pick a category…</option>
+        ${financeTxnLabelOptionsHtml(selected)}
+      </select>
+    </label>
+    ${hint}
+    ${chips.length ? `<div class="fin-review-chips" role="group" aria-label="Quick categories">${chips.map((k) => `<button type="button" class="fin-review-chip${k === selected ? " is-on" : ""}" data-review-chip="${escapeHtml(k)}">${escapeHtml(financeTxnLabelShortName(k))}</button>`).join("")}</div>` : ""}`;
+}
+
+function financeReviewLinesHtml(lines, receipt) {
+  const top = financeReviewTopLabel(lines);
+  const missing = lines.filter((l) => !l.label).length;
+  return `
+    <div class="fin-review-lines-head">
+      <span>${lines.length} item${lines.length === 1 ? "" : "s"} on the ${escapeHtml(receipt.merchant || "")} receipt</span>
+      <button type="button" class="fin-review-allone-btn" data-review-allone aria-pressed="false">All one category</button>
+    </div>
+    <label class="fin-review-field fin-review-allone-field">Whole receipt
+      <select class="fin-review-label" data-review-allone-label aria-label="One category for the whole receipt">
+        <option value="">Pick a category…</option>
+        ${financeTxnLabelOptionsHtml(top)}
+      </select>
+    </label>
+    <div class="fin-review-lines" data-review-lines>
+      ${lines.map((l) => `
+      <div class="fin-review-line">
+        <span class="fin-review-line-name">${escapeHtml(l.name)}</span>
+        <span class="fin-review-line-price">${formatFinMoney(l.price)}</span>
+        <select class="fin-review-line-cat${l.label ? "" : " is-empty"}" data-review-line data-line-id="${escapeHtml(l.id)}" data-name="${escapeHtml(l.name)}" data-price="${l.price}" aria-label="Category for ${escapeHtml(l.name)}">
+          <option value="">Pick…</option>
+          ${financeTxnLabelOptionsHtml(l.label)}
+        </select>
+      </div>`).join("")}
+    </div>
+    <div class="fin-review-guess">${missing ? `${missing} item${missing === 1 ? " needs" : "s need"} a category. Tax is shared across the categories.` : "Each item has a guess. Tap one to change it. Tax is shared across the categories."}</div>`;
+}
+
+// "Approve suggested" takes a card only when every choice on it is a guess the
+// app is fairly sure of: never a mixed store, never a card with a blank.
+function financeReviewCardSuggestible(t, lines) {
+  if (lines.length) return lines.every((l) => l.label);
+  return Boolean(t.guess?.label) && !t.guess.mixed;
+}
+
+// What a card would save right now, or null if something still needs a category.
+function financeReviewCardChoice(card) {
+  if (card.dataset.mode === "lines") {
+    const allOne = card.classList.contains("is-allone");
+    const one = card.querySelector("[data-review-allone-label]")?.value || "";
+    const lines = [...card.querySelectorAll("[data-review-line]")].map((sel) => ({
+      id: sel.dataset.lineId, name: sel.dataset.name || "", price: Number(sel.dataset.price) || 0, label: allOne ? one : sel.value,
+    }));
+    if (!lines.length || lines.some((l) => l.price && !l.label)) return null;
+    return { kind: "lines", lines };
+  }
+  const label = card.querySelector("[data-review-label]")?.value || "";
+  return label ? { kind: "one", label } : null;
+}
+
+function financeTxnLabelShortName(key) {
+  const full = financeTxnLabelName(key) || "";
+  return full.split("·").pop().trim() || full;
+}
+
 function renderFinanceReviewDeck() {
   const deck = document.querySelector("[data-fin-review-deck]");
   if (!deck) return;
@@ -2204,16 +2385,22 @@ function renderFinanceReviewDeck() {
   if (!groups.length && !alertsHtml) { updateFinanceReviewProgress(deck); return; } // paints the caught-up state
   const names = state.financeMerchantNames || {};
   const noteOverrides = state.financeTxnNoteOverrides || {};
+  const frequent = financeFrequentLabels();
   deck.innerHTML = alertsHtml + groups.map((g) => {
     const t = g.rep;
     const mKey = financeMerchantKey(t.description);
     const nameVal = names[mKey] || "";
     const noteVal = Object.prototype.hasOwnProperty.call(noteOverrides, t.id) ? (noteOverrides[t.id] || "") : "";
     const facts = financeTxnFactsLine(t);
-    const merchantTitle = nameVal || t.description || "Transaction";
-    const showRaw = nameVal && nameVal !== t.description; // renamed → surface the original bank text
+    const receipt = financeReceiptForTxn(t);
+    // A matched receipt's store name reads better than the bank's text.
+    const merchantTitle = nameVal || receipt?.merchant || t.description || "Transaction";
+    const showRaw = merchantTitle !== t.description; // renamed → surface the original bank text
+    const lines = financeReviewLines(receipt);
+    const choose = lines.length ? financeReviewLinesHtml(lines, receipt) : financeReviewOneHtml(t, frequent);
+    const suggest = financeReviewCardSuggestible(t, lines);
     return `
-    <div class="fin-review-card fin-notif-card" data-review-key="${escapeHtml(g.key)}" data-txn-id="${escapeHtml(t.id)}">
+    <div class="fin-review-card fin-notif-card" data-review-key="${escapeHtml(g.key)}" data-txn-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description || "")}" data-mode="${lines.length ? "lines" : "one"}"${lines.length ? ` data-receipt-id="${escapeHtml(receipt.id)}"` : ""}${suggest ? ` data-suggest="1"` : ""}>
       <div class="fin-review-action fin-review-action-dismiss" aria-hidden="true">Skip ✕</div>
       <div class="fin-review-action fin-review-action-done" aria-hidden="true">✓ Approve</div>
       <div class="fin-review-card-inner">
@@ -2222,13 +2409,7 @@ function renderFinanceReviewDeck() {
           <div class="fin-review-merchant">${escapeHtml(merchantTitle)}</div>
           ${facts ? `<div class="fin-review-facts">${escapeHtml(facts)}</div>` : ""}
           ${showRaw ? `<div class="fin-review-raw">Bank: ${escapeHtml(t.description)}</div>` : ""}
-          ${g.count > 1 ? `<div class="fin-review-group"><strong>${g.count} matching transactions</strong> from this merchant. Approving applies the category to all of them.</div>` : ""}
-          <label class="fin-review-field">Category
-            <select class="fin-txn-label fin-review-label" data-review-label data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget category">
-              <option value="">Pick a category…</option>
-              ${financeTxnLabelOptionsHtml("")}
-            </select>
-          </label>
+          ${choose}
           <div class="fin-review-quick">${financeReviewQuickChipsHtml(t)}</div>
           <!-- Name and note sit behind "Edit details…" (Luke, 2026-10-26) unless a
                note is already set; the first tap shows them, the next opens the
@@ -2278,6 +2459,13 @@ function updateFinanceReviewProgress(deck) {
   }
   const idx = deck.clientHeight ? Math.round(deck.scrollTop / deck.clientHeight) : 0;
   if (countEl) countEl.textContent = `${Math.min(idx + 1, cards.length)} of ${cards.length}`;
+  const sugBtn = deck.closest(".fin-review-modal")?.querySelector("[data-fin-review-suggested]");
+  if (sugBtn) {
+    const n = deck.querySelectorAll('.fin-review-card[data-suggest="1"]').length;
+    const bar = sugBtn.closest("[data-fin-review-bulk]");
+    if (bar) bar.hidden = n < 2;
+    sugBtn.textContent = `Approve ${n} suggested`;
+  }
 }
 
 const finReviewReduceMotion = () => typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -2305,7 +2493,7 @@ function finishFinanceReviewCard(card, kind) {
 // rows keep a red "needs confirming" dot until each is explicitly confirmed.
 function dismissFinanceReviewCard(card) {
   if (!card) return;
-  financeDismissNotifGroup(card.dataset.reviewKey, card.dataset.txnId);
+  financeDismissNotifGroup("", card.dataset.txnId); // this charge only
   finishFinanceReviewCard(card, "dismiss");
 }
 
@@ -2321,19 +2509,21 @@ function dismissFinanceReviewCard(card) {
 // double-count the learned merchant/note majority votes. Returns true if
 // anything was written. Called by both approve AND every close path, so a
 // picked category / typed name / typed note is never silently discarded.
-function commitFinanceReviewEdits(card) {
-  if (!card || card.dataset.finReviewCommitted === "1") return false;
-  const sel = card.querySelector("[data-review-label]");
-  if (!sel) return false;
-  const cat = sel.value || "";
+// A card's categories are saved on Approve, or on close only if you changed them
+// yourself: a guess you never touched is not a choice (Luke, 2026-11-23).
+function commitFinanceReviewEdits(card, { approve = false } = {}) {
+  if (!card || card.dataset.finReviewCommitted === "1" || !card.dataset.txnId) return false;
+  const id = card.dataset.txnId, desc = card.dataset.desc || "";
   const nameInput = card.querySelector("[data-review-name]");
   const noteInput = card.querySelector("[data-review-note]");
   const nameChanged = nameInput && nameInput.value !== nameInput.defaultValue;
   const noteChanged = noteInput && noteInput.value !== noteInput.defaultValue;
-  if (!cat && !nameChanged && !noteChanged) return false; // nothing staged → leave it reviewable
+  const choice = (approve || card.dataset.touched === "1") ? financeReviewCardChoice(card) : null;
+  if (!choice && !nameChanged && !noteChanged) return false; // nothing staged → leave it reviewable
   card.dataset.finReviewCommitted = "1";
-  if (nameChanged || noteChanged) saveRenameTxn(sel.dataset.id, sel.dataset.desc || "", nameInput.value, noteInput.value);
-  if (cat) recordFinanceTxnLabel(sel.dataset.id, cat, sel.dataset.desc || ""); // labels + learns the merchant rule + updates the bell count
+  if (nameChanged || noteChanged) saveRenameTxn(id, desc, nameInput.value, noteInput.value);
+  if (choice?.kind === "one") recordFinanceTxnLabel(id, choice.label, desc); // labels + learns the merchant + updates the bell count
+  else if (choice?.kind === "lines") recordFinanceReceiptCategories(id, desc, card.dataset.receiptId || "", choice.lines);
   return true;
 }
 
@@ -2343,16 +2533,26 @@ function commitAllFinanceReviewCards(root) {
 
 function approveFinanceReviewCard(card) {
   if (!card || card.dataset.finReviewCommitted === "1") return false; // already committed (mid-fling)
-  const sel = card.querySelector("[data-review-label]");
-  if (!(sel && sel.value)) { // approval requires a category — nudge instead of a silent no-op
+  if (!financeReviewCardChoice(card)) { // approval requires every category — nudge instead of a silent no-op
     card.classList.add("fin-review-need-cat");
     setTimeout(() => card.classList.remove("fin-review-need-cat"), 1200);
-    try { sel?.focus(); } catch { /* not focusable */ }
+    const blank = card.classList.contains("is-allone")
+      ? card.querySelector("[data-review-allone-label]")
+      : [...card.querySelectorAll("[data-review-line], [data-review-label]")].find((s) => !s.value);
+    try { blank?.focus(); } catch { /* not focusable */ }
     return false;
   }
-  commitFinanceReviewEdits(card);
+  commitFinanceReviewEdits(card, { approve: true });
   finishFinanceReviewCard(card, "approve");
   return true;
+}
+
+// "Approve suggested": every card whose guesses the app is fairly sure of.
+function approveSuggestedFinanceReviewCards(deck) {
+  const cards = [...deck.querySelectorAll('.fin-review-card[data-suggest="1"]')].filter((c) => financeReviewCardChoice(c));
+  for (const c of cards) { commitFinanceReviewEdits(c, { approve: true }); c.remove(); }
+  updateFinanceReviewProgress(deck);
+  if (cards.length) showMailToast(`Approved ${cards.length} suggested.`);
 }
 
 function skipFinanceReviewCard(card) {
@@ -2433,9 +2633,37 @@ function wireFinanceReviewDeck(overlay) {
   const deck = overlay.querySelector("[data-fin-review-deck]");
   if (!deck) return;
 
+  overlay.querySelector("[data-fin-review-suggested]")?.addEventListener("click", () => approveSuggestedFinanceReviewCards(deck));
+
+  // Any category you pick yourself makes the card yours (saved even on close).
+  deck.addEventListener("change", (e) => {
+    const card = e.target.closest(".fin-review-card");
+    if (!card || !e.target.matches("[data-review-label], [data-review-line], [data-review-allone-label]")) return;
+    card.dataset.touched = "1";
+    if (e.target.matches("[data-review-line]")) e.target.classList.toggle("is-empty", !e.target.value);
+    if (e.target.matches("[data-review-label]")) {
+      card.querySelectorAll("[data-review-chip]").forEach((c) => c.classList.toggle("is-on", c.dataset.reviewChip === e.target.value));
+    }
+  });
+
   // Buttons (the non-gesture path — approval is always possible without swiping).
   deck.addEventListener("click", (e) => {
     const card = e.target.closest(".fin-review-card");
+    const chip = e.target.closest("[data-review-chip]");
+    if (chip && card) {
+      const sel = card.querySelector("[data-review-label]");
+      if (sel) { sel.value = chip.dataset.reviewChip; sel.dispatchEvent(new Event("change", { bubbles: true })); }
+      return;
+    }
+    const allOne = e.target.closest("[data-review-allone]");
+    if (allOne && card) {
+      const on = !card.classList.contains("is-allone");
+      card.classList.toggle("is-allone", on);
+      allOne.setAttribute("aria-pressed", on ? "true" : "false");
+      allOne.textContent = on ? "Item by item" : "All one category";
+      card.dataset.touched = "1";
+      return;
+    }
     if (e.target.closest("[data-fin-review-approve]")) { approveFinanceReviewCard(card); return; }
     if (e.target.closest("[data-fin-review-skip]")) { skipFinanceReviewCard(card); return; }
     const moreBtn = e.target.closest("[data-fin-review-more]");
@@ -2643,6 +2871,15 @@ function updateFinanceMonthActuals() {
     if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) continue;
     state.financeMonthActuals[month] = entry;
     changed = true;
+  }
+  // Store mode: past months with no saved totals are filled from stored history.
+  if (financeStoreActive()) {
+    for (const month of financeMonthsToBackfill(txns, state.financeMonthActuals, currentMonth, financeMonthClosed)) {
+      const entry = { ...financeMonthEntry(txns, month, financeTxnPortions), rebuilt: true };
+      if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) continue;
+      state.financeMonthActuals[month] = entry;
+      changed = true;
+    }
   }
   if (!changed) return;
   persist();
@@ -2905,14 +3142,52 @@ function recordFinanceTxnLabel(txnId, labelKey, description) {
       counts[labelKey] = (Number(counts[labelKey]) || 0) + 1;
       delete state.financeTxnRules[key];
       state.financeTxnRules[key] = counts;
-      const rKeys = Object.keys(state.financeTxnRules);
-      for (let i = 0; i < rKeys.length - 400; i++) delete state.financeTxnRules[rKeys[i]];
+      trimFinanceRules();
     }
   }
   invalidateFinanceLabeled(); // recompute with the new label
   setPageNotifCount("finance", financeBellCount());
   updateFinanceMonthActuals();
   persist();
+}
+
+// The rules map holds merchants, item names (item:) and AI answers (ai:);
+// least recently used go first past the cap.
+function trimFinanceRules() {
+  const rKeys = Object.keys(state.financeTxnRules || {});
+  for (let i = 0; i < rKeys.length - 1500; i++) delete state.financeTxnRules[rKeys[i]];
+}
+
+// A receipt categorized item by item on the review card. lines: [{ id, name,
+// price, label }]. Saves each line's category on the receipt, learns each item
+// name, and files the charge: one category → a plain label (which also teaches
+// the merchant, so a liquor-only Trader Joe's run marks the store as mixed);
+// several → a split. Returns false when a priced line still has no category.
+function recordFinanceReceiptCategories(txnId, description, receiptId, lines) {
+  const t = financeLabeledTxns().find((x) => x.id === txnId);
+  if (!t) return false;
+  const portions = splitFromLines(lines, Math.abs(t.amount || 0));
+  if (!portions) return false;
+  if (receiptId) {
+    const byLineId = {};
+    for (const l of lines) if (l.id && l.label) byLineId[l.id] = l.label;
+    try { setReceiptLineCategories(receiptId, byLineId); } catch { /* receipt gone */ }
+    try { linkReceiptToFinanceTxn(receiptId, txnId); } catch { /* already linked */ }
+    financeReceiptFitCache = null;
+  }
+  if (!state.financeTxnRules || typeof state.financeTxnRules !== "object") state.financeTxnRules = {};
+  for (const l of lines) {
+    const k = l.label && itemKey(l.name);
+    if (!k) continue;
+    const key = ITEM_PREFIX + k;
+    const counts = addCount(state.financeTxnRules[key], l.label);
+    delete state.financeTxnRules[key];
+    state.financeTxnRules[key] = counts;
+  }
+  trimFinanceRules();
+  if (portions.length === 1) recordFinanceTxnLabel(txnId, portions[0].label, description);
+  else recordFinanceTxnSplit(txnId, portions);
+  return true;
 }
 
 async function unlinkFinanceBanks() {
@@ -3449,7 +3724,7 @@ function renderFinancePage() {
   // update the saved totals. Never automatic: saved history only changes by hand.
   let staleSaved = null;
   const closedThis = financeMonthClosed(monthKey);
-  if (!isCurrentMonth && !closedThis && storedThis && haveLive && financeStoreActive() && financeTxnsCoverMonth(allTxns, monthKey, financeCurrentMonthKey())) {
+  if (!isCurrentMonth && !closedThis && storedThis && !storedThis.rebuilt && haveLive && financeStoreActive() && financeTxnsCoverMonth(allTxns, monthKey, financeCurrentMonthKey())) {
     const fresh = financeMonthEntry(allTxns, monthKey, financeTxnPortions);
     if (!financeMonthEntriesMatch(storedThis, fresh)) staleSaved = { saved: financeMonthEntryTotals(storedThis), now: financeMonthEntryTotals(fresh) };
   }
