@@ -83,6 +83,13 @@
   node_bundler = "esbuild"
   included_files = ["finance-transactions.js"]
 
+# Nightly receipt linking (FINANCE_JOURNEY_AUDIT R1): after finance-nightly saves
+# the day's transactions (11:40 UTC), link receipts that surely fit a charge.
+# esbuild: it imports the ES-module receipt-matcher.js from the repo root.
+[functions."receipt-link-nightly"]
+  schedule = "10 12 * * *"
+  node_bundler = "esbuild"
+
 [functions."gmail-watch-rearm"]
   schedule = "0 11 * * *"
 

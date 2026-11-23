@@ -21,7 +21,7 @@ all your work is there. Make focused changes to the Finance domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/_receipt-link.js`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `email-receipt-pdf.js`, `receipt-duplicates.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
+- files: `finance-*.js`, `netlify/functions/simplefin.js`, `netlify/functions/_finance-*.js`, `netlify/functions/_receipt-link.js`, `netlify/functions/receipt-link-nightly.mjs`, `netlify/functions/share-receipt.js`, `netlify/functions/_receipt-extract.js`, `receipt-matcher.js`, `email-receipt-pdf.js`, `receipt-duplicates.js`, `receipts-sync.js`, `finance-settle.js`, `finance-plan.js`, `finance-tags.js`, `receipt-returns.js`, `receipt-pantry.js`
 - state: `finance*`
 
 ## Your scope (edit these)
@@ -99,9 +99,10 @@ all your work is there. Make focused changes to the Finance domain only.
   `cleanMerchantName` of the bank text; a receipt mark shows on rows with a receipt.
   Cash flow and the spending trend include uncategorized spending.
 - **Nightly receipt linking:** `netlify/functions/_receipt-link.js`, run by the
-  `finance-nightly` Edge Function after the ingest, links "sure" fits in
-  `fin_receipts` (household + each owner's Personal scope). Rebuild the bundle with
-  `npm run build:finance-nightly`; redeploy the Edge Function to make it live.
+  scheduled Netlify function `receipt-link-nightly.mjs` at 12:10 UTC (after the
+  `finance-nightly` Edge Function saves the day's transactions), links "sure" fits in
+  `fin_receipts` (household + each owner's Personal scope). Kept out of the Edge
+  Function so it ships with a normal deploy.
 - **Month history (Luke, 2026-11-23):** past months with no saved totals that stored
   history covers are filled automatically (`financeMonthsToBackfill`) and marked
   `rebuilt: true`; those keep following stored history; months saved any other way
