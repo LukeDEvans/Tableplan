@@ -64,9 +64,29 @@ all your work is there. Make focused changes to the Finance domain only.
   `mergedReceiptFileActions`. Finance's `financeReceiptInfo` reports status
   `duplicate` ("Possible duplicate") to Document; the Merge / Keep both buttons are in
   Shop's receipt editor. Receipts linked to two different charges are never duplicates.
+- **Categorizing (Luke, 2026-11-23 — FINANCE_JOURNEY_AUDIT.md §5).** Decisions:
+  (1) **item by item**: a charge with a receipt is categorized per line on the review
+  card, with **All one category** to mark the whole receipt (one category → a plain
+  label, several → a split, tax spread in proportion); (2) **a choice on one charge
+  never changes another** — one review card per charge (no merchant grouping, no
+  "applies to all"), and approved labels are never touched by later choices;
+  (3) **mixed stores** (any store with more than one approved category, e.g. Trader
+  Joe's food and booze) are never filed on their own, only guessed, and are left out
+  of "Approve suggested"; a consistent store files itself after 2 approvals; one
+  approval only guesses; (4) **AI guesses** for merchants never seen (rules first,
+  one call per merchant, `simplefin` action `guessMerchants` — needs the deploy);
+  (5) a guess you never touched is not saved when the window closes.
+  `finance-guess.js` (pure, tested) holds the rules; memory stays in
+  `financeTxnRules` (merchant keys, `item:<name>` for receipt lines, `ai:<merchant>`
+  for AI answers — no new synced key). Line categories are written back through the
+  injected `setReceiptLineCategories`.
+- **Month history (Luke, 2026-11-23):** past months with no saved totals that stored
+  history covers are filled automatically (`financeMonthsToBackfill`) and marked
+  `rebuilt: true`; those keep following stored history; months saved any other way
+  still change only by Update; closed months never.
 - **Receipts are Shop's** (`state.receipts`, one list for Shop and Finance — RECEIPTS.md);
   Finance reads them only through the injected `receiptsForFinance` /
-  `linkReceiptToFinanceTxn` / `openReceiptDetail` interface.
+  `linkReceiptToFinanceTxn` / `setReceiptLineCategories` / `openReceiptDetail` interface.
 - **`app.js` (minimal, shared-glue only):** `showFinanceApp` (nav/router entry — it
   calls the module's `resetFinanceViewMonth()` + `onEnterFinancePage()`), the
   `createFinanceModule({...})` instantiation + destructure (above `render()`), and the

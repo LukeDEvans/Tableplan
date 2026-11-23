@@ -351,7 +351,7 @@ return {
       warrantyUntil: receipt.warrantyUntil || "",
       needsReview: Boolean(receipt.extraction && receipt.extraction.status && receipt.extraction.status !== "ok"),
       hasImage: (receipt.imageRefs || []).length > 0,
-      items: (receipt.lineItems || []).map((line) => ({ ...(line.owedBy ? { owedBy: line.owedBy } : {}), name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
+      items: (receipt.lineItems || []).map((line) => ({ ...(line.owedBy ? { owedBy: line.owedBy } : {}), id: line.id || "", name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
       portions: receiptFinancePortions(receipt)
     };
   }

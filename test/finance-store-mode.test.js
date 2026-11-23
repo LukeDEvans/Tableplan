@@ -106,8 +106,11 @@ describe("finance store mode — through the real finance module", () => {
 
     // Past month: untouched even though the store now fully "covers" it.
     expect(JSON.stringify(state.financeMonthActuals[monthOf(200)])).toBe(before);
-    // Only months the feed would have written exist.
-    expect(Object.keys(state.financeMonthActuals).sort()).toEqual(Object.keys(feedState.financeMonthActuals).sort());
+    // Every month the feed writes exists; any other month was filled from stored
+    // history because it had no saved totals (2026-11-23) and is marked rebuilt.
+    const feedMonths = new Set(Object.keys(feedState.financeMonthActuals));
+    for (const m of feedMonths) expect(state.financeMonthActuals[m]).toBeTruthy();
+    for (const [m, entry] of Object.entries(state.financeMonthActuals)) if (!feedMonths.has(m)) expect(entry.rebuilt).toBe(true);
     expect(state.financeMonthActuals[monthOf(1)]).toEqual(feedState.financeMonthActuals[monthOf(1)]);
     // ~150 old unlabeled txns exist, but the bell counts the same as the feed.
     expect(storeRun.bell.at(-1)).toBe(feedRun.bell.at(-1));

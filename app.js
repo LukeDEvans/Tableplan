@@ -2063,6 +2063,7 @@ const _finance = createFinanceModule({
   receiptsForFinance: (...a) => receiptsForFinance(...a).filter((r) => r.view !== "personal" || currentViewKey() === "personal"),
   importFinanceInboxReceipts: (...a) => importFinanceInboxReceipts(...a),
   linkReceiptToFinanceTxn: (...a) => linkReceiptToFinanceTxn(...a),
+  setReceiptLineCategories: (...a) => setReceiptLineCategories(...a),
   openReceiptDetail: (...a) => openReceiptDetail(...a),
   // A receipt scanned in Finance's split editor is filed in Document like any scan.
   queueReceiptFile: (files, opts) => queueReceiptForDocuments(files, opts),
@@ -2191,6 +2192,7 @@ const {
   receiptsForFinance,
   importFinanceInboxReceipts,
   linkReceiptToFinanceTxn,
+  setReceiptLineCategories,
   openReceiptDetail,
   mergeReceiptPair,
   keepReceiptsApart,

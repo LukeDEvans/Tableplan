@@ -5918,6 +5918,24 @@ function renderShopReceipts() {
     state.receipts = normalizeReceipts((state.receipts || []).map((r) => r.id === receiptId ? { ...r, financeTxnId: txnId } : r));
     persist();
   }
+  // Finance's review card categorizes a receipt item by item; the chosen
+  // categories are saved on the receipt's lines (byLineId: { lineId: label }).
+  function setReceiptLineCategories(receiptId, byLineId) {
+    const receipt = (state.receipts || []).find((r) => r.id === receiptId);
+    if (!receipt || !byLineId || typeof byLineId !== "object") return false;
+    let changed = false;
+    const lineItems = (receipt.lineItems || []).map((line) => {
+      if (!Object.prototype.hasOwnProperty.call(byLineId, line.id)) return line;
+      const label = String(byLineId[line.id] || "");
+      if ((line.budgetCategory || "") === label) return line;
+      changed = true;
+      return { ...line, budgetCategory: label };
+    });
+    if (!changed) return false;
+    state.receipts = normalizeReceipts((state.receipts || []).map((r) => r.id === receiptId ? { ...r, lineItems } : r));
+    persist();
+    return true;
+  }
   function openReceiptDetail(receiptId) {
     openShopReceiptsDialog();
     openReceiptEditView(receiptId);
@@ -6005,6 +6023,7 @@ function renderShopReceipts() {
     receiptsForFinance,
     importFinanceInboxReceipts,
     linkReceiptToFinanceTxn,
+    setReceiptLineCategories,
     openReceiptDetail,
     openShopReceiptsDialog,
     mergeReceiptPair,
