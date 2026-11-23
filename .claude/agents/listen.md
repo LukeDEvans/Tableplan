@@ -55,7 +55,9 @@ menu (restored 2026-10-17, Luke), and still opens from the **bottom dock's mini-
   `presynth-*.mjs`, `_presynth-key.mjs`, `tts-cache-cleanup.js`.
 - **`app.js`:** the Listen sections of `activeAppArea === "media"` other than the
   music tab — `showMediaApp`, `renderMediaAllList` (the queue), podcasts, radio,
-  Books, `renderMediaSearchResults`, the mini-player / Now Playing. Search:
+  Books, the mini-player / Now Playing. The top search bar is shared with the
+  music agent: it shows the music results first, then `listenLibraryMatches`
+  (your episodes and books) and "Find podcasts and radio" (LISTEN_SEARCH_DESIGN.md). Search:
   `showMediaApp`, `renderMediaAllList`, `podcastQueue`, `mediaQueueAdded`, `miniPlayer`.
 - **One queue and player per person (Luke, 2026-11-13; LISTEN_QUEUE_DESIGN.md):**
   `listen-queue.js` lists the keys that live in the person's own **`listen`** row

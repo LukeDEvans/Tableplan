@@ -33,6 +33,7 @@ function makeSandbox(env = {}) {
     let musicCurTrack = null, musicQueueRest = [], musicCurUrl = null;
     let musicPlaybackProvider = null, musicOwnedUnsub = null, musicOwnedNP = null;
     let musicOpenToken = 0, musicOpenItem = null, musicOpenItemLoading = false;
+    let musicOpenStack = [], musicArtistTopAll = false;
     let mediaAllQueueId = env.mediaAllQueueId ?? null, mediaAllQueueRest = env.mediaAllQueueRest ?? [];
     let mediaAllQueueSkipped = [], mediaAllQueueTrail = [];
     const mediaAllQueueDone = new Set();
@@ -212,6 +213,19 @@ describe("MED-8 openMusicItem race", () => {
     await pA;
     expect(sb.get().musicOpenItem.album.id).toBe("B");
     expect(sb.get().musicOpenItemLoading).toBe(false);
+  });
+  it("Back returns to a loaded page, never a half-loaded one (LISTEN_SEARCH_DESIGN.md)", async () => {
+    const dA = deferred();
+    const prov = { getItem: (a) => (a.id === "A" ? dA.promise : Promise.resolve({ album: a, tracks: [a.id] })) };
+    const sb = makeSandbox(baseEnv({ getMusicProviders: async () => ({ get: () => prov }) }));
+    const pA = sb.openMusicItem({ id: "A", provider: "x" }); // still loading
+    await sb.openMusicItem({ id: "B", provider: "x" });
+    dA.resolve({ album: { id: "A" }, tracks: ["a1"] }); await pA;
+    await sb.openMusicItem({ id: "C", provider: "x" });      // from B's page
+    sb.closeMusicItem();
+    expect(sb.get().musicOpenItem.album.id).toBe("B");
+    sb.closeMusicItem();
+    expect(sb.get().musicOpenItem).toBe(null);               // A was never stacked
   });
   it("closing while loading keeps it closed", async () => {
     const dA = deferred();
