@@ -10,4 +10,4 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
-_Nothing undeployed. Last deploy: 2026-11-23 (#294)._
+- **Watch: tabs move into the menu** · #286 · client only. All, Upcoming, In Theaters and your own tabs (Spooky, French Revolution…) now sit in the three-bar menu, nested under Watch list like Mail's subfolders, with a chevron to fold them and a "+ New tab" row; the strip above the list is gone and the picked tab's name heads the list. Dragging a show onto a tab in the menu still files it; a show's ⋯ › Tabs › New tab… opens the menu with the name box. Reaches the iPhone by TestFlight; the web on the next deploy. Post-deploy, Claude (Luke's Chrome): hover the Watch rail, the tabs show under Watch list; pick Spooky, the list heads "Spooky". Luke (iPhone): ☰ › a tab closes the menu onto that tab; the chevron folds the tabs.
