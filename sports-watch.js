@@ -59,7 +59,7 @@ export function inWatchWindow(game, now = Date.now(), leadMs = 60 * 60 * 1000) {
 
 /**
  * The buttons for a game, best first, at most `max`. Each option:
- *   { id, label, network, appUrls, webUrl, mine }
+ *   { id, label, network, appUrls, webUrl, phoneWebUrl?, mine }
  * `services` = the person's Streaming Services ids (state.mediaServices).
  */
 export function watchOptionsForGame(game, { services = [], max = 3 } = {}) {
@@ -73,7 +73,7 @@ export function watchOptionsForGame(game, { services = [], max = 3 } = {}) {
     const h = targetHandoff(id);
     if (!h) return;
     seen.add(id);
-    out.push({ id, label: h.label, network, appUrls: h.appUrls, webUrl: h.webUrl, mine: have.has(id), rank });
+    out.push({ id, label: h.label, network, appUrls: h.appUrls, webUrl: h.webUrl, ...(h.phoneWebUrl ? { phoneWebUrl: h.phoneWebUrl } : {}), mine: have.has(id), rank });
   };
   names.forEach((name, i) => {
     const net = networkFor(name);

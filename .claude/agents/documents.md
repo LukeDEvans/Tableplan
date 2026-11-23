@@ -156,6 +156,12 @@ as security-critical. Everything below about vaults, keys and the lock is the Sa
   100 / 80 MB / 60 days); opening Household Documents files them into Receipts
   ("<store> · <date>" from the receipt's read, one PDF for several JPEG pages).
 - An entry leaves the outbox only after it's stored. Sign-out deletes the outbox.
+- Other routes file the same way (2026-11-22): Mail's Send to Finance queues the email's
+  text as a PDF (`email-receipt-pdf.js`). When two duplicate receipts are merged
+  (receipt-duplicates.js), app.js `relinkMergedReceiptFiles` points the dropped receipt's
+  file at the kept one with `everyday.relinkReceipt` (updates `source` only), or trashes
+  it (Recently deleted) when the kept receipt already has a file. Document shows
+  "Possible duplicate" from `receiptInfo().status === "duplicate"` (`.docs-chip.is-duplicate`).
 
 ## The web lock, sign-out, Quick Look, cache (DOCUMENTS_DESIGN.md §24)
 - **Web lock (Luke, 2026-11-03: passkey, real encryption):** `documents/web-lock.js`. A
@@ -218,11 +224,33 @@ Everyday files with `kind = 'doc'` are Live documents, edited in `documents/edit
   `addConverted(converted, name)` is how Mail's "Save to Document" makes it a real document.
   Keep preview mode unable to write: anything new that saves must check `preview` first.
 
+## Passwords in the Safe (Luke, 2026-11-21; phase 1 built 2026-11-22 — PASSWORDS_DESIGN.md)
+- **Passwords** is the first entry in the Safe's sidebar, Household and Personal, behind the
+  Safe's unlock. Decisions: import from iCloud Passwords and Chrome first (iCloud wins a
+  disagreement; the other password goes to history, tagged `Check password`, until "mark it
+  checked"); leak check on (Have I Been Pwned range API, 5 hash characters, padded, straight
+  from the device, at most weekly per password); QuickType suggestions on, passkeys in Liv
+  (phase 3), Marijane's AutoFill only after the independent review, laptop unlock = passkey
+  else approve on the phone. Never for Duet, the assistant or universal search.
+- **Keys:** a scope's Logins key is DERIVED from its vault key per version
+  (`deriveLoginsKey`, keyed BLAKE2b over the context) — one-way, so the coming AutoFill and
+  Chrome extensions hold only Logins keys and can't open documents; grants, rotation and
+  recovery need nothing new. Each login is sealed with its vault, scope, login id and key
+  version as context. `vaults.rotate` re-seals every login; keep that step when touching it.
+- `documents/crypto/logins.js` (`parseLogin` keeps known fields only; sites http(s) only),
+  `documents/passwords/` (`site.js` matching via `tldts` with private suffixes, `totp.js`,
+  `generator.js`, `transfer.js`, `checks.js`, `library.js`, `ui.js`); table `safe_logins`
+  (`migrations/2026-11-22-safe-logins.sql`: `doc_can_access`, MFA policy, no hard delete,
+  `safe_purge_login` after 30 days). Rows below the settled version are never shown; the
+  highest `rev` per login wins over a replayed row.
+- Tests: `test/documents-passwords.test.js`, `test/documents-logins-migration.test.js`,
+  `npm run qa:documents-ui` (section "Passwords in the Safe").
+
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `documents/*.js`, `documents/crypto/*.js`, `documents/editor/*.js`, `netlify/functions/gdocs.js`
+- files: `documents/*.js`, `documents/crypto/*.js`, `documents/editor/*.js`, `documents/passwords/*.js`, `netlify/functions/gdocs.js`
 - state: none — documents never go in tableplan_states; they live in the doc_ tables, R2 and on each device
 
 ## Uploads from the iPhone (2026-11-16)

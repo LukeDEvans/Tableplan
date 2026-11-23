@@ -165,7 +165,39 @@ function cleanSide(raw, scope) {
     record: str(raw?.record, 16),
     rank: rank && rank >= 1 && rank <= 99 ? rank : null,
     winner: raw?.winner === true,
+    lines: (Array.isArray(raw?.lines) ? raw.lines : []).slice(0, 30).map((v) => { const n = intOrNull(v); return n !== null && n >= 0 && n < 1000 ? n : null; }),
   };
+}
+
+// What's happening in a live game (and a finished soccer game's goals), from the
+// scoreboard itself. Every field optional; null when there's nothing.
+function cleanLive(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  const small = (v, max) => { const n = intOrNull(v); return n !== null && n >= 0 && n <= max ? n : null; };
+  if (raw.spot || raw.down != null) {
+    out.down = small(raw.down, 4);
+    out.distance = small(raw.distance, 99);
+    out.spot = str(raw.spot, 16);         // "MIN 34", "50"
+    out.redZone = raw.redZone === true;
+  }
+  if (raw.balls != null || raw.outs != null) {
+    out.balls = small(raw.balls, 4);
+    out.strikes = small(raw.strikes, 3);
+    out.outs = small(raw.outs, 3);
+    out.bases = [raw.onFirst === true, raw.onSecond === true, raw.onThird === true];
+    out.batter = str(raw.batter, 40);
+    out.pitcher = str(raw.pitcher, 40);
+  }
+  if (raw.lastPlay) out.lastPlay = str(raw.lastPlay, 160);
+  const events = (Array.isArray(raw.events) ? raw.events : []).slice(0, 20).map((e) => ({
+    minute: str(e?.minute, 10),
+    side: e?.side === "home" || e?.side === "away" ? e.side : "",
+    who: str(e?.who, 40),
+    kind: ["goal", "pen", "og", "red"].includes(e?.kind) ? e.kind : "goal",
+  })).filter((e) => e.side);
+  if (events.length) out.events = events;
+  return Object.keys(out).length ? out : null;
 }
 
 // Validate and trim one game to the canonical shape; null when it can't be used.
@@ -194,6 +226,7 @@ export function cleanGame(raw) {
     broadcasts: (Array.isArray(raw.broadcasts) ? raw.broadcasts : []).map((b) => str(b, 24)).filter(Boolean).slice(0, 4),
     situation: str(raw.situation, 60),     // "2nd & 7 at MIN 34"
     possession: raw.possession === "home" || raw.possession === "away" ? raw.possession : "",
+    live: cleanLive(raw.live),
     neutral: raw.neutral === true,
     link: httpsUrl(raw.link),
     home,
@@ -505,7 +538,7 @@ export function cleanStandings(raw) {
         stats,
       });
     }
-    if (rows.length) groups.push({ name: str(g?.name, 60), rows });
+    if (rows.length) groups.push({ name: str(g?.name, 60), parent: str(g?.parent, 60), rows });
   }
   return { league: league.key, season: str(raw?.season, 40), groups };
 }

@@ -106,6 +106,14 @@ async function device(name, userId, { native, width = 390, host = null, ctx: sam
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("dialog", (d) => { const a = page.__answers?.shift(); d.accept(a); });
+  // Have I Been Pwned's range API (PASSWORDS_DESIGN §5): "Summer2024!" is "leaked".
+  // Every request is kept so the check can see only 5 hash characters ever leave.
+  page.__hibp = [];
+  await page.route("https://api.pwnedpasswords.com/**", (r) => {
+    page.__hibp.push({ url: r.request().url(), headers: r.request().headers() });
+    r.fulfill({ status: 200, headers: { "access-control-allow-origin": "*", "content-type": "text/plain" }, body: "0018A45C4D1DEF81644B54AB7F969B88D65:3\r\nA3433F1210A9699D85420E363A1B162ECAC:42\r\n" });
+  });
+  await ctx.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
   await page.route(`${appUrl}/qa-documents.html`, (r) => r.fulfill({ contentType: "text/html", body: `<!doctype html><html data-theme="light"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"></head>
     <body style="margin:0;background:var(--bg);font-family:system-ui"><section class="planner-column do-column documents-page" id="documentsMainPage" style="height:100vh;display:flex;flex-direction:column"><div class="article-page-inner" id="documentsRoot" style="flex:1;min-height:0;display:flex;flex-direction:column"></div></section></body></html>` }));
   await page.goto(`${appUrl}/qa-documents.html`);
@@ -246,7 +254,7 @@ try {
   await phone.page.click("[data-act=create]");
   await phone.page.waitForSelector(".docs-sidebar", { timeout: 20000 });
   const tabs = await folderTabs(phone);
-  check(JSON.stringify(tabs) === JSON.stringify(["All documents", "IDs & Records", "Insurance", "Medical", "New folder", "Recently deleted"]), "the Household Safe starts with its three private folders (Receipts, Home and Vehicles are everyday now)", tabs.join(", "));
+  check(JSON.stringify(tabs) === JSON.stringify(["Passwords", "All documents", "IDs & Records", "Insurance", "Medical", "New folder", "Recently deleted"]), "the Household Safe starts with its three private folders (Receipts, Home and Vehicles are everyday now)", tabs.join(", "));
   check((await text(phone)).includes("verified Marijane"), "an unverified household member is flagged, with a way to Messages");
   await shot(phone, "2-household-empty");
   check(await noSideScroll(phone), "the empty page fits a phone-width window");
@@ -264,7 +272,7 @@ try {
   await confirmCode(phone, code);
   await phone.page.waitForSelector(".docs-sidebar");
   const ptabs = await folderTabs(phone);
-  check(JSON.stringify(ptabs) === JSON.stringify(["All documents", "Work", "Personal", "New folder", "Recently deleted"]), "Personal starts with Work and Personal, no Receipts", ptabs.join(", "));
+  check(JSON.stringify(ptabs) === JSON.stringify(["Passwords", "All documents", "Work", "Personal", "New folder", "Recently deleted"]), "Personal starts with Work and Personal, no Receipts", ptabs.join(", "));
   check(!(await text(phone)).includes("Make your recovery code"), "with a code made, no reminder to make one");
 
   console.log("Adding documents");
@@ -430,12 +438,127 @@ try {
   }, PERSONAL);
   check(herPersonal === 403, "Marijane can't get links to Luke's Personal documents");
 
+
+  console.log("Passwords in the Safe");
+  await household(phone);
+  await idle(phone);
+  await pick(phone, "[data-folder=passwords]");
+  await phone.page.waitForSelector(".pw-panel", { timeout: 15000 });
+  await phone.page.waitForFunction(() => !document.querySelector(".pw-panel")?.innerText.includes("Opening passwords"), null, { timeout: 15000 });
+  check((await text(phone)).includes("No passwords here yet"), "Passwords opens empty, in the Safe's sidebar");
+  await phone.page.click("[data-pw=new]");
+  await phone.page.fill("[data-pw-form] [name=title]", "Netflix");
+  await phone.page.fill("[data-pw-form] [name=sites]", "netflix.com");
+  await phone.page.fill("[data-pw-form] [name=username]", "evans@example.com");
+  await phone.page.click("[data-pw=generate]");
+  const genPw = await phone.page.inputValue("[data-pw-pass]");
+  check(genPw.length === 20 && /[^A-Za-z0-9]/.test(genPw), "Generate makes a 20-character password with symbols", genPw);
+  await phone.page.fill("[data-pw-form] [name=totp]", "JBSWY3DPEHPK3PXP");
+  await shot(phone, "pw-1-editor");
+  check(await noSideScroll(phone), "the editor fits a phone");
+  await phone.page.click("[data-pw-form] button[type=submit]");
+  await phone.page.waitForSelector("[data-pw-totp]", { timeout: 15000 });
+  await phone.page.waitForFunction(() => /^\d{3} \d{3}$/.test(document.querySelector("[data-pw-totp]")?.textContent || ""), null, { timeout: 5000 });
+  check(true, "a saved login opens with its live 2FA code");
+  check(!(await text(phone)).includes(genPw), "the password is hidden until Show");
+  await phone.page.click("[data-pw=reveal]");
+  check((await text(phone)).includes(genPw), "…and Show reveals it");
+  await phone.page.click("[data-pw-copy=Password]");
+  await phone.page.waitForFunction(() => window.__toasts.some((t) => t.startsWith("Password copied")), null, { timeout: 5000 });
+  check(await phone.page.evaluate(() => navigator.clipboard.readText().catch(() => "?")) === genPw, "Copy puts the password on the clipboard (cleared after a minute)");
+  await shot(phone, "pw-2-login");
+  await phone.page.click("[data-pw=close]");
+
+  await phone.page.click("[data-pw=new]");
+  await phone.page.fill("[data-pw-form] [name=title]", "<img src=x onerror=window.__xss=1>Gym");
+  await phone.page.fill("[data-pw-form] [name=username]", "luke");
+  await phone.page.fill("[data-pw-pass]", "Summer2024!");
+  await phone.page.click("[data-pw-form] button[type=submit]");
+  await phone.page.waitForSelector(".pw-sheet", { timeout: 15000 });
+  await phone.page.click("[data-pw=close]");
+  check(!(await phone.page.evaluate(() => window.__xss)) && !(await phone.page.locator(".pw-panel img").count()), "markup in a name is shown as text, never run");
+  await phone.page.waitForFunction(() => /Needs attention \(1\)/.test(document.querySelector(".pw-chips")?.innerText || "") && document.querySelector(".pw-panel")?.innerText.includes("Found in a data breach"), null, { timeout: 15000 });
+  await phone.page.click("[data-pw-filter=attention]");
+  const attn = await phone.page.locator(".pw-panel .docs-list").innerText();
+  check(attn.includes("Gym") && attn.includes("Found in a data breach") && !attn.includes("Netflix"), "Needs attention lists the leaked password", attn);
+  const hibp = phone.page.__hibp;
+  check(hibp.length >= 2 && hibp.every((h) => /\/range\/[0-9A-F]{5}$/.test(h.url) && h.headers["add-padding"] === "true"), "the leak check sends only 5 hash characters, padded", hibp.map((h) => h.url).join(" "));
+  check(!hibp.some((h) => h.url.includes("7E8B0A3433F")), "…never the full hash");
+  await phone.page.click("[data-pw-filter=all]");
+
+  // Import: an iCloud export and a Chrome export that disagree on Netflix.
+  await phone.page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["Title,URL,Username,Password,Notes,OTPAuth\r\nHulu,https://hulu.com/,evans@example.com,hulu-pass-12345,,\r\nXcel Energy,https://xcelenergy.com/,evans,xcel-pass-12345,,\r\n"], "Passwords.csv", { type: "text/csv" }));
+    dt.items.add(new File(["name,url,username,password,note\nnetflix.com,https://www.netflix.com/,evans@example.com,old-netflix-pw,\nHulu,https://hulu.com/,evans@example.com,hulu-pass-12345,\n"], "Chrome Passwords.csv", { type: "text/csv" }));
+    const input = document.querySelector("[data-pw-file]");
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await phone.page.waitForSelector("[data-pw=import-go]", { timeout: 15000 });
+  const plan = await phone.page.locator(".pw-sheet").innerText();
+  check(plan.includes("2 new") && plan.includes("1 updated") && plan.includes("iCloud Passwords") && plan.includes("Chrome"), "Import reads both exports and shows what it will do", plan);
+  await shot(phone, "pw-3-import");
+  await phone.page.click("[data-pw=import-go]");
+  await phone.page.waitForFunction(() => window.__toasts.some((t) => t.startsWith("Imported 3")), null, { timeout: 20000 });
+  check((await phone.page.evaluate(() => window.__toasts.find((t) => t.startsWith("Imported")))).includes("Delete the export file"), "…then reminds you to delete the export");
+  const pwNames = await fileNames(phone);
+  check(pwNames.length === 4 && pwNames.some((n) => n.includes("Hulu")) && pwNames.some((n) => n.includes("Xcel")), "imported logins join the list, merged with what's there", pwNames.join(", "));
+  await phone.page.click(".pw-row:has-text('Netflix')");
+  await phone.page.waitForSelector("[data-pw=history]", { timeout: 10000 });
+  await phone.page.click("[data-pw=reveal]");
+  check((await text(phone)).includes(genPw), "Netflix keeps the password it had; the Chrome one goes to its history");
+  check((await text(phone)).includes("Two passwords found on import"), "…and it's flagged to check");
+  await phone.page.click("[data-pw=checked]");
+  await phone.page.waitForFunction(() => !document.querySelector(".pw-sheet")?.innerText.includes("Two passwords found"), null, { timeout: 15000 });
+  check((await text(phone)).includes("Earlier passwords (1)"), "“mark it checked” clears the flag and keeps the history");
+  await phone.page.click("[data-pw=close]");
+  await shot(phone, "pw-4-list");
+  check(await noSideScroll(phone), "the passwords list fits a phone");
+
+  console.log("Passwords: Marijane and the lock");
+  await household(wife);
+  await idle(wife);
+  await pick(wife, "[data-folder=passwords]");
+  await wife.page.waitForFunction(() => document.querySelectorAll(".pw-row").length === 4, null, { timeout: 20000 });
+  check(true, "Marijane sees the Household passwords");
+  await wife.page.click(".pw-row:has-text('Netflix')");
+  await wife.page.waitForSelector("[data-pw=reveal]", { timeout: 10000 });
+  await wife.page.click("[data-pw=reveal]");
+  check((await text(wife)).includes(genPw) && (await text(wife)).includes("Added by Luke"), "…opens Luke's login, marked as added by him");
+  await wife.page.click("[data-pw=close]");
+  const pwPrompts = await phone.page.evaluate(() => window.__lock.prompts);
+  await phone.page.evaluate(() => window.__ui.hide());
+  check(!(await phone.page.evaluate(() => document.getElementById("documentsRoot").innerText.includes("Netflix"))), "leaving the page drops the passwords from the screen");
+  await household(phone);
+  await idle(phone);
+  check((await phone.page.evaluate(() => window.__lock.prompts)) === pwPrompts + 1, "coming back asks for Face ID again");
+  await pick(phone, "[data-folder=passwords]");
+  await phone.page.waitForFunction(() => document.querySelectorAll(".pw-row").length === 4, null, { timeout: 20000 });
+  check(true, "…then they're back");
+  await phone.page.click(".pw-row:has-text('Xcel')");
+  await phone.page.waitForSelector("[data-pw=trash]");
+  await phone.page.click("[data-pw=trash]");
+  await phone.page.waitForFunction(() => document.querySelectorAll(".pw-row").length === 3, null, { timeout: 15000 });
+  await phone.page.click("[data-pw-filter=trash]");
+  check((await fileNames(phone)).some((n) => n.includes("Xcel")), "Delete puts a login in Recently deleted");
+  await phone.page.click("[data-pw-filter=all]");
+  const encRows = await db.query("select enc from public.safe_logins");
+  check(encRows.rows.length === 4 && !encRows.rows.some((r) => /Netflix|Hulu|evans/.test(r.enc)), "the server holds only ciphertext");
+  await pick(phone, "[data-folder=all]");
+
   console.log("The Document page: everyday documents, with the Safe inside");
   const E = "[data-everyday]";
   const eNames = (d) => d.page.locator(`${E} .docs-file-name`).allInnerTexts();
   const eTabs = (d) => d.page.locator(`${E} .docs-sidebar .article-sidebar-tab span`).allInnerTexts();
   // The drawer of folders (phone width) in one part of the page: E or the Safe's box.
-  const inPick = async (d, part, selector) => { await d.page.click(`${part} [data-act=toggle-sidebar]`); await d.page.click(`${part} ${selector}`); };
+  // The page redraws once its load finishes, which closes a drawer opened just before:
+  // open it and pick again when that happens (a race in the check, not the page).
+  const inPick = async (d, part, selector) => {
+    for (let i = 0; ; i++) {
+      try { await d.page.click(`${part} [data-act=toggle-sidebar]`); await d.page.click(`${part} ${selector}`, { timeout: 5000 }); return; } catch (e) { if (i >= 3) throw e; }
+    }
+  };
   const eIdle = (d) => d.page.waitForFunction(() => !document.querySelector("[data-everyday] [role=status]"), null, { timeout: 20000 });
   const lukeKey = await phone.page.evaluate(() => window.__lock.key);
   await phone.page.evaluate(() => window.__ui.hide());

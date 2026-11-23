@@ -51,7 +51,7 @@ scoping**, so it is still shared infrastructure: every change here is flagged to
   only the band, its ‹ › and the arrow keys switch, and they switch **only the menu**
   until a page is picked (decisions 24–25).
 - Menus are **flat in every view** (decision 28). No menu entry for Tasks (inside the
-  Calendar), Weather (the dock) or Scores (News → Sports). A new page goes in
+  Calendar), Weather (the dock) or Scores (a News section). A new page goes in
   `PAGE_GROUPS`, both menus' markup, `pageNavButtons()` and `VIEW_PAGES` for every view
   that should hold it — `test/architecture-page-groups.test.js` checks they agree.
 - **Overview** is the first menu entry, Personal only, and opens `#overviewDialog`.

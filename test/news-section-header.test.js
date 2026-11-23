@@ -6,29 +6,38 @@ import { headerViews, stepView, swipeStep, viewLabel, NEWS_SECTIONS } from "../n
 const name = (v) => (v ? `${v.kind}${v.key ? `:${v.key}` : ""}` : null);
 
 describe("headerViews", () => {
-  it("Front page, then Sports, then every other section once", () => {
+  it("Front page, then every section once in its usual order (Sports after Culture)", () => {
     const list = headerViews().map(name);
-    expect(list.slice(0, 2)).toEqual(["front", "section:sports"]);
-    expect(list).toHaveLength(1 + NEWS_SECTIONS.length);
+    expect(list[0]).toBe("front");
+    expect(list.slice(1)).toEqual(NEWS_SECTIONS.map((x) => `section:${x.key}`));
+    expect(list.indexOf("section:sports")).toBe(list.indexOf("section:culture") + 1);
     expect(new Set(list).size).toBe(list.length);
   });
-  it("For you, when the server offers it, sits one swipe right of the Front page", () => {
-    expect(headerViews({ forYou: true }).slice(0, 3).map(name)).toEqual(["foryou", "front", "section:sports"]);
+  it("Scores, its own section, sits one swipe right of the Front page (Luke, 2026-11-20)", () => {
+    expect(headerViews({ scores: true }).slice(0, 3).map(name)).toEqual(["scores", "front", "section:world"]);
+  });
+  it("For you, while it is its own view, sits left of Scores so Scores stays next to the Front page", () => {
+    expect(headerViews({ forYou: true, scores: true }).slice(0, 3).map(name)).toEqual(["foryou", "scores", "front"]);
+    expect(headerViews({ forYou: true }).slice(0, 2).map(name)).toEqual(["foryou", "front"]);
   });
 });
 
 describe("stepView", () => {
-  const list = headerViews({ forYou: true });
-  it("a swipe left from the Front page goes to Sports; right goes to For you", () => {
-    expect(name(stepView(list, { kind: "front" }, 1))).toBe("section:sports");
-    expect(name(stepView(list, { kind: "front" }, -1))).toBe("foryou");
+  const list = headerViews({ forYou: true, scores: true });
+  it("a swipe left from the Front page goes to World; right goes to Scores", () => {
+    expect(name(stepView(list, { kind: "front" }, 1))).toBe("section:world");
+    expect(name(stepView(list, { kind: "front" }, -1))).toBe("scores");
+    expect(name(stepView(list, { kind: "scores" }, -1))).toBe("foryou");
   });
   it("stops at either end (no wrap-around)", () => {
     expect(stepView(list, { kind: "foryou" }, -1)).toBeNull();
     expect(stepView(list, list[list.length - 1], 1)).toBeNull();
   });
   it("a paper (not in the header's order) steps from the Front page", () => {
-    expect(name(stepView(list, { kind: "paper", key: "nyt" }, 1))).toBe("section:sports");
+    expect(name(stepView(list, { kind: "paper", key: "nyt" }, 1))).toBe("section:world");
+  });
+  it("Scores is labelled Scores", () => {
+    expect(viewLabel({ kind: "scores" })).toBe("Scores");
   });
 });
 

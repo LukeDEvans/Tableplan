@@ -17,8 +17,11 @@ section like a newspaper.
 - Each article has a **⋯ menu**. **Send to Media** saves it to Media → Publications,
   as Mail's ⋯ → Send to Media does for an email.
 - In Media's Playlist settings, the per-paper tiles become **one Publications tile**.
-- **Sports** has an ESPN-style **Scores** tab beside its stories (built
-  2026-10-07: [SPORTS_SCORES_DESIGN.md](SPORTS_SCORES_DESIGN.md)).
+- **Scores** is its own section, one swipe right of the Front page (Luke,
+  2026-11-20; it was a tab of Sports from 2026-10-07: [SPORTS_SCORES_DESIGN.md](SPORTS_SCORES_DESIGN.md)).
+  **Sports** holds only its stories, after Culture. News fills its window edge to
+  edge (no margin inside the border), and the top-left ☰ (Saved) turns into a square
+  ‹ while Scores has a page to go back to.
 
 ## 2. Decisions (2026-10-06)
 

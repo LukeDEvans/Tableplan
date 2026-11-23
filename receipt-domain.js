@@ -103,6 +103,12 @@ return {
       source: RECEIPT_SOURCES.includes(text(receipt?.source)) ? text(receipt.source) : "scan",
       // The source's own id (Gmail message id for email receipts) — for links.
       externalId: text(receipt?.externalId),
+      // The store's order number, when an emailed order confirmation printed one
+      // (Send to Finance spots a second email about an order already saved).
+      orderNumber: text(receipt?.orderNumber).slice(0, 60),
+      // Receipts the user said are separate purchases ("Keep both" on a possible
+      // duplicate — receipt-duplicates.js), so the pair isn't asked about again.
+      notDuplicateOf: [...new Set((Array.isArray(receipt?.notDuplicateOf) ? receipt.notDuplicateOf : []).map(text).filter(Boolean))].slice(-20),
       // The Finance transaction this receipt was itemized against, once linked.
       financeTxnId: text(receipt?.financeTxnId),
       lineItems
@@ -337,12 +343,15 @@ return {
       financeTxnId: receipt.financeTxnId || "",
       tip: number(receipt.tip),
       last4: receipt.paymentLast4 || "",
+      orderNumber: receipt.orderNumber || "",
+      notDuplicateOf: receipt.notDuplicateOf || [],
+      createdAt: receipt.createdAt || "",
       view: receipt.view || "",
       returnBy: receipt.returnBy || "",
       warrantyUntil: receipt.warrantyUntil || "",
       needsReview: Boolean(receipt.extraction && receipt.extraction.status && receipt.extraction.status !== "ok"),
       hasImage: (receipt.imageRefs || []).length > 0,
-      items: (receipt.lineItems || []).map((line) => ({ ...(line.owedBy ? { owedBy: line.owedBy } : {}), name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
+      items: (receipt.lineItems || []).map((line) => ({ ...(line.owedBy ? { owedBy: line.owedBy } : {}), id: line.id || "", name: line.normalizedName || line.rawText, price: number(line.totalPrice), category: line.budgetCategory || "" })),
       portions: receiptFinancePortions(receipt)
     };
   }
@@ -363,6 +372,13 @@ return {
       source,
       externalId: source === "email" ? externalId : "",
       createdAt: text(inbound?.at),
+      // Read from an emailed order when printed (all optional).
+      subtotal: number(inbound?.subtotal),
+      tax: number(inbound?.tax),
+      paymentLast4: text(inbound?.cardLast4 || inbound?.last4),
+      orderNumber: text(inbound?.orderNumber),
+      view: text(inbound?.view),
+      notDuplicateOf: Array.isArray(inbound?.notDuplicateOf) ? inbound.notDuplicateOf : [],
       lineItems: (Array.isArray(inbound?.items) ? inbound.items : []).map((it, i) => ({
         id: `${id}-line-${i}`,
         rawText: text(it?.name),
