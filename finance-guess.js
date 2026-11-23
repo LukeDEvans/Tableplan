@@ -172,3 +172,48 @@ export function splitFromLines(lines, charge) {
   }
   return portions;
 }
+
+// ── Readable store names ────────────────────────────────────────────────────
+// "TARGET T-2177 MPLS" → "Target", "SQ *DANGEROUS MAN BREW" → "Dangerous Man Brew",
+// "TRADER JOE S #710" → "Trader Joe's". Only for display when you haven't renamed
+// the store yourself; matching still uses the bank's own text.
+const NAME_FIXES = [
+  [/^amzn( mktp| digital)?\b.*|^amazon( com| mktp| prime)?\b.*/i, "Amazon"],
+  [/^costco( whse| wholesale)?\b.*/i, "Costco"],
+  [/^holiday ?station\w*\b.*/i, "Holiday"],
+  [/^trader joe ?s\b.*/i, "Trader Joe's"],
+  [/^wal-?mart\b.*|^wm supercenter\b.*/i, "Walmart"],
+  [/^target\b.*/i, "Target"],
+  [/^cub foods\b.*/i, "Cub Foods"],
+  [/^aldi\b.*/i, "Aldi"],
+  [/^kwik ?trip\b.*/i, "Kwik Trip"],
+  [/^apple ?com ?bill\b.*/i, "Apple"],
+  [/^netflix\b.*/i, "Netflix"],
+  [/^spotify\b.*/i, "Spotify"],
+  [/^xcel energy\b.*/i, "Xcel Energy"],
+];
+const NAME_PREFIX = /^(?:(?:pos|debit|credit|card|ach|recurring|checkcard|visa)\s+)*(?:purchase\s+|payment\s+|pmt\s+)?(?:sq|tst|sp|py|pp|paypal|dd|in|ic|sumup|toast|clover)\s*\*\s*/i;
+const NAME_PREFIX_WORDS = /^(?:(?:pos|debit|credit|card|ach|recurring|checkcard|visa|purchase|withdrawal|electronic|online)\s+)+/i;
+const STATES = "al|ak|az|ar|ca|co|ct|de|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy";
+const KEEP_UPPER = new Set(["bp", "cvs", "ups", "usps", "ikea", "hbo", "atm", "llc", "us", "tj", "rei", "ymca", "mn", "dmv"]);
+
+export function cleanMerchantName(description) {
+  let s = String(description || "").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  s = s.replace(NAME_PREFIX, "").replace(NAME_PREFIX_WORDS, "");
+  for (const [re, name] of NAME_FIXES) if (re.test(s)) return name;
+  s = s
+    .replace(/\s+(?:#|no\.?\s*)?\d[\d-]*\b.*$/i, "")          // store numbers and everything after
+    .replace(/\s+[a-z]-\d+\b.*$/i, "")                      // "T-2177 MPLS"
+    .replace(new RegExp(`\\s+(?:mpls|minneapolis|st\\.? paul|saint paul|${STATES})$`, "i"), "")
+    .replace(/[*#]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return String(description || "").trim();
+  // Title case only when the bank shouted; keep mixed case as written.
+  if (s === s.toUpperCase()) {
+    s = s.toLowerCase().split(" ").map((w) => (KEEP_UPPER.has(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1))).join(" ");
+    s = s.replace(/ S\b/g, "'s").replace(/\.Com\b/g, ".com");
+  }
+  return s;
+}

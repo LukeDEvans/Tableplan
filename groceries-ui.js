@@ -1940,6 +1940,7 @@ function importScannedReceipts(imports, attach = []) {
   const added = (imports || []).map(({ scan, refs }) => {
     const receipt = LiveReceiptDomain.normalizeReceipt(ReceiptQueue.receiptFromScanResult(scan, refs), createId);
     if (!receipt.storeId) receipt.storeId = matchReceiptStoreId(receipt.storeName);
+    if (!receipt.scannedBy) receipt.scannedBy = getAuthSession()?.user?.id || ""; // who scanned it (FINANCE_AUDIT D5)
     return LiveReceiptDomain.applyReceiptMappings(receipt, receiptItemMappings());
   });
   const current = (state.receipts || []).map((r) => (attachById.has(r.id) && !(r.imageRefs || []).length ? { ...r, imageRefs: attachById.get(r.id) } : r));
@@ -2342,6 +2343,7 @@ function saveReviewedReceipt(event) {
   event.preventDefault();
   const receipt = markReceiptReviewed(reviewedReceiptFromForm());
   if (!receipt.storeName || !receipt.purchaseDate || !receipt.lineItems.length) return;
+  if (!receipt.scannedBy) receipt.scannedBy = getAuthSession()?.user?.id || "";
   state.receipts = normalizeReceipts([...(state.receipts || []), receipt]);
   noticeReceiptDuplicates([receipt.id]);
   state.receiptItemMappings = LiveReceiptDomain.correctedMappingsFromReceipt(receipt, receiptItemMappings());
@@ -5927,9 +5929,14 @@ function renderShopReceipts() {
     const lineItems = (receipt.lineItems || []).map((line) => {
       if (!Object.prototype.hasOwnProperty.call(byLineId, line.id)) return line;
       const label = String(byLineId[line.id] || "");
-      if ((line.budgetCategory || "") === label) return line;
+      // "owe:<uid>": that person's own item, paid by the household (Luke,
+      // 2026-11-23) — saved as owedBy; the line keeps its category.
+      const next = label.startsWith("owe:")
+        ? { ...line, owedBy: label.slice(4) }
+        : { ...line, budgetCategory: label, owedBy: "" };
+      if ((next.budgetCategory || "") === (line.budgetCategory || "") && (next.owedBy || "") === (line.owedBy || "")) return line;
       changed = true;
-      return { ...line, budgetCategory: label };
+      return next;
     });
     if (!changed) return false;
     state.receipts = normalizeReceipts((state.receipts || []).map((r) => r.id === receiptId ? { ...r, lineItems } : r));

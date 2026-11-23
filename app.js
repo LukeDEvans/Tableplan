@@ -2069,6 +2069,13 @@ const _finance = createFinanceModule({
   // A receipt scanned in Finance's split editor is filed in Document like any scan.
   queueReceiptFile: (files, opts) => queueReceiptForDocuments(files, opts),
   memberName: (userId) => (userId === authSession?.user?.id ? "You" : groupMembers.find((gm) => gm.user_id === userId)?.display_name || "A household member"),
+  // Household members, you included: [{ id, name }] (personal items, Luke 2026-11-23).
+  householdMemberList: () => {
+    const list = (groupMembers || []).map((gm) => ({ id: gm.user_id, name: gm.display_name || "" })).filter((m) => m.id);
+    const me = authSession?.user?.id;
+    if (me && !list.some((m) => m.id === me)) list.unshift({ id: me, name: getCurrentProfileMember?.()?.name || authSession?.user?.user_metadata?.full_name || "Me" });
+    return list;
+  },
   currentViewKey: () => currentViewKey(),
   onFinanceCountChanged: () => { scheduleReminderSync(); },
 });
@@ -4344,6 +4351,8 @@ function setupDiagnostics() {
       state.financeAccounts = normalizeFinanceAccounts([{ id: "qa-acct", owner: "Joint", name: "QA Savings", kind: "cash", manualBalance: 5000 }], createId);
       return true;
     },
+    // Finance QA: household members for personal items (local dev has no group).
+    financeMembersForQa: (list) => { if (!localDevMode || !Array.isArray(list)) return null; groupMembers = list; return true; },
     // Settings QA (scripts/qa-settings.mjs): view Settings as a household admin with
     // a few members (local dev has no signed-in group). Local dev only.
     settingsAsAdmin: () => {
