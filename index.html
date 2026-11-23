@@ -478,9 +478,19 @@
           <div class="article-page-inner">
             <div class="article-layout watch-layout">
             <nav class="article-sidebar watch-sidebar" id="watchSidebar" aria-label="Watch menu">
-              <button class="article-sidebar-tab is-active" type="button" data-watch-side="list" aria-current="true">
-                <svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span>Watch list</span>
-              </button>
+              <!-- Watch list is a folder (Luke, 2026-11-20): its tabs (All, Upcoming,
+                   In Theaters and his own) nest under it like Mail's subfolders. -->
+              <div class="watch-side-folder is-open" id="watchSideFolder">
+                <div class="watch-side-folder-row">
+                  <button class="watch-side-chevron" type="button" data-watch-side-toggle aria-expanded="true" aria-controls="watchSideChildren" aria-label="Collapse Watch list tabs">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+                  </button>
+                  <button class="article-sidebar-tab watch-side-parent" type="button" data-watch-side="list">
+                    <svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span>Watch list</span>
+                  </button>
+                </div>
+                <div class="watch-side-children" id="watchSideChildren" role="group" aria-label="Watch list tabs"></div>
+              </div>
               <button class="article-sidebar-tab" type="button" data-watch-side="youtube">
                 <svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="4"/><path d="m10 9.2 5 2.8-5 2.8z"/></svg><span>YouTube</span>
               </button>
