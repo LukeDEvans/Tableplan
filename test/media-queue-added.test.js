@@ -71,7 +71,7 @@ describe("queue-added items in the Media queue (real app.js functions)", () => {
       withSkippedLast, mediaAllQueueSkipped: [], nowPlayingQueueId: () => null, queueNowId: () => null,
       RECENT_WINDOW_OPTIONS: [{ value: "month", ms: 30 * 864e5 }, 0, 0, 0, { value: "month", ms: 30 * 864e5 }],
       getBundleHeldEpisodeIds: () => new Set(),
-      getReadPublications: () => [], articleArtUrl: () => "", getArticleSortDate: (a) => a.savedAt,
+      getReadPublications: () => [], publicationLabelFor: () => "", articleArtUrl: () => "", getArticleSortDate: (a) => a.savedAt,
       publicationTierFor: () => undefined, hoistResumeEpisode: (l) => l, musicArtUrlFor: () => "", musicLibrary: [],
       playlistItemForEpisodeId: (id) => {
         for (const p of [...(lib.podcasts || []), ...(lib === state ? [] : state.podcasts || [])]) { const e = p.episodes.find((x) => x.id === id); if (e) return { ...e, type: "podcast", showId: p.id, showTitle: p.title, showArt: "" }; }

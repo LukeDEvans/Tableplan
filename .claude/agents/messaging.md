@@ -99,6 +99,14 @@ as security-critical.
 - Leaving / removal / a leave from my other device **erases** the conversation's
   messages here. Held messages: 7 days, 1000 total.
 - Only the phone removes devices; a removed phone re-registers under the same identity.
+- **Removals are identity-signed** (Luke's go-ahead 2026-11-24; migration
+  2026-11-24-msg-device-removals.sql, `messaging/crypto/removals.js`): the phone signs
+  the full list of its owner's removed devices (`msg_device_removals`, one row per
+  person, generation number). `resolveDevices` skips every device on a list that
+  verifies against the **pinned** identity, whatever `revoked_at` says, and keeps the
+  union of every list it has seen (`removedSeen`), so an older list can't bring a
+  device back. A removal made on a linked device is server-only until the phone's next
+  `maintain` signs it in.
 - Read receipts off hides others' receipts too.
 - Server limits (migration 2026-10-31): ciphertext ≤ 32768 chars, 3000 queued rows/hour
   per person, 2000 waiting rows per device, 200 prekey claims/hour; `last_seen_at`

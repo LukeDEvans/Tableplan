@@ -22809,6 +22809,10 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-forecast rect { fill: transparent; stroke: none; }
 .receipt-line-mine { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
 .receipt-personal-toggle { display: flex; align-items: center; gap: 8px; }
+/* In the editor's meta grid the grid-label rule would otherwise win, stretching the
+   checkbox to the cell and 4px past the edit view at 390px (ISSUES 2026-11-22). */
+.receipt-review-meta .receipt-personal-toggle { display: flex; grid-column: 1 / -1; flex-wrap: wrap; }
+.receipt-personal-toggle input[type="checkbox"] { width: auto; flex: 0 0 auto; margin: 0; }
 .receipt-personal-toggle .hint { color: var(--muted); font-size: 0.8rem; }
 /* Where it went: one whole split by budget group. Validated categorical slots
    (dataviz palette, light vs #fffdf8, dark vs #20221f); 0 = neutral. */

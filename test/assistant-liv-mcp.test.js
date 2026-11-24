@@ -350,6 +350,17 @@ describe("liv_health", () => {
     expect(text).toContain("household media row is 2.4 MB");
     expect(text).toContain('Photo sync device "Luke\'s iPhone" last synced 5 days ago');
   });
+  it("reports the upcoming-episodes job, and flags it when stale or failed", async () => {
+    health.podcastUpcoming = { ok: true, startedAt: "2026-11-17T09:23:01Z", finishedAt: "2026-11-17T09:23:38Z", feeds: 17, failed: 0, listed: 17, upcoming: 1 };
+    let { text } = await call("liv_health");
+    expect(text).toContain("Upcoming episodes: ok, ran");
+    expect(text).toContain("17/17 shows found in Apple's catalog, 1 upcoming episode.");
+    expect(text).not.toContain("Upcoming-episodes job");
+    health.podcastUpcoming = { ok: false, finishedAt: "2026-11-15T09:23:38Z", feeds: 17, failed: 17, listed: 0, upcoming: 0 };
+    ({ text } = await call("liv_health"));
+    expect(text).toContain("Upcoming-episodes job's last run failed (17 of 17 shows)");
+    expect(text).toContain("Upcoming-episodes job last ran 2 days ago");
+  });
   it("is the admin's only — a member's key gets no health", async () => {
     const { text } = await call("liv_health", {}, { key: `${MJ_KEY_ID}.${SECRET}` });
     expect(text).toMatch(/admin only/);
