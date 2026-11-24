@@ -9,6 +9,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Photo sync's background tasks must be registered before launch finishes
         // (PHOTOS_DESIGN.md §17).
         PhotoSyncEngine.shared.registerBackgroundTasks()
+        // Apple Health background delivery needs its observer running again on every
+        // launch, including when iOS launches Liv for a new workout (HEALTH_DESIGN.md §3).
+        HealthSyncEngine.shared.startObserving()
         return true
     }
 

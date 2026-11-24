@@ -122,6 +122,7 @@
                 <button type="button" id="menuRecurringTasksBtn">Recurring Tasks</button>
                 <button type="button" id="menuWorkoutLogsBtn">Workout Logs</button>
                 <button type="button" id="menuWorkoutLibraryBtn">Workouts</button>
+                <button type="button" id="menuAppleHealthBtn" hidden>Apple Health</button>
                 <button type="button" id="menuPodcastSettingsBtn">Podcasts</button>
                 <button type="button" id="menuPodcastPriorityBtn">Queue</button>
                 <button type="button" id="menuReadSyncBtn">Sync Settings</button>
@@ -1633,6 +1634,23 @@
               <button class="primary-btn" type="button" id="donePlayExercisePickerBtn">Done</button>
             </div>
           </div>
+        </div>
+      </dialog>
+
+      <!-- Apple Health inbox (HEALTH_DESIGN.md §5): Watch workouts that matched no workout. -->
+      <dialog class="recipe-dialog auth-dialog" id="healthInboxDialog">
+        <div class="recipe-form">
+          <div class="dialog-head">
+            <div>
+              <p class="muted-label">Exercise</p>
+              <h2>From Apple Watch</h2>
+            </div>
+            <button class="icon-btn" id="closeHealthInboxBtn" type="button" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <p class="settings-panel-note">File each kind once and Liv files the rest of that kind by itself.</p>
+          <div class="health-inbox-list" id="healthInboxList"></div>
         </div>
       </dialog>
 

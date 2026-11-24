@@ -111,6 +111,11 @@ all your work is there. Make focused changes to the Finance domain only.
   `finance-nightly` Edge Function saves the day's transactions), links "sure" fits in
   `fin_receipts` (household + each owner's Personal scope). Kept out of the Edge
   Function so it ships with a normal deploy.
+- **Accounts tab underline (Luke, 2026-11-24):** the red underline on Accounts always
+  has an explanation: a "Needs your attention" card at the top of Accounts lists each
+  problem in plain words (a bank needing sign-in on SimpleFIN, an account not coming
+  through or not updating) with **Open SimpleFIN** and **Hide**. The underline follows
+  that same list (`financeAccountsNeedingAttention`, hidden items don't count).
 - **Month history (Luke, 2026-11-23):** past months with no saved totals that stored
   history covers are filled automatically (`financeMonthsToBackfill`) and marked
   `rebuilt: true`; those keep following stored history; months saved any other way

@@ -2979,6 +2979,43 @@ function financeAccountsNeedingAttention() {
   return raw.filter((r) => !dismissed[r.key]);
 }
 
+// "Needs your attention" at the top of the Accounts tab (Luke, 2026-11-24: the
+// tab's red underline didn't say what needed fixing). Each item says what's wrong
+// in plain words and what to do; a bank connection opens SimpleFIN, where it's
+// fixed. Hide dismisses an item until it happens again.
+const FIN_SIMPLEFIN_URL = "https://beta-bridge.simplefin.org";
+function financeAttentionText(a, connectionTrouble = false) {
+  if (a.kind === "error") {
+    const m = /connection to (.+?)\s+may need attention\.?\s*(.*)$/i.exec(a.detail || "");
+    const bank = (m?.[1] || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+    const why = (m?.[2] || "").trim();
+    if (bank && /auth/i.test(why)) return { title: `${bank} needs you to sign in again`, body: `SimpleFIN can't reach ${bank} until you sign in to it again on SimpleFIN's site. Until then its charges and balance stop updating here.`, fix: true };
+    if (bank) return { title: `${bank}'s connection needs a look`, body: `SimpleFIN says: ${why || "the connection may need attention"}. Open SimpleFIN to fix it.`, fix: true };
+    return { title: "The bank connection reported a problem", body: a.detail || "", fix: true };
+  }
+  if (a.kind === "disconnected") return { title: `${a.label} isn't coming through`, body: "SimpleFIN no longer sends this account. Reconnect the bank on SimpleFIN's site, or remove the account here if it's closed.", fix: true };
+  return { title: `${a.label} hasn't updated`, body: `${a.detail} ${connectionTrouble ? "Probably the same connection problem above; fixing that brings it back." : "This usually means its bank connection needs signing in again on SimpleFIN."}`, fix: !connectionTrouble };
+}
+function financeAccountsAttentionCard() {
+  const items = financeAccountsNeedingAttention();
+  if (!items.length) return "";
+  return `
+    <section class="fin-card fin-attn-card" aria-label="Needs your attention">
+      <h3 class="fin-attn-head">Needs your attention</h3>
+      ${items.map((a) => {
+        const t = financeAttentionText(a, a.kind !== "error" && items.some((x) => x.kind === "error"));
+        return `
+        <div class="fin-attn-item">
+          <div class="fin-attn-text"><strong>${escapeHtml(t.title)}</strong><span>${escapeHtml(t.body)}</span></div>
+          <div class="fin-attn-actions">
+            ${t.fix ? `<a class="secondary-btn fin-add-btn" href="${FIN_SIMPLEFIN_URL}" target="_blank" rel="noopener noreferrer">Open SimpleFIN</a>` : ""}
+            <button class="secondary-btn fin-add-btn" type="button" data-fin-action="dismiss-alert" data-key="${escapeHtml(a.key)}">Hide</button>
+          </div>
+        </div>`;
+      }).join("")}
+    </section>`;
+}
+
 // Per-account connection status — splits the two problems the notification count
 // conflates so the Overview/Accounts UI can say WHICH account and WHY:
 //   manual        — not bank-linked (a manual balance; nothing to sync)
@@ -4967,7 +5004,9 @@ function renderFinancePage() {
   // Unaddressed = still to review OR swiped-out-but-not-yet-confirmed (red-dot).
   const unconfirmedCount = allTxns.filter(financeTxnNeedsConfirm).length;
   const hasTxnAttention = reviewCount > 0 || unconfirmedCount > 0;
-  const hasAcctAttention = health.needsAttention.length > 0 || Boolean(health.bridgeError);
+  // The Accounts underline follows exactly what the Accounts tab's "Needs your
+  // attention" card lists (dismissed items don't count), so it's always explained.
+  const hasAcctAttention = financeAccountsNeedingAttention().length > 0;
 
   // The section tabs are their own bar across the top of the window (Luke,
   // 2026-11-23): opaque edge to edge, so nothing shows through above or around
@@ -5189,6 +5228,7 @@ function renderFinancePage() {
   // Alerts, the bank link and Personal accounts are in Finance's gear menu; the
   // savings figures and net worth moved to Budget.
   const accountsPanel = `
+    ${financeAccountsAttentionCard()}
     <div class="fin-accounts${financeAcctEditMode ? " is-editing" : ""}">
       <div class="fin-accounts-tools">
         ${financeAcctEditMode ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="acct-edit-done">Done</button>` : ""}
