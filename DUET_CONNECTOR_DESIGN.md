@@ -186,3 +186,11 @@ Watch items across Personal and Household. Not yet deployed: plural group headin
    only Luke? Recommended: a small "added by assistant" mark on Household items.
 5. **OAuth** in place of a static key — needed only if Request headers stay
    unavailable or someone besides Luke uses it. Recommended: later.
+
+**liv-mcp v9 (2026-11-24, #300):** liv_health reports the upcoming-episodes job; #273's plural
+headings are live. Deployed through the Supabase MCP with `index.ts` as committed and a
+one-line `tools.bundle.js` that re-exports the committed bundle pinned by commit
+(`cdn.jsdelivr.net/gh/LukeDEvans/Tableplan@<sha>/supabase/functions/liv-mcp/tools.bundle.js`),
+so the 98 KB bundle isn't pasted by hand. Supabase bundles the import at deploy time; the
+running function doesn't depend on the CDN. Checked: liv_health and search answer normally.
+
