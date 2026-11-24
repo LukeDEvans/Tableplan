@@ -109,3 +109,22 @@ describe("the PDF", () => {
     expect(execFileSync("qpdf", ["--show-npages", file]).toString().trim()).toBe("3");
   });
 });
+
+describe("email text for the receipt reader", () => {
+  const { htmlToText } = require("../netlify/functions/_gmail-shared.js");
+  it("drops preview-line padding so the total stays inside the reader's window", () => {
+    const pad = "&#847;&zwnj;&nbsp;&#8199;&shy;".repeat(600);
+    const html = `<html><head><title>Receipt</title><style>.a{color:red}</style></head><body>` +
+      `<!--[if mso]><table><tr><td><![endif]--><div style="display:none">${pad}</div>` +
+      `<p>Receipt from Anthropic, PBC</p><p>$20.00</p><table><tr><td>One-time credit purchase</td><td>$20.00</td></tr>` +
+      `<tr><td>Total</td><td>$20.00</td></tr></table></body></html>`;
+    const text = htmlToText(html);
+    expect(text.length).toBeLessThan(400);
+    expect(text.slice(0, 9000)).toContain("Total");
+    expect(text).not.toMatch(/&#|͏|‌|­/);
+  });
+  it("cleans a plain-text body with entity padding (Target's)", () => {
+    const text = htmlToText(" &#8199; &#847;".repeat(400) + "\nOrder total\n$0.00");
+    expect(text).toBe("Order total\n$0.00");
+  });
+});
