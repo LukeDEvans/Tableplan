@@ -35,6 +35,7 @@
     "qa:podcast-upcoming": "node scripts/qa-podcast-upcoming.mjs",
     "qa:view-deletes": "node scripts/qa-view-deletes.mjs",
     "qa:finance-move": "node scripts/qa-finance-move.mjs",
+    "qa:finance-tabs": "node scripts/qa-finance-tabs.mjs",
     "build:finance-nightly": "node scripts/build-finance-nightly.mjs",
     "build:liv-mcp": "node scripts/build-liv-mcp.mjs",
     "qa:calendar-month": "node scripts/qa-calendar-month.mjs",

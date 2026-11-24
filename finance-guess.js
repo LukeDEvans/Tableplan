@@ -191,6 +191,11 @@ const NAME_FIXES = [
   [/^netflix\b.*/i, "Netflix"],
   [/^spotify\b.*/i, "Spotify"],
   [/^xcel energy\b.*/i, "Xcel Energy"],
+  [/^uber\s*\*?\s*eats\b.*/i, "Uber Eats"],
+  [/^uber\b.*\btrip\b.*|^uber\s*\*\s*trip\b.*/i, "Uber"],
+  [/^doordash\b.*/i, "DoorDash"],
+  [/^lyft\b.*/i, "Lyft"],
+  [/^venmo\b.*/i, "Venmo"],
 ];
 const NAME_PREFIX = /^(?:(?:pos|debit|credit|card|ach|recurring|checkcard|visa)\s+)*(?:purchase\s+|payment\s+|pmt\s+)?(?:sq|tst|sp|py|pp|paypal|dd|in|ic|sumup|toast|clover)\s*\*\s*/i;
 const NAME_PREFIX_WORDS = /^(?:(?:pos|debit|credit|card|ach|recurring|checkcard|visa|purchase|withdrawal|electronic|online)\s+)+/i;
@@ -200,9 +205,11 @@ const KEEP_UPPER = new Set(["bp", "cvs", "ups", "usps", "ikea", "hbo", "atm", "l
 export function cleanMerchantName(description) {
   let s = String(description || "").replace(/\s+/g, " ").trim();
   if (!s) return "";
-  s = s.replace(NAME_PREFIX, "").replace(NAME_PREFIX_WORDS, "");
+  s = s.replace(NAME_PREFIX, "").replace(NAME_PREFIX_WORDS, "")
+    .replace(/\s+(?:pending|pend)$/i, "");                  // a trailing "PENDING" from the bank
   for (const [re, name] of NAME_FIXES) if (re.test(s)) return name;
   s = s
+    .replace(/\*\s*(?=[a-z0-9]*\d)[a-z0-9]{5,}\b.*$/i, "")     // "*RV1IN47W3": an order code and what follows
     .replace(/\s+(?:#|no\.?\s*)?\d[\d-]*\b.*$/i, "")          // store numbers and everything after
     .replace(/\s+[a-z]-\d+\b.*$/i, "")                      // "T-2177 MPLS"
     .replace(new RegExp(`\\s+(?:mpls|minneapolis|st\\.? paul|saint paul|${STATES})$`, "i"), "")

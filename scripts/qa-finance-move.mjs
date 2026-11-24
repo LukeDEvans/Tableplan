@@ -75,10 +75,16 @@ try {
   await page.evaluate(() => window.__liveQA.viewsAsRole("admin"));
   await page.evaluate(() => window.__liveQA.setViewForQa("household"));
 
+  // The move screen is Finance's gear menu › Personal Accounts (Luke, 2026-11-23);
+  // the menu item shows only when moving is possible.
   const openAccounts = async () => {
+    await page.evaluate(() => document.getElementById("finSettingsOverlay")?.remove());
     await page.evaluate(() => window.__liveQA.openPageForQa("finance"));
     await page.waitForTimeout(700);
-    await page.evaluate(() => document.querySelector('[data-fin-action="fin-tab"][data-tab="accounts"]')?.click());
+    await page.click("#appMenuBtn");
+    await page.waitForTimeout(150);
+    const item = await page.$("#menuFinancePersonalBtn:not([hidden])");
+    if (item) await item.click(); else await page.click("#appMenuBtn");
     await page.waitForTimeout(400);
   };
   const text = (sel) => page.evaluate((s) => document.querySelector(s)?.innerText || "", sel);

@@ -1,8 +1,7 @@
 // Browser check for APP_LINKS_DESIGN.md (buttons that open another app).
 // Runs the real app against the local dev server (npm run dev:local):
-//   - Finance › Accounts: "Your banks" lists only banks the catalog knows; a tap
-//     opens the bank's website on the web app
-//   - Finance › Insights: a Verizon bill has Pay; rent doesn't
+//   - Finance › Accounts: an account's name opens its bank (only banks the
+//     catalog knows), the bank's website on the web app
 //   - Calendar: an event with a place offers Apple Maps / Google Maps; a bill
 //     on the calendar offers Pay
 //   - Shop: Target's heading has its app button; an item's menu has
@@ -78,28 +77,16 @@ async function run(browser, { width, height, dark }) {
   await page.evaluate(() => { window.__liveQA.openPageForQa("finance"); });
   await page.waitForTimeout(600);
   await page.click('[data-fin-action="fin-tab"][data-tab="accounts"]').catch(() => null);
-  await page.waitForSelector(".fin-bank-links .out-link-chip", { timeout: 8000 }).catch(() => null);
-  const banks = await texts(page, ".fin-bank-links .out-link-chip");
-  check(banks.join("|") === "SoFi|Chase", `Your banks: ${banks.join(", ") || "(none)"}`);
+  // Finance › Accounts (Luke, 2026-11-23): each account's name opens its bank.
+  await page.waitForSelector(".fin-acct-link", { timeout: 8000 }).catch(() => null);
+  const banks = await texts(page, ".fin-acct-link");
+  check(banks.join("|") === "SoFi — Checking|Chase — Credit|SoFi — Savings", `account names that open a bank: ${banks.join(", ") || "(none)"}`);
   check(await noSideScroll(page), "no sideways scroll (Finance › Accounts)");
   await shot(page, "finance-accounts", width, dark);
   if (banks.length) {
-    await page.click(".fin-bank-links .out-link-chip >> nth=0");
+    await page.click(".fin-acct-link >> nth=0");
     const o = await opened(page);
     check(o.length === 1 && o[0] === "https://www.sofi.com/login/", `SoFi opens its website: ${o.join(", ")}`);
-  }
-  await page.click('[data-fin-action="fin-tab"][data-tab="insights"]').catch(() => null);
-  await page.waitForTimeout(400);
-  const billRows = await page.$$eval(".fin-bill-row", (rows) => rows.map((r) => ({ name: r.querySelector(".fin-bill-name")?.textContent.trim(), pay: Boolean(r.querySelector(".out-link-chip")) })));
-  const verizon = billRows.find((r) => /verizon/i.test(r.name || ""));
-  const rent = billRows.find((r) => /kula/i.test(r.name || ""));
-  check(Boolean(verizon?.pay) && rent && !rent.pay, `bills: Verizon has Pay, rent doesn't (${JSON.stringify(billRows)})`);
-  check(await noSideScroll(page), "no sideways scroll (Finance › Insights)");
-  await shot(page, "finance-bills", width, dark);
-  if (verizon?.pay) {
-    await page.click(".fin-bill-row .out-link-chip >> nth=0");
-    const o = await opened(page);
-    check(o.length === 1 && /verizon\.com/.test(o[0]), `Pay opens Verizon: ${o.join(", ")}`);
   }
 
   // ── Calendar ──
