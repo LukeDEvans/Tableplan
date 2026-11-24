@@ -27078,6 +27078,14 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
 }
 .fin-tabbar .fin-tab:hover { color: var(--ink); }
 .fin-tabbar .fin-tab.is-active { background: none; box-shadow: none; color: var(--accent-dark, var(--accent)); }
+/* Accounts › "Needs your attention": what the red underline is about. */
+.fin-attn-card { border-left: 3px solid var(--tomato); display: flex; flex-direction: column; gap: 10px; }
+.fin-attn-head { margin: 0; font-size: 0.95rem; }
+.fin-attn-item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.fin-attn-text { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.86rem; }
+.fin-attn-text span { color: var(--muted); line-height: 1.35; }
+.fin-attn-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+.fin-attn-actions a { text-decoration: none; }
 .fin-tab.has-attention .fin-tab-label {
   text-decoration: underline; text-decoration-color: #b3261e;
   text-decoration-thickness: max(1px, 0.05em); text-underline-offset: 0.22em; text-decoration-skip-ink: none;
