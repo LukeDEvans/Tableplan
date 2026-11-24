@@ -13,6 +13,7 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 ---
 
 ## P0
+- [ ] **[P3] qa:views still expects the page named Mail** (views · scripts/qa-views.mjs · 2026-11-24) — two Personal page-list checks fail because the menu now says **Message**; failing on main too, not caused by the finance fixes. → Update the expected list to Message.
 - [x] **[P3] Receipt editor: the Personal purchase row sticks out 4px at 390 px** (groceries · index.html #editReceiptPersonalRow · 2026-11-22) — its checkbox's right edge is 4px past the edit view, so the view can scroll sideways a hair. Seen while checking the duplicate banner (the banner itself fits). → Lay the row out as a flex row like other toggle rows.
       → **Fixed 2026-11-24:** the row spans the meta grid as a flex row and the checkbox keeps its own size (styles.css). Measured at 390px in local dev: the checkbox was 170px wide and ended 4px past its cell; now 13px, row ends at the form edge, no sideways scroll.
 - [ ] **[P3] Merged receipts drop the other receipt's old-style scan photos** (finance · receipt-duplicates.js mergeReceipts · 2026-11-22) — scan-content stores photos under the receipt's own id (`receipt:<id>:<n>`), so after a merge only the kept receipt's `imageRefs` still open; the other's stay stored but unlinked. The Document file (the photo that counts since FINANCE_AUDIT D6) is relinked to the kept receipt. → If it matters, copy the blobs to the kept id on merge.

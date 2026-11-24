@@ -29,7 +29,7 @@ public class LinkOutPlugin: CAPPlugin, CAPBridgedPlugin {
         "pplus", "peacock", "videos", "gametime", "youtube", "fubotv", "hbomax",
         "foxone", "nflmobile", "nhl", "mlbatbat", "fsapp",
         // Banks, stores and maps (APP_LINKS_DESIGN.md, out-catalog.js)
-        "sofi", "chase", "bofa", "target", "shoebox", "comgooglemaps"
+        "sofi", "chase", "bofa", "citiglobal", "target", "shoebox", "comgooglemaps"
     ]
 
     private static func url(_ raw: String?) -> URL? {

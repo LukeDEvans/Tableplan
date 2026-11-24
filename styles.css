@@ -25751,11 +25751,6 @@ body[data-theme="dark"] .explore-picture-preview { background: #f3ede2; }
 .link-test-result { font-size: 0.8rem; color: var(--muted); }
 .link-test-result.is-app { color: var(--ink); font-weight: 700; }
 
-/* Personal Finance: the household's summary card (FINANCE_SPLIT_DESIGN.md §2.3). */
-.fin-household-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
-.fin-household-summary-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.fin-household-summary-label { font-size: 0.8rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.fin-household-summary-value { font-weight: 700; color: var(--ink); }
 
 /* ── Dutch practice (language-ui.js, LANGUAGE_PRACTICE.md) ───────────────────
    The Dutch row's full view on Leisure: lessons, start, the matching board and

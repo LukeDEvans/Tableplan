@@ -418,7 +418,9 @@ async function extractReceipt(anthropicKey, { subject, from, date, bodyText, cat
   const system = [
     "You extract purchase receipts / order confirmations from emails for a household budget app.",
     'Reply with ONLY valid JSON, no markdown: {"receipt": {...}} or {"receipt": null}.',
-    "Return null unless the email contains an itemized purchase with a charged total.",
+    "Return a receipt for any email that confirms a purchase, order, subscription or membership charge, or a paid invoice, and shows the amount charged. Return null for marketing, shipping-only updates and unpaid quotes.",
+    "A total of 0 (fully discounted, free with a promotion) is still a receipt: return it with total 0.",
+    "If the email lists no separate items (a subscription or plan, for example), return one item named after the plan or product with its price.",
     'Receipt shape: {"merchant": "...", "date": "YYYY-MM-DD", "subtotal": 10.00, "tax": 0.80, "total": 12.34, "cardLast4": "1234" or null, "orderNumber": "..." or null, "items": [{"name": "...", "price": 1.23, "category": "<key>" or null}]}',
     "total = the amount actually charged (after tax, shipping, discounts). date = the order or purchase date.",
     "cardLast4 = the last 4 digits of the payment card only when the email prints them; orderNumber = the store's order number when shown.",
@@ -438,7 +440,9 @@ function parseReceiptReply(text, categories = []) {
   let parsed;
   try { parsed = JSON.parse(m[0]); } catch { return null; }
   const r = parsed && parsed.receipt;
-  if (!r || !Number(r.total)) return null;
+  // A $0 total is a real receipt (a membership free with a promotion, Luke
+  // 2026-11-24); only a missing or unreadable total means there's no receipt.
+  if (!r || r.total === null || r.total === undefined || r.total === "" || !Number.isFinite(Number(r.total)) || Number(r.total) < 0) return null;
   const money = (v) => Math.round((Number(v) || 0) * 100) / 100;
   const validKeys = new Set(categories.map((c) => c.key));
   const items = (Array.isArray(r.items) ? r.items : []).slice(0, 60).map((it) => ({

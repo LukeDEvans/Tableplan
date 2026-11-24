@@ -27,9 +27,12 @@ describe("the reader's reply", () => {
     expect(r.items[1].category).toBe(""); // not one of the household's categories
     expect(r.portions).toEqual([{ label: "cat:g:food", amount: 4.29 }, { label: "", amount: 17.21 }]);
   });
-  it("drops card digits that aren't four, and returns null without a total", () => {
+  it("drops card digits that aren't four; null only without a total", () => {
     expect(parseReceiptReply('{"receipt":{"merchant":"A","total":5,"cardLast4":"12"}}').cardLast4).toBe("");
-    expect(parseReceiptReply('{"receipt":{"merchant":"A","total":0}}')).toBeNull();
+    expect(parseReceiptReply('{"receipt":{"merchant":"A"}}')).toBeNull();
+    expect(parseReceiptReply('{"receipt":{"merchant":"A","total":-5}}')).toBeNull();
+    // A free membership is still a receipt (Target Circle 360, 2026-11-24).
+    expect(parseReceiptReply('{"receipt":{"merchant":"Target","total":0,"items":[{"name":"Target Circle 360","price":99}]}}')).toMatchObject({ merchant: "Target", total: 0 });
     expect(parseReceiptReply('{"receipt":null}')).toBeNull();
     expect(parseReceiptReply("not json")).toBeNull();
   });

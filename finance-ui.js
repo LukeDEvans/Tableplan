@@ -2940,9 +2940,18 @@ function financeAccountsNeedingAttention() {
   if (!financeLive) return [];
   const raw = [];
   // Connection-level messages from the bridge ("Connection to X needs attention").
+  // The bridge reports every bank's problems to every book, so a message about a
+  // bank with no accounts in this book (Luke's Apple Card is Personal) is left out
+  // here (Luke, 2026-11-24). A message that names no bank stays. (A bank that
+  // stops sending its accounts altogether still shows: each of its accounts here
+  // turns "disconnected" below.)
+  const scopedOrgs = new Set((financeLive.accounts || []).map((a) => financeOrgKey(a.org)).filter(Boolean));
   for (const err of (financeLive.errors || [])) {
     const detail = String(err || "").trim();
-    if (detail) raw.push({ kind: "error", key: `error:${detail}`, label: "Bank connection", detail });
+    if (!detail) continue;
+    const org = financeOrgKey(/connection to (.+?)\s+may need attention/i.exec(detail)?.[1] || "");
+    if (org && scopedOrgs.size && !scopedOrgs.has(org)) continue; // another book's bank
+    raw.push({ kind: "error", key: `error:${detail}`, label: "Bank connection", detail });
   }
   // Per-account status — reuses financeAccountStatus (the same primitive the
   // Accounts panel pills use) so "stale" and "disconnected" are genuinely
@@ -2977,6 +2986,11 @@ function financeAccountsNeedingAttention() {
     for (const k of Object.keys(dismissed)) { if (!liveKeys.has(k)) delete dismissed[k]; }
   }
   return raw.filter((r) => !dismissed[r.key]);
+}
+
+// A bank's name for comparing: "Apple Card (Updated Monthly)" → "apple card".
+function financeOrgKey(name) {
+  return String(name || "").replace(/\([^)]*\)/g, " ").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 // "Needs your attention" at the top of the Accounts tab (Luke, 2026-11-24: the
@@ -5243,25 +5257,13 @@ function renderFinancePage() {
     : financeTab === "accounts" ? `${showOnboard ? connectPrompt : ""}${accountsPanel}`
     : (txnsCard || connectPrompt);
 
-  // Personal Finance (FINANCE_SPLIT_DESIGN.md §2.3): this member's own accounts,
-  // with a small read-only summary of the household's and a way over there.
-  const householdSummary = financeScopeNow() === "personal" ? (() => {
-    const days = financeHistoryAll?.days || {};
-    const last = Object.keys(days).sort().at(-1);
-    const nw = last ? Number(days[last]?.netWorth) : NaN;
-    return `
-      <div class="fin-card fin-household-summary">
-        <div class="fin-household-summary-text">
-          <span class="fin-household-summary-label">Household</span>
-          <span class="fin-household-summary-value">${Number.isFinite(nw) ? `Net worth ${escapeHtml(formatFinMoney(nw))}` : "Shared accounts and budget"}</span>
-        </div>
-        <button type="button" class="secondary-btn" data-fin-action="open-household">Open in Household</button>
-      </div>`;
-  })() : "";
+  // Personal Finance used to open with a "Household · Net worth · Open in
+  // Household" card on every tab; Luke removed it (2026-11-24). The views band
+  // already gets you to Household.
+
 
   grid.innerHTML = `
     <section class="fin-panel">
-      ${householdSummary}
       ${financeTabNav}
       <div class="fin-tab-body" id="fin-tabpanel" role="tabpanel" aria-labelledby="fin-tab-${financeTab}" tabindex="0" data-fin-tab-body="${financeTab}">${tabBody}</div>
     </section>`;

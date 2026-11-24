@@ -116,6 +116,16 @@ all your work is there. Make focused changes to the Finance domain only.
   problem in plain words (a bank needing sign-in on SimpleFIN, an account not coming
   through or not updating) with **Open SimpleFIN** and **Hide**. The underline follows
   that same list (`financeAccountsNeedingAttention`, hidden items don't count).
+- **Each book's own banks only (Luke, 2026-11-24):** SimpleFIN reports sign-in errors
+  for every bank on the connection, so a bank error counts only when its bank is one of
+  this book's own accounts (`financeOrgKey`). The Apple Card is personal, so its error
+  shows in Personal and never underlines Household's Accounts.
+- **No Household card in Personal (Luke, 2026-11-24):** Personal Finance no longer opens
+  with the "Household · Net worth · Open in Household" card on any tab.
+- **Bank links open the bank's app on the phone** when its app is installed (out-catalog.js
+  `app` list, each custom scheme also in LinkOutPlugin.swift `allowedSchemes`), else the website.
+- **Email receipts (Luke, 2026-11-24):** a $0 total is still a receipt (a membership free
+  with a promotion); subscriptions and paid invoices with no item list count, as one item.
 - **Month history (Luke, 2026-11-23):** past months with no saved totals that stored
   history covers are filled automatically (`financeMonthsToBackfill`) and marked
   `rebuilt: true`; those keep following stored history; months saved any other way
