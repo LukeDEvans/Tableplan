@@ -3,6 +3,13 @@
 <plist version="1.0">
 <dict>
 	<!-- Shared with the Share Extension for the receipt share token (ShareTokenStore.swift). -->
+	<!-- Apple Health, read only, with background delivery (HEALTH_DESIGN.md §3). -->
+	<key>com.apple.developer.healthkit</key>
+	<true/>
+	<key>com.apple.developer.healthkit.access</key>
+	<array/>
+	<key>com.apple.developer.healthkit.background-delivery</key>
+	<true/>
 	<key>keychain-access-groups</key>
 	<array>
 		<string>6RTNUZR7K5.com.mrlukedevans.live.shared</string>

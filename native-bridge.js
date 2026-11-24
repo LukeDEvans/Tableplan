@@ -408,6 +408,24 @@ export function nativePhotoLibrary() {
   return _photoLibrary;
 }
 
+// Apple Health (LiveHealth plugin, HEALTH_DESIGN.md §3): available(), status(),
+// authorize(), setup({ endpoint, apiKey, token, name }), sync(), forget(), and
+// addListener("healthSyncDone"). Reads only; Liv never writes to Health. null in a
+// browser or an app build from before the plugin.
+let _health;
+export function nativeHealth() {
+  if (_health !== undefined) return _health;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _health = null;
+      return _health;
+    }
+    const p = registerPlugin("LiveHealth");
+    _health = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("LiveHealth")) ? p : null;
+  } catch { _health = null; }
+  return _health;
+}
+
 // A file on the phone (a file:// URL or path from a plugin) as a URL the web view can
 // load (Photos' full-size images).
 export function nativeFileSrc(path) {

@@ -17,7 +17,11 @@ const SORTS = {
   heaviest: { key: "heaviest", label: "Heaviest", dir: "desc", value: logHeaviestLb },
   rating: { key: "rating", label: "Rating", dir: "desc", value: (log) => ({ easy: 3, ok: 2, hard: 1 })[log?.gameRating] || null },
   name: { key: "name", label: "Event", dir: "asc", value: (log) => String(log?.gameName || "").trim().toLowerCase() || null },
+  // From Apple Health (HEALTH_DESIGN.md §6): offered only when some entry has them.
+  hr: { key: "hr", label: "Avg HR", dir: "desc", value: (log) => Number(log?.hrAvg) || null },
+  kcal: { key: "kcal", label: "Calories", dir: "desc", value: (log) => Number(log?.kcal) || null },
 };
+const HEALTH_SORTS = ["hr", "kcal"];
 
 const SORTS_BY_TYPE = {
   timed: ["date", "duration", "distance", "speed"],
@@ -25,32 +29,35 @@ const SORTS_BY_TYPE = {
   game: ["date", "rating", "name"],
 };
 
-/** The sorts offered for a workout kind, in display order. */
-export function historySortOptions(type) {
-  return (SORTS_BY_TYPE[type] || SORTS_BY_TYPE.timed).map((key) => {
+/** The sorts offered for a workout kind, in display order. With `logs`, Avg HR and
+ *  Calories join when any entry came from Apple Health with them. */
+export function historySortOptions(type, logs) {
+  const keys = [...(SORTS_BY_TYPE[type] || SORTS_BY_TYPE.timed)];
+  if (Array.isArray(logs)) HEALTH_SORTS.forEach((key) => { if (logs.some((log) => SORTS[key].value(log) != null)) keys.push(key); });
+  return keys.map((key) => {
     const { label, dir } = SORTS[key];
     return { key, label, dir };
   });
 }
 
 /** The sort to use: the asked-for one if this kind offers it, else Date newest first. */
-export function resolveHistorySort(type, sort) {
-  const offered = historySortOptions(type);
+export function resolveHistorySort(type, sort, logs) {
+  const offered = historySortOptions(type, logs);
   const match = offered.find((option) => option.key === sort?.key);
   if (!match) return { key: "date", dir: "desc" };
   return { key: match.key, dir: sort.dir === "asc" || sort.dir === "desc" ? sort.dir : match.dir };
 }
 
 /** Tapping a sort: the same one flips its order; another starts in its own order. */
-export function nextHistorySort(type, current, tappedKey) {
-  const now = resolveHistorySort(type, current);
+export function nextHistorySort(type, current, tappedKey, logs) {
+  const now = resolveHistorySort(type, current, logs);
   if (now.key === tappedKey) return { key: tappedKey, dir: now.dir === "desc" ? "asc" : "desc" };
-  return resolveHistorySort(type, { key: tappedKey });
+  return resolveHistorySort(type, { key: tappedKey }, logs);
 }
 
 /** A new array of logs in the given order. Ties fall back to newest date first. */
 export function sortHistoryLogs(logs, type, sort) {
-  const { key, dir } = resolveHistorySort(type, sort);
+  const { key, dir } = resolveHistorySort(type, sort, logs);
   const read = SORTS[key].value;
   const sign = dir === "asc" ? 1 : -1;
   const byDateDesc = (a, b) => compare(SORTS.date.value(b), SORTS.date.value(a));
