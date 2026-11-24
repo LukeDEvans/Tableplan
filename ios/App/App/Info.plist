@@ -32,6 +32,8 @@
 	<string>Live's Clock rings your alarms and timers, even in silent mode or a Focus.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Live counts and shows the photos and videos in your library. Nothing leaves your phone unless you choose to add it to Live.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Liv reads your workouts and activity rings from Apple Health to fill in your Exercise log. Liv never writes to Health.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Live uses Face ID to unlock your Documents each time you open them.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

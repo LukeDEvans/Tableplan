@@ -69,3 +69,14 @@ describe("exercise history sorting", () => {
     expect(logs).toEqual(copy);
   });
 });
+
+describe("Apple Health sorts", () => {
+  it("offers Avg HR and Calories only when some entry has them", () => {
+    const plain = [bike("2026-11-01", 30, 10)];
+    const watch = [...plain, { ...bike("2026-11-02", 31, 10), healthId: "x", hrAvg: "150", kcal: "300" }];
+    expect(historySortOptions("timed", plain).map((o) => o.key)).toEqual(["date", "duration", "distance", "speed"]);
+    expect(historySortOptions("timed", watch).map((o) => o.key)).toEqual(["date", "duration", "distance", "speed", "hr", "kcal"]);
+    expect(sortHistoryLogs(watch, "timed", { key: "hr", dir: "desc" }).map((l) => l.date)).toEqual(["2026-11-02", "2026-11-01"]);
+    expect(resolveHistorySort("timed", { key: "hr" }, plain)).toEqual({ key: "date", dir: "desc" });
+  });
+});

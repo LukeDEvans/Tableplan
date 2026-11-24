@@ -30,6 +30,8 @@
 		4D5E6A152F10000100C0FFEE /* PdfExportPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A162F10000100C0FFEE /* PdfExportPlugin.swift */; };
 		4D5E6A172F10000100C0FFEE /* PhotoLibraryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A182F10000100C0FFEE /* PhotoLibraryPlugin.swift */; };
 		4D5E6A192F10000100C0FFEE /* PhotoSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A1A2F10000100C0FFEE /* PhotoSyncEngine.swift */; };
+		4D5E6B1B2F10000100C0FFEE /* LiveHealthPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6B1C2F10000100C0FFEE /* LiveHealthPlugin.swift */; };
+		4D5E6B192F10000100C0FFEE /* HealthSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6B1A2F10000100C0FFEE /* HealthSyncEngine.swift */; };
 		4D5E6A2B2F10000100C0FFEE /* LiveClockPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A2C2F10000100C0FFEE /* LiveClockPlugin.swift */; };
 		4D5E6A3B2F10000100C0FFEE /* LiveCameraPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A3C2F10000100C0FFEE /* LiveCameraPlugin.swift */; };
 		4D5E6A4B2F10000100C0FFEE /* SongRecognizerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6A4C2F10000100C0FFEE /* SongRecognizerPlugin.swift */; };
@@ -96,6 +98,8 @@
 		4D5E6A162F10000100C0FFEE /* PdfExportPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PdfExportPlugin.swift; sourceTree = "<group>"; };
 		4D5E6A182F10000100C0FFEE /* PhotoLibraryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryPlugin.swift; sourceTree = "<group>"; };
 		4D5E6A1A2F10000100C0FFEE /* PhotoSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSyncEngine.swift; sourceTree = "<group>"; };
+		4D5E6B1C2F10000100C0FFEE /* LiveHealthPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveHealthPlugin.swift; sourceTree = "<group>"; };
+		4D5E6B1A2F10000100C0FFEE /* HealthSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthSyncEngine.swift; sourceTree = "<group>"; };
 		4D5E6A2C2F10000100C0FFEE /* LiveClockPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveClockPlugin.swift; sourceTree = "<group>"; };
 		4D5E6A3C2F10000100C0FFEE /* LiveCameraPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveCameraPlugin.swift; sourceTree = "<group>"; };
 		4D5E6A4C2F10000100C0FFEE /* SongRecognizerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongRecognizerPlugin.swift; sourceTree = "<group>"; };
@@ -180,6 +184,8 @@
 				4D5E6A162F10000100C0FFEE /* PdfExportPlugin.swift */,
 				4D5E6A182F10000100C0FFEE /* PhotoLibraryPlugin.swift */,
 				4D5E6A1A2F10000100C0FFEE /* PhotoSyncEngine.swift */,
+				4D5E6B1C2F10000100C0FFEE /* LiveHealthPlugin.swift */,
+				4D5E6B1A2F10000100C0FFEE /* HealthSyncEngine.swift */,
 				4D5E6A1C2F10000100C0FFEE /* PhotoLibraryActions.swift */,
 				4D5E6A4C2F10000100C0FFEE /* SongRecognizerPlugin.swift */,
 				4D5E6A3C2F10000100C0FFEE /* LiveCameraPlugin.swift */,
@@ -388,6 +394,8 @@
 				4D5E6A152F10000100C0FFEE /* PdfExportPlugin.swift in Sources */,
 				4D5E6A172F10000100C0FFEE /* PhotoLibraryPlugin.swift in Sources */,
 				4D5E6A192F10000100C0FFEE /* PhotoSyncEngine.swift in Sources */,
+				4D5E6B1B2F10000100C0FFEE /* LiveHealthPlugin.swift in Sources */,
+				4D5E6B192F10000100C0FFEE /* HealthSyncEngine.swift in Sources */,
 				4D5E6A1B2F10000100C0FFEE /* PhotoLibraryActions.swift in Sources */,
 				4D5E6A4B2F10000100C0FFEE /* SongRecognizerPlugin.swift in Sources */,
 				4D5E6A3B2F10000100C0FFEE /* LiveCameraPlugin.swift in Sources */,

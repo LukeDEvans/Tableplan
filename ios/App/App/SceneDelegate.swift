@@ -35,6 +35,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneDidBecomeActive(_ scene: UIScene) {
         PhotoSyncEngine.shared.appBecameActive() // new photos since last time (at most every 10 minutes)
+        HealthSyncEngine.shared.appBecameActive() // new workouts and rings (at most every 10 minutes)
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {

@@ -1,5 +1,6 @@
 import * as LiveGroceryCatalog from './grocery-catalog.js';
 import { historySortOptions, resolveHistorySort, nextHistorySort, sortHistoryLogs, formatLogSpeed } from './exercise-history.js';
+import { fileHealthWorkout, healthLogFields, healthInbox, ringFractions, ringWeek, healthLogSummary, activityLabel, HEALTH_ACTIVITIES } from './health-workouts.js';
 import { safeUrl, isSafeHref, isSafeSrc, parseInertHtml, scrubActiveAttributes, sanitizeUntrustedHtml } from './html-sanitize.js';
 import { buildMailBodyFrame as buildMailFrame, sanitizeMailFrameHtml } from './mail-frame.js';
 import { createMealplanModule, autoRule, defaultMealPlanConfig, groceryMealSlotId, mealEntryList, minimumMealEntryCount, normalizeMealPlanConfig, defaultMealEntries, weekdayDefaultDayIds, daySpecificDefaultMealEntries } from './mealplan-ui.js';
@@ -69,7 +70,7 @@ import { proposeGoogleLinks, appCalendarIdForGoogle, buildSeveranceReport, googl
 import { gcalApi, loadGcalCache, saveGcalCache, buildEventsRequest, applyEventsResponse, cacheEntriesFor, reconcileGoogleLinks, readdAppCalendarId, panelRows as gcalPanelRows, feedEventsFor } from './calendar/google-client.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
-import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, nativePdfExport, nativePhotoLibrary, nativeFileSrc, nativeClock, nativeCamera, nativeSongRecognizer, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
+import { isNativeApp, nativeApiPath, nativeTts, nativeAppleMusic, nativeArticleReader, nativeDocumentScanner, scannedPagesToFiles, nativeWebAuth, nativeShareToken, nativeLocalNotifications, nativeAppIcon, nativeAttachmentPreview, nativeLanguage, nativeLinkOut, nativeMessagingKeys, nativeQrScan, nativeDocumentsLock, nativePdfExport, nativePhotoLibrary, nativeFileSrc, nativeClock, nativeCamera, nativeSongRecognizer, nativeHealth, APP_CALLBACK_SCHEME, parseAppCallback, APP_AUTH_CALLBACK_URL, parseOAuthCallback } from './native-bridge.js';
 import { syncReceiptShareToken } from './receipt-share-token.js';
 import { BUILD, formatBuild, isNewerBuild, versionCheckDue } from './build-info.js';
 import { reminderInstances, legacyReminderFolds, reminderSelectValue, reminderValueFromSelect, googleReminderKey, reminderDescription, normalizeReminderValue } from './calendar/reminders.js';
@@ -1232,6 +1233,7 @@ const elements = {
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
   menuWorkoutLogsBtn: document.querySelector("#menuWorkoutLogsBtn"),
+  menuAppleHealthBtn: document.querySelector("#menuAppleHealthBtn"),
   menuPodcastSettingsBtn: document.querySelector("#menuPodcastSettingsBtn"),
   menuPodcastPriorityBtn: document.querySelector("#menuPodcastPriorityBtn"),
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
@@ -1483,6 +1485,9 @@ const elements = {
   closeRecurringTasksBtn: document.querySelector("#closeRecurringTasksBtn"),
   doneRecurringTasksBtn: document.querySelector("#doneRecurringTasksBtn"),
   recurringTaskList: document.querySelector("#recurringTaskList"),
+  healthInboxDialog: document.querySelector("#healthInboxDialog"),
+  closeHealthInboxBtn: document.querySelector("#closeHealthInboxBtn"),
+  healthInboxList: document.querySelector("#healthInboxList"),
   workoutLibraryDialog: document.querySelector("#workoutLibraryDialog"),
   closeWorkoutLibraryBtn: document.querySelector("#closeWorkoutLibraryBtn"),
   doneWorkoutLibraryBtn: document.querySelector("#doneWorkoutLibraryBtn"),
@@ -2961,6 +2966,7 @@ function bindEvents() {
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
+  elements.menuAppleHealthBtn?.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("apple-health")));
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   // Back arrow on windows opened from a Settings row (openFromSettingsWithBack).
   document.querySelectorAll("[data-settings-back]").forEach((btn) => btn.addEventListener("click", () => {
@@ -3113,6 +3119,7 @@ function bindEvents() {
   elements.closePlayExercisePickerBtn.addEventListener("click", () => elements.playExercisePickerDialog.close());
   elements.donePlayExercisePickerBtn.addEventListener("click", () => elements.playExercisePickerDialog.close());
   elements.playExercisePickerForm.addEventListener("submit", addPlayExerciseFromPicker);
+  elements.closeHealthInboxBtn?.addEventListener("click", () => elements.healthInboxDialog.close());
   elements.closePlayAutoRulesBtn.addEventListener("click", () => elements.playAutoRulesDialog.close());
   elements.donePlayAutoRulesBtn.addEventListener("click", () => elements.playAutoRulesDialog.close());
   elements.closeWorkoutDetailBtn.addEventListener("click", () => elements.workoutDetailDialog.close());
@@ -4284,6 +4291,15 @@ function setupDiagnostics() {
     showScoresForQa: () => { if (!localDevMode) return null; showScoresApp(); return true; },
     mediaServicesForQa: (ids) => { if (!localDevMode) return null; state.mediaServices = ids.map(String); resetMediaHub(); return true; },
     settingsForQa: (kind) => { if (!localDevMode) return null; openContextSettingsDialog(kind); return true; },
+    // Apple Health (scripts/qa-health.mjs): fake rows for the tables, then open Exercise.
+    healthForQa: (data) => {
+      if (!localDevMode) return null;
+      if (data) { healthQa = { rows: data.rows || [], days: data.days || [] }; healthState = { at: 0, rows: [], days: [], loading: null, error: "" }; }
+      return { qa: healthQa, workouts: normalizeWorkouts(state.workouts), playPlans: state.playPlans };
+    },
+    seedWorkoutsForQa: (workouts, playPlans) => { if (!localDevMode) return null; state.workouts = normalizeWorkouts(workouts); if (playPlans) state.playPlans = playPlans; persist(); return true; },
+    openExerciseForQa: () => { if (!localDevMode) return null; showPlayApp(); return true; },
+    healthInboxForQa: () => { if (!localDevMode) return null; openHealthInbox(); return true; },
     billsSeedForQa: (bills) => { if (!localDevMode) return null; state.financeRecurring = bills; planAppDataIndex = null; planRangeCache.clear(); return true; },
     planSeedForQa: (events) => { if (!localDevMode) return null; state.planEvents = events; planRangeCache.clear(); persist(); return true; },
     planEventsInRangeForQa: (a, b) => (localDevMode ? getPlanEventsForRange(a, b).map((e) => ({ id: e.id, title: e.title, source: e.source, layerView: e.layerView || null })) : null),
@@ -6439,6 +6455,8 @@ function normalizeWorkouts(workouts) {
         exerciseDetails: details,
         notes: exerciseDetailsToNotes(details),
         logs: normalizeWorkoutLogs(workout?.logs),
+        // The Apple Health activity Luke filed into this workout (health-workouts.js).
+        ...(/^[a-z_]{1,32}$/.test(String(workout?.healthActivity || "")) ? { healthActivity: workout.healthActivity } : {}),
         createdAt: workout?.createdAt || new Date().toISOString()
       };
     })
@@ -6668,6 +6686,17 @@ function normalizeRepWeights(repWeights) {
     .filter(([, value]) => value));
 }
 
+// (A list inside the function, not a module const: normalizeState runs at boot,
+// before a const this far down would be initialized.)
+function healthLogExtras(log) {
+  const out = {};
+  ["healthId", "healthSource", "healthSeconds", "hrAvg", "hrMax", "kcal", "startTime", "endTime"].forEach((key) => {
+    const value = String(log?.[key] ?? "").trim().slice(0, 60);
+    if (value) out[key] = value;
+  });
+  return out;
+}
+
 function normalizeWorkoutLogs(logs) {
   return (Array.isArray(logs) ? logs : [])
     .map((log) => ({
@@ -6689,9 +6718,12 @@ function normalizeWorkoutLogs(logs) {
       gameNotes: String(log?.gameNotes || "").trim(),
       gameRating: ["hard", "ok", "easy"].includes(log?.gameRating) ? log.gameRating : null,
       taskId: String(log?.taskId || "").trim(),
+      // From Apple Health (HEALTH_DESIGN.md §5): which Health workout filled this log,
+      // its real start/end and the Watch's numbers. Empty on hand-entered logs.
+      ...healthLogExtras(log),
       createdAt: log?.createdAt || new Date().toISOString()
     }))
-    .filter((log) => log.date || log.time || log.weight || Object.keys(log.repWeights).length || log.timedMinutes || log.gameName || log.gameNotes);
+    .filter((log) => log.date || log.time || log.weight || Object.keys(log.repWeights).length || log.timedMinutes || log.gameName || log.gameNotes || log.healthId);
 }
 
 function normalizePlayAutoRules(rules) {
@@ -15509,9 +15541,10 @@ function showRecordingHistory() {
 }
 
 function renderRecordingHistory(workout, historyEl) {
-  const sort = resolveHistorySort(workout.type, recordingHistorySort);
-  const logs = sortHistoryLogs(normalizeWorkoutLogs(workout.logs), workout.type, sort);
-  const options = historySortOptions(workout.type);
+  const allLogs = normalizeWorkoutLogs(workout.logs);
+  const sort = resolveHistorySort(workout.type, recordingHistorySort, allLogs);
+  const logs = sortHistoryLogs(allLogs, workout.type, sort);
+  const options = historySortOptions(workout.type, allLogs);
   const sortRow = logs.length > 1 ? `
     <div class="recording-history-sort" role="group" aria-label="Sort history">
       <span class="recording-history-sort-label">Sort</span>
@@ -15529,7 +15562,8 @@ function renderRecordingHistory(workout, historyEl) {
           const speed = formatLogSpeed(log);
           if (speed) summary += ` · ${speed}`;
         }
-        return `<button type="button" class="workout-log-row workout-log-row--link" data-history-log="${escapeHtml(log.id)}" aria-label="Edit ${escapeHtml(summary)}"><span>${escapeHtml(summary)}</span><span class="workout-log-row-chevron" aria-hidden="true">›</span></button>`;
+        const watch = log.healthId ? `<span class="workout-log-health">⌚ ${escapeHtml(healthLogSummary(log) || "Apple Watch")}</span>` : "";
+        return `<button type="button" class="workout-log-row workout-log-row--link" data-history-log="${escapeHtml(log.id)}" aria-label="Edit ${escapeHtml(summary)}"><span>${escapeHtml(summary)}${watch ? `<br>${watch}` : ""}</span><span class="workout-log-row-chevron" aria-hidden="true">›</span></button>`;
       }).join("")
     : `<p class="empty-state">No history yet.</p>`;
   historyEl.innerHTML = `
@@ -15539,7 +15573,7 @@ function renderRecordingHistory(workout, historyEl) {
   `;
   historyEl.querySelectorAll("[data-history-sort]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      recordingHistorySort = nextHistorySort(workout.type, recordingHistorySort, btn.dataset.historySort);
+      recordingHistorySort = nextHistorySort(workout.type, recordingHistorySort, btn.dataset.historySort, allLogs);
       renderRecordingHistory(workout, historyEl);
     });
   });
@@ -16437,7 +16471,7 @@ function renderPlayPlanner() {
   const EXERCISE_SECTIONS = exerciseSections();
   const workouts = workoutsByRecency();
   const ofType = (type) => workouts.filter((w) => (EXERCISE_SECTIONS.some((s) => s.type === w.type) ? w.type : "timed") === type);
-  elements.playPlannerGrid.innerHTML = `<div class="recreate-hub">${EXERCISE_SECTIONS.map((sec) => {
+  elements.playPlannerGrid.innerHTML = `${healthStripHtml()}<div class="recreate-hub">${EXERCISE_SECTIONS.map((sec) => {
     const list = ofType(sec.type);
     return recreateSectionTemplate(sec.type, sec.title, `
       ${list.map(workoutPoolCardTemplate).join("")}
@@ -16448,6 +16482,372 @@ function renderPlayPlanner() {
   grid.querySelectorAll("[data-exercise-new]").forEach((btn) => {
     btn.addEventListener("click", () => openNewWorkoutDialog(btn.dataset.exerciseNew));
   });
+  grid.querySelector("[data-health-inbox]")?.addEventListener("click", openHealthInbox);
+  grid.querySelector("[data-health-today]")?.addEventListener("click", () => openContextSettingsDialog("apple-health"));
+  refreshHealthIfStale();
+}
+
+// ── Apple Health (HEALTH_DESIGN.md; Luke, 2026-11-24) ────────────────────────
+// The phone copies workout summaries and daily rings into live_health_workouts /
+// live_health_days (the LiveHealth plugin + the health-sync service). Here: read the
+// unfiled workouts and this week's rings, file each workout into the Exercise
+// library (health-workouts.js decides where), and show the rings strip and the
+// "From Apple Watch" inbox. Luke only for now (decision 7). Reads are bounded and at
+// most every 10 minutes (no polling); filed rows get `matched` so they're never read
+// again. Health data never goes into tableplan_states beyond the filed log fields.
+const HEALTH_REFRESH_MS = 10 * 60 * 1000;
+let healthState = { at: 0, rows: [], days: [], loading: null, error: "" };
+
+// scripts/qa-health.mjs (local dev only): fake Health rows stand in for the tables.
+let healthQa = null;   // { rows, days } while a QA run drives the page
+
+function healthEnabledForUser() {
+  if (localDevMode) return Boolean(healthQa);
+  return Boolean(authSession?.user?.id) && userGroup?.role === "admin";
+}
+
+function healthQaRest(path, { method = "GET", body } = {}) {
+  const ids = (path.match(/id=in\.\(([^)]*)\)/) || [])[1]?.split(",") || [];
+  if (path.startsWith("live_health_workouts")) {
+    if (method === "GET") return healthQa.rows.filter((r) => !r.matched).map((r) => ({ ...r }));
+    if (method === "PATCH") { healthQa.rows.forEach((r) => { if (ids.includes(r.id)) r.matched = body.matched; }); return null; }
+    if (method === "DELETE") { healthQa.rows = []; return null; }
+  }
+  if (path.startsWith("live_health_days")) {
+    if (method === "DELETE") { healthQa.days = []; return null; }
+    return healthQa.days.map((d) => ({ ...d }));
+  }
+  return null;
+}
+
+async function healthRest(path, { method = "GET", body, prefer } = {}) {
+  if (localDevMode) { if (!healthQa) throw new Error("health: local"); return healthQaRest(path, { method, body }); }
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${path}`, {
+    method,
+    cache: "no-store",
+    headers: { ...supabaseHeaders(), ...(prefer ? { prefer } : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) { const err = new Error(`health: ${res.status}`); err.status = res.status; throw err; }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function loadHealthData({ force = false } = {}) {
+  if (!healthEnabledForUser()) return null;
+  if (!force && Date.now() - healthState.at < HEALTH_REFRESH_MS) return healthState;
+  if (healthState.loading) return healthState.loading;
+  healthState.loading = (async () => {
+    const since = dateKeyFromDate(addDays(new Date(), -8));
+    const [rows, days] = await Promise.all([
+      healthRest("live_health_workouts?select=id,started_at,ended_at,activity,duration_s,distance_m,energy_kcal,hr_avg,hr_max,source,matched&matched=is.null&order=started_at.asc&limit=1000"),
+      healthRest(`live_health_days?select=day,move_kcal,move_goal,exercise_min,exercise_goal,stand_h,stand_goal&day=gte.${since}&order=day.asc&limit=14`),
+    ]);
+    healthState = { at: Date.now(), rows: Array.isArray(rows) ? rows : [], days: Array.isArray(days) ? days : [], loading: null, error: "" };
+    await fileHealthRows();
+    return healthState;
+  })().catch((error) => {
+    healthState = { ...healthState, at: Date.now(), loading: null, error: String(error?.status || "network") };
+    return null;
+  });
+  return healthState.loading;
+}
+
+// After a sync on the phone, or when Exercise opens with an old copy: reload, then
+// redraw Exercise if it's showing. One redraw per load, so this can't loop.
+function refreshHealthIfStale({ force = false } = {}) {
+  if (!healthEnabledForUser() || healthState.loading) return;
+  // Only while Exercise is open (renderPlayPlanner also runs in the boot render).
+  if (activeAppArea !== "play" && !force) return;
+  if (!force && Date.now() - healthState.at < HEALTH_REFRESH_MS) return;
+  loadHealthData({ force }).then((loaded) => {
+    if (loaded && activeAppArea === "play" && !elements.playMainPage?.hidden) renderPlayPlanner();
+    if (elements.healthInboxDialog?.open) renderHealthInbox();
+  });
+}
+
+// Mark rows filed on the server, in batches (one request per 100 rows).
+async function markHealthRows(ids, matched) {
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    await healthRest(`live_health_workouts?id=in.(${chunk.join(",")})`, { method: "PATCH", body: { matched }, prefer: "return=minimal" });
+  }
+}
+
+// File every unfiled row that has a home; the rest stay for the inbox.
+async function fileHealthRows() {
+  state.workouts = normalizeWorkouts(state.workouts);
+  const filed = [];
+  let changed = false;
+  for (const row of healthState.rows) {
+    const where = fileHealthWorkout(row, { workouts: state.workouts, playPlans: state.playPlans });
+    if (where.action === "already") filed.push(row.id);
+    else if (where.action === "plan" || where.action === "library") {
+      if (applyHealthFiling(row, where)) { filed.push(row.id); changed = true; }
+    }
+  }
+  if (changed) persist();
+  if (!filed.length) return;
+  const done = new Set(filed);
+  healthState.rows = healthState.rows.filter((row) => !done.has(row.id));
+  try { await markHealthRows(filed, { filed: true }); } catch { /* the logs carry healthId, so the next load files them as "already" */ }
+}
+
+// Write one Health workout into its workout's log (and tick its planned task).
+function applyHealthFiling(row, where) {
+  const workout = state.workouts.find((w) => w.id === where.workoutId);
+  if (!workout) return false;
+  workout.logs = normalizeWorkoutLogs(workout.logs);
+  const lastWithDistance = workout.logs.filter((l) => l.distanceWhole).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+  const fields = healthLogFields(row, { kind: workout.type, distanceUnit: lastWithDistance?.distanceUnit || "" });
+  let task = null;
+  if (where.action === "plan") {
+    const tasks = state.playPlans?.[where.weekKey]?.[where.dayId];
+    task = Array.isArray(tasks) ? tasks.find((t) => t.id === where.taskId) : null;
+    if (task) task.done = true;
+  }
+  // A log already there for this task, or the one hand-entered log that day, takes
+  // the Watch's numbers (a lift keeps its sets and weights) instead of a duplicate.
+  const sameDay = workout.logs.filter((l) => !l.healthId && l.date === fields.date);
+  const existing = (task && workout.logs.find((l) => l.taskId === task.id && !l.healthId)) || (sameDay.length === 1 ? sameDay[0] : null);
+  if (existing) Object.assign(existing, fields, task ? { taskId: task.id } : {});
+  else workout.logs.push({ id: createId("workout-log"), ...fields, taskId: task?.id || "", createdAt: String(row.ended_at || new Date().toISOString()) });
+  workout.logs = normalizeWorkoutLogs(workout.logs);
+  return true;
+}
+
+function healthRingSvg(row, size = 26) {
+  const f = ringFractions(row);
+  const rings = [["move", 0], ["exercise", 1], ["stand", 2]];
+  const stroke = size >= 40 ? 5 : 3;
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true">${rings.map(([key, i]) => {
+    const r = size / 2 - stroke / 2 - i * (stroke + 1);
+    const c = 2 * Math.PI * r;
+    const shown = Math.min(1, f[key]);
+    return `<circle class="health-ring-track" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}" />`
+      + (shown > 0 ? `<circle class="health-ring health-ring--${key}" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}" stroke-dasharray="${(c * shown).toFixed(2)} ${c.toFixed(2)}" />` : "");
+  }).join("")}</svg>`;
+}
+
+function healthStripHtml() {
+  if (!healthEnabledForUser()) return "";
+  const week = ringWeek(healthState.days);
+  const inbox = healthInbox(healthState.rows, { workouts: normalizeWorkouts(state.workouts), playPlans: state.playPlans });
+  const inboxCount = inbox.reduce((n, g) => n + g.rows.length, 0);
+  if (!healthState.days.length && !inboxCount) return "";
+  const today = week[week.length - 1];
+  const t = today.row;
+  const label = t ? `${Math.round(Number(t.move_kcal) || 0)}/${Math.round(Number(t.move_goal) || 0)} kcal · ${t.exercise_min ?? 0}/${t.exercise_goal ?? 0} min · ${t.stand_h ?? 0}/${t.stand_goal ?? 0} h` : "No rings yet today";
+  return `
+    <div class="health-strip" aria-label="Activity rings">
+      <button type="button" class="health-strip-today" data-health-today aria-label="Today: ${escapeHtml(label)}. Apple Health settings">
+        ${healthRingSvg(t, 48)}
+      </button>
+      <div class="health-strip-week">${week.map((d, i) => `
+        <div class="health-strip-day${i === week.length - 1 ? " is-today" : ""}" title="${escapeHtml(d.day)}">
+          ${healthRingSvg(d.row, 22)}<span>${escapeHtml(d.weekday)}</span>
+        </div>`).join("")}
+      </div>
+    </div>
+    <p class="health-strip-label" style="padding:0 16px">${escapeHtml(label)}</p>
+    ${inboxCount ? `<button type="button" class="health-inbox-btn" data-health-inbox>⌚ From Apple Watch<span class="health-inbox-count">${inboxCount}</span></button>` : ""}`;
+}
+
+// Settings › Apple Health (Exercise's gear menu). On the iPhone: connect (Health's
+// read permission, then trading the sign-in once for a health-only device key),
+// sync now, and turn off. Anywhere: delete everything Liv copied from Health.
+let healthNative = null;   // the plugin's status(), or null
+let healthBusy = false;
+let healthSyncSub = null;
+async function refreshHealthNative() {
+  const plugin = nativeHealth();
+  if (!plugin) { healthNative = null; return null; }
+  try { healthNative = await plugin.status(); } catch { healthNative = null; }
+  if (!healthSyncSub) {
+    try {
+      healthSyncSub = await plugin.addListener("healthSyncDone", (result) => {
+        healthNative = { ...(healthNative || {}), last: result };
+        refreshHealthIfStale({ force: true });
+        if (contextSettingsKind === "apple-health" && elements.contextSettingsDialog?.open) renderAppleHealthPanel();
+      });
+    } catch { /* status still shows on the next open */ }
+  }
+  return healthNative;
+}
+
+function renderAppleHealthPanel() {
+  const body = elements.contextSettingsBody;
+  if (!healthEnabledForUser()) {
+    body.innerHTML = `<p class="settings-panel-note">Apple Health isn't turned on for this account yet.</p>`;
+    return;
+  }
+  const plugin = nativeHealth();
+  const st = healthNative;
+  const last = st?.last;
+  const lastText = last?.at
+    ? `Last synced ${new Date(last.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}${last.error ? ` · ${last.error}` : ` · ${Number(last.workouts) || 0} workouts, ${Number(last.days) || 0} days`}`
+    : "Not synced yet.";
+  const phone = !plugin
+    ? `<p class="settings-panel-note">${isNativeApp() ? "Update the Liv app (TestFlight) to connect Apple Health." : "Set up on your iPhone: Exercise › gear › Apple Health in the Liv app. Workouts it copies show here too."}</p>`
+    : st?.available === false
+      ? `<p class="settings-panel-note">Apple Health isn't available on this device.</p>`
+      : st?.registered
+        ? `
+          <p class="settings-panel-note">Connected on this iPhone. New Watch workouts arrive by themselves, even with Liv closed. Liv only reads from Health; it never writes to it.</p>
+          <p class="muted-label" data-health-last>${escapeHtml(st?.running ? "Syncing…" : lastText)}</p>
+          <div class="settings-action-grid">
+            <button type="button" data-health-action="sync" ${healthBusy || st?.running ? "disabled" : ""}>Sync Now</button>
+            <button type="button" data-health-action="forget" ${healthBusy ? "disabled" : ""}>Turn Off on This iPhone</button>
+          </div>`
+        : `
+          <p class="settings-panel-note">Liv reads your workouts and activity rings from Apple Health and fills in your Exercise log. The first sync brings in all your past workouts. Liv never writes to Health.</p>
+          <div class="settings-action-grid">
+            <button type="button" data-health-action="connect" ${healthBusy ? "disabled" : ""}>${healthBusy ? "Connecting…" : "Connect Apple Health"}</button>
+          </div>`;
+  body.innerHTML = `
+    ${phone}
+    <div class="settings-admin-section">
+      <span class="theme-setting-title">Your Health data in Liv</span>
+      <p class="settings-panel-note">Only workout summaries and daily rings, in your Personal view only. The assistant sees them only if you turn on "Assistant can read Exercise health data" (Settings › Beta › Assistant).</p>
+      <div class="settings-action-grid">
+        <button type="button" data-health-action="delete" ${healthBusy ? "disabled" : ""}>Delete All Health Data from Liv</button>
+      </div>
+    </div>`;
+  body.querySelectorAll("[data-health-action]").forEach((btn) => btn.addEventListener("click", () => runAppleHealthAction(btn.dataset.healthAction)));
+  if (plugin && !st && !healthBusy) refreshHealthNative().then(() => { if (contextSettingsKind === "apple-health" && healthNative) renderAppleHealthPanel(); });
+}
+
+async function runAppleHealthAction(action) {
+  const plugin = nativeHealth();
+  const redraw = () => { if (contextSettingsKind === "apple-health" && elements.contextSettingsDialog?.open) renderAppleHealthPanel(); };
+  if (healthBusy) return;
+  healthBusy = true;
+  redraw();
+  try {
+    if (action === "connect" && plugin) {
+      await plugin.authorize();
+      healthNative = await plugin.setup({
+        endpoint: `${supabaseBaseUrl()}/functions/v1/health-sync`,
+        apiKey: supabaseConfig().anonKey,
+        token: authSession?.access_token || "",
+        name: "iPhone",
+      });
+      showMailToast("Apple Health connected. Bringing in your workouts…");
+    } else if (action === "sync" && plugin) {
+      await plugin.sync();
+      healthNative = { ...(healthNative || {}), running: true };
+    } else if (action === "forget" && plugin) {
+      await plugin.forget();
+      await revokeHealthDevices();
+      healthNative = await plugin.status();
+    } else if (action === "delete") {
+      if (!window.confirm("Delete every workout summary and ring Liv copied from Apple Health? Workout logs it already filled in stay. Apple Health itself isn't touched.")) return;
+      if (plugin) { try { await plugin.forget(); } catch { /* not connected here */ } }
+      await revokeHealthDevices();
+      await healthRest("live_health_workouts?user_id=not.is.null", { method: "DELETE", prefer: "return=minimal" });
+      await healthRest("live_health_days?user_id=not.is.null", { method: "DELETE", prefer: "return=minimal" });
+      healthState = { at: 0, rows: [], days: [], loading: null, error: "" };
+      if (plugin) healthNative = await plugin.status();
+      showMailToast("Deleted.");
+    }
+  } catch (error) {
+    const code = String(error?.code || "");
+    showMailToast(code === "DENIED" ? "Health access is off. Turn it on in iPhone Settings › Health › Data Access › Liv."
+      : code === "SIGNED_OUT" ? "Sign in again, then connect."
+      : "Couldn't do that right now.");
+  } finally {
+    healthBusy = false;
+    redraw();
+  }
+}
+
+async function revokeHealthDevices() {
+  await healthRest("health_sync_devices?revoked_at=is.null", { method: "PATCH", body: { revoked_at: new Date().toISOString() }, prefer: "return=minimal" });
+}
+
+function openHealthInbox() {
+  if (!healthInbox(healthState.rows, { workouts: normalizeWorkouts(state.workouts), playPlans: state.playPlans }).length) {
+    showMailToast("You're all caught up.");
+    return;
+  }
+  renderHealthInbox();
+  if (!elements.healthInboxDialog.open) elements.healthInboxDialog.showModal();
+}
+
+// One group per activity: pick a workout (or make one) and every workout of that kind
+// is filed, now and from now on; or dismiss them. The window closes when it's empty.
+function renderHealthInbox() {
+  const workouts = normalizeWorkouts(state.workouts);
+  const groups = healthInbox(healthState.rows, { workouts, playPlans: state.playPlans });
+  if (!groups.length) {
+    if (elements.healthInboxDialog.open) elements.healthInboxDialog.close();
+    renderPlayPlanner();
+    return;
+  }
+  const kindName = { reps: "Strength", timed: "Cardio", game: "Games" };
+  elements.healthInboxList.innerHTML = groups.map((g) => {
+    const latest = new Date(g.rows[0].started_at);
+    const kind = HEALTH_ACTIVITIES[g.activity]?.kind || "timed";
+    const options = workouts
+      .slice().sort((a, b) => (a.type === kind ? 0 : 1) - (b.type === kind ? 0 : 1) || a.title.localeCompare(b.title))
+      .map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.title)} (${escapeHtml(kindName[w.type] || "Cardio")})</option>`).join("");
+    return `
+      <div class="health-inbox-group" data-health-group="${escapeHtml(g.activity)}">
+        <div class="health-inbox-group-head">
+          <strong>${escapeHtml(g.label)}</strong>
+          <span>${g.rows.length} workout${g.rows.length === 1 ? "" : "s"} · latest ${escapeHtml(latest.toLocaleDateString("en-US", { month: "short", day: "numeric", year: latest.getFullYear() === new Date().getFullYear() ? undefined : "numeric" }))}</span>
+        </div>
+        <select aria-label="File ${escapeHtml(g.label)} workouts under">
+          <option value="">Choose a workout…</option>
+          ${options}
+          <option value="__new">New workout: ${escapeHtml(g.label)}</option>
+        </select>
+        <div class="health-inbox-actions">
+          <button type="button" class="primary-btn compact-btn" data-health-file>File ${g.rows.length === 1 ? "it" : `all ${g.rows.length}`}</button>
+          <button type="button" class="secondary-btn compact-btn" data-health-dismiss>Dismiss</button>
+        </div>
+      </div>`;
+  }).join("");
+  elements.healthInboxList.querySelectorAll("[data-health-group]").forEach((el) => {
+    const activity = el.dataset.healthGroup;
+    el.querySelector("[data-health-file]").addEventListener("click", () => fileHealthActivity(activity, el.querySelector("select").value));
+    el.querySelector("[data-health-dismiss]").addEventListener("click", () => dismissHealthActivity(activity));
+  });
+}
+
+async function fileHealthActivity(activity, choice) {
+  if (!choice) { showMailToast("Pick a workout first."); return; }
+  state.workouts = normalizeWorkouts(state.workouts);
+  let workout = choice === "__new" ? null : state.workouts.find((w) => w.id === choice);
+  if (!workout) {
+    const kind = HEALTH_ACTIVITIES[activity]?.kind || "timed";
+    const details = normalizeExerciseDetails({ type: kind }, "", kind);
+    workout = { id: createId("workout"), title: activityLabel(activity), type: details.type, exerciseDetails: details, notes: exerciseDetailsToNotes(details), logs: [], createdAt: new Date().toISOString() };
+    state.workouts.push(workout);
+  }
+  // Teach it: this workout takes every workout of this activity, now and later (one
+  // workout per activity, so any other workout taught it lets go).
+  state.workouts.forEach((w) => { if (w !== workout && w.healthActivity === activity) delete w.healthActivity; });
+  workout.healthActivity = activity;
+  state.workouts = normalizeWorkouts(state.workouts);
+  await fileHealthRows();
+  persist();
+  renderHealthInbox();
+  renderPlayPlanner();
+}
+
+async function dismissHealthActivity(activity) {
+  const ids = healthState.rows.filter((r) => r.activity === activity).map((r) => r.id);
+  if (!ids.length) return;
+  try {
+    await markHealthRows(ids, { dismissed: true });
+  } catch {
+    showMailToast("Couldn't dismiss those right now.");
+    return;
+  }
+  const gone = new Set(ids);
+  healthState.rows = healthState.rows.filter((r) => !gone.has(r.id));
+  renderHealthInbox();
 }
 
 // Wire workout cards (workoutPoolCardTemplate) inside `root`: tap → record;
@@ -19153,6 +19553,7 @@ function updateSettingsMenuOptions() {
   elements.menuRecurringTasksBtn.hidden = !(isPlan && isPagePersonallyEnabled("do"));
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
+  if (elements.menuAppleHealthBtn) elements.menuAppleHealthBtn.hidden = !(isPlay && healthEnabledForUser());
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
   elements.menuReadSyncBtn.hidden = activeAppArea !== "news"; // newspaper sign-ins: News, not Media
   elements.menuScoresBtn.hidden = activeAppArea !== "news";
@@ -19187,7 +19588,7 @@ function openSettingsMenuDialog(openDialog) {
 function openContextSettingsDialog(kind) {
   paperSignInCheckStarted = false;
   paperSignInCheckDone = false;
-  const normalizedKind = ["general", "watch", "watch-services", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "link-test", "photos-check", "mail-ai", "voice", "api-usage", "ai-log"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "watch", "watch-services", "family", "recreate", "pages", "admin-pages", "read-sync", "assistant", "podcasts", "radio", "display", "beta", "link-test", "photos-check", "mail-ai", "voice", "api-usage", "ai-log", "apple-health"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -20098,10 +20499,11 @@ function renderContextSettingsDialog(kind) {
     "beta": "Beta",
     "link-test": "Link Test",
     "photos-check": "Photos Check",
+    "apple-health": "Apple Health",
     "assistant-keys": "Connected Assistants",
     "ai-log": "AI Action Log"
   };
-  const isSubPanel = !["general", "watch", "watch-services", "radio", "recreate", "read-sync", "mail-ai"].includes(kind);
+  const isSubPanel = !["general", "watch", "watch-services", "radio", "recreate", "read-sync", "mail-ai", "apple-health"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
   elements.contextSettingsBackBtn.dataset.parent = SETTINGS_PANEL_PARENT[kind] || "general";
   elements.contextSettingsTitle.textContent = titles[kind] || "Settings";
@@ -20167,6 +20569,11 @@ function renderContextSettingsDialog(kind) {
 
   // Photos Check (admin, PHOTOS_DESIGN.md build step 1): count the iPhone's photo
   // library to settle the Photos page's storage plan. Nothing leaves the phone.
+  if (kind === "apple-health") {
+    renderAppleHealthPanel();
+    return;
+  }
+
   if (kind === "photos-check") {
     renderPhotosCheckPanel();
     return;
@@ -20541,6 +20948,7 @@ function renderContextSettingsDialog(kind) {
   if (kind === "assistant") {
     const briefingOn = state.aiSettings?.dailyBriefingEnabled !== false;
     const financeAccessOn = state.aiSettings?.assistantFinanceRead === true;
+    const healthAccessOn = state.aiSettings?.assistantHealthRead === true;
     const suggestionsOn = state.aiSettings?.assistantSuggestionsEnabled !== false;
     const mailAccessOn = state.mailAiSettings?.assistantMailRead === true;
     const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
@@ -20592,6 +21000,13 @@ function renderContextSettingsDialog(kind) {
           </div>
           <input type="checkbox" class="live-toggle" id="assistantFinanceToggle" aria-label="Assistant can read Finance" ${financeAccessOn ? "checked" : ""} />
         </div>
+        <div class="ai-settings-row" style="border-top:1px solid var(--border-subtle,#e5e7eb);margin-top:12px;padding-top:12px">
+          <div>
+            <strong>Assistant can read Exercise health data</strong>
+            <p class="muted-label" style="margin:2px 0 0;font-size:0.8rem">Lets the assistant see workouts that came from Apple Health, with heart rate and calories. While it's off, it sees only workouts you logged by hand. Off by default.</p>
+          </div>
+          <input type="checkbox" class="live-toggle" id="assistantHealthToggle" aria-label="Assistant can read Exercise health data" ${healthAccessOn ? "checked" : ""} />
+        </div>
         <p class="muted-label" style="margin:10px 0 0;font-size:0.78rem">Email access: ${mailAccessOn ? "on" : "off"} — change it in Mail → gear → Automation.</p>
       </div>
     `;
@@ -20617,6 +21032,12 @@ function renderContextSettingsDialog(kind) {
     document.getElementById("assistantFinanceToggle")?.addEventListener("change", (e) => {
       if (!state.aiSettings) state.aiSettings = {};
       state.aiSettings.assistantFinanceRead = e.target.checked;
+      persist();
+    });
+    // Off by default (HEALTH_DESIGN.md decision 6): only an explicit true is on.
+    document.getElementById("assistantHealthToggle")?.addEventListener("change", (e) => {
+      if (!state.aiSettings) state.aiSettings = {};
+      state.aiSettings.assistantHealthRead = e.target.checked;
       persist();
     });
     return;
@@ -21587,12 +22008,23 @@ async function exportMyData() {
       notes.push("Not signed in to the cloud — permanent history and stored transactions are not included.");
     }
 
+    let health = {};
+    if (uid && healthEnabledForUser()) {
+      try {
+        const [workouts, days] = await Promise.all([
+          healthRest("live_health_workouts?select=id,started_at,ended_at,activity,indoor,duration_s,distance_m,energy_kcal,hr_avg,hr_max,source&order=started_at.desc&limit=20000"),
+          healthRest("live_health_days?select=day,move_kcal,move_goal,exercise_min,exercise_goal,stand_h,stand_goal&order=day.desc&limit=20000"),
+        ]);
+        health = { workouts: workouts || [], days: days || [] };
+      } catch (e) { notes.push(`Apple Health copies could not be read (${e?.message || "error"}).`); }
+    }
+
     const [{ buildExportFiles, buildExportZip }, fflate] = await Promise.all([import("./data-export.js"), import("fflate")]);
     const scopes = Object.fromEntries(Object.keys(STATE_SECTIONS).map((section) => [section, sectionScope(section)]));
     const exportedAt = new Date().toISOString();
     const { files, manifest } = buildExportFiles({
       state, shadowByScope: shadowSections, scopes, stateSections: STATE_SECTIONS, prepDays,
-      finance, history, contactsVcf: (state.contacts || []).length ? buildContactsVcf(state.contacts) : "",
+      finance, history, health, contactsVcf: (state.contacts || []).length ? buildContactsVcf(state.contacts) : "",
       exportedAt, schemaVersion: STATE_SCHEMA_VERSION, notes,
     });
     const zip = buildExportZip(files, fflate, `live-export-${exportedAt.slice(0, 10)}`);
@@ -29381,7 +29813,9 @@ function buildPlanAppDataIndex() {
   });
   (state.workouts || []).forEach((w) => {
     (w.logs || []).forEach((log) => {
-      if (log.date) push(log.date, { id: `play-${log.id}`, title: w.title || "Workout", date: log.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.play, source: "play", calendarName: "Exercise" });
+      // A log from Apple Health has its real start and end (HEALTH_DESIGN.md §6).
+      const timed = /^\d{2}:\d{2}$/.test(log.startTime || "") && /^\d{2}:\d{2}$/.test(log.endTime || "");
+      if (log.date) push(log.date, { id: `play-${log.id}`, title: w.title || "Workout", date: log.date, allDay: !timed, startTime: timed ? log.startTime : null, endTime: timed ? log.endTime : null, color: PLAN_APP_COLORS.play, source: "play", calendarName: "Exercise" });
     });
   });
   const doTasks = [...(state.doPlans ? Object.values(state.doPlans).flatMap((d) => Object.values(d || {}).flat()) : []), ...(state.doTasks || [])];
@@ -44667,6 +45101,7 @@ function assistantAccessFlags() {
   return {
     mail: state.mailAiSettings?.assistantMailRead === true,
     finance: state.aiSettings?.assistantFinanceRead === true,
+    health: state.aiSettings?.assistantHealthRead === true,
   };
 }
 
@@ -50843,14 +51278,17 @@ function buildChatMediaContext() {
 
 function buildChatSweatContext() {
   const workouts = normalizeWorkouts(state.workouts);
+  // Logs filled from Apple Health reach the assistant only when Luke has switched
+  // that on (HEALTH_DESIGN.md decision 6); off, it sees hand-entered logs only.
+  const healthOn = assistantAccessFlags().health;
   const logs = workouts.flatMap((w) =>
-    (w.logs || []).map((l) => ({ title: w.title, type: w.type, date: l.date || l.createdAt || "", log: l }))
+    (w.logs || []).filter((l) => healthOn || !l.healthId).map((l) => ({ title: w.title, type: w.type, date: l.date || l.createdAt || "", log: l }))
   ).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
 
   const lines = [`WORKOUT LIBRARY (${workouts.length} workouts — use exact names with log_workout tool):`];
   workouts.forEach((w) => {
     const type = w.type === "reps" ? "strength" : w.type === "game" ? "game" : "timed";
-    const count = w.logs?.length || 0;
+    const count = (w.logs || []).filter((l) => healthOn || !l.healthId).length;
     lines.push(`  - ${w.title} [${type}]${count ? ` · ${count} session${count !== 1 ? "s" : ""}` : ""}`);
   });
 
@@ -50865,6 +51303,10 @@ function buildChatSweatContext() {
         parts.push(h ? `${h}h ${m}m` : `${m} min`);
       }
       if (log.distanceWhole) parts.push(`${log.distanceWhole}${log.distanceDecimal ? `.${log.distanceDecimal}` : ""} ${log.distanceUnit || "km"}`);
+      if (log.healthId) {
+        const watch = healthLogSummary(log);
+        parts.push(`Apple Watch${watch ? ` (${watch})` : ""}`);
+      }
       lines.push(`  - ${parts.join(" · ")}`);
     });
   }
