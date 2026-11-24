@@ -36,10 +36,13 @@ Decisions (Luke, 2026-10-14):
     outlines are black (light) / gray (dark). Dock: black with a logo-green edge.
   - No alternate iPhone icon or favicon for either yet.
 - **Thanksgiving** (Luke, 2026-11-03), in the Holiday row, from the "Feast" palette: brown
-  `#4e2d0a`, pumpkin `#dd5705`, gold `#ecb206`, olive `#5b540e`, cranberry `#ac2411`. Light:
-  brown buttons, olive window outlines, pumpkin secondary, harvest-cream backdrop. Dark: gold
-  accent, pumpkin outlines, olive secondary. Warnings use a deeper cranberry (`#b01c2e`) because
-  `#ac2411` sits within 25° of the brown accent's hue. Dock: brown with a pumpkin edge. No app icon.
+  `#4e2d0a`, pumpkin `#dd5705`, gold `#ecb206`, olive `#5b540e`, cranberry `#ac2411`.
+  **Recolored 2026-11-24** (Luke: light was too heavy on browns, with no reds, oranges, yellows
+  or greens). Light: burnt-pumpkin buttons, tabs and links (`#b4470a`, the readable shade of
+  pumpkin), harvest-green window and button outlines (`#3f6b21`), gold highlights, cranberry
+  warnings (`#b01c2e`), harvest-cream backdrop; brown stays for text. Dock: pumpkin → cranberry
+  with a gold edge. Dark: gold accent, pumpkin outlines, sage-green secondary (`#a8bf5a`), dock
+  cranberry → near-black with a gold edge. No app icon.
 - **Display rows** (Luke, 2026-10-25). Settings › Display lists themes like the Leisure
   page: a heading over a sideways-scrolling row of cards for each group in `THEME_GROUPS`
   (`theme.js`) — **General** (Classic, Household), **Holiday** (Halloween, Thanksgiving,

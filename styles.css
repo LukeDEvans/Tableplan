@@ -155,8 +155,10 @@ body[data-palette="halloween"][data-theme="dark"] .bottom-dock {
 }
 
 /* Thanksgiving (Luke, 2026-11-03): the "Feast" palette — brown #4e2d0a, pumpkin #dd5705,
-   gold #ecb206, olive #5b540e, cranberry #ac2411 (warnings use a deeper #b01c2e, so they stand apart from the brown). Light leads with brown (buttons), olive
-   outlines, cranberry as danger; dark leads with gold, pumpkin outlines. */
+   gold #ecb206, olive #5b540e, cranberry #ac2411 (warnings use a deeper #b01c2e, so they stand apart from the pumpkin).
+   2026-11-24: light was almost all brown, so light now leads with a burnt pumpkin #b4470a
+   (buttons, tabs), harvest-green #3f6b21 outlines, a pumpkin→cranberry dock with a gold
+   edge; brown stays for text. Dark leads with gold, pumpkin outlines, sage-green extras. */
 /* theme:thanksgiving:light */
 body[data-palette="thanksgiving"] {
   --bg: #faf3e6;
@@ -165,9 +167,9 @@ body[data-palette="thanksgiving"] {
   --ink: #2a1a08;
   --muted: #5f4f3c;
   --line: #e4d3b8;
-  --accent: #4e2d0a;
-  --accent-dark: #3a2107;
-  --accent-soft: #f6e6cf;
+  --accent: #b4470a;
+  --accent-dark: #8a3507;
+  --accent-soft: #fde6cf;
   --on-accent: #ffffff;
   --tomato: #b01c2e;
   --tomato-soft: #f9dde1;
@@ -177,7 +179,7 @@ body[data-palette="thanksgiving"] {
   --sun-pale: #fcf5e6;
   --blue: #a84304;
   --window-bg: #ffffff;
-  --window-border: #5b540e;
+  --window-border: #3f6b21;
   --purple: #a84304;
   --paper: #ffffff;
   --card: #fffcf5;
@@ -205,20 +207,21 @@ body[data-palette="thanksgiving"][data-theme="dark"] {
   --blue: #ecb206;
   --window-bg: #241a0e;
   --window-border: #f08a3c;
-  --purple: #c2ba64;
+  --purple: #a8bf5a;
   --paper: #241a0e;
   --card: #2e2214;
   --text-muted: #c8b9a2;
 }
 body[data-palette="thanksgiving"] .bottom-dock {
-  --dock-bg1: #6b3f10;
-  --dock-bg2: #4e2d0a;
+  --dock-bg1: #b4470a;
+  --dock-bg2: #7d1d10;
   --dock-ink: #ffffff;
-  border-top-color: #dd5705;
+  border-top-color: #ecb206;
 }
 body[data-palette="thanksgiving"][data-theme="dark"] .bottom-dock {
-  --dock-bg1: #4e2d0a;
+  --dock-bg1: #7d1d10;
   --dock-bg2: #140d06;
+  border-top-color: #ecb206;
 }
 
 /* theme:household:light */
@@ -15974,13 +15977,13 @@ body[data-palette="halloween"][data-theme="dark"] .mail-thread-panel {
   --line: #e2cdb3;
 }
 body[data-palette="thanksgiving"][data-theme="dark"] .mail-thread-panel {
-  --accent: #4e2d0a;
-  --accent-dark: #3a2107;
-  --accent-soft: #f6e6cf;
+  --accent: #b4470a;
+  --accent-dark: #8a3507;
+  --accent-soft: #fde6cf;
   --on-accent: #ffffff;
   --tomato: #b01c2e;
   --tomato-soft: #f9dde1;
-  --window-border: #5b540e;
+  --window-border: #3f6b21;
   --line: #e4d3b8;
 }
 body[data-palette="household"][data-theme="dark"] .mail-thread-panel {

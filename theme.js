@@ -51,7 +51,7 @@ export const THEMES = Object.freeze({
     label: "Thanksgiving",
     icon: "",
     themeColor: Object.freeze({ light: "#4e2d0a", dark: "#1a1208" }),
-    swatch: Object.freeze(["#4e2d0a", "#dd5705", "#ecb206", "#5b540e", "#ac2411"]),
+    swatch: Object.freeze(["#b4470a", "#ecb206", "#3f6b21", "#ac2411", "#4e2d0a"]),
   }),
   // Sports (Luke, 2026-10-25): his favorite teams, in their official colors.
   vikings: Object.freeze({
