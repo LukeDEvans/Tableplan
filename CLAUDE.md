@@ -47,9 +47,10 @@ bottom of this file.
   `get_project` API can report **`ACTIVE_HEALTHY`** even while the dashboard shows
   billing / quota / egress problems. Cross-check the dashboard (usage, billing,
   logs) — a green API status is **not** proof the project is healthy.
-- **Applying DB changes** (updated 2026-10-20): with Luke's OK for the specific
-  migration, apply it through the Supabase MCP **`execute_sql`** (Luke chose this,
-  2026-10-20). `apply_migration`, and any `execute_sql` containing **`DROP`**, need an
+- **Applying DB changes** (updated 2026-11-23): **no OK needed** — Luke, 2026-11-23:
+  database changes don't need his approval; only Netlify deploys do. Apply a migration
+  through the Supabase MCP **`execute_sql`** (Luke chose this, 2026-10-20) and say in
+  the report what was applied. `apply_migration`, and any `execute_sql` containing **`DROP`**, need an
   approval prompt that doesn't reach a phone session, so they come back `cancelled`:
   run the additive statements without the `DROP`s (`create … if not exists`, a fresh
   `create policy` on a new table), run any `revoke` separately, and if a `DROP` is
@@ -71,7 +72,7 @@ bottom of this file.
 The recommended flow for substantial work — and the conventions behind it — live in [DEVELOPMENT.md](DEVELOPMENT.md): `INTENT → SPEC → PLAN → IMPLEMENT → ADVERSARIAL REVIEW → FIX → VERIFY → SHIP`, plus the `/recap` loop for resuming long-running work. Core principles that govern every session:
 
 - **Evidence beats assertion.** Distinguish observed fact, verified behavior, inferred behavior, assumption, and proposed change — and label which is which. **"Tests pass" is never proof the whole feature works**; say what you actually verified and how.
-- **Decision boundaries.** Make ordinary implementation calls autonomously, but **stop and ask** when a choice materially affects architecture, data integrity, security, auth, secrets, production infra, DB migrations, deployment, destructive/irreversible operations, or major product behavior.
+- **Decision boundaries.** Make ordinary implementation calls autonomously, but **stop and ask** when a choice materially affects architecture, data integrity, security, auth, secrets, production infra, Netlify deployment, destructive/irreversible operations, or major product behavior.
 - **Audit ≠ implementation.** When asked for an audit or review, inspect → analyze → report → recommend. **Do not silently start fixing** unless implementation was explicitly authorized.
 - **Verification is mandatory.** "Implementation complete" (code written) and "task verified" (evidence it behaves correctly) are different states — a finished task carries verification evidence.
 - **Don't restart from zero.** When continuing work, run `/recap` first: inspect git state, artifacts, tests, and memory to establish what's actually done before assuming it isn't.
@@ -102,7 +103,7 @@ Two things still interrupt the run, regardless of pace:
 For a second, skeptical pass on finished work without stopping the line, use the
 **reviewer** subagent (`.claude/agents/reviewer.md`): it self-critiques and logs to
 `ISSUES.md` instead of blocking. `git push` to non-`main` branches is auto-approved;
-`main`/deploys/migrations stay gated (see Git / GitHub below).
+Netlify deploys stay gated (see Git / GitHub below); DB migrations don't (Luke, 2026-11-23).
 
 **`ISSUES.md` isn't only for the reviewer subagent's formal pass.** Log to it in the
 moment, on *any* task, whenever you notice something real but not worth interrupting
@@ -160,7 +161,7 @@ After changing the frame run **`npm run check:mail-frame`** (`scripts/check-mail
 
 **Push to GitHub freely after any completed, verified commit — no need to ask first.** Netlify deploys still require explicit confirmation before proceeding. **Ask Luke before every single deploy** (Luke, 2026-10-20): an OK covers that one deploy only — never a later one, even in the same session or for a fix to what was just deployed. Deploys cost credits; a TestFlight build doesn't, so offer that for the iPhone in between. **Merging to `main` no longer deploys by itself (2026-09-27):** a production build runs only when the commit on `main` has **`[deploy]`** in its message (`netlify.toml` `ignore` → `scripts/netlify-ignore.sh`; deploy previews always build). So a merge is safe once Luke has OK'd it; a `[deploy]` commit is the boundary that matters. Netlify Free plan: ~20 production deploys/month (300 credits ÷ 15 credits/deploy).
 
-**Auto-merge PRs to `main` (Luke, 2026-10-01, "for now"):** don't wait for Luke's approval to merge. Once a PR's CI is green on its current head, it has no merge conflict, and the work is verified (tests and boot check where relevant), merge it yourself and add its UNDEPLOYED.md entry. This changes only the merge step. **Still gated:** `[deploy]` commits and Netlify deploys, DB migrations, and anything on the Decision-boundaries list (data-authority flips, `STATE_SCHEMA_VERSION` bumps, auth, secrets). Raise those with Luke before implementing, as before. A PR that carries one of them still waits for his OK to merge.
+**Auto-merge PRs to `main` (Luke, 2026-10-01, "for now"):** don't wait for Luke's approval to merge. Once a PR's CI is green on its current head, it has no merge conflict, and the work is verified (tests and boot check where relevant), merge it yourself and add its UNDEPLOYED.md entry. This changes only the merge step. **DB migrations no longer need his OK (Luke, 2026-11-23); apply them and report what was applied.** Merging a PR and starting a TestFlight build are pre-approved in `.claude/settings.json` (Luke, 2026-11-23): after merging work that reaches the iPhone, start the TestFlight build. **Still gated:** `[deploy]` commits and Netlify deploys, and anything on the Decision-boundaries list (data-authority flips, `STATE_SCHEMA_VERSION` bumps, auth, secrets). Raise those with Luke before implementing, as before. A PR that carries one of them still waits for his OK to merge.
 
 **Every merge to `main` that isn't deployed adds an entry to [UNDEPLOYED.md](UNDEPLOYED.md)** (what shipped, the PR, post-deploy steps), so undeployed work isn't forgotten. After a deploy, those post-deploy steps move to [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md) (checks for work that is live) and UNDEPLOYED.md is emptied — it only ever lists work that hasn't shipped. **Sort them by who does them** (Luke, 2026-11-17): Claude does every server/log check itself and the web checks in Luke's Chrome (Claude in Chrome); only what truly needs the iPhone goes on Luke's list, kept short and batched per TestFlight build. Claude does its share without being asked.
 
