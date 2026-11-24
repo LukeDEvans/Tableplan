@@ -476,6 +476,7 @@ function detectPublication(url) {
     if (h.includes("nytimes.com")) return "nyt";
     if (h.includes("economist.com")) return "economist";
     if (h.includes("startribune.com")) return "startribune";
+    if (h === "npr.org" || h.endsWith(".npr.org")) return "npr";
     if (h.includes("wikipedia.org")) return "wikipedia";
   } catch { /* ignore */ }
   return "other";

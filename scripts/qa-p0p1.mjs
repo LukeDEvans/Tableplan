@@ -44,7 +44,8 @@ const seed = {
   financeManualTxns: [{ id: "txn-autotest", description: "AUTOTEST-TXN", amount: -50, posted: "2026-09-05", account: "acct-autotest" }],
   financeTxnLabels: { "txn-autotest": "cat-autotest" }, // annotation (vector 3)
   financeMerchantNames: { "txn-autotest": "AUTOTEST-MERCHANT" },
-  financeRecurring: [{ id: "rec-autotest", name: "AUTOTEST-BILL", amount: 42, dayOfMonth: 15, lastAmount: 42 }],
+  // merchantKey is required: dedupeFinanceRecurring drops key-less entries (ISSUES 2026-10-26).
+  financeRecurring: [{ id: "rec-autotest", merchantKey: "autotest-bill", name: "AUTOTEST-BILL", expectedDay: 15, lastAmount: 42 }],
 };
 writeFileSync(FILE, JSON.stringify(seed, null, 2) + "\n");
 
@@ -136,6 +137,9 @@ try {
 
   // ---------- P1 · mp-boot + mp-planner (meal-plan renders) ----------
   const errsBeforeMp = pageErrs.length;
+  // Meal Plan is Household's only (VIEWS_DESIGN.md, 2026-10-20); a fresh local run opens in Personal.
+  await page.evaluate(() => window.__liveQA?.setViewForQa?.("household"));
+  await page.waitForTimeout(500);
   await navTo("eatMainPage", "homeEatBtn", "titleMealPlanBtn");
   await page.waitForTimeout(300);
   const mpRendered = await page.evaluate(() => {

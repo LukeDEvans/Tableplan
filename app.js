@@ -5696,6 +5696,13 @@ async function persistImmediately(label = "saving") {
   if (failed) console.warn(`Immediate ${label} save did not complete.`, failed.reason);
 }
 
+// Free papers saved articles can come from that aren't sign-in papers, so they're not
+// in readPublications (ISSUES 2026-11-14: NPR was filed as "other").
+const FREE_PUBLICATION_LABELS = { npr: "NPR", wikipedia: "Wikipedia" };
+function publicationLabelFor(key) {
+  return getReadPublications().find((p) => p.key === key)?.label || FREE_PUBLICATION_LABELS[key] || "";
+}
+
 function defaultReadPublications() {
   return [
     { key: "nyt", label: "New York Times", domain: "nytimes.com" },
@@ -34454,7 +34461,7 @@ function articleHasListenableBody(a) {
 }
 // A saved article as a queue row.
 function articleQueueItem(a) {
-  const pubInfo = getReadPublications().find(p => p.key === a.publication);
+  const pubInfo = { label: publicationLabelFor(a.publication) };
   return {
     ...a,
     type: "article",
@@ -34946,7 +34953,7 @@ function renderMediaArchive() {
   const readArticles = (state.savedArticles || [])
     .filter((a) => readIds.has(a.id))
     .map((a) => {
-      const pubInfo = getReadPublications().find((p) => p.key === a.publication);
+      const pubInfo = { label: publicationLabelFor(a.publication) };
       return { id: a.id, type: "article", title: a.title, showTitle: pubInfo?.label || a.author || a.publication || "Article", showArt: articleArtUrl(a), when: readDates[a.id] || a.savedAt || "" };
     })
     .sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0)).slice(0, 50);
@@ -40402,7 +40409,7 @@ function formatPodcastDuration(seconds) {
 const ARTICLE_CHECK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
 
 function articleRowHtml(a, { pub }) {
-  const pubEntry = getReadPublications().find(p => p.key === a.publication);
+  const pubEntry = { label: publicationLabelFor(a.publication) };
   const showPub = pub === "all" || articleSearchActive;
   const pubLabel = showPub ? (pubEntry?.label || (a.publication === "other" ? "Other" : a.publication)) : "";
   const artUrl = articleArtUrl(a) || "";

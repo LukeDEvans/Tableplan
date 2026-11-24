@@ -524,6 +524,7 @@ const HANDLERS = {
 // set well past a normal gap to keep false alarms rare.
 export const HEALTH_LIMITS = Object.freeze({
   financeNightlyHours: 26,   // runs once a day
+  podcastUpcomingHours: 26,  // runs once a day (09:23 UTC)
   newsFeedsHours: 2,         // runs hourly
   newsLatestHours: 24,
   mailSweepHours: 2,
@@ -556,6 +557,15 @@ export function formatHealth(h, now = new Date()) {
     if (fin.ok === false) problems.push(`Finance nightly job's last run failed${fin.error ? ` (${fin.error})` : ""}.`);
     if (hoursSince(fin.finishedAt || fin.startedAt, t) > L.financeNightlyHours) problems.push(`Finance nightly job last ran ${ago(fin.finishedAt || fin.startedAt, t)}.`);
     lines.push(`Finance nightly: ${fin.ok ? "ok" : "not ok"}, ran ${ago(fin.finishedAt || fin.startedAt, t)}; last good ${ago(fin.lastGood, t)}.`);
+  }
+
+  // Upcoming podcast episodes + the series hold (PODCAST_UPCOMING_DESIGN.md). A stuck
+  // job otherwise only shows as the hold quietly switching off.
+  const pu = h?.podcastUpcoming;
+  if (pu) {
+    if (pu.ok === false) problems.push(`Upcoming-episodes job's last run failed (${pu.failed ?? "?"} of ${pu.feeds ?? "?"} shows).`);
+    if (hoursSince(pu.finishedAt || pu.startedAt, t) > L.podcastUpcomingHours) problems.push(`Upcoming-episodes job last ran ${ago(pu.finishedAt || pu.startedAt, t)}.`);
+    lines.push(`Upcoming episodes: ${pu.ok ? "ok" : "not ok"}, ran ${ago(pu.finishedAt || pu.startedAt, t)}; ${pu.listed ?? 0}/${pu.feeds ?? 0} shows found in Apple's catalog, ${pu.upcoming ?? 0} upcoming episode${pu.upcoming === 1 ? "" : "s"}.`);
   }
 
   const nf = h?.newsFeeds;
