@@ -24,7 +24,9 @@
       "Bash(cat:*)",
       "Bash(grep:*)",
       "Bash(wc:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(gh api -X PUT repos/LukeDEvans/tableplan/pulls/:*)",
+      "Bash(gh api -X POST repos/LukeDEvans/tableplan/actions/workflows/ios-testflight.yml/dispatches:*)"
     ],
     "ask": [
       "Bash(netlify deploy:*)",
