@@ -289,9 +289,10 @@ function decodeB64(encoded) {
 
 function htmlToText(html) {
   if (!html) return "";
-  if (!/<[a-z][\s\S]*>/i.test(html)) return html;
-  return html
-    .replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, " ")
+  if (!/<[a-z][\s\S]*>/i.test(html)) return cleanInvisible(html);
+  return cleanInvisible(html
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(style|script|head|title)[\s\S]*?<\/\1>/gi, " ")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|tr|li|h[1-6]|table)>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
@@ -300,11 +301,27 @@ function htmlToText(html) {
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&quot;/gi, '"')
-    .replace(/[ \t]+/g, " ")
+    .replace(/&quot;/gi, '"'));
+}
+
+// Marketing and receipt emails pad their preview line with hundreds of invisible
+// characters (&#847; &zwnj; &#8199; &shy; …). Left in, they ate the reader's
+// 9,000-character window before the order total (Anthropic's Stripe receipt,
+// 2026-11-24). Decode numeric entities, drop the invisible ones, squeeze spaces.
+const INVISIBLE = /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u2028-\u202F\u205F-\u206F\u3164\uFEFF\uFFA0]/g;
+function cleanInvisible(text) {
+  return String(text || "")
+    .replace(/&#x([0-9a-f]{1,6});/gi, (m, h) => safeChar(parseInt(h, 16), m))
+    .replace(/&#(\d{1,7});/g, (m, d) => safeChar(parseInt(d, 10), m))
+    .replace(/&(zwnj|zwj|shy|lrm|rlm|ensp|emsp|thinsp|hairsp|nbsp);/gi, " ")
+    .replace(INVISIBLE, "")
+    .replace(/[ \t\u00A0\u2000-\u200A\u3000]+/g, " ")
     .replace(/\n\s+/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+function safeChar(code, fallback) {
+  try { return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : fallback; } catch { return fallback; }
 }
 
 function cleanSnippet(raw) {
