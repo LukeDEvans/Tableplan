@@ -168,8 +168,9 @@ describe("Google events carry their place, page and meeting", () => {
 
 describe("wired into the pages", () => {
   it("each page renders its links", () => {
-    expect(read("finance-ui.js")).toContain("financeBankLinksHtml(liveById)");
-    expect(read("finance-ui.js")).toContain("financeBillPayHtml(b.name)");
+    // Finance (Luke, 2026-11-23): an account's name opens its bank (the old
+    // "Your banks" row is gone); upcoming bills no longer carry a Pay button.
+    expect(read("finance-ui.js")).toContain('matchPlace([live?.org || "", a.name || ""], "bank")');
     expect(read("groceries-ui.js")).toContain("storeAppBtn(store, name)");
     expect(read("groceries-ui.js")).toContain("data-find-at-store");
     expect(read("news-ui.js")).toContain('data-news-act="app"');

@@ -135,6 +135,12 @@ describe("cleanMerchantName", () => {
     ["POS PURCHASE JMK ENTERPRISES", "Jmk Enterprises"],
     ["SPYHOUSE COFFEE", "Spyhouse Coffee"],
     ["Blue Door Pub", "Blue Door Pub"],
+    ["Amazon.com*RV1IN47W3", "Amazon"],
+    ["AMAZON.COM*RV1IN47W3 AMZN.COM/BILLWA", "Amazon"],
+    ["UBER   *EATS PENDING", "Uber Eats"],
+    ["DOORDASH*CHIPOTLE", "DoorDash"],
+    ["ETSY.COM*KX9P2Q1 BROOKLYN NY", "Etsy.com"],
+    ["SP *ALLBIRDS", "Allbirds"],
     ["", ""],
   ])("%s → %s", (raw, want) => expect(cleanMerchantName(raw)).toBe(want));
 });

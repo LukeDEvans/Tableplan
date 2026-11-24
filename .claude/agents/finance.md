@@ -15,7 +15,15 @@ all your work is there. Make focused changes to the Finance domain only.
 - Follow the DEVELOPMENT.md flow: investigate → plan → implement → verify. "Tests
   pass" is not proof — say what you actually verified.
 
-**App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md):** the Accounts card starts with **Your banks** — one button per bank behind the accounts this view shows (SimpleFIN's institution name, else the account name), and each upcoming bill gets **Pay** when its merchant is a known biller, bank or card. Recognised from names by `out-catalog.js`; nothing stored, so no `financeRecurring` field and no schema bump.
+**App links (Luke, 2026-10-27; APP_LINKS_DESIGN.md; changed 2026-11-23):** on the Accounts tab each account's **name** opens its bank's app (or website) when `out-catalog.js` recognises the bank from SimpleFIN's institution name or the account's own name — the old "Your banks" button row is gone. Upcoming bills no longer carry a Pay button (Luke: the extra bill detail isn't needed). Nothing stored, no schema bump.
+
+**Page layout (Luke, 2026-11-23 — follow it, don't put the old pieces back):**
+- **Three tabs — Transactions · Budget · Accounts.** Insights is gone. The tabs are their own opaque bar pinned across the window top (`.fin-tabbar`, edge to edge so nothing shows through), with a **sliding underline** under the chosen tab like the Meal Plan's day tabs (`--fin-tab-l/-w` on the grid) — no grey track, no white bubble. A tab with something to look at gets the red text underline.
+- **Transactions:** no "Transactions" title and no box around the list. One tools row — search, Add, Filter, bell — all 40px; **sort is inside the Filter window**. The row tucks away while scrolling down and slides back on any scroll up; each day's date stays pinned under it. **Upcoming bills** (name, date, amount only) sit just above the newest charge, scrolled out of view on entering the tab. No category chips on rows. A charge still to review (no category, or skipped in the deck) gets a **thin red underline under its name** — not a dot or a left stripe. **Receipts with no bank charge yet show as their own rows** (`financeReceiptOnlyRows`, display only, in no total) until the charge arrives and the receipt matches it. Opening a charge scrolls it to the top.
+- **Transaction card:** a viewing space first. No ✎ and no × (tap the row again to close). A **⋯ at the top right** holds Edit · Trip · Split into categories · Scan receipt (· Mark reviewed). Category is one line, plain text; tapping it (or the merchant's name) **filters the list** to it (`financeTxnFilter.kind = "cat:…"` / `.merchant`, shown as a chip). An uncategorized charge shows the dropdown in the card; a categorized one changes only through Edit (or the notifications deck). Receipt: one "View Receipt" link at the bottom right, or a square scan button beside "No receipt image yet". Edit is a stacked one-field-per-line view in the card (`financeRenamingTxnId`).
+- **Budget** also holds Cash on hand / Emergency / Retirement, Net worth, and the old Insights charts (Cash flow, Where it went, Spending trend, 3-month outlook, Subscriptions, Returns & warranties, Tax time). "Next 30 days", "Notable this month", the Receipts list and **Savings goals** were removed (goal data in `state.financeGoals` is left alone).
+- **Accounts** is only the account list (no card), names and balances; no "Updated …" pills — a linked account that's stale or no longer sent gets a small red **!** (the bell explains). **⋯ › Edit accounts** (`financeAcctEditMode`) brings back the label buttons, ✎ per account, unlinked bank accounts and the add row.
+- **Finance's gear menu** has **Bank Link** (connect/refresh/disconnect, stored-history switch, CSV imports, and "Relinked accounts" when there's something to merge), **Personal Accounts** (the move screen; "Household Accounts" in Personal) and **Alerts** — each a window (`openFinanceSettingsPanel`) using the page's own handlers.
 
 ## Ownership (checked by CI)
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
@@ -133,15 +141,10 @@ all your work is there. Make focused changes to the Finance domain only.
   `invalidateFinanceLabeled` is called by **state-sync** (`applyStoredState`). These are
   in the module's returned interface — don't change their names/shapes without updating
   those callers.
-- **No finance settings (Luke, 2026-10-14):** Settings › Finance (Accounts, Emergency
-  Savings) and the Finance gear-menu items are gone. Everything lives on the page:
-  the Accounts tab's **Accounts** card (bank link, manual accounts, labels, stored
-  history switch), the **Emergency savings** card's "Months of Needs to cover" field
-  (`emergency-months`), and an **Alerts** card (`FINANCE_ALERTS`, `data-fin-edit="alert"`,
-  stored in `state.financeAlertPrefs`). "Link a bank" / "Track manually" / "Open
-  Accounts" switch to the Accounts tab. Don't add a Finance settings panel back.
-- **No UI test coverage:** the finance/receipt test files cover the pure logic modules
-  only, not `finance-ui.js`'s render/handlers. Verify UI changes by hand and say so.
+- **Finance settings (Luke, 2026-10-14; changed 2026-11-23):** there is still no Settings › Finance panel. Bank Link, Personal Accounts and Alerts are Finance **gear-menu** windows (see Page layout above); the **Emergency savings** card's "Months of Needs to cover" field (`emergency-months`) is on the Budget tab. "Link a bank" opens Bank Link; "Track manually" opens Accounts in edit mode.
+- **UI coverage:** the finance/receipt test files cover the pure logic modules only.
+  The page layout has a browser check, `node scripts/qa-finance-tabs.mjs` (dev server
+  running); otherwise verify UI changes by hand and say so.
 
 ## ⛔ Domain landmines (do NOT change without flagging — load-bearing)
 - **Personal accounts are private, split on the server (Luke, 2026-10-20 — FINANCE_SPLIT_DESIGN.md).** One SimpleFIN connection; `netlify/functions/_finance-split.js` sorts every pulled account by `live_finance_account_views` (row = personal to its owner). Household accounts → `finaccts_<groupId>` / store `group_id <groupId>` / `finhist_<groupId>`; personal → the same with `u-<owner>`. Every `accounts` response goes through `accountsForMember`; unreadable assignments fail closed (never save or serve). Decisions: personal spending never counts toward the household budget; receipts stay in Shop; income/people stay household; personal alerts go only to the owner.

@@ -2928,6 +2928,11 @@ function bindEvents() {
   elements.menuWatchServicesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch-services")));
   elements.menuWatchTheatersBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch")));
   elements.menuMailAutomationBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("mail-ai")));
+  // Finance's gear menu (Luke, 2026-11-23): Bank Link, Personal Accounts and Alerts
+  // moved here off the Accounts tab.
+  document.getElementById("menuFinanceBankLinkBtn")?.addEventListener("click", () => openSettingsMenuDialog(() => _finance.openFinanceSettingsPanel("bank-link")));
+  document.getElementById("menuFinancePersonalBtn")?.addEventListener("click", () => openSettingsMenuDialog(() => _finance.openFinanceSettingsPanel("personal-accounts")));
+  document.getElementById("menuFinanceAlertsBtn")?.addEventListener("click", () => openSettingsMenuDialog(() => _finance.openFinanceSettingsPanel("alerts")));
   // Watch's sidebar (Luke, 2026-10-15): three-bar button like News/Mail; Archive
   // sits at the bottom of it (it used to be a button beside the tabs).
   document.getElementById("watchSidebarToggle")?.addEventListener("click", () => {
@@ -4352,6 +4357,15 @@ function setupDiagnostics() {
     openTripForQa: (id) => { if (!localDevMode) return null; openExploreTrip(id); return true; },
     openPageForQa: (name) => { if (!localDevMode) return null; ({ finance: showFinanceApp, shop: showShopApp, contacts: showContactsApp, news: showNewsApp, media: showMediaApp })[name]?.(); return activeAppArea; },
     // The account move screen (scripts/qa-finance-move.mjs). Local dev only.
+    // The Finance page layout (scripts/qa-finance-tabs.mjs): put finance state in place.
+    financeStateSeedForQa: (patch) => {
+      if (!localDevMode) return null;
+      for (const [k, v] of Object.entries(patch || {})) state[k] = k === "financeAccounts" ? normalizeFinanceAccounts(v, createId) : v;
+      invalidateFinanceLabeled();
+      persist();
+      if (activeAppArea === "finance") _finance.renderFinancePage();
+      return true;
+    },
     financeMoveSeedForQa: (accounts) => { if (!localDevMode) return null; state.financeAccounts = normalizeFinanceAccounts(accounts, createId); return true; },
     financeAccountsForQa: () => (localDevMode ? JSON.parse(JSON.stringify(state.financeAccounts || [])) : null),
     personalFinanceFlagForQa: () => (localDevMode ? hasPersonalFinance : null),
@@ -19139,6 +19153,18 @@ function updateSettingsMenuOptions() {
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
   // Mail's AI features live in Mail's own gear menu as "Automation" (Luke, 2026-10-15).
   elements.menuMailAutomationBtn.hidden = activeAppArea !== "mail";
+  const isFinance = activeAppArea === "finance";
+  const finBank = document.getElementById("menuFinanceBankLinkBtn");
+  const finPersonal = document.getElementById("menuFinancePersonalBtn");
+  const finAlerts = document.getElementById("menuFinanceAlertsBtn");
+  if (finBank) finBank.hidden = !isFinance;
+  if (finAlerts) finAlerts.hidden = !isFinance;
+  if (finPersonal) {
+    let canMove = false;
+    try { canMove = isFinance && _finance.financePersonalAccountsAvailable(); } catch { /* finance not loaded */ }
+    finPersonal.hidden = !canMove;
+    finPersonal.textContent = sectionScope("finance") === "personal" ? "Household Accounts" : "Personal Accounts";
+  }
   const isContacts = activeAppArea === "contacts";
   const impBtn = document.getElementById("menuContactsImportBtn");
   const expBtn = document.getElementById("menuContactsExportBtn");

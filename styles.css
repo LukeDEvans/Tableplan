@@ -27043,3 +27043,172 @@ body:has(#documentsMainPage:not([hidden])) #documentsMainPage { flex: 1; min-hei
 #mediaMusicPanel.is-listen-search { overflow-y: auto; -webkit-overflow-scrolling: touch; }
 #mediaMusicPanel.is-listen-search .music-mode-body { flex: none; overflow: visible; }
 #mediaMusicPanel.is-listen-search .listen-search-extra { flex: none; }
+
+/* ── Finance page cleanup (Luke, 2026-11-23) ─────────────────────────────────
+   Tabs as their own opaque bar across the window top with a sliding underline
+   (the Meal Plan day tabs' look); Transactions without a title or a box, one
+   tools row that tucks away while scrolling down, pinned day dates, a red
+   underline for charges still to review; a clean transaction card. */
+.fin-tabbar {
+  position: sticky; top: -10px; z-index: 6;
+  margin: 0 -10px; padding: 10px 10px 0;
+  background: var(--window-bg);
+}
+.fin-panel > .fin-tabbar:first-child { margin-top: -10px; }
+.fin-tabbar .fin-tabs {
+  position: relative; top: auto; z-index: auto;
+  display: flex; gap: 0; padding: 0; border-radius: 0; overflow: hidden;
+  background: transparent; box-shadow: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+}
+.fin-tabbar .fin-tabs::after {
+  content: ""; position: absolute; bottom: 0; height: 2px; border-radius: 1px;
+  left: var(--fin-tab-l, 0px); width: var(--fin-tab-w, 0px);
+  background: var(--accent); pointer-events: none;
+  transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.fin-tabbar .fin-tab {
+  flex: 1 1 0; min-width: 0; padding: 12px 6px 11px; border-radius: 0;
+  background: none; box-shadow: none; color: var(--muted);
+  font-size: 0.9rem; font-weight: 800;
+}
+.fin-tabbar .fin-tab:hover { color: var(--ink); }
+.fin-tabbar .fin-tab.is-active { background: none; box-shadow: none; color: var(--accent-dark, var(--accent)); }
+.fin-tab.has-attention .fin-tab-label {
+  text-decoration: underline; text-decoration-color: #b3261e;
+  text-decoration-thickness: max(1px, 0.05em); text-underline-offset: 0.22em; text-decoration-skip-ink: none;
+}
+
+/* Transactions: tools row (search · add · filter · bell), all 40px tall. */
+.fin-txns { display: flex; flex-direction: column; }
+.fin-txn-tools {
+  position: sticky; z-index: 5;
+  top: calc(var(--fin-bar-h, 54px) - 10px);
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 -10px; padding: 8px 10px;
+  background: var(--window-bg);
+  transition: top 0.22s ease;
+}
+.fin-tools-tucked .fin-txn-tools,
+.fin-txn-tools.is-tucked { top: calc(var(--fin-bar-h, 54px) - 10px - var(--fin-tools-h, 56px)); }
+.fin-txn-tools .fin-txn-search {
+  flex: 1 1 auto; min-width: 0; height: 40px; min-height: 40px; box-sizing: border-box;
+  padding: 0 12px; border: 2px solid var(--window-border); border-radius: 12px;
+  background: var(--window-bg); font-size: 0.9rem;
+}
+.fin-txn-tools .fin-head-btn, .fin-txn-tools .fin-notif-btn { flex: 0 0 auto; width: 40px; height: 40px; min-height: 40px; }
+.fin-scope-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 6px; }
+.fin-scope-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: none; border-radius: 99px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--window-bg)); color: var(--accent-dark, var(--accent));
+  font: inherit; font-size: 0.8rem; font-weight: 700; cursor: pointer;
+}
+.fin-scope-chip span { font-size: 1rem; line-height: 1; opacity: 0.8; }
+
+/* The list: rows sit on the window, no box; each day's date stays pinned. */
+.fin-txn-list { display: flex; flex-direction: column; }
+.fin-txns .fin-txn-day-head {
+  position: sticky; z-index: 3;
+  top: calc(var(--fin-bar-h, 54px) - 10px + var(--fin-tools-h, 56px));
+  margin: 0 -10px; padding: 8px 12px 4px;
+  background: var(--window-bg);
+  transition: top 0.22s ease;
+}
+.fin-tools-tucked .fin-txns .fin-txn-day-head { top: calc(var(--fin-bar-h, 54px) - 10px); }
+.fin-txns .fin-txn-row { padding: 9px 2px; font-size: 0.88rem; align-items: center; }
+.fin-txns .fin-txn-row.is-review .fin-txn-name {
+  text-decoration: underline; text-decoration-color: #b3261e;
+  text-decoration-thickness: max(1px, 0.06em); text-underline-offset: 0.24em; text-decoration-skip-ink: none;
+}
+.fin-txns .fin-txn-row.is-receipt-only .fin-txn-name { color: color-mix(in srgb, var(--ink) 78%, transparent); }
+.fin-bills-upcoming .fin-txn-row { cursor: default; color: var(--muted); }
+.fin-bills-upcoming .fin-txn-row .fin-txn-amt { color: var(--muted); }
+.fin-bills-upcoming .fin-txn-row.is-overdue .fin-txn-date { color: #b3261e; font-weight: 700; }
+.fin-bills-upcoming { margin-bottom: 6px; }
+
+/* The open transaction's card. */
+.fin-txns .fin-txn-card { margin: 2px 0 10px; padding: 12px 14px; gap: 8px; }
+.fin-txn-card-head { align-items: center; }
+.fin-link-text {
+  font: inherit; color: inherit; background: none; border: none; padding: 0; margin: 0;
+  text-align: left; cursor: pointer; min-height: 0; max-width: 100%;
+}
+.fin-link-text:hover, .fin-link-text:focus-visible { text-decoration: underline; outline: none; }
+.fin-txn-card-merchant.fin-link-text { font-weight: 850; font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-txn-more {
+  flex: 0 0 auto; width: 36px; height: 36px; min-height: 36px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 10px; background: none; color: var(--muted);
+}
+.fin-txn-more:hover, .fin-txn-more:focus-visible { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); outline: none; }
+.fin-txn-card-amount.is-neg { color: var(--ink); }
+.fin-txn-card-lines { display: flex; flex-direction: column; }
+.fin-txn-card-line {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); font-size: 0.88rem;
+}
+.fin-txn-card-key { flex: 0 0 auto; color: var(--muted); font-weight: 650; }
+.fin-txn-card-val { min-width: 0; text-align: right; color: var(--ink); font-weight: 700; display: flex; justify-content: flex-end; align-items: center; }
+.fin-txn-card-val .fin-txn-label { max-width: 100%; }
+.fin-txn-card-line--split { align-items: flex-start; }
+.fin-txn-card-splits { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; }
+.fin-txn-card-split { display: flex; gap: 10px; font-weight: 700; }
+.fin-txn-card-split-amt { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 650; }
+.fin-txn-noreceipt .fin-hint { font-size: 0.85rem; }
+.fin-square-btn {
+  flex: 0 0 auto; width: 36px; height: 36px; min-height: 36px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 2px solid var(--window-border); border-radius: 10px; background: var(--window-bg); color: var(--ink);
+}
+.fin-square-btn:hover, .fin-square-btn:focus-visible { border-color: var(--accent); color: var(--accent-dark, var(--accent)); outline: none; }
+.fin-txn-card-foot { display: flex; justify-content: flex-end; padding-top: 2px; }
+.fin-link-btn {
+  font: inherit; font-size: 0.86rem; font-weight: 750; color: var(--accent-dark, var(--accent));
+  background: none; border: none; padding: 2px 0; min-height: 0; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 0.2em;
+}
+.fin-txn-card-note { text-align: center; }
+.fin-txn-card-items { display: flex; flex-direction: column; font-size: 0.84rem; }
+.fin-txn-card-item { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+
+/* The card's Edit view: one labelled field per line, so nothing squeezes. */
+.fin-txn-card.is-editing { gap: 10px; }
+.fin-txn-edit-title { font-weight: 850; font-size: 0.95rem; color: var(--ink); }
+.fin-edit-field { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fin-edit-label { flex: 0 0 72px; font-size: 0.7rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.fin-edit-field > input, .fin-edit-field > select, .fin-edit-field > .fin-txn-label { flex: 1 1 160px; min-width: 0; max-width: none; width: auto; }
+.fin-edit-field .fin-txn-rename-input { padding: 8px 10px; font-size: 0.88rem; }
+.fin-edit-hint { margin: -4px 0 0 80px; font-size: 0.72rem; overflow-wrap: anywhere; }
+.fin-edit-amount { font-weight: 800; font-variant-numeric: tabular-nums; }
+.fin-edit-suggest { align-self: flex-start; margin-left: 80px; }
+.fin-edit-foot { justify-content: flex-end; }
+@media (max-width: 420px) {
+  .fin-edit-label { flex-basis: 100%; }
+  .fin-edit-hint, .fin-edit-suggest { margin-left: 0; }
+}
+
+/* ⋯ menus. */
+.fin-txn-menu-option { display: flex; align-items: center; gap: 8px; }
+.fin-menu-more, .fin-menu-check { margin-left: auto; color: var(--muted); }
+.fin-txn-menu-option.is-checked { font-weight: 750; }
+.fin-menu-back { color: var(--muted); }
+
+/* Accounts: the list on the window, a ⋯ at the top right. */
+.fin-accounts { display: flex; flex-direction: column; gap: 4px; }
+.fin-accounts-tools { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: -8px; }
+.fin-acct-row { align-items: center; padding: 6px 0; }
+.fin-acct-link {
+  font: inherit; color: var(--ink); background: none; border: none; padding: 0; min-height: 0;
+  text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fin-acct-link:hover, .fin-acct-link:focus-visible { text-decoration: underline; outline: none; }
+.fin-acct-alert {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%; background: #b3261e; color: #fff;
+  font-size: 0.7rem; font-weight: 900; line-height: 1;
+}
+
+/* Finance's gear-menu windows. */
+.fin-settings-body .fin-account-add { flex-wrap: wrap; }
+.fin-accounts .fin-acct-row .fin-acct-name { flex: 1 1 auto; min-width: 0; }
+.fin-edit-field > select, .fin-edit-field > .fin-txn-label { min-height: 38px; padding: 6px 10px; font-size: 0.88rem; }
