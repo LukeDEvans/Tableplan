@@ -49,6 +49,24 @@ export function createMessagingServer(transport) {
 
     removeDevice: (deviceId) => transport.update("msg_devices", `device_id=eq.${uuid(deviceId, "device")}`, { revoked_at: new Date().toISOString() }),
 
+    // Every device of mine the server shows as removed (my own rows only; a handful).
+    myRemovedDeviceIds: async (userId) => (await transport.select("msg_devices", `user_id=eq.${uuid(userId, "user")}&select=device_id,revoked_at`))
+      .filter((r) => r.revoked_at).map((r) => r.device_id),
+
+    // Identity-signed removal lists (messaging/crypto/removals.js), one row per person.
+    removals: (userIds) => userIds.length
+      ? transport.select("msg_device_removals", `user_id=in.${inList(userIds)}&select=user_id,generation,removed_device_ids,sig`)
+      : Promise.resolve([]),
+
+    publishRemovals: async (userId, row) => {
+      const me = uuid(userId, "user");
+      const has = (await transport.select("msg_device_removals", `user_id=eq.${me}&select=user_id`)).length > 0;
+      const body = { generation: row.generation, removed_device_ids: row.removed_device_ids, sig: row.sig, updated_at: new Date().toISOString() };
+      return has
+        ? transport.update("msg_device_removals", `user_id=eq.${me}`, body)
+        : transport.insert("msg_device_removals", [{ user_id: me, ...body }]);
+    },
+
     uploadPrekeys: (deviceId, keys) => keys.length
       ? transport.insert("msg_prekeys", keys.map((k) => ({ device_id: uuid(deviceId, "device"), prekey_id: k.id, pub: k.pub })))
       : Promise.resolve(null),

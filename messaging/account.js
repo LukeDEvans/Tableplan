@@ -18,6 +18,7 @@ import {
 } from "./crypto/keys.js";
 import { toB64, fromB64, utf8, fromUtf8, equalBytes, concat, u32, readU32, toHex, fromHex } from "./crypto/bytes.js";
 import { withLock } from "./keystore.js";
+import { signDeviceRemovals, verifyDeviceRemovals, canonicalRemovedIds } from "./crypto/removals.js";
 
 export const OPK_TARGET = 20;
 export const OPK_REFILL_BELOW = 5;
@@ -267,6 +268,8 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
         await store.set("account", a);
         return { removed: true };
       }
+      // Phone: sign any of my devices removed elsewhere (from a linked device) into my list.
+      if (a.kind === "phone") { try { if (await publishRemovals(a)) out.signedRemovals = true; } catch { /* next upkeep */ } }
       const left = await server.prekeyCount(a.deviceId);
       if (left < OPK_REFILL_BELOW) {
         const opks = await newOneTimePrekeys(OPK_TARGET - left);
@@ -316,6 +319,60 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
 
   // ---- whose devices are whose ------------------------------------------------------------
 
+  // Fold a person's signed removal list into what this device has seen. Only a list
+  // that verifies against `trusted` (the identity pinned here) counts; a new identity
+  // starts a new list. Never shrinks, so an older list from the server can't undo a
+  // removal. Mutates `removedSeen`; returns { ids, generation, changed }.
+  function noteRemovals(removedSeen, uid, trusted, row) {
+    const pub = toB64(trusted);
+    let entry = removedSeen[uid];
+    let changed = false;
+    if (!entry || entry.signPub !== pub) { entry = removedSeen[uid] = { signPub: pub, generation: 0, ids: [] }; changed = true; }
+    if (row) {
+      const statement = { userId: uid, generation: Number(row.generation), removedDeviceIds: row.removed_device_ids || [] };
+      let ok = false;
+      try { ok = verifyDeviceRemovals(trusted, statement, fromB64(row.sig)); } catch { ok = false; }
+      if (ok) {
+        const ids = canonicalRemovedIds([...entry.ids, ...statement.removedDeviceIds]);
+        if (ids.length !== entry.ids.length || statement.generation > entry.generation) changed = true;
+        entry.ids = ids;
+        entry.generation = Math.max(entry.generation, statement.generation);
+      }
+    }
+    return { ids: entry.ids, generation: entry.generation, changed };
+  }
+
+  // Phone only: sign and publish my full removal list with `extraIds` added (and any
+  // of my devices the server already shows as removed). Returns the published list,
+  // or null when there's nothing new to sign.
+  async function publishRemovals(a, extraIds = []) {
+    if (a.kind !== "phone" || !a.identity) return null;
+    const [rows, serverRemoved] = await Promise.all([server.removals([userId]), server.myRemovedDeviceIds(userId)]);
+    const removedSeen = (await store.get("removedSeen")) || {};
+    const current = noteRemovals(removedSeen, userId, a.identitySignPub, rows[0]);
+    const want = canonicalRemovedIds([...current.ids, ...serverRemoved, ...extraIds].filter((d) => String(d).toLowerCase() !== String(a.deviceId).toLowerCase()));
+    const serverGen = Number(rows[0]?.generation) || 0;
+    // Nothing to do when the server already holds a list signed by this identity that
+    // names every one of them (or there's nothing removed at all and no list yet).
+    const serverIds = (() => {
+      const r = rows[0];
+      if (!r) return null;
+      const st = { userId, generation: serverGen, removedDeviceIds: r.removed_device_ids || [] };
+      try { return verifyDeviceRemovals(a.identitySignPub, st, fromB64(r.sig)) ? new Set(canonicalRemovedIds(st.removedDeviceIds)) : null; } catch { return null; }
+    })();
+    if ((!want.length && !rows[0]) || (serverIds && want.every((d) => serverIds.has(d)))) {
+      if (current.changed) await store.set("removedSeen", removedSeen);
+      return null;
+    }
+    const generation = Math.max(serverGen, current.generation) + 1;
+    const statement = { userId, generation, removedDeviceIds: want };
+    const sig = signDeviceRemovals(a.identity, statement);
+    await server.publishRemovals(userId, { generation, removed_device_ids: want, sig: toB64(sig) });
+    removedSeen[userId] = { signPub: toB64(a.identitySignPub), generation, ids: want };
+    await store.set("removedSeen", removedSeen);
+    return statement;
+  }
+
   // Returns { people: { [userId]: { identitySignPub, verified, changed, devices: [descriptor + spk] } } }
   // using pinned identities: the first key seen for a person is pinned; a different
   // key later is accepted (Signal's behaviour) but marks them changed + unverified,
@@ -326,8 +383,11 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
     const a = await account();
     if (!a || a.state !== "ready") throw new MessagingError("NOT_READY", "Messaging isn't set up on this device.");
     const ids = [...new Set(userIds)];
-    const [idents, rows] = await Promise.all([server.identities(ids), server.devices(ids)]);
+    // A failed removals read counts as "no list": what this device already verified still applies.
+    const [idents, rows, removalRows] = await Promise.all([server.identities(ids), server.devices(ids), server.removals(ids).catch(() => [])]);
     const pins = (await store.get("pins")) || {};
+    const removedSeen = (await store.get("removedSeen")) || {};
+    let removedChanged = false;
     const people = {};
     let pinsChanged = false;
     for (const uid of ids) {
@@ -352,8 +412,14 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
         pinsChanged = true;
       }
       const trusted = uid === userId ? a.identitySignPub : pin.signPub;
+      // Devices this person's identity says are removed: never sent to, whatever the
+      // server's revoked_at says (crypto/removals.js). Kept per identity, as a union.
+      const seen = noteRemovals(removedSeen, uid, trusted, removalRows.find((r) => r.user_id === uid));
+      if (seen.changed) removedChanged = true;
+      const removed = new Set(seen.ids);
       const devices = [];
       for (const row of rows.filter((r) => r.user_id === uid)) {
+        if (removed.has(String(row.device_id).toLowerCase())) continue;
         const cert = certFromRow(row, trusted);
         const sigs = { identitySig: fromB64(row.identity_sig), deviceSig: fromB64(row.device_sig) };
         if (!verifyDeviceCert(trusted, cert, sigs)) continue; // forged or stale: never used
@@ -366,6 +432,7 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
       people[uid] = { identitySignPub: trusted, verified: uid === userId || Boolean(pin?.verified), changed: Boolean(pin?.changed), blocked: uid !== userId && Boolean(pin?.blocked), devices };
     }
     if (pinsChanged) await store.set("pins", pins);
+    if (removedChanged) await store.set("removedSeen", removedSeen);
     return { people };
   }
 
@@ -436,6 +503,11 @@ export function createMessagingAccount({ server, store, userId, now = () => Date
       const row = await server.device(deviceId);
       if (row?.kind === "phone") throw new MessagingError("NOT_PHONE", "Only your phone can remove your phone — use Reset messaging there.");
     }
+    // The phone signs the removal first, so senders skip the device even if the
+    // server's mark were cleared. A linked device can only ask the server; the phone
+    // signs that removal at its next upkeep (maintain).
+    // (If publishing fails, the removal still goes through; upkeep signs it later.)
+    if (a.kind === "phone") { try { await publishRemovals(a, [deviceId]); } catch { /* maintain retries */ } }
     await server.removeDevice(deviceId);
     if (deviceId === a.deviceId) { a.state = "removed"; await store.set("account", a); }
   }
