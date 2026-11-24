@@ -23,7 +23,7 @@ export const PLACES = {
   chase:       { kind: "bank", label: "Chase", match: /\bchase\b/, app: ["chase://", "https://secure.chase.com/"], web: "https://www.chase.com/" },
   bofa:        { kind: "bank", label: "Bank of America", match: /\bbank of america\b|\bbofa\b|\bboa\b/, app: ["bofa://", "https://secure.bankofamerica.com/"], web: "https://www.bankofamerica.com/" },
   usbank:      { kind: "bank", label: "U.S. Bank", match: /\bu ?s bank\b|\busbank\b/, app: ["https://onlinebanking.usbank.com/"], web: "https://www.usbank.com/" },
-  citi:        { kind: "bank", label: "Citi", match: /\bciti(bank|cards?)?\b/, app: ["https://online.citi.com/"], web: "https://www.citi.com/" },
+  citi:        { kind: "bank", label: "Citi", match: /\bciti(bank|cards?)?\b/, app: ["citiglobal://", "https://online.citi.com/"], web: "https://www.citi.com/" },
   targetcard:  { kind: "bank", label: "Target Circle Card", match: /\btarget\b.*\b(credit|card|circle|redcard)\b|\bredcard\b/, app: ["target://", "https://www.target.com/circlecard"], web: "https://mytargetcirclecard.target.com/" },
   applecard:   { kind: "bank", label: "Apple Card", match: /\bapple card\b|\bapple\b.*\bcredit\b/, app: ["shoebox://"], web: "https://card.apple.com/" },
   fidelity:    { kind: "bank", label: "Fidelity", match: /\bfidelity\b|\bnetbenefits\b/, app: ["https://digital.fidelity.com/"], web: "https://www.fidelity.com/" },
