@@ -38,8 +38,6 @@
 	<string>Liv doesn't save anything to Apple Health. It only reads your workouts and activity rings.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Liv reads your workouts and activity rings from Apple Health to fill in your Exercise log. Liv never writes to Health.</string>
-	<key>NSHealthUpdateUsageDescription</key>
-	<string>Liv only reads from Apple Health and never saves anything to it. Apple requires this note for apps that use Health.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Live uses Face ID to unlock your Documents each time you open them.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
