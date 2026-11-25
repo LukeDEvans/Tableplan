@@ -22,8 +22,9 @@ export const PLACES = {
   // Chase and Bank of America: their apps claim these https links in the banks'
   // own apple-app-site-association files (checked 2026-11-24); chase:// and bofa://
   // didn't open the apps on Luke's iPhone. SoFi's file only claims sign-in and
-  // transfer pages, so it tries its bundle-id scheme instead.
-  sofi:        { kind: "bank", label: "SoFi", match: /\bsofi\b/, app: ["sofi://", "com.sofi.mobile://"], web: "https://www.sofi.com/login/" },
+  // transfer pages, and sofi:// / com.sofi.mobile:// didn't open it, so SoFi opens
+  // the app on its transfer-in page (Luke chose the app over the website).
+  sofi:        { kind: "bank", label: "SoFi", match: /\bsofi\b/, app: ["https://www.sofi.com/wealth/app/acat"], web: "https://www.sofi.com/login/" },
   chase:       { kind: "bank", label: "Chase", match: /\bchase\b/, app: ["chase://", "https://www.chase.com/web/auth/nav"], web: "https://www.chase.com/" },
   bofa:        { kind: "bank", label: "Bank of America", match: /\bbank of america\b|\bbofa\b|\bboa\b/, app: ["bofa://", "https://www.bankofamerica.com/deeplink/redirect.go"], web: "https://www.bankofamerica.com/" },
   usbank:      { kind: "bank", label: "U.S. Bank", match: /\bu ?s bank\b|\busbank\b/, app: ["usbank://", "https://onlinebanking.usbank.com/"], web: "https://www.usbank.com/" },
