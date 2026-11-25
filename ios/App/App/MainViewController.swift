@@ -26,6 +26,10 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(DocumentsLockPlugin())
         bridge?.registerPluginInstance(PdfExportPlugin())
         bridge?.registerPluginInstance(PhotoLibraryPlugin())
+        bridge?.registerPluginInstance(LiveClockPlugin())
+        bridge?.registerPluginInstance(LiveCameraPlugin())
+        bridge?.registerPluginInstance(SongRecognizerPlugin())
+        bridge?.registerPluginInstance(LiveHealthPlugin())
 
         // Tap the status bar → scroll to top. iOS only scrolls the web view's own
         // document on that tap, and this app's document never scrolls (each page

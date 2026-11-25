@@ -7,7 +7,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const MIGRATION = ["2026-10-30-messaging.sql", "2026-10-31-messaging-limits.sql"]
+const MIGRATION = ["2026-10-30-messaging.sql", "2026-10-31-messaging-limits.sql", "2026-11-24-msg-device-removals.sql"]
   .map((f) => readFileSync(fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)), "utf8"))
   .join("\n");
 

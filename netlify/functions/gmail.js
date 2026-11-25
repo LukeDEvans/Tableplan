@@ -4,7 +4,8 @@ const {
   loadUserGmailTokens, saveUserGmailTokens, deleteUserGmailTokens,
   getUserId, getValidAccessToken, gFetch, gBatchGet, headersMap, extractBody,
   htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep,
-  loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread, loadAppConfig
+  loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread, loadAppConfig,
+  loadReceiptContext, extractReceipt
 } = require("./_gmail-shared");
 const { loadMailAiRow, dismissPendingRecipe } = require("./_recipe-digest");
 const NewsLinks = require("./_news-links");
@@ -112,7 +113,10 @@ exports.handler = async (event) => {
     // app knows whether to send its Scores favourites.
     const forYou = await NewsStore.forYouReady(serviceKey).catch(() => false);
     if (view.kind === "foryou" && !forYou) view.kind = "front";
-    const wantsWeights = forYou && view.kind === "foryou" && !q;
+    // The blended Front page (NEWS_FRONT_PAGE_DESIGN.md §12): builds that ask for
+    // it get Top stories + For you in one list; paging and search stay newest first.
+    const blend = forYou && body.blend === true && view.kind === "front" && !before && !NewsStore.searchTerm(q);
+    const wantsWeights = forYou && (view.kind === "foryou" || blend) && !q;
     const interest = forYou ? await NewsStore.loadInterest(serviceKey, userId, { cols: wantsWeights ? "all" : "teams" }).catch(() => null) : null;
     // Opening the Front page (or the app: its dock ticker asks for the Front page)
     // checks the papers' top feeds if nothing has in the last ten minutes, so a
@@ -124,7 +128,11 @@ exports.handler = async (event) => {
         new Promise((resolve) => setTimeout(resolve, 3500))
       ]);
     }
-    const pageP = wantsWeights && interest
+    const plainPage = () => NewsStore.loadFeedPage(serviceKey, userId, { view: view.kind === "foryou" ? { kind: "front" } : view, before, q, limit: body.limit, athleticTagged: forYou });
+    const pageP = blend && interest
+      // A failed blend falls back to the plain Front page, never an error.
+      ? NewsStore.loadBlendedFront(serviceKey, userId, interest, { limit: body.limit }).catch((e) => { console.warn("[news] blend:", e.message); return plainPage(); })
+      : wantsWeights && interest
       ? NewsStore.loadForYou(serviceKey, userId, interest)
       : NewsStore.loadFeedPage(serviceKey, userId, { view: view.kind === "foryou" ? { kind: "front" } : view, before, q, limit: body.limit, athleticTagged: forYou });
     const [page, counts, signIns] = await Promise.all([
@@ -499,6 +507,34 @@ exports.handler = async (event) => {
     } catch (e) {
       console.error("Travel thread interpretation failed:", e.message);
       return json(502, { error: e.message || "Interpretation failed." });
+    }
+  }
+
+  // Send to Finance (Luke, 2026-11-22): read one email the user picked as a
+  // receipt. Unlike the inbox sweep's receiptExtract this runs only on a tap,
+  // so it doesn't depend on that Mail AI switch or the subject hint. Nothing is
+  // stored here: the app saves the receipt (and files the email's text in
+  // Document › Receipts) once the user confirms. The id is the Gmail message
+  // id, the same one the sweep uses, so the two never make two receipts.
+  if (action === "readReceipt") {
+    const { messageId } = body;
+    if (!messageId || !/^[A-Za-z0-9_-]{6,64}$/.test(String(messageId))) return json(400, { error: "messageId required" });
+    const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+    if (!anthropicKey) return json(503, { error: "ANTHROPIC_API_KEY not configured." });
+    const r = await gFetch(gToken, `/messages/${messageId}?format=full`);
+    if (!r.ok) return json(502, { error: "Couldn't open that email." });
+    const msg = await r.json();
+    const hdrs = headersMap(msg.payload?.headers);
+    const meta = { subject: hdrs.subject || "(no subject)", from: hdrs.from || "", date: hdrs.date || "" };
+    const text = htmlToText(extractBody(msg.payload)).slice(0, 60000);
+    const ctx = await loadReceiptContext(serviceKey, userId, {});
+    try {
+      const receipt = await extractReceipt(anthropicKey, { ...meta, bodyText: text, categories: ctx?.categories || [] });
+      if (receipt) receipt.id = messageId;
+      return json(200, { receipt, meta, text });
+    } catch (e) {
+      console.error("[receipt] Send to Finance read failed:", e.message);
+      return json(502, { error: "Couldn't read a receipt from that email right now." });
     }
   }
 

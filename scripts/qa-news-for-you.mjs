@@ -1,6 +1,6 @@
 // Browser check for News → For you (NEWS_RANKING_DESIGN.md), against the local dev
 // server (npm run dev:local) with the feed seeded in For you's order:
-//   - the For you tab sits above Front page and opens the ranked list in seed order
+//   - For you is first in the header's section menu and opens the ranked list in seed order
 //     (an Athletic story included), with each card's reason in its meta line
 //   - the ⋯ menu has More like this / Less like this / Mute topic
 //   - Less like this and Mute topic take the story out of For you
@@ -59,8 +59,15 @@ async function run(browser, { width, height, forYou }) {
   await page.evaluate(([list, fy, learned]) => window.__liveQA.newsSetFeed(list, { nyt: { status: "signed-in" } }, { forYou: fy, learned }), [STORIES, forYou, LEARNED]);
   await page.waitForTimeout(300);
 
-  const tab = await page.$('[data-news-view="foryou"]');
+  // Sections live in the header's menu (Luke, 2026-11-20).
+  const pickSection = async (kind) => {
+    if (!(await page.$(".news-section-menu"))) await page.click("[data-news-section-btn]");
+    await page.click(`.news-section-menu [data-news-pick="${kind}"]`);
+  };
+  await page.click("[data-news-section-btn]");
+  const tab = await page.$('.news-section-menu [data-news-pick="foryou"]');
   if (!forYou) {
+    await page.click("[data-news-section-btn]");
     check(!tab, "no For you tab");
     await page.click("[data-news-dots]");
     const items = await page.$$eval(".news-menu [data-news-act]", (els) => els.map((e) => e.dataset.newsAct));
@@ -70,10 +77,9 @@ async function run(browser, { width, height, forYou }) {
     return;
   }
   check(!!tab, "For you tab shown");
-  const order = await page.$$eval("#newsSidebar [data-news-view]", (els) => els.slice(0, 2).map((e) => e.dataset.newsView));
+  const order = await page.$$eval(".news-section-menu [data-news-pick]", (els) => els.slice(0, 2).map((e) => e.dataset.newsPick));
   check(order.join() === "foryou,front", `For you sits above Front page (${order.join()})`);
-  if (width < 700) await page.evaluate(() => document.getElementById("newsSidebar")?.classList.add("is-expanded"));
-  await page.click('[data-news-view="foryou"]');
+  await pickSection("foryou");
   await page.waitForTimeout(200);
   const title = await page.textContent(".news-title");
   check(title.trim() === "For you", `title is "For you" (${title.trim()})`);
@@ -139,13 +145,12 @@ async function run(browser, { width, height, forYou }) {
   check((await page.$$(".news-learned-label")).length === 0, "second tap resets");
   const lOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check(lOverflow <= 0, `learned view: no sideways scroll (${lOverflow}px)`);
-  await page.click("[data-news-back-foryou]");
+  await page.click("[data-news-back]");
   await page.waitForTimeout(150);
   check((await page.textContent(".news-title")).trim() === "For you", "back arrow returns to For you");
 
   // Front page still has no Athletic stories and keeps newest-first.
-  if (width < 700) await page.evaluate(() => document.getElementById("newsSidebar")?.classList.add("is-expanded"));
-  await page.click('[data-news-view="front"]');
+  await pickSection("front");
   await page.waitForTimeout(200);
   const front = await page.$$eval("#newsContent [data-news-id]", (els) => els.map((e) => e.dataset.newsId));
   check(!front.includes("s2") && front[0] === "s3", `Front page unchanged: newest first, no Athletic (${front.join()})`);

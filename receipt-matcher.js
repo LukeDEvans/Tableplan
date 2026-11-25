@@ -12,7 +12,9 @@
 //            (a tip written in afterwards) — that last one only with the store
 //            name matching, and never certain.
 //   date     the charge posts from 1 day before to 5 days after the receipt's date
-//            (banks post late; a receipt's clock can be a day off).
+//            (banks post late; a receipt's clock can be a day off). An online order
+//            (source email / extension / share) is often charged when it ships, so
+//            its charge may post up to 14 days after; past 5 days it's only "likely".
 //   store    the receipt's store and the bank's description share a word.
 //   card     the receipt's last 4 digits appear in the account's name.
 // "sure" = same amount, right dates, same store. Everything else that still fits
@@ -23,6 +25,8 @@ const DAY_MS = 86400000;
 const CENTS = 0.02;
 export const RECEIPT_MATCH_DAYS_BEFORE = 1;
 export const RECEIPT_MATCH_DAYS_AFTER = 5;
+export const RECEIPT_MATCH_DAYS_AFTER_ONLINE = 14;
+const ONLINE_SOURCES = new Set(["email", "extension", "share"]);
 export const RECEIPT_TIP_MAX = 0.3;
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -64,8 +68,10 @@ export function scoreReceiptTxn(receipt, txn) {
   let dayGap = null;
   if (rDay != null && tDay != null) {
     dayGap = Math.round((tDay - rDay) / DAY_MS);
-    if (dayGap < -RECEIPT_MATCH_DAYS_BEFORE || dayGap > RECEIPT_MATCH_DAYS_AFTER) return null;
+    const after = ONLINE_SOURCES.has(String(receipt?.source || "")) ? RECEIPT_MATCH_DAYS_AFTER_ONLINE : RECEIPT_MATCH_DAYS_AFTER;
+    if (dayGap < -RECEIPT_MATCH_DAYS_BEFORE || dayGap > after) return null;
   }
+  const late = dayGap != null && dayGap > RECEIPT_MATCH_DAYS_AFTER;
   const last4 = String(receipt?.last4 || "").replace(/\D/g, "");
   const card = last4.length === 4 && String(txn?.account || "").includes(last4);
 
@@ -73,7 +79,7 @@ export function scoreReceiptTxn(receipt, txn) {
   if (store) score += 2;
   if (card) score += 1;
   if (dayGap != null) score += dayGap >= 0 && dayGap <= 3 ? 2 : 1;
-  const confidence = amount !== "tip-guess" && store && dayGap != null ? "sure" : "likely";
+  const confidence = amount !== "tip-guess" && store && dayGap != null && !late ? "sure" : "likely";
   return { score, confidence, amount, dayGap };
 }
 
@@ -130,7 +136,8 @@ export function receiptStatus(receipt, fit = null) {
   if (fit?.confidence === "linked" && items.length && items.every((i) => i.category)) return "itemized";
   return fit ? "matched" : "unmatched";
 }
-export const RECEIPT_STATUS_LABEL = { reading: "Reading…", "needs-look": "Needs a look", itemized: "Itemized", matched: "Matched", unmatched: "Unmatched" };
+// "duplicate" (Possible duplicate) is decided by receipt-duplicates.js, not here.
+export const RECEIPT_STATUS_LABEL = { reading: "Reading…", "needs-look": "Needs a look", itemized: "Itemized", matched: "Matched", unmatched: "Unmatched", duplicate: "Possible duplicate" };
 
 // The split a matched receipt can fill in on its own: every line has a category,
 // the categories add up to the charge (±2¢), and the transaction hasn't been

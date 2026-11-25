@@ -21,7 +21,7 @@ changes to Mail only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `mail-frame.js`, `mail-attachment-view.js`, `mail-attachment-viewers.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/gmail-attachment.mjs`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
+- files: `mail-frame.js`, `mail-receipt-ui.js`, `mail-attachment-view.js`, `mail-attachment-viewers.js`, `html-sanitize.js`, `netlify/functions/gmail*.js`, `netlify/functions/gmail-attachment.mjs`, `netlify/functions/_gmail-shared.js`, `netlify/functions/sweep-background.js`, `netlify/functions/_mail-jobs.js`, `netlify/functions/scheduled-email.js`, `netlify/functions/recipe-digest.js`, `netlify/functions/_recipe-digest.js`
 - state: `mail*`
 
 ## Your scope (edit these)
@@ -41,6 +41,14 @@ changes to Mail only.
   (`getValidAccessToken`, `runInboxSweep`), `sweep-background.js`, `_mail-jobs.js`
   (durable processing engine), `scheduled-email.js` (15-minute snooze wake only),
   `recipe-digest.js` / `_recipe-digest.js`.
+- **Send to Finance** (Luke, 2026-11-22): `mail-receipt-ui.js` (`createMailReceiptModule`) —
+  the open email's ⋯ menu → `gmail.js` `readReceipt` (reuses the sweep's `extractReceipt`)
+  → a check sheet → Save puts it in the one receipts list through Shop's
+  `importFinanceInboxReceipts` (id = Gmail message id, the same as the sweep's, so never
+  two receipts) and files the email's text as a PDF (`email-receipt-pdf.js`, finance)
+  in Document › Receipts. **Manual only** (Luke chose the button over auto-filing), so
+  like Send to Explore it has no Automation toggle; the sweep's automatic
+  `receiptExtract` is separate and unchanged.
 - **Data:** tables `mail_accounts` and `mail_sweep_state` (service role only — per-user
   state stays **out of `tableplan_states`** for egress). Client config in the `config`
   section: `mailAiSettings`, `mailMoveMemory`.

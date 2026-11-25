@@ -139,4 +139,13 @@ describe("everyday documents", () => {
     expect(filed[0].tags).toEqual(["receipt"]);
     expect(await outbox.entries()).toEqual([]);
   });
+
+  it("a merged receipt's file can point at the kept receipt (relinkReceipt), and the other household can't", async () => {
+    const luke = lib("luke");
+    const id = await luke.addFile(GROUP, { content: bytes("%PDF r"), source: { receiptId: "receipt-scan-1" }, meta: { name: "Target", mime: "application/pdf" } });
+    await luke.relinkReceipt(GROUP, id, "receipt-email-2");
+    expect((await luke.files(GROUP)).find((f) => f.id === id).source).toEqual({ receiptId: "receipt-email-2" });
+    await lib("stranger").relinkReceipt(GROUP, id, "x").catch(() => {});
+    expect((await luke.files(GROUP)).find((f) => f.id === id).source).toEqual({ receiptId: "receipt-email-2" });
+  });
 });

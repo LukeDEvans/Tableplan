@@ -22,6 +22,8 @@ public class LinkOutPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise)
     ]
 
+    // usbank:// and fidelity:// aren't published by the banks (2026-11-24); an
+    // unregistered scheme just fails and the next link is tried.
     // Custom schemes this app may hand off to. Kept short on purpose: anything
     // else must be an https link.
     private static let allowedSchemes: Set<String> = [
@@ -29,7 +31,7 @@ public class LinkOutPlugin: CAPPlugin, CAPBridgedPlugin {
         "pplus", "peacock", "videos", "gametime", "youtube", "fubotv", "hbomax",
         "foxone", "nflmobile", "nhl", "mlbatbat", "fsapp",
         // Banks, stores and maps (APP_LINKS_DESIGN.md, out-catalog.js)
-        "sofi", "chase", "bofa", "target", "shoebox", "comgooglemaps"
+        "chase", "bofa", "citiglobal", "usbank", "fidelity", "target", "shoebox", "comgooglemaps"
     ]
 
     private static func url(_ raw: String?) -> URL? {

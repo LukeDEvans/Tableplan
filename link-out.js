@@ -11,6 +11,12 @@
 //         schemes; see LinkOutPlugin.swift `allowedSchemes`). UNVERIFIED until
 //         tapped on the phone from Settings › Admin › Link test (step 1).
 //   web — the website, used when the app isn't installed and on the web app.
+//   phoneWeb — optional: what the iPhone app opens instead of `web` when no app
+//         link worked. For a service whose website another app claims: Xfinity's
+//         www.xfinity.com links open the Xfinity account app, not Xfinity Stream
+//         (Luke, 2026-11-20 — a Wild game "opened the wrong Xfinity app"), so
+//         the phone goes to Xfinity Stream's App Store page, whose Open button
+//         launches the right app.
 // Pure apart from openOutLink, whose side effects are all injected.
 
 export const OUT_TARGETS = {
@@ -23,7 +29,7 @@ export const OUT_TARGETS = {
   appletv:   { label: "Apple TV",      app: ["videos://"],         web: "https://tv.apple.com/" },
   peacock:   { label: "Peacock",       app: ["peacock://"],        web: "https://www.peacocktv.com/" },
   espn:      { label: "ESPN",          app: ["sportscenter://"],   web: "https://www.espn.com/watch/" },
-  xfinity:   { label: "Xfinity Stream", app: ["xfinitystream://"], web: "https://www.xfinity.com/stream/live" },
+  xfinity:   { label: "Xfinity Stream", app: ["xfinitystream://"], web: "https://www.xfinity.com/stream/live", phoneWeb: "https://apps.apple.com/us/app/xfinity-stream/id731629156" },
   foxone:    { label: "Fox One",       app: ["foxone://"],         web: "https://www.foxone.com/" },
   nfl:       { label: "NFL",           app: ["nflmobile://"],      web: "https://www.nfl.com/plus/" },
   nba:       { label: "NBA",           app: ["gametime://"],       web: "https://www.nba.com/watch" },
@@ -53,6 +59,7 @@ export function titleHandoff(providerId, links = {}) {
   return {
     appUrls: [...new Set([...exact, ...(t ? t.app : [])])],
     webUrl: exact[0] || search || (t ? t.web : ""),
+    phoneWebUrl: exact[0] ? "" : (t?.phoneWeb || ""),
     label: t ? t.label : "",
     exact: exact.length > 0,
   };
@@ -61,7 +68,7 @@ export function titleHandoff(providerId, links = {}) {
 /** The app (or site) for a target, e.g. a network for a live game. */
 export function targetHandoff(id) {
   const t = outTarget(id);
-  return t ? { appUrls: [...t.app], webUrl: t.web, label: t.label, exact: false } : null;
+  return t ? { appUrls: [...t.app], webUrl: t.web, phoneWebUrl: t.phoneWeb || "", label: t.label, exact: false } : null;
 }
 
 /**
@@ -75,7 +82,8 @@ export async function openOutLink(spec, { linkOut = null, windowOpen } = {}) {
   const webUrl = spec && isHttps(spec.webUrl) ? spec.webUrl : "";
   if (linkOut && typeof linkOut.open === "function") {
     try {
-      const r = await linkOut.open({ appUrls, webUrl });
+      // The phone's own fallback when the website would open the wrong app.
+      const r = await linkOut.open({ appUrls, webUrl: isHttps(spec?.phoneWebUrl) ? spec.phoneWebUrl : webUrl });
       return r && r.opened ? r.opened : "none";
     } catch { /* fall through to the web path */ }
   }
@@ -102,7 +110,7 @@ export function catalogSchemes() {
 // listener (app.js "Link out") opens it, so any page can render one.
 export function linkOutAttrs(spec, esc) {
   const apps = (spec?.appUrls || []).filter(Boolean).join(" ");
-  return `data-link-out="1" data-out-app="${esc(apps)}" data-out-web="${esc(spec?.webUrl || "")}" data-out-label="${esc(spec?.label || "")}"${spec?.note ? ` data-out-note="${esc(spec.note)}"` : ""}`;
+  return `data-link-out="1" data-out-app="${esc(apps)}" data-out-web="${esc(spec?.webUrl || "")}"${spec?.phoneWebUrl ? ` data-out-phone-web="${esc(spec.phoneWebUrl)}"` : ""} data-out-label="${esc(spec?.label || "")}"${spec?.note ? ` data-out-note="${esc(spec.note)}"` : ""}`;
 }
 
 /** Read a hand-off back from an element rendered with linkOutAttrs. */
@@ -111,6 +119,7 @@ export function linkOutFromElement(el) {
   return {
     appUrls: String(d.outApp || "").split(/\s+/).filter(Boolean),
     webUrl: d.outWeb || "",
+    ...(d.outPhoneWeb ? { phoneWebUrl: d.outPhoneWeb } : {}),
     label: d.outLabel || "",
     note: d.outNote || "",
   };

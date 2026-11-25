@@ -324,6 +324,9 @@ export const EXPORT_TABLES = [
   { name: "finance_goals", section: "finance", rows: ({ state }) => arr(state.financeGoals), preferred: LEAD },
   // Contacts
   { name: "contacts", section: "contacts", rows: ({ state }) => contactRows(state.contacts), preferred: ["id", "name", "firstName", "lastName", "phones", "emails", "birthday", "addresses", "groups", "notes"] },
+  // Apple Health copies (live_health_workouts / live_health_days; HEALTH_DESIGN.md).
+  { name: "health_workouts", section: null, rows: ({ health }) => arr(health?.workouts), preferred: ["started_at", "ended_at", "activity", "duration_s", "distance_m", "energy_kcal", "hr_avg", "hr_max", "source", "id"] },
+  { name: "health_rings", section: null, rows: ({ health }) => arr(health?.days), preferred: ["day", "move_kcal", "move_goal", "exercise_min", "exercise_goal", "stand_h", "stand_goal"] },
   // Permanent history (live_history table) — all kinds, newest first.
   { name: "history", section: null, rows: ({ history }) => arr(history).map((h) => ({ occurredAt: h.occurred_at, kind: h.kind, title: h.title, refId: h.ref_id, payload: h.payload, id: h.id })) },
 ];
@@ -417,6 +420,7 @@ export function planEventsToIcs(events, { calendarName = "Live", stamp = new Dat
 //   prepDays,         // [{ id, name, offset }] — planner day offsets from the week key
 //   finance,          // { transactions: [...] } from the finance module
 //   history,          // live_history rows
+//   health,           // { workouts, days } — Apple Health copies (may be empty)
 //   contactsVcf,      // prebuilt vCard text (contacts module owns the format)
 //   exportedAt, appVersion, schemaVersion, notes: [string]
 // }
@@ -429,7 +433,7 @@ export function buildExportFiles(input) {
   const scopes = input.scopes || {};
   const shadowInput = input.shadowByScope || Object.fromEntries(Object.entries(input.shadowSections || {}).map(([section, data]) => [section, { [scopes[section] === "household" ? "personal" : "household"]: data }]));
   const { value: cleanShadow, removed: removedShadow } = redactSecrets(shadowInput);
-  const ctx = { state: cleanState, prepDays: input.prepDays || [], finance: input.finance || {}, history: input.history || [] };
+  const ctx = { state: cleanState, prepDays: input.prepDays || [], finance: input.finance || {}, history: input.history || [], health: input.health || {} };
   const files = [];
   const tables = [];
 

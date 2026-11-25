@@ -374,14 +374,9 @@ try {
   check((await scopes()).finance === "personal", "with personal accounts: Personal reads the person's own Finance");
   await page.evaluate(() => document.querySelector("#homeFinanceBtn").click());
   await page.waitForTimeout(800);
-  const summary = await page.evaluate(() => document.querySelector(".fin-household-summary")?.textContent.replace(/\s+/g, " ") || "");
-  check(/Household/.test(summary) && /Open in Household/.test(summary), "Personal Finance shows the Household card", summary.slice(0, 80));
+  check(!(await page.evaluate(() => !!document.querySelector(".fin-household-summary"))), "Personal Finance has no Household card (removed 2026-11-24)");
   check(await fits(), "Personal Finance fits 390px");
   await shot("finance-personal");
-  await page.click('[data-fin-action="open-household"]');
-  await page.waitForTimeout(800);
-  check(await view() === "household" && (await scopes()).finance === "household" && await area() === "finance", "Open in Household switches views and stays on Finance", `${await view()} / ${(await scopes()).finance} / ${await area()}`);
-  check(!(await page.evaluate(() => !!document.querySelector(".fin-household-summary"))), "no Household card in Household");
   check(!(await page.evaluate(() => window.__liveQA.shadowOnDeviceForQa())).includes("finance"), "the finance copy not on screen is never saved on the device");
   await page.evaluate(() => window.__liveQA.personalFinanceForQa(false));
   await page.waitForTimeout(400);

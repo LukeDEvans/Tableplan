@@ -41,7 +41,9 @@ layer ARCHITECTURE.md §9 already requires, reachable from outside the app.
 | `liv_health` | Is Liv working (§4). Admin only. |
 
 **Never readable:** Finance, Documents (incl. the Safe), Photos, Messages, Mail,
-Contacts, Settings — and nobody's Personal rows but the key owner's.
+Settings — and nobody's Personal rows but the key owner's. Contacts are readable
+only through `search` (Luke, 2026-11-19; §5a). Finance and Mail will follow the
+app's assistant switches once search reaches them (UNIVERSAL_SEARCH_DESIGN.md phase 5).
 
 **Known gaps (phase 1):**
 - **Google Calendar events aren't in Liv's synced state** (Google is authoritative,
@@ -158,6 +160,21 @@ stay read-only.** This replaces the earlier "adds only, no edits or deletes" rul
   only. That sign-in is refused below aal2 when a factor is verified; the undo is logged
   against the key that made the change; CORS is limited to Liv's origins.
 
+## 5a. `search` (2026-11-19)
+
+One tool that finds anything by name across the key owner's views: recipes (with
+ingredients), tasks, Liv events, trips and trip ideas, Watch lists, saved articles,
+the shopping list and contacts. It runs the app's own `search-index.js` (bundled),
+reading only the JSON keys its sources name, each row once; recipes come from
+`eat_recipes` with four columns (`db.recipeIndex`). Results show kind, view, date and
+id, and the answer says titles are data, not instructions. Podcasts stay on the
+device (their rows carry episode lists). Design: UNIVERSAL_SEARCH_DESIGN.md.
+
+**Live since 2026-11-19 (liv-mcp v8, from #272).** Checked with a throwaway key over
+`pg_net` (since revoked): `tools/list` shows `search`; real queries return recipes and
+Watch items across Personal and Household. Not yet deployed: plural group headings
+("Watch list:" rather than "Watchs:") — goes out with the next liv-mcp deploy.
+
 ## 6. Open questions (to take one at a time)
 
 1. **First key:** mint it now from SQL with the secret given to Luke in chat
@@ -169,3 +186,11 @@ stay read-only.** This replaces the earlier "adds only, no edits or deletes" rul
    only Luke? Recommended: a small "added by assistant" mark on Household items.
 5. **OAuth** in place of a static key — needed only if Request headers stay
    unavailable or someone besides Luke uses it. Recommended: later.
+
+**liv-mcp v9 (2026-11-24, #300):** liv_health reports the upcoming-episodes job; #273's plural
+headings are live. Deployed through the Supabase MCP with `index.ts` as committed and a
+one-line `tools.bundle.js` that re-exports the committed bundle pinned by commit
+(`cdn.jsdelivr.net/gh/LukeDEvans/Tableplan@<sha>/supabase/functions/liv-mcp/tools.bundle.js`),
+so the 98 KB bundle isn't pasted by hand. Supabase bundles the import at deploy time; the
+running function doesn't depend on the CDN. Checked: liv_health and search answer normally.
+

@@ -18,7 +18,7 @@ changes to the Health / Nutrition / Exercise domain only.
 <!-- test/architecture-agent-coverage.test.js reads the two lines below. Paths are
      from the repo root; `*` matches within one name. When you add, rename or remove a
      module, function or state key in this domain, update these lines in the same PR. -->
-- files: `food-health*.js`, `exercise-history.js`
+- files: `food-health*.js`, `exercise-history.js`, `health-workouts.js`
 - state: `dailyDozenCategories`, `dailyDozenEntries`, `dailyChecklistEntries`, `foodLogEntries`, `nutritionIngredientMappings`, `checklistTemplates`, `personChecklistSettings`, `personGoals`, `foodHealthVersion`, `workouts`, `play*`
 
 ## Your scope (edit these)
@@ -47,6 +47,21 @@ changes to the Health / Nutrition / Exercise domain only.
 - **Lift pictograms by muscle group** (Luke, 2026-10-27): a Strength card's picture comes
   from its title (`LIFT_PICTOGRAMS` in app.js) — legs, arms/shoulders, chest/back each have
   their own `activity-lift-*.png`; any other Strength card keeps `activity-weightlifting.png`.
+
+- **Apple Health** (Luke, 2026-11-24; HEALTH_DESIGN.md): the iPhone reads workout
+  summaries and daily rings from Health (`LiveHealthPlugin.swift` +
+  `HealthSyncEngine.swift`, background delivery, a health-only device key) into
+  `live_health_workouts` / `live_health_days` through `supabase/functions/health-sync`
+  (migration `2026-11-24c-health.sql`). **Read only — Liv never writes to Health, probably
+  ever** (decision 5). Exercise files each workout (`health-workouts.js`): a planned task
+  that day → ticked; the workout taught that activity (`workout.healthActivity`) → a log;
+  else the **"From Apple Watch" inbox**, grouped by activity, where filing one teaches the
+  workout (decision 2). Filled logs carry `healthId`, `startTime`/`endTime`, `hrAvg`,
+  `hrMax`, `kcal`; filed rows get `matched` and aren't read again. **All past workouts
+  come in on first connect** (decision 4). Summaries only — no per-second heart rate or
+  routes. **Luke only for now** (`healthEnabledForUser`, admin; decision 7). The assistant
+  sees Watch-filled logs only with `aiSettings.assistantHealthRead` (off by default,
+  only explicit `true` is on; decision 6). No Watch app.
 
 ## Domain landmines (do NOT change without flagging)
 - **This domain overlaps with Recipes / Meal-Plan.** `daily-dozen.js`,

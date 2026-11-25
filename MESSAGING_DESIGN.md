@@ -398,3 +398,27 @@ A second separate agent attacked everything above the crypto core (account, engi
 **Verified:** 114 messaging tests (`test/messaging-*.test.js`) against PGlite with both migrations; 13 of the fixes confirmed by planting the bug back (each makes tests fail); `npm run qa:messaging-ui` 28/28, now including sign-out (device removed, store deleted); crypto QA passes; full suite 3215 passing; build passes.
 
 **Migration 2026-10-31** is additive (no DROP), re-runnable, and checked by `scripts/check-messaging-migration.mjs` (89 checks over both migrations). **Applied 2026-10-30** via execute_sql (additive part, then the revokes and column grant separately); verified afterwards: `msg_rate` has row security and no access for signed-in users or anon, `msg_rate_take` isn't callable by them, `last_seen_at` isn't selectable while the key columns are, the new `msg_send` / `msg_claim_prekey` bodies are live; recorded in `schema_migrations` (20261031090000).
+
+## 19. Identity-signed device removals (2026-11-24)
+
+Closes the P1 "Messaging trusts the server for device removal" (ISSUES.md, from the
+Documents crypto review). Until now a removed linked device was "removed" only by
+`msg_devices.revoked_at`, which the server sets; its certificate still verified, so
+a server that cleared the mark kept it in everyone's fan-out.
+
+- **Statement** (`messaging/crypto/removals.js`): `LiveMsg/devices-removed/v1 ‖ userId ‖
+  generation ‖ sorted removed device ids`, signed by the person's identity key (only
+  on the phone). Verified against the identity the reader **pinned**, never one the
+  server supplied.
+- **Table** `msg_device_removals` (migration 2026-11-24): one row per person —
+  generation, `removed_device_ids uuid[]` (≤ 500), sig. Readable by anyone who can
+  message them (`msg_can_contact`), written only by the owner, MFA policy.
+- **Phone removes a device**: signs the cumulative list (+1 generation), publishes it,
+  then sets `revoked_at` as before. A linked device removing another linked device can
+  only set `revoked_at`; the phone's next `maintain` signs that in.
+- **Senders** (`resolveDevices`): skip any device on a verified list, and keep the union
+  of every list they've verified per identity (`removedSeen` in the keystore), so a
+  server serving an older list can't un-remove a device. A new identity (reset) starts
+  a fresh list. A failed read counts as "no list" — what's already been seen still holds.
+- Tests: `test/messaging-device-removals.test.js` (a server clearing `revoked_at`, a
+  rolled-back list, a forged list, a linked-device removal, row security).

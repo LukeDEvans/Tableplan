@@ -28,6 +28,28 @@ extraction. Added for Finance:
 | `source` | `scan` (default) · `email` · `extension` · `manual` |
 | `externalId` | Gmail message id for `email` receipts (for the "Email" link) |
 | `financeTxnId` | the transaction it was itemized against, once linked |
+| `orderNumber` | the store's order number when an emailed order printed one (Send to Finance) |
+| `notDuplicateOf` | receipts the user said are separate purchases ("Keep both") |
+
+**Possible duplicates (Luke, 2026-11-22: the app always asks).** `receipt-duplicates.js`
+treats two receipts as the same purchase when they print the same order number, or when the
+totals agree (±2¢), the dates are at most 2 days apart and the store names start with the
+same word. Receipts linked to two different charges, or marked Keep both, never are. A new
+receipt with a twin gets a toast with **Review** (and waits before going into Inventory);
+Shop's list and Document show **Possible duplicate**; the receipt editor offers **Merge into
+one** (the more detailed read, the charge link and categories kept; Document keeps one file:
+the dropped receipt's is relinked, or goes to Recently deleted when the kept one has its own)
+or **Keep both**. Send to Finance asks before saving.
+
+**Send to Finance (Luke, 2026-11-22).** In Mail, an open email's ⋯ menu → *Send to
+Finance* reads that one email (`gmail.js` `readReceipt`, the sweep's `extractReceipt`),
+shows it for a check (with a Personal purchase switch), and on Save adds it through
+`importFinanceInboxReceipts` as `source: "email"` with the Gmail message id — the same id
+the sweep's automatic `receiptExtract` uses, so the two never make two receipts. The
+email's text is filed in Document › Receipts as a PDF (`email-receipt-pdf.js`) pointing
+at the receipt. Manual only. Emailed, shared and extension receipts may match a charge
+up to 14 days after their date (online orders charge at shipping); past 5 days only as
+"likely" (`receipt-matcher.js`).
 
 Only `scan`/`manual` receipts feed grocery price history, item mappings and the
 grocery catalog (`feedsPriceHistory`). Amazon-style email orders do not.
@@ -108,6 +130,9 @@ history is built then). `extraction.status` lives inside `extraction`, which old
   unlabeled remainder (`receiptFinancePortions`).
 - `importFinanceInboxReceipts(list)`, `linkReceiptToFinanceTxn(receiptId, txnId)`,
   `openReceiptDetail(receiptId)` (opens the receipt in Shop).
+- `setReceiptLineCategories(receiptId, { lineId: label })` (2026-11-23): Finance's
+  review card categorizes a receipt item by item and saves each line's budget
+  category here. `items` carry each line's `id` for this.
 
 Matching (`financeReceiptForTxn`): use the receipt linked to the transaction if there is
 one. Otherwise use an unlinked receipt with the same total (±2¢) dated within 4 days.

@@ -67,6 +67,17 @@ almost all your work is there. Make focused changes to the Groceries domain only
   persistentManualGroceryStamps, instacartOrders`.
   New keys follow "New synced state" below.
 
+- **Possible duplicate receipts (Luke, 2026-11-22): the app always asks.** `receipt-duplicates.js`
+  (finance-owned, pure) finds the same purchase saved twice: same order number, or same total
+  (±2¢) within 2 days at a store whose name starts with the same word. A new arrival (scan
+  result, email, shared order, a reviewed scan) that has a twin gets a "looks like one you
+  already have" toast with Review instead of the usual "is in" line, and its items wait
+  instead of going into Inventory. The list marks both **Possible duplicate**; the editor's
+  banner offers **Merge into one** (`mergeReceiptPair`: keeps the more detailed read, the
+  charge link and categories; price history of dropped lines tombstoned; Document's file
+  relinked or trashed through the injected `onReceiptsMerged`) or **Keep both**
+  (`keepReceiptsApart` → `notDuplicateOf` on each, never asked again). Never merged on its own.
+
 ## Module contract & seams (preserve — the entanglement is real)
 - **Injected deps** (from app.js — add to the deps object, never reach for an app.js global):
   `state`, `elements`, `persist`, `meals`, `prepDays`; the meal-plan/recipe **grocery-list

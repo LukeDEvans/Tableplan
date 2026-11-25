@@ -206,7 +206,9 @@ describe("the app's side (app.js)", () => {
   it("the header scanner queues every scan with its household, and the camera's as camera pages", () => {
     const fn = app.slice(app.indexOf("function scanReceiptFromHeader("), app.indexOf("let receiptOutboxPromise"));
     expect(fn).toMatch(/const receiptId = openReceiptScanWithFiles\(images, scanOptions\);\s+queueReceiptForDocuments\(images, \{ camera, receiptId \}\)/);
-    expect(app).toMatch(/scanReceiptFromHeader\(scannedPagesToFiles\(result\?\.pages\), \{[^}]*camera: true \}\)/);
+    // Scan now goes through the destination step (utilities menu): the camera flag rides along to the receipt path.
+    expect(app).toMatch(/routeScan\(scannedPagesToFiles\(result\?\.pages\), \{[^}]*camera: true \}\)/);
+    expect(app).toMatch(/scanReceiptFromHeader\(images, \{[^}]*camera \}\)/);
     expect(app).toMatch(/\.queue\(pages, \{ scope, camera, receiptId \}\)/);
   });
   it("sign-out deletes the outbox", () => {

@@ -1,5 +1,5 @@
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
-import { financeMonthsToSnapshot, financeOffsettingPairIds, financeTransferPairIds, financePendingDuplicates, localMonthKey, monthKeyOffset, financeMonthEntry, financeMonthEntryTotals, financeMonthEntriesMatch, financeTxnsCoverMonth, financeUncategorizedByMonth, financeProjectedSpend } from './finance-actuals.js';
+import { financeMonthsToSnapshot, financeOffsettingPairIds, financeTransferPairIds, financePendingDuplicates, localMonthKey, monthKeyOffset, financeMonthEntry, financeMonthEntryTotals, financeMonthEntriesMatch, financeTxnsCoverMonth, financeUncategorizedByMonth, financeProjectedSpend, financeMonthsToBackfill } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport, findDuplicateCsvAccount } from './finance-csv.js';
 import { saveFile } from './save-file.js';
@@ -9,11 +9,13 @@ import { createIdbStorage, createMemoryStorage } from './content-store/storage.j
 import { usableViewportBottom, notificationsWindowBox } from './dock-space.js';
 import { linkOutAttrs } from './link-out.js';
 import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
-import { financeOwedBalances } from './finance-settle.js';
+import { duplicateMap } from './receipt-duplicates.js';
+import { financeOwedLedger, suggestSettlement, oweLabel, owedByLabel } from './finance-settle.js';
+import { merchantDecision, guessForMerchant, guessForLine, splitFromLines, addCount, itemKey, cleanMerchantName, ITEM_PREFIX, AI_PREFIX } from './finance-guess.js';
 import { subscriptionReview, cashForecast, everydaySpendPerDay, goalProgress } from './finance-plan.js';
 import { TAX_KINDS, taxLabel, taxTagFor, taxYearSummary, taxYearCsv, tripCandidates, tripCharges } from './finance-tags.js';
 import { upcomingReturns, returnReminderInstances } from './receipt-returns.js';
-import { banksForAccounts, billerForBill, placeHandoff, OUT_LINK_ARROW } from './out-catalog.js';
+import { placeHandoff, matchPlace } from './out-catalog.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
 // commits (see FINANCE_EXTRACTION.md). This is COMMIT 1: the pure normalizers,
@@ -300,7 +302,7 @@ export function parseFinAmount(str) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, openReceiptDetail, queueReceiptFile, onFinanceCountChanged, memberName, currentViewKey } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, getFinanceScope, canMoveFinanceAccounts, reloadFinanceAfterMove, openHouseholdFinance, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore, receiptsForFinance, importFinanceInboxReceipts, linkReceiptToFinanceTxn, setReceiptLineCategories, openReceiptDetail, queueReceiptFile, onFinanceCountChanged, memberName, currentViewKey, householdMemberList } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -1083,6 +1085,42 @@ function financeReceiptForTxn(t) {
   return financeReceiptFits().byTxn.get(t.id)?.receipt || null;
 }
 
+// Receipts with no bank charge yet, as transaction-shaped rows for the list
+// (Luke, 2026-11-23): a purchase shows up as soon as its receipt is in, before
+// SimpleFIN has the charge. Once the charge arrives the receipt fits it
+// (financeReceiptFits) and the row is gone — the bank's charge carries the
+// receipt from then on. Recent ones only (the bank window), no duplicates, and
+// only once the bank data is on screen, so a cold start doesn't flash every
+// receipt as unmatched. These rows are never in any total.
+function financeReceiptOnlyRows() {
+  if (!financeLive?.accounts?.length) return [];
+  const cutoff = Date.now() - 45 * 86400000;
+  const fits = financeReceiptFits().byReceipt;
+  const dups = financeReceiptDuplicates();
+  return financeReceiptList()
+    .filter((r) => r && r.id && Number(r.total) > 0 && !fits.has(r.id) && !dups.has(r.id) && (!r.date || new Date(r.date).getTime() >= cutoff))
+    .map((r) => {
+      const day = String(r.date || "").slice(0, 10);
+      const store = cleanMerchantName(r.merchant || "") || "Receipt";
+      return {
+        id: `rcpt:${r.id}`, receiptId: r.id, isReceiptOnly: true,
+        posted: day ? `${day}T12:00:00` : "", description: r.merchant || "Receipt",
+        displayName: store, amount: -Math.abs(Number(r.total) || 0),
+        account: "Receipt", accountId: "", label: "", items: r.items || [], source: r.source || "scan",
+      };
+    });
+}
+
+// Receipts that look like the same purchase saved twice (receipt-duplicates.js),
+// worked out once per set of receipts; shown as "Possible duplicate" in Document.
+let financeReceiptDupCache = null;
+function financeReceiptDuplicates() {
+  const list = financeReceiptList();
+  const sig = list.map((r) => `${r.id}:${r.total}:${r.date}:${r.financeTxnId || ""}:${(r.notDuplicateOf || []).length}`).join("|");
+  if (financeReceiptDupCache?.sig !== sig) financeReceiptDupCache = { sig, map: duplicateMap(list) };
+  return financeReceiptDupCache.map;
+}
+
 // What Document shows on a receipt's file: what was read, and its charge.
 function financeReceiptInfo(receiptId) {
   const list = financeReceiptList();
@@ -1091,11 +1129,11 @@ function financeReceiptInfo(receiptId) {
   const haveTxns = Boolean(financeLive?.accounts?.length);
   const fit = haveTxns ? financeReceiptFits().byReceipt.get(receiptId) || null : null;
   // Before Finance has loaded this visit, only a saved link is known.
-  const status = !haveTxns && r.financeTxnId ? "matched" : receiptStatus(r, fit);
+  const status = financeReceiptDuplicates().has(r.id) ? "duplicate" : !haveTxns && r.financeTxnId ? "matched" : receiptStatus(r, fit);
   return {
     id: r.id, store: r.merchant || "", date: r.date || "", total: Number(r.total) || 0, tip: Number(r.tip) || 0,
     source: r.source || "scan", status, statusLabel: RECEIPT_STATUS_LABEL[status] || "",
-    known: haveTxns || Boolean(r.financeTxnId),
+    known: haveTxns || Boolean(r.financeTxnId) || status === "duplicate",
     items: (r.items || []).map((i) => ({ name: i.name || "", price: Number(i.price) || 0, category: i.category ? financeTxnLabelName(i.category) || "" : "" })),
     txn: fit?.txn ? { id: fit.txn.id, posted: fit.txn.posted || "", name: fit.txn.displayName || fit.txn.description || "", account: fit.txn.account || "", amount: Number(fit.txn.amount) || 0 } : null,
   };
@@ -1229,7 +1267,9 @@ async function linkFinanceBanks() {
 let financeNotifOpen = false;
 // from/to: optional YYYY-MM-DD date range (inclusive). Either set → the list shows
 // that range across everything loaded instead of just the viewed month.
-const financeTxnFilter = { q: "", kind: "", account: "", from: "", to: "", sort: "date" };
+// merchant: a merchant key — tapping a merchant's name in a transaction's card
+// shows only that merchant (across everything loaded, like a search).
+const financeTxnFilter = { q: "", kind: "", account: "", from: "", to: "", sort: "date", merchant: "" };
 // Redesigned finance page: an always-on Overview band + a working area switched
 // between these tabs. "transactions" is the default (purchase tracking is primary).
 let financeTab = "transactions";
@@ -1237,8 +1277,23 @@ const FINANCE_TABS = [
   { id: "transactions", label: "Transactions" },
   { id: "budget", label: "Budget" },
   { id: "accounts", label: "Accounts" },
-  { id: "insights", label: "Insights" },
 ];
+// Insights was folded away (Luke, 2026-11-23): upcoming bills sit above the
+// transaction list, the charts and the savings/net-worth figures moved to Budget,
+// and Alerts, the bank link and Personal accounts went to Finance's gear menu.
+// Accounts › ⋯ › Edit accounts turns on the editing controls for the account list.
+let financeAcctEditMode = false;
+// The Finance gear-menu window open now ("alerts" | "bank-link" | "personal-accounts"), or "".
+let financeSettingsPanel = "";
+// Transactions tab scroll behaviour: tuck the search/tools row while scrolling
+// down, bring it back on any scroll up; on entering the tab, start with the
+// upcoming bills just above the top edge (scroll up to see them).
+let financeToolsTucked = false;
+let financeTxnScrollPending = true;
+let financeScrollWired = false;
+let financeProgrammaticScrollUntil = 0;
+// Name/note typed in a transaction's edit view, kept across re-renders.
+let financeRenameDraft = null;
 // Budget tab: live client-side filter over category names (applied without a
 // full re-render; re-applied after each render so it survives edits).
 let financeBudgetSearch = "";
@@ -1269,16 +1324,18 @@ function financeSuggestedNote(counts) {
   return (n >= 2 && n / total >= 0.6) ? best : "";
 }
 
+// A merchant's charges are filed on their own only when the store is consistent:
+// approved 2+ times and never as anything else. One approval, or a store that has
+// had more than one category (Trader Joe's: food and booze), only gives a guess
+// on the review card (finance-guess.js; Luke, 2026-11-23).
 function financeTxnRuleGuess(desc) {
   const key = financeMerchantKey(desc);
-  const counts = key && state.financeTxnRules?.[key];
-  if (!counts || typeof counts !== "object") return null;
-  let best = null, n = 0, total = 0;
-  for (const [k, c] of Object.entries(counts)) {
-    total += Number(c) || 0;
-    if (Number(c) > n) { n = Number(c); best = k; }
-  }
-  return (n >= 2 && n / total >= 0.6) ? best : null;
+  return merchantDecision(key ? state.financeTxnRules?.[key] : null).auto;
+}
+
+// Every budget category as { key, name } ("Needs · Food"), for guesses.
+function financeCategoryChoices() {
+  return (state.financeBudgetGroups || []).flatMap((g) => (g.categories || []).map((c) => ({ key: `cat:${g.id}:${c.id}`, name: `${g.label} · ${c.name}` })));
 }
 
 const FIN_MGMT_KEYWORDS = /payment thank you|autopay|auto pay|online payment|internet transfer|online transfer|transfer (to|from)|crcardpmt|epay/i;
@@ -1383,7 +1440,11 @@ function financeLabeledTxns() {
     // merchant's majority note (financeSuggestedNote), the same "sender
     // usually goes to X" fallback the Mail page uses for folder suggestions.
     const merchantKey = financeMerchantKey(t.description);
-    const merchantPart = names[merchantKey] || t.description;
+    // Your own name for the store wins; otherwise a readable version of the
+    // bank's text ("TARGET T-2177 MPLS" → "Target"). A linked receipt's store
+    // name is used at render time (financeTxnRowName).
+    t.nameIsCustom = Boolean(names[merchantKey]);
+    const merchantPart = names[merchantKey] || cleanMerchantName(t.description) || t.description;
     const hasOverride = Object.prototype.hasOwnProperty.call(noteOverrides, t.id);
     const note = hasOverride ? noteOverrides[t.id] : financeSuggestedNote(noteCounts[merchantKey]);
     t.noteIsOverride = hasOverride;
@@ -1422,6 +1483,15 @@ function financeLabeledTxns() {
         t.label = ""; t.labelSource = ""; delete t.split;
       }
     }
+  }
+
+  // A first guess for every charge still without a category (shown on the
+  // review card; never counted until approved).
+  const choices = financeCategoryChoices();
+  const rules = state.financeTxnRules || {};
+  for (const t of txns) {
+    if (t.label) { delete t.guess; continue; }
+    t.guess = guessForMerchant({ description: t.description, merchantKey: financeMerchantKey(t.description), rules, categories: choices });
   }
 
   // Linked returns: a manually-confirmed return→purchase link (financeTxnLinks)
@@ -1554,8 +1624,8 @@ let financeManualForm = null;
 
 function openManualTxnForm(existing) {
   financeManualForm = existing
-    ? { id: existing.id, date: (existing.posted || "").slice(0, 10), desc: existing.description || "", amount: String(existing.amount ?? ""), account: existing.account || "", label: (state.financeTxnLabels || {})[existing.id] || "" }
-    : { id: null, date: dateKeyFromDate(new Date()), desc: "", amount: "", account: "", label: "" };
+    ? { id: existing.id, date: (existing.posted || "").slice(0, 10), desc: existing.description || "", amount: String(existing.amount ?? ""), account: existing.account || "", label: (state.financeTxnLabels || {})[existing.id] || "", paidBy: (state.financeManualTxns || []).find((m) => m.id === existing.id)?.paidBy || "" }
+    : { id: null, date: dateKeyFromDate(new Date()), desc: "", amount: "", account: "", label: "", paidBy: "" };
   financeTab = "transactions"; financeExpanded.add("card:txns");
   renderFinancePage();
 }
@@ -1575,7 +1645,9 @@ function saveManualTxnForm(fields) {
     posted: /^\d{4}-\d{2}-\d{2}$/.test(fields.date) ? `${fields.date}T12:00:00.000Z` : new Date().toISOString(),
     amount,
     description: desc,
-    account: String(fields.account || "").trim().slice(0, 60) || "Cash"
+    account: String(fields.account || "").trim().slice(0, 60) || "Cash",
+    // Paid with this person's own money for the household: the household owes them.
+    ...(fields.paidBy ? { paidBy: String(fields.paidBy) } : {}),
   };
   const i = state.financeManualTxns.findIndex((m) => m.id === entry.id);
   if (i >= 0) state.financeManualTxns[i] = entry; else state.financeManualTxns.unshift(entry);
@@ -1627,10 +1699,24 @@ function financeTxnPortions(t) {
   return [{ label: t.label, amount: isIncome ? (t.amount || 0) : -(t.amount || 0) }];
 }
 
+// Household members an item can belong to (Luke, 2026-11-23: Luke and Marijane).
+function financeMembers() {
+  try { return (householdMemberList?.() || []).filter((m) => m && m.id); } catch { return []; }
+}
+function financeMemberFirstName(uid) {
+  const m = financeMembers().find((x) => x.id === uid);
+  return String(m?.name || "").trim().split(/\s+/)[0] || "Someone";
+}
+// Personal items exist only in the household's books: an item paid with household
+// money that belongs to one person (label "owe:<uid>").
+const financeOwesAllowed = () => currentViewKey?.() !== "personal";
+
 function financeTxnLabelName(key) {
   if (key === "income") return "Income";
   if (key === "mgmt") return "Account mgmt";
   const k = String(key || "");
+  const owner = owedByLabel(k);
+  if (owner) return `${financeMemberFirstName(owner)}'s · personal`;
   if (k.startsWith("income:")) {
     const p = (state.financePeople || []).find((x) => x.id === k.slice(7));
     return p ? `Income · ${p.name}` : "Income";
@@ -1674,7 +1760,14 @@ function financeTxnLabelOptionsHtml(selected) {
           const key = `cat:${g.id}:${c.id}`;
           return `<option value="${key}" ${selected === key ? "selected" : ""}>${escapeHtml(c.name)}</option>`;
         }).join("")}
-      </optgroup>`).join("")}`;
+      </optgroup>`).join("")}
+    ${financeOwesAllowed() && financeMembers().length ? `
+    <optgroup label="Someone's own (paid by the household)">
+      ${financeMembers().map((m) => {
+        const key = oweLabel(m.id);
+        return `<option value="${escapeHtml(key)}" ${selected === key ? "selected" : ""}>${escapeHtml(financeMemberFirstName(m.id))}'s</option>`;
+      }).join("")}
+    </optgroup>` : ""}`;
 }
 
 // ── Recurring charges ────────────────────────────────────────────────────────
@@ -1796,12 +1889,20 @@ function financeUpcomingBills(now = new Date()) {
 // Spending trend from the persisted monthly snapshots (financeMonthActuals):
 // total spend for the last 6 months + the categories that moved most vs their
 // 3-month average. Pure derivation from data we already keep — no new state.
-function financeSpendTrends(viewMonth) {
+// uncatByMonth (financeUncategorizedByMonth): money out with no category is added
+// to each month's bar, so the trend shows everything that left the accounts
+// (2026-11-23); the category rows below still compare categories only.
+function financeSpendTrends(viewMonth, uncatByMonth = new Map()) {
   const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
-  const monthSpend = (m) => { const e = ma[m]; if (!e || !e.cats) return null; return Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0); };
+  const monthSpend = (m) => {
+    const e = ma[m];
+    const uncat = uncatByMonth.get(m)?.spend || 0;
+    if (!e || !e.cats) return uncat > 0 ? uncat : null;
+    return Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0) + uncat;
+  };
   const months = [];
   for (let i = 5; i >= 0; i--) months.push(monthKeyOffset(viewMonth, -i));
-  const series = months.map((m) => ({ month: m, spend: monthSpend(m) }));
+  const series = months.map((m) => ({ month: m, spend: monthSpend(m), uncat: uncatByMonth.get(m)?.spend || 0 }));
   const priorMonths = months.slice(2, 5); // the 3 months before the viewed one
   const curCats = ma[viewMonth]?.cats || {};
   const keys = new Set(Object.keys(curCats));
@@ -1847,16 +1948,20 @@ function financeSetCategoryBudget(c, target) {
   else c.items[0].amount = target;
 }
 
-// Cash flow (money in vs out) for the last 6 months, from the monthly snapshots.
-function financeCashFlow(viewMonth) {
+// Cash flow (money in vs out) for the last 6 months, from the monthly snapshots
+// plus spending that has no category yet (uncatByMonth), so money out is all of
+// it, not only what's been categorized (2026-11-23).
+function financeCashFlow(viewMonth, uncatByMonth = new Map()) {
   const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
   const months = [];
   for (let i = 5; i >= 0; i--) months.push(monthKeyOffset(viewMonth, -i));
   const series = months.map((m) => {
     const e = ma[m];
     const income = e && e.income != null ? Math.abs(Number(e.income) || 0) : null;
-    const spend = e && e.cats ? Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0) : null;
-    return { month: m, income, spend };
+    const uncat = uncatByMonth.get(m)?.spend || 0;
+    const catSpend = e && e.cats ? Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0) : null;
+    const spend = catSpend == null && !uncat ? null : (catSpend || 0) + uncat;
+    return { month: m, income, spend, uncat };
   });
   return { series, hasData: series.some((s) => s.income != null || s.spend != null) };
 }
@@ -1890,14 +1995,21 @@ function financeRecurringAlerts() {
   return out;
 }
 
-// Unlabeled transactions collapsed to one row per merchant. A recurring debit
-// (e.g. a monthly loan withdrawal) otherwise shows up as one nag per month —
-// eight "electronic withdrawal firstmark" lines when it should be a single
-// "label this merchant" prompt. Labeling the representative learns a merchant
-// rule (recordFinanceTxnLabel) that auto-labels every sibling, so the whole
-// group clears at once. The newest posting represents the group.
+// Charges still waiting for a category, one entry per charge, newest first. (Until
+// 2026-11-23 these were collapsed per merchant and one approval was meant to clear
+// the group; Luke decided a choice on one charge must never change another.) A
+// recurring bill stops coming back once it's been approved twice the same way
+// (financeTxnRuleGuess), and "Approve suggested" clears guessed cards in one tap.
+// The merchant key is kept on each entry for skip and snooze.
+// A skipped store is stored with the day it was skipped. Skips saved before
+// 2026-11-23 were plain `true`; Luke chose to bring all of those back (the review
+// card now arrives with a guess), so only dated skips count. Nothing is deleted,
+// so a device holding an old copy can't bring the old skips back either.
+const financeMerchantSkipped = (v) => typeof v === "string" && v.length > 0;
+
 function financeUnlabeledByMerchant(txns) {
-  const skips = (state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {};
+  const allSkips = (state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {};
+  const skips = Object.fromEntries(Object.entries(allSkips).filter(([, v]) => financeMerchantSkipped(v)));
   const snoozes = (state.financeLabelSnoozes && typeof state.financeLabelSnoozes === "object") ? state.financeLabelSnoozes : {};
   const dismissed = (state.financeNotifDismissed && typeof state.financeNotifDismissed === "object") ? state.financeNotifDismissed : {};
   const today = dateKeyFromDate(new Date());
@@ -1908,12 +2020,11 @@ function financeUnlabeledByMerchant(txns) {
     const k = financeMerchantKey(t.description) || `id:${t.id}`;
     if (skips[k]) continue; // user chose to skip labeling this merchant's charges
     if (snoozes[k] === today) continue; // snoozed for today — returns tomorrow
-    const g = byKey.get(k);
-    if (!g) { byKey.set(k, { key: k, rep: t, count: 1 }); continue; }
-    g.count++;
-    if ((t.posted || "") > (g.rep.posted || "")) g.rep = t;
+    // One card per charge (Luke, 2026-11-23): a choice on one charge never
+    // changes another, so charges are no longer grouped by merchant.
+    byKey.set(t.id, { key: k, rep: t, count: 1 });
   }
-  return [...byKey.values()];
+  return [...byKey.values()].sort((a, b) => (b.rep.posted || "").localeCompare(a.rep.posted || ""));
 }
 function financeUnlabeledCount() {
   return financeUnlabeledByMerchant(financeDeckWindow(financeLabeledTxns())).length;
@@ -1989,6 +2100,11 @@ function openFinanceTxnFilter() {
   const dates = allTxns.map((t) => (t.posted || "").slice(0, 10)).filter(Boolean).sort();
   const oldest = dates[0] || "";
   const today = new Date().toISOString().slice(0, 10);
+  const merchantLabel = () => {
+    const t = allTxns.find((x) => financeMerchantKey(x.description || "") === f.merchant);
+    const n = t?.displayName || "";
+    return (n.includes(" - ") ? n.slice(0, n.indexOf(" - ")) : n) || "This merchant";
+  };
   const overlay = document.createElement("div");
   overlay.id = "finFilterOverlay";
   overlay.className = "fin-review-overlay fin-filter-overlay";
@@ -2001,7 +2117,10 @@ function openFinanceTxnFilter() {
         <option value="income" ${f.kind === "income" ? "selected" : ""}>Income</option>
         <option value="mgmt" ${f.kind === "mgmt" ? "selected" : ""}>Account mgmt</option>
         <option value="split" ${f.kind === "split" ? "selected" : ""}>Splits</option>
-        ${(state.financeBudgetGroups || []).map((g) => `<option value="group:${escapeHtml(g.id)}" ${f.kind === `group:${g.id}` ? "selected" : ""}>${escapeHtml(g.label)}</option>`).join("")}
+        ${(state.financeBudgetGroups || []).map((g) => `<optgroup label="${escapeHtml(g.label)}">
+          <option value="group:${escapeHtml(g.id)}" ${f.kind === `group:${g.id}` ? "selected" : ""}>All ${escapeHtml(g.label)}</option>
+          ${(g.categories || []).map((c) => `<option value="cat:${escapeHtml(g.id)}:${escapeHtml(c.id)}" ${f.kind === `cat:${g.id}:${c.id}` ? "selected" : ""}>${escapeHtml(c.name || "Category")}</option>`).join("")}
+        </optgroup>`).join("")}
       </select>
     </label>
     <label class="fin-filter-field"><span class="fin-filter-label">Account</span>
@@ -2017,8 +2136,18 @@ function openFinanceTxnFilter() {
         <input class="fin-item-name" type="date" value="${escapeHtml(f.to)}" ${f.from || oldest ? `min="${escapeHtml(f.from || oldest)}"` : ""} max="${today}" data-fin-filter="to" aria-label="To date" />
       </div>
       <span class="fin-hint">${f.from || f.to ? "Covers every loaded transaction in the range, regardless of the month shown." : "Blank = the month shown at the top."}${oldest ? ` Transactions are loaded back to ${escapeHtml(finFilterDateLabel(oldest))}.` : ""}</span>
-    </div>`;
-  const active = () => Boolean(f.kind || f.account || f.from || f.to);
+    </div>
+    ${f.merchant ? `<div class="fin-filter-field"><span class="fin-filter-label">Merchant</span>
+      <button class="fin-scope-chip" type="button" data-fin-filter-merchant-clear>${escapeHtml(merchantLabel())}<span aria-hidden="true">×</span></button>
+    </div>` : ""}
+    <label class="fin-filter-field"><span class="fin-filter-label">Sort</span>
+      <select class="fin-scenario-select" data-fin-filter="sort">
+        <option value="date" ${f.sort === "date" ? "selected" : ""}>Date</option>
+        <option value="label" ${f.sort === "label" ? "selected" : ""}>Category</option>
+        <option value="account" ${f.sort === "account" ? "selected" : ""}>Account</option>
+      </select>
+    </label>`;
+  const active = () => Boolean(f.kind || f.account || f.from || f.to || f.merchant || f.sort !== "date");
   overlay.innerHTML = `
     <div class="fin-review-modal fin-filter-modal" role="dialog" aria-modal="true" aria-label="Filter transactions">
       <div class="fin-review-head">
@@ -2052,14 +2181,15 @@ function openFinanceTxnFilter() {
   overlay.addEventListener("change", (e) => {
     const key = e.target.dataset?.finFilter;
     if (!key) return;
-    f[key] = e.target.value || "";
+    f[key] = e.target.value || (key === "sort" ? "date" : "");
     // keep the range ordered if one end is moved past the other
     if (f.from && f.to && f.from > f.to) { if (key === "from") f.to = f.from; else f.from = f.to; }
     refresh();
   });
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay || e.target.closest(".fin-review-close, [data-fin-filter-done]")) return close();
-    if (e.target.closest("[data-fin-filter-clear]")) { f.kind = ""; f.account = ""; f.from = ""; f.to = ""; refresh(); }
+    if (e.target.closest("[data-fin-filter-merchant-clear]")) { f.merchant = ""; refresh(); return; }
+    if (e.target.closest("[data-fin-filter-clear]")) { f.kind = ""; f.account = ""; f.from = ""; f.to = ""; f.merchant = ""; f.sort = "date"; refresh(); }
   });
   overlay.querySelector("[data-fin-filter-body] select")?.focus();
 }
@@ -2078,6 +2208,7 @@ function openFinanceTxnReview() {
         <span class="fin-review-count" data-fin-review-count aria-live="polite"></span>
         <button class="fin-review-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
+      <div class="fin-review-bulk" data-fin-review-bulk hidden><button class="fin-review-suggested" type="button" data-fin-review-suggested></button></div>
       <div class="fin-review-deck" data-fin-review-deck tabindex="0"></div>
     </div>`;
   document.body.appendChild(overlay);
@@ -2103,6 +2234,56 @@ function openFinanceTxnReview() {
   renderFinanceReviewDeck();
   wireFinanceReviewDeck(overlay);
   overlay.querySelector("[data-fin-review-deck]")?.focus();
+  requestFinanceAiGuesses(overlay).catch(() => {});
+}
+
+// Merchants the app has never seen and the built-in list doesn't know get one
+// small AI call (Luke, 2026-11-12/23: AI is fine, your own choices come first).
+// The answer is kept (ai:<merchant> in the rules map) so each is asked once, and
+// it only pre-fills cards you haven't touched. Asked at most once per merchant
+// per session even when the server can't answer (before the deploy).
+const financeAiAsked = new Set();
+async function requestFinanceAiGuesses(overlay) {
+  const deck = overlay?.querySelector("[data-fin-review-deck]");
+  if (!deck) return;
+  const rules = state.financeTxnRules || {};
+  const want = new Map();
+  for (const card of deck.querySelectorAll('.fin-review-card[data-mode="one"]')) {
+    const key = card.dataset.reviewKey || "";
+    const sel = card.querySelector("[data-review-label]");
+    if (!key || key.startsWith("id:") || sel?.value || financeAiAsked.has(key) || rules[AI_PREFIX + key] || rules[key]) continue;
+    if (!want.has(key)) want.set(key, card.dataset.desc || "");
+    if (want.size >= 20) break;
+  }
+  if (!want.size) return;
+  for (const k of want.keys()) financeAiAsked.add(k);
+  const data = await callNetlifyFunction("simplefin", { action: "guessMerchants", merchants: [...want].map(([key, text]) => ({ key, text })) });
+  const guesses = data?.guesses && typeof data.guesses === "object" ? data.guesses : {};
+  let saved = 0;
+  if (!state.financeTxnRules || typeof state.financeTxnRules !== "object") state.financeTxnRules = {};
+  for (const [key, label] of Object.entries(guesses)) {
+    if (!want.has(key) || typeof label !== "string" || !financeTxnLabelName(label)) continue;
+    state.financeTxnRules[AI_PREFIX + key] = { [label]: 1 };
+    saved += 1;
+  }
+  if (!saved) return;
+  trimFinanceRules();
+  invalidateFinanceLabeled();
+  persist();
+  if (!overlay.isConnected) return;
+  // Fill the cards still untouched; anything you've already picked stays yours.
+  for (const card of deck.querySelectorAll('.fin-review-card[data-mode="one"]')) {
+    const label = guesses[card.dataset.reviewKey || ""];
+    const sel = card.querySelector("[data-review-label]");
+    if (!label || !sel || sel.value || card.dataset.touched === "1" || !financeTxnLabelName(label)) continue;
+    sel.value = label;
+    card.dataset.suggest = "1";
+    const hint = card.querySelector(".fin-review-guess");
+    if (hint) hint.textContent = FIN_GUESS_HINT.ai;
+    else sel.closest(".fin-review-field")?.insertAdjacentHTML("afterend", `<div class="fin-review-guess">${escapeHtml(FIN_GUESS_HINT.ai)}</div>`);
+    card.querySelectorAll("[data-review-chip]").forEach((c) => c.classList.toggle("is-on", c.dataset.reviewChip === label));
+  }
+  updateFinanceReviewProgress(deck);
 }
 
 // Non-transaction notifications rendered as their own (non-swipeable) cards at
@@ -2185,6 +2366,192 @@ function financeTxnFactsLine(t) {
   return facts + (t.signFlipped ? " · sign corrected" : "");
 }
 
+let financeSettleFormBy = ""; // whose Settle up form is open
+function financeOwedLedgerNow(allTxns) {
+  return financeOwedLedger({ txns: allTxns, portionsOf: financeTxnPortions, receipts: financeReceiptList(), manual: state.financeManualTxns || [], settlements: state.financeSettlements || [] });
+}
+function financeOwedBlockHtml(allTxns) {
+  const ledger = financeOwedLedgerNow(allTxns);
+  const rows = [...ledger.entries()].filter(([by, e]) => Math.abs(e.net) >= 0.01 || financeExpanded.has(`owed:${by}`) || financeSettleFormBy === by);
+  const html = rows.map(([by, e]) => {
+    const name = escapeHtml(financeMemberFirstName(by));
+    const owes = e.net > 0;
+    const open = financeExpanded.has(`owed:${by}`);
+    const suggestion = suggestSettlement(e.net, allTxns, state.financeSettlements || []);
+    const itemCount = e.items.filter((i) => i.kind === "owes" || i.kind === "owed").length;
+    const items = e.items.slice(0, 40).map((it) => `
+        <div class="fin-owed-item">
+          <span class="fin-owed-date">${it.date ? escapeHtml(new Date(it.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })) : ""}</span>
+          <span class="fin-owed-name">${escapeHtml(it.name)}</span>
+          <span class="fin-owed-amt ${it.kind === "owes" || it.kind === "paid-out" ? "is-owes" : "is-owed"}">${it.kind === "owes" || it.kind === "paid-out" ? "+" : "−"}${formatFinMoney(it.amount)}</span>
+        </div>`).join("");
+    return `
+      <div class="fin-truth-row fin-owed-row">
+        <button class="fin-owed-toggle" type="button" data-fin-action="toggle-owed" data-by="${escapeHtml(by)}" aria-expanded="${open}">
+          <span class="fin-truth-name">${Math.abs(e.net) < 0.01 ? `${name} and the household are even` : owes ? `${name} owes the household` : `The household owes ${name}`}<span class="fin-of"> · ${itemCount} item${itemCount === 1 ? "" : "s"}</span></span>
+          <span class="fin-truth-amt">${Math.abs(e.net) < 0.01 ? "" : formatFinMoney(Math.abs(e.net))}</span>
+        </button>
+        ${Math.abs(e.net) >= 0.01 ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-open" data-by="${escapeHtml(by)}">Settle up</button>` : ""}
+      </div>
+      ${suggestion ? `
+      <div class="fin-truth-row fin-owed-suggest">
+        <span class="fin-truth-name">Looks like ${escapeHtml(new Date(suggestion.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" }))}'s ${formatFinMoney(Math.abs(suggestion.amount))} ${suggestion.amount > 0 ? "transfer in" : "transfer out"} settled this</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-confirm" data-by="${escapeHtml(by)}" data-txn="${escapeHtml(suggestion.id)}" data-amount="${e.net}">Confirm</button>
+      </div>` : ""}
+      ${financeSettleFormBy === by ? `
+      <div class="fin-truth-row fin-owed-form">
+        <span class="fin-truth-name">${owes ? `${name} paid the household` : `The household paid ${name}`}</span>
+        <input class="fin-item-amount" type="text" inputmode="decimal" value="${Math.abs(e.net).toFixed(2)}" data-fin-settle-amount aria-label="Amount paid" />
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-cancel">Cancel</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-save" data-by="${escapeHtml(by)}" data-dir="${owes ? "1" : "-1"}">Save</button>
+      </div>` : ""}
+      ${open ? `<div class="fin-owed-items">${items || `<div class="fin-hint">Nothing yet.</div>`}<div class="fin-hint">+ adds to what ${name} owes · − adds to what the household owes ${name}</div></div>` : ""}`;
+  }).join("");
+  const add = financeMembers().length ? `
+      <div class="fin-truth-row fin-owed-add">
+        <span class="fin-truth-name fin-of">Paid for something of the household's with your own money?</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="paid-personally">Add it</button>
+      </div>` : "";
+  return html + add;
+}
+
+// A row's name: your own rename, else a linked receipt's store name, else the
+// cleaned bank text (financeLabeledTxns), with the purchase note after it.
+const FIN_RECEIPT_ICON = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.5 1.5h9v13l-1.5-1-1.5 1-1.5-1-1.5 1-1.5-1-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.5 5h5M5.5 7.5h5M5.5 10h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`;
+function financeTxnRowName(t, receiptFits) {
+  if (t.nameIsCustom) return t.displayName;
+  const fit = receiptFits?.get(t.id);
+  const store = fit && fit.fit.confidence !== "likely" ? String(fit.receipt?.merchant || "").trim() : "";
+  if (!store) return t.displayName;
+  const note = t.displayName.includes(" - ") ? t.displayName.slice(t.displayName.indexOf(" - ")) : "";
+  return store + note;
+}
+
+// ── Review card: choosing categories (Luke, 2026-11-23) ─────────────────────
+// A charge with a receipt is categorized item by item, with "All one category"
+// to mark the whole receipt instead. A charge without one gets a single choice.
+// Every choice starts from a guess (finance-guess.js); nothing is saved until
+// Approve, and a choice on one charge never changes another.
+
+// The categories used most often, for the quick chips under a single choice.
+function financeFrequentLabels() {
+  const counts = new Map();
+  for (const v of Object.values(state.financeTxnLabels || {})) {
+    if (typeof v === "string" && v.startsWith("cat:") && financeTxnLabelName(v)) counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k).slice(0, 6);
+}
+
+// A receipt's priced lines with a guess for each.
+function financeReviewLines(receipt) {
+  const items = Array.isArray(receipt?.items) ? receipt.items : [];
+  if (!items.some((i) => Number(i.price) > 0)) return [];
+  const choices = financeCategoryChoices();
+  const rules = state.financeTxnRules || {};
+  // Discount and coupon lines (negative) aren't categorized; like tax, they are
+  // spread over the categories when the charge is split.
+  return items.filter((i) => Number(i.price) > 0).map((i, n) => {
+    const g = guessForLine({ name: i.name, readCategory: i.category, rules, categories: choices });
+    if (i.owedBy && financeOwesAllowed()) return { id: i.id || `line-${n}`, name: i.name || "Item", price: Number(i.price) || 0, label: oweLabel(i.owedBy), source: "yours" };
+    return { id: i.id || `line-${n}`, name: i.name || "Item", price: Number(i.price) || 0, label: g?.label || "", source: g?.source || "" };
+  });
+}
+
+// The category that covers the most money on the receipt (the "All one" default).
+function financeReviewTopLabel(lines) {
+  const by = new Map();
+  for (const l of lines) if (l.label) by.set(l.label, (by.get(l.label) || 0) + Math.abs(l.price));
+  return [...by.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
+
+const FIN_GUESS_HINT = {
+  yours: "From your past choices",
+  common: "Suggested for this kind of store",
+  ai: "Suggested by AI",
+};
+
+function financeReviewOneHtml(t, frequent) {
+  const guess = t.guess || null;
+  const selected = guess?.label || "";
+  // The store's own past categories come first (a mixed store's alternatives),
+  // then the ones used most overall.
+  const storeCounts = state.financeTxnRules?.[financeMerchantKey(t.description)] || {};
+  const storeLabels = Object.entries(storeCounts).filter(([k, c]) => Number(c) > 0 && financeTxnLabelName(k)).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const chips = [...new Set([selected, ...storeLabels, ...frequent].filter((k) => k && !owedByLabel(k)))].slice(0, 4);
+  // Whose it is: a personal item on a household card leaves the household budget
+  // and goes on that person's balance (Luke, 2026-11-23).
+  const people = financeOwesAllowed() ? financeMembers().map((m) => oweLabel(m.id)) : [];
+  const hint = guess?.mixed
+    ? `<div class="fin-review-guess is-mixed">Mixed store: you've used more than one category here, so check this one.</div>`
+    : guess ? `<div class="fin-review-guess">${escapeHtml(FIN_GUESS_HINT[guess.source] || "Suggested")}</div>` : "";
+  return `
+    <label class="fin-review-field">Category
+      <select class="fin-review-label" data-review-label aria-label="Budget category">
+        <option value="">Pick a category…</option>
+        ${financeTxnLabelOptionsHtml(selected)}
+      </select>
+    </label>
+    ${hint}
+    ${chips.length ? `<div class="fin-review-chips" role="group" aria-label="Quick categories">${chips.map((k) => `<button type="button" class="fin-review-chip${k === selected ? " is-on" : ""}" data-review-chip="${escapeHtml(k)}">${escapeHtml(financeTxnLabelShortName(k))}</button>`).join("")}</div>` : ""}
+    ${people.length ? `<div class="fin-review-chips fin-review-whose" role="group" aria-label="Someone's own"><span class="fin-review-whose-label">Someone's own:</span>${people.map((k) => `<button type="button" class="fin-review-chip${k === selected ? " is-on" : ""}" data-review-chip="${escapeHtml(k)}">${escapeHtml(financeMemberFirstName(owedByLabel(k)))}'s</button>`).join("")}</div>` : ""}`;
+}
+
+function financeReviewLinesHtml(lines, receipt) {
+  const top = financeReviewTopLabel(lines);
+  const missing = lines.filter((l) => !l.label).length;
+  return `
+    <div class="fin-review-lines-head">
+      <span>${lines.length} item${lines.length === 1 ? "" : "s"} on the ${escapeHtml(receipt.merchant || "")} receipt</span>
+      <button type="button" class="fin-review-allone-btn" data-review-allone aria-pressed="false">All one category</button>
+    </div>
+    <label class="fin-review-field fin-review-allone-field">Whole receipt
+      <select class="fin-review-label" data-review-allone-label aria-label="One category for the whole receipt">
+        <option value="">Pick a category…</option>
+        ${financeTxnLabelOptionsHtml(top)}
+      </select>
+    </label>
+    <div class="fin-review-lines" data-review-lines>
+      ${lines.map((l) => `
+      <div class="fin-review-line">
+        <span class="fin-review-line-name">${escapeHtml(l.name)}</span>
+        <span class="fin-review-line-price">${formatFinMoney(l.price)}</span>
+        <select class="fin-review-line-cat${l.label ? "" : " is-empty"}" data-review-line data-line-id="${escapeHtml(l.id)}" data-name="${escapeHtml(l.name)}" data-price="${l.price}" aria-label="Category for ${escapeHtml(l.name)}">
+          <option value="">Pick…</option>
+          ${financeTxnLabelOptionsHtml(l.label)}
+        </select>
+      </div>`).join("")}
+    </div>
+    <div class="fin-review-guess">${missing ? `${missing} item${missing === 1 ? " needs" : "s need"} a category. Tax is shared across the categories.` : "Each item has a guess. Tap one to change it. Tax is shared across the categories."}</div>`;
+}
+
+// "Approve suggested" takes a card only when every choice on it is a guess the
+// app is fairly sure of: never a mixed store, never a card with a blank.
+function financeReviewCardSuggestible(t, lines) {
+  if (lines.length) return lines.every((l) => l.label);
+  return Boolean(t.guess?.label) && !t.guess.mixed;
+}
+
+// What a card would save right now, or null if something still needs a category.
+function financeReviewCardChoice(card) {
+  if (card.dataset.mode === "lines") {
+    const allOne = card.classList.contains("is-allone");
+    const one = card.querySelector("[data-review-allone-label]")?.value || "";
+    const lines = [...card.querySelectorAll("[data-review-line]")].map((sel) => ({
+      id: sel.dataset.lineId, name: sel.dataset.name || "", price: Number(sel.dataset.price) || 0, label: allOne ? one : sel.value,
+    }));
+    if (!lines.length || lines.some((l) => l.price && !l.label)) return null;
+    return { kind: "lines", lines };
+  }
+  const label = card.querySelector("[data-review-label]")?.value || "";
+  return label ? { kind: "one", label } : null;
+}
+
+function financeTxnLabelShortName(key) {
+  if (owedByLabel(key)) return `${financeMemberFirstName(owedByLabel(key))}'s`;
+  const full = financeTxnLabelName(key) || "";
+  return full.split("·").pop().trim() || full;
+}
+
 function renderFinanceReviewDeck() {
   const deck = document.querySelector("[data-fin-review-deck]");
   if (!deck) return;
@@ -2193,16 +2560,22 @@ function renderFinanceReviewDeck() {
   if (!groups.length && !alertsHtml) { updateFinanceReviewProgress(deck); return; } // paints the caught-up state
   const names = state.financeMerchantNames || {};
   const noteOverrides = state.financeTxnNoteOverrides || {};
+  const frequent = financeFrequentLabels();
   deck.innerHTML = alertsHtml + groups.map((g) => {
     const t = g.rep;
     const mKey = financeMerchantKey(t.description);
     const nameVal = names[mKey] || "";
     const noteVal = Object.prototype.hasOwnProperty.call(noteOverrides, t.id) ? (noteOverrides[t.id] || "") : "";
     const facts = financeTxnFactsLine(t);
-    const merchantTitle = nameVal || t.description || "Transaction";
-    const showRaw = nameVal && nameVal !== t.description; // renamed → surface the original bank text
+    const receipt = financeReceiptForTxn(t);
+    // A matched receipt's store name reads better than the bank's text.
+    const merchantTitle = nameVal || receipt?.merchant || cleanMerchantName(t.description) || t.description || "Transaction";
+    const showRaw = merchantTitle !== t.description; // renamed → surface the original bank text
+    const lines = financeReviewLines(receipt);
+    const choose = lines.length ? financeReviewLinesHtml(lines, receipt) : financeReviewOneHtml(t, frequent);
+    const suggest = financeReviewCardSuggestible(t, lines);
     return `
-    <div class="fin-review-card fin-notif-card" data-review-key="${escapeHtml(g.key)}" data-txn-id="${escapeHtml(t.id)}">
+    <div class="fin-review-card fin-notif-card" data-review-key="${escapeHtml(g.key)}" data-txn-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description || "")}" data-mode="${lines.length ? "lines" : "one"}"${lines.length ? ` data-receipt-id="${escapeHtml(receipt.id)}"` : ""}${suggest ? ` data-suggest="1"` : ""}>
       <div class="fin-review-action fin-review-action-dismiss" aria-hidden="true">Skip ✕</div>
       <div class="fin-review-action fin-review-action-done" aria-hidden="true">✓ Approve</div>
       <div class="fin-review-card-inner">
@@ -2211,13 +2584,7 @@ function renderFinanceReviewDeck() {
           <div class="fin-review-merchant">${escapeHtml(merchantTitle)}</div>
           ${facts ? `<div class="fin-review-facts">${escapeHtml(facts)}</div>` : ""}
           ${showRaw ? `<div class="fin-review-raw">Bank: ${escapeHtml(t.description)}</div>` : ""}
-          ${g.count > 1 ? `<div class="fin-review-group"><strong>${g.count} matching transactions</strong> from this merchant. Approving applies the category to all of them.</div>` : ""}
-          <label class="fin-review-field">Category
-            <select class="fin-txn-label fin-review-label" data-review-label data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget category">
-              <option value="">Pick a category…</option>
-              ${financeTxnLabelOptionsHtml("")}
-            </select>
-          </label>
+          ${choose}
           <div class="fin-review-quick">${financeReviewQuickChipsHtml(t)}</div>
           <!-- Name and note sit behind "Edit details…" (Luke, 2026-10-26) unless a
                note is already set; the first tap shows them, the next opens the
@@ -2267,6 +2634,13 @@ function updateFinanceReviewProgress(deck) {
   }
   const idx = deck.clientHeight ? Math.round(deck.scrollTop / deck.clientHeight) : 0;
   if (countEl) countEl.textContent = `${Math.min(idx + 1, cards.length)} of ${cards.length}`;
+  const sugBtn = deck.closest(".fin-review-modal")?.querySelector("[data-fin-review-suggested]");
+  if (sugBtn) {
+    const n = deck.querySelectorAll('.fin-review-card[data-suggest="1"]').length;
+    const bar = sugBtn.closest("[data-fin-review-bulk]");
+    if (bar) bar.hidden = n < 2;
+    sugBtn.textContent = `Approve ${n} suggested`;
+  }
 }
 
 const finReviewReduceMotion = () => typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -2294,7 +2668,7 @@ function finishFinanceReviewCard(card, kind) {
 // rows keep a red "needs confirming" dot until each is explicitly confirmed.
 function dismissFinanceReviewCard(card) {
   if (!card) return;
-  financeDismissNotifGroup(card.dataset.reviewKey, card.dataset.txnId);
+  financeDismissNotifGroup("", card.dataset.txnId); // this charge only
   finishFinanceReviewCard(card, "dismiss");
 }
 
@@ -2310,19 +2684,21 @@ function dismissFinanceReviewCard(card) {
 // double-count the learned merchant/note majority votes. Returns true if
 // anything was written. Called by both approve AND every close path, so a
 // picked category / typed name / typed note is never silently discarded.
-function commitFinanceReviewEdits(card) {
-  if (!card || card.dataset.finReviewCommitted === "1") return false;
-  const sel = card.querySelector("[data-review-label]");
-  if (!sel) return false;
-  const cat = sel.value || "";
+// A card's categories are saved on Approve, or on close only if you changed them
+// yourself: a guess you never touched is not a choice (Luke, 2026-11-23).
+function commitFinanceReviewEdits(card, { approve = false } = {}) {
+  if (!card || card.dataset.finReviewCommitted === "1" || !card.dataset.txnId) return false;
+  const id = card.dataset.txnId, desc = card.dataset.desc || "";
   const nameInput = card.querySelector("[data-review-name]");
   const noteInput = card.querySelector("[data-review-note]");
   const nameChanged = nameInput && nameInput.value !== nameInput.defaultValue;
   const noteChanged = noteInput && noteInput.value !== noteInput.defaultValue;
-  if (!cat && !nameChanged && !noteChanged) return false; // nothing staged → leave it reviewable
+  const choice = (approve || card.dataset.touched === "1") ? financeReviewCardChoice(card) : null;
+  if (!choice && !nameChanged && !noteChanged) return false; // nothing staged → leave it reviewable
   card.dataset.finReviewCommitted = "1";
-  if (nameChanged || noteChanged) saveRenameTxn(sel.dataset.id, sel.dataset.desc || "", nameInput.value, noteInput.value);
-  if (cat) recordFinanceTxnLabel(sel.dataset.id, cat, sel.dataset.desc || ""); // labels + learns the merchant rule + updates the bell count
+  if (nameChanged || noteChanged) saveRenameTxn(id, desc, nameInput.value, noteInput.value);
+  if (choice?.kind === "one") recordFinanceTxnLabel(id, choice.label, desc); // labels + learns the merchant + updates the bell count
+  else if (choice?.kind === "lines") recordFinanceReceiptCategories(id, desc, card.dataset.receiptId || "", choice.lines);
   return true;
 }
 
@@ -2332,16 +2708,26 @@ function commitAllFinanceReviewCards(root) {
 
 function approveFinanceReviewCard(card) {
   if (!card || card.dataset.finReviewCommitted === "1") return false; // already committed (mid-fling)
-  const sel = card.querySelector("[data-review-label]");
-  if (!(sel && sel.value)) { // approval requires a category — nudge instead of a silent no-op
+  if (!financeReviewCardChoice(card)) { // approval requires every category — nudge instead of a silent no-op
     card.classList.add("fin-review-need-cat");
     setTimeout(() => card.classList.remove("fin-review-need-cat"), 1200);
-    try { sel?.focus(); } catch { /* not focusable */ }
+    const blank = card.classList.contains("is-allone")
+      ? card.querySelector("[data-review-allone-label]")
+      : [...card.querySelectorAll("[data-review-line], [data-review-label]")].find((s) => !s.value);
+    try { blank?.focus(); } catch { /* not focusable */ }
     return false;
   }
-  commitFinanceReviewEdits(card);
+  commitFinanceReviewEdits(card, { approve: true });
   finishFinanceReviewCard(card, "approve");
   return true;
+}
+
+// "Approve suggested": every card whose guesses the app is fairly sure of.
+function approveSuggestedFinanceReviewCards(deck) {
+  const cards = [...deck.querySelectorAll('.fin-review-card[data-suggest="1"]')].filter((c) => financeReviewCardChoice(c));
+  for (const c of cards) { commitFinanceReviewEdits(c, { approve: true }); c.remove(); }
+  updateFinanceReviewProgress(deck);
+  if (cards.length) showMailToast(`Approved ${cards.length} suggested.`);
 }
 
 function skipFinanceReviewCard(card) {
@@ -2422,9 +2808,37 @@ function wireFinanceReviewDeck(overlay) {
   const deck = overlay.querySelector("[data-fin-review-deck]");
   if (!deck) return;
 
+  overlay.querySelector("[data-fin-review-suggested]")?.addEventListener("click", () => approveSuggestedFinanceReviewCards(deck));
+
+  // Any category you pick yourself makes the card yours (saved even on close).
+  deck.addEventListener("change", (e) => {
+    const card = e.target.closest(".fin-review-card");
+    if (!card || !e.target.matches("[data-review-label], [data-review-line], [data-review-allone-label]")) return;
+    card.dataset.touched = "1";
+    if (e.target.matches("[data-review-line]")) e.target.classList.toggle("is-empty", !e.target.value);
+    if (e.target.matches("[data-review-label]")) {
+      card.querySelectorAll("[data-review-chip]").forEach((c) => c.classList.toggle("is-on", c.dataset.reviewChip === e.target.value));
+    }
+  });
+
   // Buttons (the non-gesture path — approval is always possible without swiping).
   deck.addEventListener("click", (e) => {
     const card = e.target.closest(".fin-review-card");
+    const chip = e.target.closest("[data-review-chip]");
+    if (chip && card) {
+      const sel = card.querySelector("[data-review-label]");
+      if (sel) { sel.value = chip.dataset.reviewChip; sel.dispatchEvent(new Event("change", { bubbles: true })); }
+      return;
+    }
+    const allOne = e.target.closest("[data-review-allone]");
+    if (allOne && card) {
+      const on = !card.classList.contains("is-allone");
+      card.classList.toggle("is-allone", on);
+      allOne.setAttribute("aria-pressed", on ? "true" : "false");
+      allOne.textContent = on ? "Item by item" : "All one category";
+      card.dataset.touched = "1";
+      return;
+    }
     if (e.target.closest("[data-fin-review-approve]")) { approveFinanceReviewCard(card); return; }
     if (e.target.closest("[data-fin-review-skip]")) { skipFinanceReviewCard(card); return; }
     const moreBtn = e.target.closest("[data-fin-review-more]");
@@ -2526,9 +2940,18 @@ function financeAccountsNeedingAttention() {
   if (!financeLive) return [];
   const raw = [];
   // Connection-level messages from the bridge ("Connection to X needs attention").
+  // The bridge reports every bank's problems to every book, so a message about a
+  // bank with no accounts in this book (Luke's Apple Card is Personal) is left out
+  // here (Luke, 2026-11-24). A message that names no bank stays. (A bank that
+  // stops sending its accounts altogether still shows: each of its accounts here
+  // turns "disconnected" below.)
+  const scopedOrgs = new Set((financeLive.accounts || []).map((a) => financeOrgKey(a.org)).filter(Boolean));
   for (const err of (financeLive.errors || [])) {
     const detail = String(err || "").trim();
-    if (detail) raw.push({ kind: "error", key: `error:${detail}`, label: "Bank connection", detail });
+    if (!detail) continue;
+    const org = financeOrgKey(/connection to (.+?)\s+may need attention/i.exec(detail)?.[1] || "");
+    if (org && scopedOrgs.size && !scopedOrgs.has(org)) continue; // another book's bank
+    raw.push({ kind: "error", key: `error:${detail}`, label: "Bank connection", detail });
   }
   // Per-account status — reuses financeAccountStatus (the same primitive the
   // Accounts panel pills use) so "stale" and "disconnected" are genuinely
@@ -2563,6 +2986,48 @@ function financeAccountsNeedingAttention() {
     for (const k of Object.keys(dismissed)) { if (!liveKeys.has(k)) delete dismissed[k]; }
   }
   return raw.filter((r) => !dismissed[r.key]);
+}
+
+// A bank's name for comparing: "Apple Card (Updated Monthly)" → "apple card".
+function financeOrgKey(name) {
+  return String(name || "").replace(/\([^)]*\)/g, " ").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+// "Needs your attention" at the top of the Accounts tab (Luke, 2026-11-24: the
+// tab's red underline didn't say what needed fixing). Each item says what's wrong
+// in plain words and what to do; a bank connection opens SimpleFIN, where it's
+// fixed. Hide dismisses an item until it happens again.
+const FIN_SIMPLEFIN_URL = "https://beta-bridge.simplefin.org";
+function financeAttentionText(a, connectionTrouble = false) {
+  if (a.kind === "error") {
+    const m = /connection to (.+?)\s+may need attention\.?\s*(.*)$/i.exec(a.detail || "");
+    const bank = (m?.[1] || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+    const why = (m?.[2] || "").trim();
+    if (bank && /auth/i.test(why)) return { title: `${bank} needs you to sign in again`, body: `SimpleFIN can't reach ${bank} until you sign in to it again on SimpleFIN's site. Until then its charges and balance stop updating here.`, fix: true };
+    if (bank) return { title: `${bank}'s connection needs a look`, body: `SimpleFIN says: ${why || "the connection may need attention"}. Open SimpleFIN to fix it.`, fix: true };
+    return { title: "The bank connection reported a problem", body: a.detail || "", fix: true };
+  }
+  if (a.kind === "disconnected") return { title: `${a.label} isn't coming through`, body: "SimpleFIN no longer sends this account. Reconnect the bank on SimpleFIN's site, or remove the account here if it's closed.", fix: true };
+  return { title: `${a.label} hasn't updated`, body: `${a.detail} ${connectionTrouble ? "Probably the same connection problem above; fixing that brings it back." : "This usually means its bank connection needs signing in again on SimpleFIN."}`, fix: !connectionTrouble };
+}
+function financeAccountsAttentionCard() {
+  const items = financeAccountsNeedingAttention();
+  if (!items.length) return "";
+  return `
+    <section class="fin-card fin-attn-card" aria-label="Needs your attention">
+      <h3 class="fin-attn-head">Needs your attention</h3>
+      ${items.map((a) => {
+        const t = financeAttentionText(a, a.kind !== "error" && items.some((x) => x.kind === "error"));
+        return `
+        <div class="fin-attn-item">
+          <div class="fin-attn-text"><strong>${escapeHtml(t.title)}</strong><span>${escapeHtml(t.body)}</span></div>
+          <div class="fin-attn-actions">
+            ${t.fix ? `<a class="secondary-btn fin-add-btn" href="${FIN_SIMPLEFIN_URL}" target="_blank" rel="noopener noreferrer">Open SimpleFIN</a>` : ""}
+            <button class="secondary-btn fin-add-btn" type="button" data-fin-action="dismiss-alert" data-key="${escapeHtml(a.key)}">Hide</button>
+          </div>
+        </div>`;
+      }).join("")}
+    </section>`;
 }
 
 // Per-account connection status — splits the two problems the notification count
@@ -2632,6 +3097,15 @@ function updateFinanceMonthActuals() {
     if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) continue;
     state.financeMonthActuals[month] = entry;
     changed = true;
+  }
+  // Store mode: past months with no saved totals are filled from stored history.
+  if (financeStoreActive()) {
+    for (const month of financeMonthsToBackfill(txns, state.financeMonthActuals, currentMonth, financeMonthClosed)) {
+      const entry = { ...financeMonthEntry(txns, month, financeTxnPortions), rebuilt: true };
+      if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) continue;
+      state.financeMonthActuals[month] = entry;
+      changed = true;
+    }
   }
   if (!changed) return;
   persist();
@@ -2810,6 +3284,8 @@ let financeDetailTxnId = null; // which transaction's detail card is open (main 
 
 function startRenameTxn(txnId) {
   financeRenamingTxnId = txnId;
+  financeDetailTxnId = txnId; // editing happens in the open card (its Edit view)
+  financeRenameDraft = null;
   renderFinancePage();
   requestAnimationFrame(() => {
     const input = document.querySelector(`[data-fin-rename-id="${CSS.escape(txnId)}"][data-fin-rename-field="name"]`);
@@ -2820,6 +3296,7 @@ function startRenameTxn(txnId) {
 
 function cancelRenameTxn() {
   financeRenamingTxnId = null;
+  financeRenameDraft = null;
   renderFinancePage();
 }
 
@@ -2856,6 +3333,7 @@ function saveRenameTxn(txnId, rawDescription, newName, newNote) {
   }
   invalidateFinanceLabeled(); // recompute displayName for every txn sharing this merchant/note
   financeRenamingTxnId = null;
+  financeRenameDraft = null;
   persist();
   renderFinancePage();
 }
@@ -2894,14 +3372,52 @@ function recordFinanceTxnLabel(txnId, labelKey, description) {
       counts[labelKey] = (Number(counts[labelKey]) || 0) + 1;
       delete state.financeTxnRules[key];
       state.financeTxnRules[key] = counts;
-      const rKeys = Object.keys(state.financeTxnRules);
-      for (let i = 0; i < rKeys.length - 400; i++) delete state.financeTxnRules[rKeys[i]];
+      trimFinanceRules();
     }
   }
   invalidateFinanceLabeled(); // recompute with the new label
   setPageNotifCount("finance", financeBellCount());
   updateFinanceMonthActuals();
   persist();
+}
+
+// The rules map holds merchants, item names (item:) and AI answers (ai:);
+// least recently used go first past the cap.
+function trimFinanceRules() {
+  const rKeys = Object.keys(state.financeTxnRules || {});
+  for (let i = 0; i < rKeys.length - 1500; i++) delete state.financeTxnRules[rKeys[i]];
+}
+
+// A receipt categorized item by item on the review card. lines: [{ id, name,
+// price, label }]. Saves each line's category on the receipt, learns each item
+// name, and files the charge: one category → a plain label (which also teaches
+// the merchant, so a liquor-only Trader Joe's run marks the store as mixed);
+// several → a split. Returns false when a priced line still has no category.
+function recordFinanceReceiptCategories(txnId, description, receiptId, lines) {
+  const t = financeLabeledTxns().find((x) => x.id === txnId);
+  if (!t) return false;
+  const portions = splitFromLines(lines, Math.abs(t.amount || 0));
+  if (!portions) return false;
+  if (receiptId) {
+    const byLineId = {};
+    for (const l of lines) if (l.id && l.label) byLineId[l.id] = l.label;
+    try { setReceiptLineCategories(receiptId, byLineId); } catch { /* receipt gone */ }
+    try { linkReceiptToFinanceTxn(receiptId, txnId); } catch { /* already linked */ }
+    financeReceiptFitCache = null;
+  }
+  if (!state.financeTxnRules || typeof state.financeTxnRules !== "object") state.financeTxnRules = {};
+  for (const l of lines) {
+    const k = l.label && itemKey(l.name);
+    if (!k) continue;
+    const key = ITEM_PREFIX + k;
+    const counts = addCount(state.financeTxnRules[key], l.label);
+    delete state.financeTxnRules[key];
+    state.financeTxnRules[key] = counts;
+  }
+  trimFinanceRules();
+  if (portions.length === 1) recordFinanceTxnLabel(txnId, portions[0].label, description);
+  else recordFinanceTxnSplit(txnId, portions);
+  return true;
 }
 
 async function unlinkFinanceBanks() {
@@ -3066,17 +3582,13 @@ function financeExpensesTotal() {
 // (Settings › Finance › Accounts was removed 2026-10-14). Returns the inner HTML;
 // its data-fin-edit / data-fin-action hooks route through onFinanceGridChange /
 // onFinanceGridClick. A visible ✎ button opens each account's editor.
-function renderFinanceAccountsPanel() {
-  const owners = [...new Set([
-    ...(Array.isArray(state.financeAccountLabels) ? state.financeAccountLabels : []),
-    ...(state.financeAccounts || []).map((a) => a.owner || "Other"),
-  ])];
-  const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
-  const linkedIds = new Set((state.financeAccounts || []).map((a) => a.linkedId).filter(Boolean));
-  const unlinkedLive = (financeLive?.accounts || []).filter((a) => !linkedIds.has(a.id));
-
-  const linkBlock = financeLinkStatus?.connected ? `
-      <div class="fin-subhead">Bank link · SimpleFIN</div>
+// Finance's gear menu › Bank Link (Luke, 2026-11-23; was the Accounts card's
+// "Bank link · SimpleFIN" section): connect / refresh / disconnect, the stored-
+// history switch, CSV imports, and — only when there's something to merge — the
+// "Relinked accounts" repair (the bank issued new account IDs after a relink, so
+// old copies of the same charges need merging into the new account).
+function financeBankLinkPanelHtml() {
+  return financeLinkStatus?.connected ? `
       <div class="fin-item-row fin-item-row--tools">
         <span class="fin-hint">Connected${financeLive?.at ? ` · updated ${new Date(financeLive.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}</span>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="refresh-live" ${financeLiveLoading ? "disabled" : ""}>${financeLiveLoading ? "Refreshing…" : "Refresh"}</button>
@@ -3088,20 +3600,29 @@ function renderFinanceAccountsPanel() {
       </div>
       <p class="fin-hint">${financeStoreStatusText()}</p>
       ${financeRemapBlock()}
-      ${financeMoveBlock()}
       ${financeCsvBatches().map((b) => `
         <div class="fin-item-row fin-item-row--tools">
           <span class="fin-hint">CSV · ${escapeHtml(String(b.account).replace(/^csv:/, ""))} · ${b.count} txns · ${escapeHtml(String(b.from || "").slice(0, 10))} – ${escapeHtml(String(b.to || "").slice(0, 10))}</span>
           <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="csv-import-undo" data-id="${escapeHtml(b.id)}">Undo import</button>
         </div>`).join("")}`
     : financeLinkStatus ? `
-      <div class="fin-subhead">Bank link · SimpleFIN</div>
       <p class="fin-hint">Paste a one-time setup token from <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer">SimpleFIN Bridge</a>. Bank logins stay at the bridge — the app only ever receives read-only balances.</p>
       <div class="fin-account-add">
         <input class="fin-item-name" type="password" id="finSetupToken" placeholder="SimpleFIN setup token" autocomplete="off" />
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="link-banks" ${financeLinkBusy ? "disabled" : ""}>${financeLinkBusy ? "Connecting…" : "Connect"}</button>
       </div>`
     : `<p class="fin-hint">${financeLinkStatusFailed && !financeLinkStatusChecking ? "Couldn't reach the bank link — it will retry next time you open Finance." : "Checking bank link…"}</p>`;
+}
+
+function renderFinanceAccountsPanel() {
+  const owners = [...new Set([
+    ...(Array.isArray(state.financeAccountLabels) ? state.financeAccountLabels : []),
+    ...(state.financeAccounts || []).map((a) => a.owner || "Other"),
+  ])];
+  const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
+  const linkedIds = new Set((state.financeAccounts || []).map((a) => a.linkedId).filter(Boolean));
+  const unlinkedLive = (financeLive?.accounts || []).filter((a) => !linkedIds.has(a.id));
+  const editMode = financeAcctEditMode;
 
   const ownerSubs = (owner) => [...new Set([
     ...(((state.financeAccountSubLabels || {})[owner]) || []),
@@ -3112,14 +3633,25 @@ function renderFinanceAccountsPanel() {
     const editing = financeExpanded.has(`edit:${a.id}`);
     const subs = ownerSubs(a.owner || "Other");
     const shownBal = live ? (live.balance ?? 0) : a.manualBalance;
+    // The account's name opens its bank's app (or website) when the bank is known
+    // — in place of the old "Your banks" buttons. A linked account that has gone
+    // quiet (stale or no longer sent) gets a small red "!"; the bell says why.
+    const status = financeAccountStatus(a, liveById);
+    const quiet = status.kind === "stale" || status.kind === "disconnected";
+    const bank = matchPlace([live?.org || "", a.name || ""], "bank");
+    const handoff = bank && !editMode ? placeHandoff(bank.id) : null;
+    const nameHtml = handoff
+      ? `<button type="button" class="fin-acct-name fin-acct-link" ${linkOutAttrs(handoff, escapeHtml)} title="Open ${escapeHtml(bank.label)}">${escapeHtml(a.name)}</button>`
+      : `<span class="fin-acct-name">${escapeHtml(a.name)}</span>`;
+    const quietTitle = status.kind === "disconnected" ? "The bank connection isn't sending this account — it may need reconnecting" : `Balance hasn't updated in ${status.days} days`;
     return `
     <div class="fin-item-row fin-acct-row" data-fin-acct-id="${escapeHtml(a.id)}">
-      <span class="fin-acct-name">${escapeHtml(a.name)}</span>
-      ${financeAccountStatusPill(financeAccountStatus(a, liveById))}
+      ${nameHtml}
+      ${quiet ? `<span class="fin-acct-alert" title="${escapeHtml(quietTitle)}" aria-label="${escapeHtml(quietTitle)}">!</span>` : ""}
       ${shownBal !== null && shownBal !== undefined ? `<span class="fin-live-bal${shownBal < 0 ? " is-neg" : ""}${live ? "" : " fin-bal-manual"}" ${live ? "" : `title="Manually kept balance"`}>${formatFinMoney(shownBal)}</span>` : ""}
-      <button class="fin-acct-edit-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}" aria-label="Edit ${escapeHtml(a.name)}">${editing ? "▴" : "✎"}</button>
+      ${editMode ? `<button class="fin-acct-edit-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}" aria-label="Edit ${escapeHtml(a.name)}">${editing ? "▴" : "✎"}</button>` : ""}
     </div>
-    ${editing ? `
+    ${editing && editMode ? `
     <div class="fin-acct-editor">
       <div class="fin-item-row">
         <input class="fin-item-name" type="text" value="${escapeHtml(a.name)}" data-fin-edit="account-name" data-id="${a.id}" aria-label="Account name" />
@@ -3185,30 +3717,31 @@ function renderFinanceAccountsPanel() {
     return `
     <div class="fin-label-head" data-fin-owner="${escapeHtml(owner)}">
       <span class="fin-subhead">${escapeHtml(owner)}</span>
-      <span class="fin-label-actions">
+      ${!editMode ? "" : `<span class="fin-label-actions">
         <button class="fin-label-btn" type="button" data-fin-action="add-sublabel" data-label="${escapeHtml(owner)}" title="Add sub-label" aria-label="Add a sub-label under ${escapeHtml(owner)}">＋</button>
         <button class="fin-label-btn" type="button" data-fin-action="rename-label" data-label="${escapeHtml(owner)}" title="Rename label" aria-label="Rename ${escapeHtml(owner)}">✎</button>
         <button class="fin-label-btn fin-danger" type="button" data-fin-action="delete-label" data-label="${escapeHtml(owner)}" title="Delete label" aria-label="Delete ${escapeHtml(owner)}">✕</button>
-      </span>
+      </span>`}
     </div>
     ${noSub.map(finAcctRow).join("")}
     ${subs.map((sub) => `
       <div class="fin-label-head fin-sublabel-head" data-fin-owner="${escapeHtml(owner)}" data-fin-sub="${escapeHtml(sub)}">
         <span class="fin-sublabel">${escapeHtml(sub)}</span>
-        <span class="fin-label-actions">
+        ${!editMode ? "" : `<span class="fin-label-actions">
           <button class="fin-label-btn" type="button" data-fin-action="rename-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Rename sub-label" aria-label="Rename sub-label ${escapeHtml(sub)}">✎</button>
           <button class="fin-label-btn fin-danger" type="button" data-fin-action="delete-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Delete sub-label" aria-label="Delete sub-label ${escapeHtml(sub)}">✕</button>
-        </span>
+        </span>`}
       </div>
       <div class="fin-sub-group">
-        ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || `<p class="fin-hint">Empty — open an account's ✎ and pick this sub-label.</p>`}
+        ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || (editMode ? `<p class="fin-hint">Empty — open an account's ✎ and pick this sub-label.</p>` : "")}
       </div>`).join("")}
-    ${!ownerAccts.length && !subs.length ? `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>` : ""}`;
+    ${!ownerAccts.length && !subs.length && editMode ? `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>` : ""}`;
   }).join("");
 
+  // Viewing: labels, names and balances only. Edit accounts (the ⋯) adds the
+  // label buttons, a ✎ per account, the bank's unlinked accounts and the add row.
+  if (!editMode) return ownerBlocks || `<p class="fin-hint">No accounts yet — use ⋯ › Edit accounts to add one, or link a bank from the gear menu.</p>`;
   return `
-    ${financeBankLinksHtml(liveById)}
-    ${linkBlock}
     ${ownerBlocks}
     ${unlinkedLive.length ? `
     <div class="fin-subhead">Live accounts not linked yet</div>
@@ -3224,32 +3757,6 @@ function renderFinanceAccountsPanel() {
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-account">Add</button>
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-label">+ Label</button>
     </div>`;
-}
-
-// Shortcuts to the banks behind the accounts on screen (APP_LINKS_DESIGN.md):
-// one button per bank, opened through the app-wide "Link out" listener, so the
-// iPhone opens the bank's app and the web app its website. The bank is
-// recognised from SimpleFIN's institution name or the account's own name;
-// nothing is stored. Only the accounts this view shows count, so a Personal
-// account's bank never appears in Household.
-function financeBankLinksHtml(liveById) {
-  const banks = banksForAccounts((state.financeAccounts || []).map((a) => ({
-    name: a.name,
-    org: a.linkedId ? liveById.get(a.linkedId)?.org || "" : "",
-  })));
-  if (!banks.length) return "";
-  return `
-    <div class="fin-subhead">Your banks</div>
-    <div class="out-link-row fin-bank-links">
-      ${banks.map((b) => `<button type="button" class="out-link-chip" ${linkOutAttrs(placeHandoff(b.id), escapeHtml)} aria-label="Open ${escapeHtml(b.label)}">${escapeHtml(b.label)}${OUT_LINK_ARROW}</button>`).join("")}
-    </div>`;
-}
-
-// A bill's "Pay" button when its merchant is a known biller, bank or card.
-function financeBillPayHtml(name) {
-  const m = billerForBill(name);
-  if (!m) return "";
-  return `<button type="button" class="out-link-chip out-link-chip--small" ${linkOutAttrs(placeHandoff(m.id), escapeHtml)} aria-label="Pay at ${escapeHtml(m.label)}" title="${escapeHtml(m.label)}">Pay${OUT_LINK_ARROW}</button>`;
 }
 
 // Live-filter the budget categories by name without a full re-render (so the
@@ -3432,13 +3939,13 @@ function renderFinancePage() {
   // Money out with no category in the viewed month: what every total leaves out.
   const uncatByMonth = financeUncategorizedByMonth(allTxns);
   const uncatThis = uncatByMonth.get(monthKey) || { spend: 0, count: 0 };
-  const skippedMerchants = Object.values((state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {}).filter(Boolean).length;
+  const skippedMerchants = Object.values((state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {}).filter(financeMerchantSkipped).length;
   // A past month shows its saved totals. When stored history covers the whole
   // month and adds up differently (something was categorized later), offer to
   // update the saved totals. Never automatic: saved history only changes by hand.
   let staleSaved = null;
   const closedThis = financeMonthClosed(monthKey);
-  if (!isCurrentMonth && !closedThis && storedThis && haveLive && financeStoreActive() && financeTxnsCoverMonth(allTxns, monthKey, financeCurrentMonthKey())) {
+  if (!isCurrentMonth && !closedThis && storedThis && !storedThis.rebuilt && haveLive && financeStoreActive() && financeTxnsCoverMonth(allTxns, monthKey, financeCurrentMonthKey())) {
     const fresh = financeMonthEntry(allTxns, monthKey, financeTxnPortions);
     if (!financeMonthEntriesMatch(storedThis, fresh)) staleSaved = { saved: financeMonthEntryTotals(storedThis), now: financeMonthEntryTotals(fresh) };
   }
@@ -3784,7 +4291,7 @@ function renderFinancePage() {
   // + "+" button adds one more at a time. Making any pick materializes the set.
   const savingsAccountEditor = (card, activeIds) => {
     const accts = state.financeAccounts || [];
-    if (!accts.length) return `<p class="fin-hint">Add accounts in the Accounts card below first.</p>`;
+    if (!accts.length) return `<p class="fin-hint">Add accounts on the Accounts tab first (⋯ › Edit accounts).</p>`;
     const byId = new Map(accts.map((a) => [a.id, a]));
     const active = activeIds.filter((id) => byId.has(id));
     const remaining = accts.filter((a) => !active.includes(a.id));
@@ -3885,17 +4392,27 @@ function renderFinancePage() {
   // which reads as "it's gone." No query = the viewed month's ledger as before.
   // A date range likewise spans everything loaded, ignoring the month pager.
   const hasRange = Boolean(f.from || f.to);
-  let shownTxns = (query || hasRange ? allTxns : monthTxns).slice(); // copy — sorting below must never mutate the cached/shared array
+  // Receipts with no bank charge yet show in the list as their own rows (Luke,
+  // 2026-11-23): a purchase is on the list as soon as its receipt is in, and the
+  // row gives way to the bank's charge once the two are matched. Display only —
+  // they count toward no totals until the charge arrives.
+  const receiptRows = financeReceiptOnlyRows();
+  const receiptMonthRows = receiptRows.filter((t) => (t.posted || "").slice(0, 7) === monthKey);
+  let shownTxns = (query || hasRange || f.merchant ? [...allTxns, ...receiptRows] : [...monthTxns, ...receiptMonthRows])
+    .sort((x, y) => (y.posted || "").localeCompare(x.posted || "")); // receipt rows slot in by date
+  if (f.merchant) shownTxns = shownTxns.filter((t) => financeMerchantKey(t.description || "") === f.merchant);
   if (f.from) shownTxns = shownTxns.filter((t) => (t.posted || "").slice(0, 10) >= f.from);
   if (f.to) shownTxns = shownTxns.filter((t) => (t.posted || "").slice(0, 10) && (t.posted || "").slice(0, 10) <= f.to);
   if (query) shownTxns = shownTxns.filter((t) => `${t.description || ""} ${t.displayName || ""}`.toLowerCase().includes(query));
   if (f.account) shownTxns = shownTxns.filter((t) => t.accountId === f.account);
+  if (f.kind) shownTxns = shownTxns.filter((t) => !t.isReceiptOnly); // a category filter is about charges
   if (f.kind === "unlabeled") shownTxns = shownTxns.filter((t) => !t.label);
   else if (f.kind === "auto") shownTxns = shownTxns.filter((t) => t.labelSource === "auto");
   else if (f.kind === "split") shownTxns = shownTxns.filter((t) => t.label === "split");
   else if (f.kind === "mgmt") shownTxns = shownTxns.filter((t) => t.label === "mgmt");
   else if (f.kind === "income") shownTxns = shownTxns.filter((t) => t.label === "income" || (t.label || "").startsWith("income:"));
-  else if (f.kind.startsWith("group:")) shownTxns = shownTxns.filter((t) => (t.label || "").startsWith(`cat:${f.kind.slice(6)}`));
+  else if (f.kind.startsWith("group:")) shownTxns = shownTxns.filter((t) => (t.label || "").startsWith(`cat:${f.kind.slice(6)}:`) || (t.label === "split" && (t.split || []).some((p) => (p.label || "").startsWith(`cat:${f.kind.slice(6)}:`))));
+  else if (f.kind.startsWith("cat:")) shownTxns = shownTxns.filter((t) => t.label === f.kind || (t.label === "split" && (t.split || []).some((p) => p.label === f.kind)));
   if (f.sort === "label") {
     shownTxns.sort((x, y) => {
       const lx = x.label ? financeTxnLabelName(x.label) : "￿", ly = y.label ? financeTxnLabelName(y.label) : "￿";
@@ -3965,6 +4482,7 @@ function renderFinancePage() {
       </div>
     </div>`;
   };
+  const receiptFits = financeReceiptFits().byTxn;
   const txnRow = (t, { compact = false, dupCount = 1, grouped = false } = {}) => {
     // When the detail card is open for this txn, the rename UI lives there
     // instead of swapping the row, so the row stays a normal clickable row.
@@ -3999,21 +4517,20 @@ function renderFinancePage() {
         ${txnSelect(t)}
       </div>`;
     }
-    // Status distinction: pending / unlabeled / auto-labeled / labeled.
-    const statusClass = t.pending ? " is-pending" : !t.label ? " is-unlabeled" : t.labelSource === "auto" ? " is-auto" : " is-labeled";
-    const labelPill = t.label && t.label !== "split"
-      ? `<span class="fin-txn-label-pill${t.labelSource === "auto" ? " is-auto" : ""}" title="${t.labelSource === "auto" ? "Auto-labeled — tap to change" : "Labeled"}">${escapeHtml(financeTxnLabelName(t.label))}</span>`
-      : (t.label === "split" ? `<span class="fin-txn-label-pill is-split" title="Split across categories">Split</span>` : "");
+    // A charge that still needs review (no category yet, or skipped in the
+    // notifications deck) gets a thin red underline under its name — the same
+    // cue as a page with notifications on the landing page (Luke, 2026-11-23).
+    // Categories aren't shown on the row: the card shows one tap away.
+    const needsReview = !t.isReceiptOnly && (!t.label || financeTxnNeedsConfirm(t));
+    const reviewTitle = !t.label ? "Needs a category" : "Skipped in notifications — still to review";
+    const open = financeDetailTxnId === t.id;
     return `
-    <div class="fin-txn-row fin-txn-row--clickable${statusClass}${financeDetailTxnId === t.id ? " is-open" : ""}" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}" data-fin-txn-id="${escapeHtml(t.id)}" role="button" tabindex="0" aria-expanded="${financeDetailTxnId === t.id}">
+    <div class="fin-txn-row fin-txn-row--clickable${t.pending ? " is-pending" : ""}${needsReview ? " is-review" : ""}${t.isReceiptOnly ? " is-receipt-only" : ""}${open ? " is-open" : ""}" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}" ${t.isReceiptOnly ? "" : `data-fin-txn-id="${escapeHtml(t.id)}"`} role="button" tabindex="0" aria-expanded="${open}">
       ${grouped ? "" : `<span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>`}
-      ${financeTxnNeedsConfirm(t)
-        ? `<button class="fin-txn-dot fin-txn-dot--confirm" type="button" data-fin-action="confirm-txn" data-id="${escapeHtml(t.id)}" title="Skipped in notifications — click to confirm" aria-label="Confirm this transaction"></button>`
-        : (!t.label ? `<span class="fin-txn-dot" title="Needs a label" aria-label="Needs a label"></span>` : "")}
-      <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(t.displayName)}</span>
-      ${t.isManual ? `<span class="fin-txn-flag fin-txn-flag--manual" title="Manually entered">manual</span>` : ""}
+      <span class="fin-txn-desc" title="${needsReview ? `${reviewTitle} · ` : ""}${t.isReceiptOnly ? "From a receipt — waiting for the bank's charge" : descTitle}"><span class="fin-txn-name">${escapeHtml(t.isReceiptOnly ? t.displayName : financeTxnRowName(t, receiptFits))}</span></span>
+      ${t.isReceiptOnly ? `<span class="fin-txn-receipt" title="From a receipt — waiting for the bank's charge" aria-label="From a receipt">${FIN_RECEIPT_ICON}</span>`
+        : receiptFits.get(t.id) && (receiptFits.get(t.id).fit.confidence !== "likely") ? `<span class="fin-txn-receipt" title="Has a receipt" aria-label="Has a receipt">${FIN_RECEIPT_ICON}</span>` : ""}
       ${t.pending ? `<span class="fin-txn-flag fin-txn-flag--pending" title="Pending — the amount may still change">pending</span>` : ""}
-      ${labelPill}
       <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
     </div>`;
   };
@@ -4069,115 +4586,160 @@ function renderFinancePage() {
         </div>
       </div>`;
     }
+    if (t.label === "mgmt" || t.label === "income" || (t.label || "").startsWith("income:")) return ""; // money in that isn't a refund
     return `
     <div class="fin-return-box">
       <span class="fin-hint">Is this a return?</span>
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="return-link-search-start" data-id="${escapeHtml(t.id)}">Find the purchase…</button>
     </div>`;
   };
+  // The open transaction's card (Luke, 2026-11-23): a clean view first, editing
+  // second. The view shows the name, amount, date/account, category, and the
+  // receipt; everything that changes the charge sits behind the ⋯ button at the
+  // top right (Edit · Trip · Split into categories · Scan receipt). Tapping the
+  // open row again closes the card — there's no ×.
+  //   • Tapping the category or the merchant's name filters the list to it.
+  //   • An uncategorized charge shows the category dropdown right in the card;
+  //     once categorized, a change goes through Edit (or the notifications deck).
+  const moreSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>`;
+  const receiptOnlyDetailHtml = (t) => {
+    const items = (t.items || []).filter((i) => i && (i.name || i.price));
+    const day = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+    return `
+    <div class="fin-txn-detail fin-txn-card" data-fin-receipt-only="${escapeHtml(t.receiptId)}">
+      <div class="fin-txn-card-head">
+        <div class="fin-txn-card-title"><span class="fin-txn-card-merchant">${escapeHtml(t.displayName)}</span></div>
+      </div>
+      <div class="fin-txn-card-amount is-neg"><span>${formatFinMoney(t.amount)}</span></div>
+      <div class="fin-txn-card-facts">${escapeHtml([day, "From a receipt"].filter(Boolean).join(" · "))}</div>
+      <p class="fin-hint fin-txn-card-note">Waiting for the bank's charge. When it comes in, the two are matched and the charge takes this receipt's place${items.length > 1 ? " — its items can then be split into categories" : ""}.</p>
+      ${items.length ? `<div class="fin-txn-card-items">${items.slice(0, 12).map((i) => `<div class="fin-txn-card-item"><span>${escapeHtml(i.name || "Item")}</span><span>${formatFinMoney(Number(i.price) || 0)}</span></div>`).join("")}${items.length > 12 ? `<div class="fin-hint">+ ${items.length - 12} more</div>` : ""}</div>` : ""}
+      <div class="fin-txn-card-foot"><button class="fin-link-btn" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(t.receiptId)}">View Receipt</button></div>
+    </div>`;
+  };
   const txnDetailHtml = (t) => {
+    if (t.isReceiptOnly) return receiptOnlyDetailHtml(t);
     const raw = String(t.description || "");
     const rawEsc = escapeHtml(raw);
-    const renaming = financeRenamingTxnId === t.id;
+    const editing = financeRenamingTxnId === t.id;
     const merchantKey = financeMerchantKey(raw);
-    const currentMerchant = (state.financeMerchantNames || {})[merchantKey] || raw;
+    const currentMerchant = (state.financeMerchantNames || {})[merchantKey] || cleanMerchantName(raw) || raw;
     const noteOverrides = state.financeTxnNoteOverrides || {};
     const hasNote = Object.prototype.hasOwnProperty.call(noteOverrides, t.id);
     const currentNote = hasNote ? noteOverrides[t.id] : financeSuggestedNote((state.financeTxnNoteCounts || {})[merchantKey]);
     const facts = financeTxnFactsLine(t);
     const isSplit = t.label === "split" && Array.isArray(t.split);
+    const spend = (t.amount || 0) < 0;
     const rc = financeReceiptForTxn(t);
     const keptReceipt = (state.financeTxnReceipts || {})[t.id];
-    return `
-    <div class="fin-txn-detail fin-txn-card" data-fin-txn-id="${escapeHtml(t.id)}">
+    const rowName = financeTxnRowName(t, receiptFits);
+    const merchantName = rowName.includes(" - ") ? rowName.slice(0, rowName.indexOf(" - ")) : rowName;
+    const trips = financeTrips();
+    const tripId = (state.financeTxnTrip || {})[t.id] || "";
+    const trip = tripId ? trips.find((tr) => tr.id === tripId) : null;
+    const tax = spend ? financeTaxTag(t) : { kind: "" };
+    const catLink = (label, text) => label && label.startsWith("cat:")
+      ? `<button class="fin-link-text" type="button" data-fin-action="filter-category" data-label="${escapeHtml(label)}" title="Show only ${escapeHtml(text)}">${escapeHtml(text)}</button>`
+      : `<span>${escapeHtml(text)}</span>`;
+    const head = `
       <div class="fin-txn-card-head">
-        ${renaming ? `
-        <div class="fin-rename-fields">
-          <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(currentMerchant)}" placeholder="${rawEsc}" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="name" aria-label="Store or person name" />
-          <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(currentNote)}" placeholder="what was purchased (optional)" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="note" aria-label="What was purchased" />
-          <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save" aria-label="Save">✓</button>
-          <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-cancel" title="Cancel" aria-label="Cancel">&times;</button>
-        ` : `
         <div class="fin-txn-card-title">
-          <span class="fin-txn-card-merchant">${escapeHtml(t.displayName)}</span>
+          <button class="fin-txn-card-merchant fin-link-text" type="button" data-fin-action="filter-merchant" data-key="${escapeHtml(merchantKey)}" title="Show only ${escapeHtml(merchantName)}">${escapeHtml(merchantName)}</button>
           ${currentNote ? `<span class="fin-txn-card-note-sub">${escapeHtml(currentNote)}</span>` : ""}
         </div>
-        ${t.isManual
-          ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-edit" data-id="${escapeHtml(t.id)}" title="Edit" aria-label="Edit transaction">✎</button>
-             <button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-delete" data-id="${escapeHtml(t.id)}" title="Delete" aria-label="Delete transaction">🗑</button>`
-          : `<button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-start" data-id="${escapeHtml(t.id)}" title="Rename / add note" aria-label="Rename or add a note">✎</button>`}
-        <button class="icon-btn fin-del-btn" type="button" data-fin-action="close-txn-detail" title="Close" aria-label="Close">&times;</button>
-        `}
-      </div>
-
-      <div class="fin-txn-card-amount${(t.amount || 0) < 0 ? " is-neg" : ""}">
-        <span>${formatFinMoney(t.amount || 0)}</span>
-        <button class="icon-btn fin-sign-flip-btn" type="button" data-fin-action="flip-txn-sign" data-id="${escapeHtml(t.id)}" title="${t.signFlipped ? "Restore the original sign" : "Flip the sign — bank reported it backwards"}" aria-label="Flip sign">⇄</button>
-      </div>
-      <div class="fin-txn-card-facts">${escapeHtml(facts)}${t.displayName !== raw ? ` · <span class="fin-txn-raw" title="Original bank text">${rawEsc}</span>` : ""}</div>
-
-      ${isSplit ? `
-      <div class="fin-txn-card-section">
-        <span class="fin-hint">Split across ${t.split.length} categories</span>
-        <div class="fin-split-chips">
-          ${t.split.map((p) => `<span class="fin-split-chip"><span class="fin-split-cat">${escapeHtml(financeTxnLabelName(p.label))}</span><span class="fin-split-amt">${formatFinMoney(-Math.abs(p.amount || 0))}</span></span>`).join("")}
-        </div>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="start-split" data-id="${escapeHtml(t.id)}">Edit split</button>
-      </div>` : `
-      <div class="fin-txn-card-section">
-        <span class="fin-hint">Category</span>
-        <div class="fin-item-row">${txnSelect(t)}</div>
-      </div>
-      <div class="fin-txn-card-actions">
-        ${(t.amount || 0) < 0 ? `<button class="fin-txn-act" type="button" data-fin-action="start-split" data-id="${escapeHtml(t.id)}"><span class="fin-txn-act-ic" aria-hidden="true">⑂</span><span>Split into categories</span></button>` : ""}
-        ${(t.amount || 0) < 0 ? `<button class="fin-txn-act" type="button" data-fin-action="detail-scan-receipt" data-id="${escapeHtml(t.id)}">${scanReceiptSvg}<span>Scan receipt</span></button>` : ""}
-      </div>`}
-
-      ${(t.amount || 0) < 0 ? (() => {
-        const tax = financeTaxTag(t);
-        const trips = financeTrips();
-        const tripId = (state.financeTxnTrip || {})[t.id] || "";
-        const at = Date.parse(t.posted || "");
-        const during = !tripId && trips.find((tr) => tr.startDate && tr.endDate && at >= Date.parse(tr.startDate + "T00:00:00") - 86400000 && at <= Date.parse(tr.endDate + "T23:59:59") + 2 * 86400000);
-        return `
-      <div class="fin-txn-card-section fin-txn-tags">
-        <label class="fin-tag-field"><span class="fin-hint">Tax</span>
-          <select class="fin-item-name" data-fin-edit="txn-tax" data-id="${escapeHtml(t.id)}" aria-label="Tax category">
-            <option value="none" ${!tax.kind ? "selected" : ""}>None</option>
-            ${TAX_KINDS.map((k) => `<option value="${k.key}" ${tax.kind === k.key ? "selected" : ""}>${escapeHtml(k.label)}${tax.kind === k.key && tax.source === "rule" ? " (from category)" : ""}</option>`).join("")}
-          </select>
-        </label>
-        ${trips.length ? `
-        <label class="fin-tag-field"><span class="fin-hint">Trip</span>
-          <select class="fin-item-name" data-fin-edit="txn-trip" data-id="${escapeHtml(t.id)}" aria-label="Trip">
-            <option value="">No trip</option>
-            ${trips.map((tr) => `<option value="${escapeHtml(tr.id)}" ${tr.id === tripId ? "selected" : ""}>${escapeHtml(tr.name || "Trip")}</option>`).join("")}
-          </select>
-        </label>
-        ${during ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-tag-trip" data-id="${escapeHtml(t.id)}" data-trip="${escapeHtml(during.id)}">During ${escapeHtml(during.name || "a trip")} — add it</button>` : ""}` : ""}
+        <button class="icon-btn fin-txn-more" type="button" data-fin-action="txn-more" data-id="${escapeHtml(t.id)}" aria-label="More for this transaction" aria-haspopup="menu">${moreSvg}</button>
       </div>`;
-      })() : ""}
-      ${returnLinkHtml(t)}
-      ${rc?.id ? `
-      <div class="fin-return-box fin-receipt-email">
-        <span class="fin-hint">${rc.source === "email" ? "Order email" : (rc.source === "extension" || rc.source === "share") ? "Online order" : "Receipt"}${rc.merchant ? ` · ${escapeHtml(rc.merchant)}` : ""}${(rc.items || []).length ? ` · ${rc.items.length} item${rc.items.length === 1 ? "" : "s"}` : ""}</span>
-        ${!isSplit && (rc.portions || rc.items || []).length > 1 ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="itemize-email" data-id="${escapeHtml(t.id)}">Itemize</button>` : ""}
-        ${rc.source === "email" && rc.externalId
-          ? `<a class="secondary-btn fin-add-btn" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.externalId)}" target="_blank" rel="noopener noreferrer">View email</a>`
-          : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(rc.id)}">View receipt</button>`}
-      </div>` : ""}
+    if (editing) {
+      const d = financeRenameDraft?.id === t.id ? financeRenameDraft : null;
+      const at = Date.parse(t.posted || "");
+      const during = spend && !tripId && trips.find((tr) => tr.startDate && tr.endDate && at >= Date.parse(tr.startDate + "T00:00:00") - 86400000 && at <= Date.parse(tr.endDate + "T23:59:59") + 2 * 86400000);
+      return `
+    <div class="fin-txn-detail fin-txn-card is-editing" data-fin-txn-id="${escapeHtml(t.id)}">
+      <div class="fin-txn-edit-title">Edit transaction</div>
+      <label class="fin-edit-field"><span class="fin-edit-label">Name</span>
+        <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(d ? d.name : currentMerchant)}" placeholder="${rawEsc}" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="name" aria-label="Store or person name" />
+      </label>
+      <span class="fin-hint fin-edit-hint">Renames every charge from this merchant. Bank text: ${rawEsc}</span>
+      <label class="fin-edit-field"><span class="fin-edit-label">Note</span>
+        <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(d ? d.note : currentNote)}" placeholder="What was purchased (optional)" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="note" aria-label="What was purchased" />
+      </label>
+      <div class="fin-edit-field"><span class="fin-edit-label">Category</span>
+        ${isSplit ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="start-split" data-id="${escapeHtml(t.id)}">Edit split (${t.split.length})</button>` : txnSelect(t)}
+      </div>
+      ${spend ? `
+      <label class="fin-edit-field"><span class="fin-edit-label">Tax</span>
+        <select class="fin-item-name" data-fin-edit="txn-tax" data-id="${escapeHtml(t.id)}" aria-label="Tax category">
+          <option value="none" ${!tax.kind ? "selected" : ""}>None</option>
+          ${TAX_KINDS.map((k) => `<option value="${k.key}" ${tax.kind === k.key ? "selected" : ""}>${escapeHtml(k.label)}${tax.kind === k.key && tax.source === "rule" ? " (from category)" : ""}</option>`).join("")}
+        </select>
+      </label>
+      ${trips.length ? `
+      <label class="fin-edit-field"><span class="fin-edit-label">Trip</span>
+        <select class="fin-item-name" data-fin-edit="txn-trip" data-id="${escapeHtml(t.id)}" aria-label="Trip">
+          <option value="">No trip</option>
+          ${trips.map((tr) => `<option value="${escapeHtml(tr.id)}" ${tr.id === tripId ? "selected" : ""}>${escapeHtml(tr.name || "Trip")}</option>`).join("")}
+        </select>
+      </label>
+      ${during ? `<button class="secondary-btn fin-add-btn fin-edit-suggest" type="button" data-fin-action="txn-tag-trip" data-id="${escapeHtml(t.id)}" data-trip="${escapeHtml(during.id)}">During ${escapeHtml(during.name || "a trip")} — add it</button>` : ""}` : ""}` : ""}
+      <div class="fin-edit-field"><span class="fin-edit-label">Amount</span>
+        <span class="fin-edit-amount${spend ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="flip-txn-sign" data-id="${escapeHtml(t.id)}" title="${t.signFlipped ? "Restore the original sign" : "The bank reported it backwards"}">${t.signFlipped ? "Restore sign" : "Flip sign"}</button>
+      </div>
       ${keptReceipt ? `
-      <div class="fin-return-box fin-receipt-kept">
-        <span class="fin-hint">📎 Receipt image kept${keptReceipt.uploadedAt ? ` · ${new Date(keptReceipt.uploadedAt).toLocaleDateString()}` : ""}</span>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="view-receipt-image" data-id="${escapeHtml(t.id)}">View</button>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="attach-receipt-image" data-id="${escapeHtml(t.id)}">Replace</button>
+      <div class="fin-edit-field"><span class="fin-edit-label">Receipt</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="attach-receipt-image" data-id="${escapeHtml(t.id)}">Replace image</button>
         <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="remove-receipt-image" data-id="${escapeHtml(t.id)}">Remove</button>
+      </div>` : ""}
+      ${t.isManual ? `
+      <div class="fin-edit-field"><span class="fin-edit-label">Entry</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-edit" data-id="${escapeHtml(t.id)}">Date, amount &amp; account</button>
+        <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="manual-txn-delete" data-id="${escapeHtml(t.id)}">Delete</button>
+      </div>` : ""}
+      <div class="fin-item-row fin-item-row--tools fin-edit-foot">
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="rename-txn-cancel">Cancel</button>
+        <button class="secondary-btn fin-add-btn fin-split-save" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}">Save</button>
+      </div>
+    </div>`;
+    }
+    // Category: one line, the name as plain text (a link to filter by it).
+    const categoryRow = isSplit ? `
+      <div class="fin-txn-card-line fin-txn-card-line--split">
+        <span class="fin-txn-card-key">Split</span>
+        <span class="fin-txn-card-splits">${t.split.map((p) => `<span class="fin-txn-card-split">${catLink(p.label, financeTxnLabelShortName(p.label))}<span class="fin-txn-card-split-amt">${formatFinMoney(-Math.abs(p.amount || 0))}</span></span>`).join("")}</span>
       </div>`
-      : ((t.amount || 0) < 0 ? `
-      <div class="fin-return-box fin-receipt-kept">
+      : t.label ? `
+      <div class="fin-txn-card-line">
+        <span class="fin-txn-card-key">Category</span>
+        <span class="fin-txn-card-val">${catLink(t.label, financeTxnLabelShortName(t.label))}${t.labelSource === "auto" ? `<span class="fin-of"> · auto</span>` : ""}</span>
+      </div>` : `
+      <div class="fin-txn-card-line">
+        <span class="fin-txn-card-key">Category</span>
+        <span class="fin-txn-card-val">${txnSelect(t)}</span>
+      </div>`;
+    const tagRows = [
+      trip ? `<div class="fin-txn-card-line"><span class="fin-txn-card-key">Trip</span><span class="fin-txn-card-val">${escapeHtml(trip.name || "Trip")}</span></div>` : "",
+      tax.kind ? `<div class="fin-txn-card-line"><span class="fin-txn-card-key">Tax</span><span class="fin-txn-card-val">${escapeHtml(taxLabel(tax.kind))}</span></div>` : "",
+    ].join("");
+    // Receipt: one "View Receipt" link at the bottom right when there is one; a
+    // square scan button beside "No receipt image yet" when there isn't.
+    const receiptLink = rc?.id
+      ? (rc.source === "email" && rc.externalId
+        ? `<a class="fin-link-btn" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.externalId)}" target="_blank" rel="noopener noreferrer">View Receipt</a>`
+        : `<button class="fin-link-btn" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(rc.id)}">View Receipt</button>`)
+      : keptReceipt ? `<button class="fin-link-btn" type="button" data-fin-action="view-receipt-image" data-id="${escapeHtml(t.id)}">View Receipt</button>` : "";
+    const noReceiptRow = !receiptLink && spend ? `
+      <div class="fin-txn-card-line fin-txn-noreceipt">
         <span class="fin-hint">No receipt image yet</span>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="attach-receipt-image" data-id="${escapeHtml(t.id)}">Attach image</button>
-      </div>` : "")}
+        <button class="icon-btn fin-square-btn" type="button" data-fin-action="attach-receipt-image" data-id="${escapeHtml(t.id)}" title="Add a receipt image" aria-label="Add a receipt image">${scanReceiptSvg}</button>
+      </div>` : "";
+    return `
+    <div class="fin-txn-detail fin-txn-card" data-fin-txn-id="${escapeHtml(t.id)}">
+      ${head}
+      <div class="fin-txn-card-amount${spend ? " is-neg" : ""}"><span>${formatFinMoney(t.amount || 0)}</span></div>
+      <div class="fin-txn-card-facts">${escapeHtml(facts)}</div>
+      <div class="fin-txn-card-lines">${categoryRow}${tagRows}${noReceiptRow}</div>
+      ${returnLinkHtml(t)}
+      ${receiptLink ? `<div class="fin-txn-card-foot">${receiptLink}</div>` : ""}
     </div>`;
   };
   // A brand-new user (nothing connected, no manual accounts) gets the connect
@@ -4199,11 +4761,10 @@ function renderFinancePage() {
       ${bellSvg}
       ${notifCount ? `<span class="fin-notif-badge">${notifCount}</span>` : ""}
     </button>`;
-  // The bell now opens the single-card notifications deck (openFinanceTxnReview)
-  // instead of an inline list — so no panel is embedded in the card head.
-  const notifPanel = "";
 
-  const filterActive = Boolean(f.kind || f.account || f.from || f.to); // the popup's filters (search has its own box)
+  // The popup's filters and sort (search has its own box; a category or merchant
+  // picked from a card shows as a chip under the tools as well).
+  const filterActive = Boolean(f.kind || f.account || f.from || f.to || f.merchant || f.sort !== "date");
   // Build the list: grouped by day for the default (date) sort, flat otherwise.
   const renderTxnBlock = (t) => txnRow(t, { grouped: f.sort === "date" }) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "");
   const txnDayLabel = (dayStr) => {
@@ -4240,11 +4801,6 @@ function renderFinancePage() {
     ? `<div class="fin-txn-loading" aria-live="polite" aria-busy="true"><span class="fin-txn-skel"></span><span class="fin-txn-skel"></span><span class="fin-txn-skel"></span><span class="fin-hint">Loading your transactions…</span></div>`
     : `<div class="empty-state">${filterActive ? "Nothing matches the filters." : `No transactions for ${escapeHtml(new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }))}.`}</div>`);
 
-  // On its own tab the Transactions list is the primary content — always shown
-  // (no card collapse to drill through).
-  const txnsOpen = true;
-  const sortActive = f.sort !== "date";
-  const accountOptions = [...new Map(allTxns.map((t) => [t.accountId, t.account])).entries()];
   const manualFormHtml = !financeManualForm ? "" : `
     <div class="fin-split-editor">
       <div class="fin-subhead">${financeManualForm.id ? "Edit transaction" : "Add transaction"}</div>
@@ -4260,35 +4816,67 @@ function renderFinancePage() {
         <option value="">label…</option>
         ${financeTxnLabelOptionsHtml(financeManualForm.label)}
       </select>
+      ${financeOwesAllowed() && financeMembers().length ? `
+      <label class="fin-manual-paidby">Paid with
+        <select data-fin-manual="paidBy" aria-label="Whose money paid for it">
+          <option value="">household money</option>
+          ${financeMembers().map((m) => `<option value="${escapeHtml(m.id)}" ${financeManualForm.paidBy === m.id ? "selected" : ""}>${escapeHtml(financeMemberFirstName(m.id))}'s own money</option>`).join("")}
+        </select>
+      </label>` : ""}
       <div class="fin-item-row fin-item-row--tools">
         <span class="fin-hint">Negative = spent, positive = received</span>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-cancel">Cancel</button>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-save">Save</button>
       </div>
     </div>`;
+  // Upcoming bills (moved from Insights, Luke 2026-11-23): just above the newest
+  // charge, so they're a scroll up away rather than in the way. Name, due date
+  // and amount only.
+  const upcomingForList = isCurrentMonth && !query && !hasRange && !f.merchant && !f.kind && !f.account ? financeUpcomingBills() : { bills: [] };
+  const billDate = (b) => {
+    if (b.overdue) return "Due now";
+    const now = new Date();
+    const day = Math.min(b.dueDay || 1, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate());
+    return new Date(now.getFullYear(), now.getMonth(), day).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  };
+  const billsHtml = upcomingForList.bills.length ? `
+      <div class="fin-txn-day fin-bills-upcoming" data-fin-bills>
+        <div class="fin-txn-day-head"><span>Upcoming bills</span></div>
+        ${upcomingForList.bills.map((b) => `
+        <div class="fin-txn-row fin-bill-row${b.overdue ? " is-overdue" : ""}">
+          <span class="fin-txn-date">${escapeHtml(billDate(b))}</span>
+          <span class="fin-txn-desc">${escapeHtml(b.name)}</span>
+          <span class="fin-txn-amt is-neg">${formatFinMoney(-Math.abs(b.amount))}</span>
+        </div>`).join("")}
+      </div>` : "";
+  // What a tap on a category or a merchant name narrowed the list to.
+  const scopeChips = [
+    f.merchant ? { key: "merchant", text: (() => { const t = [...allTxns, ...receiptRows].find((x) => financeMerchantKey(x.description || "") === f.merchant); const n = t ? financeTxnRowName(t, receiptFits) : ""; return (n.includes(" - ") ? n.slice(0, n.indexOf(" - ")) : n) || "This merchant"; })() } : null,
+    f.kind.startsWith("cat:") ? { key: "kind", text: financeTxnLabelShortName(f.kind) } : null,
+    f.kind.startsWith("group:") ? { key: "kind", text: (state.financeBudgetGroups || []).find((g) => g.id === f.kind.slice(6))?.label || "Group" } : null,
+  ].filter(Boolean);
+  const scopeChipsHtml = scopeChips.length ? `
+      <div class="fin-scope-chips">${scopeChips.map((c) => `<button class="fin-scope-chip" type="button" data-fin-action="clear-txn-scope" data-key="${c.key}" aria-label="Stop showing only ${escapeHtml(c.text)}">${escapeHtml(c.text)}<span aria-hidden="true">×</span></button>`).join("")}</div>` : "";
+  // The Transactions tab (Luke, 2026-11-23): no title (the tab says it), no box
+  // around the list. One row of tools — search, then Add, Filter (which holds the
+  // sort) and the bell, all the same height — that tucks away while scrolling
+  // down and slides back on any scroll up. Each day's date stays pinned at the
+  // top while its charges scroll under it.
   const txnsCard = showOnboard ? "" : `
-    <div class="fin-card" data-fin-card="txns">
-      <div class="fin-card-head fin-txns-head">
-        <h3>Transactions</h3>
+    <div class="fin-txns" data-fin-card="txns">
+      <div class="fin-txn-tools${financeToolsTucked ? " is-tucked" : ""}" data-fin-tools>
+        <input type="search" class="fin-item-name fin-txn-search" placeholder="Search" value="${escapeHtml(f.q)}" data-fin-edit="txn-filter-q" aria-label="Search transactions" />
         <button class="icon-btn fin-head-btn" type="button" data-fin-action="manual-txn-open" aria-label="Add transaction" title="Add a transaction"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
-        <button class="icon-btn fin-head-btn${filterActive ? " is-active" : ""}" type="button" data-fin-action="txn-filter-open" aria-label="${filterActive ? "Filter transactions (filters on)" : "Filter transactions"}" title="Filter by label, account or date">${FIN_FILTER_SVG}${filterActive ? `<span class="fin-head-btn-dot" aria-hidden="true"></span>` : ""}</button>
+        <button class="icon-btn fin-head-btn${filterActive ? " is-active" : ""}" type="button" data-fin-action="txn-filter-open" aria-label="${filterActive ? "Filter and sort (on)" : "Filter and sort"}" title="Filter and sort">${FIN_FILTER_SVG}${filterActive ? `<span class="fin-head-btn-dot" aria-hidden="true"></span>` : ""}</button>
         ${notifBell}
       </div>
-      ${notifPanel}
-      ${!txnsOpen ? "" : `
-      <div class="fin-txn-filters">
-        <input type="search" class="fin-item-name fin-txn-search" placeholder="Search…" value="${escapeHtml(f.q)}" data-fin-edit="txn-filter-q" aria-label="Search transactions" />
-        <select class="fin-scenario-select fin-txn-sort" data-fin-edit="txn-filter-sort" aria-label="Sort transactions">
-          <option value="date" ${f.sort === "date" ? "selected" : ""}>Sort: Date</option>
-          <option value="label" ${f.sort === "label" ? "selected" : ""}>Sort: Label</option>
-          <option value="account" ${f.sort === "account" ? "selected" : ""}>Sort: Account</option>
-        </select>
-      </div>
+      ${scopeChipsHtml}
       ${query || hasRange ? `<div class="fin-hint fin-txn-search-scope">${query ? "Searching" : "Showing"} all loaded transactions${hasRange ? ` from ${escapeHtml(f.from ? finFilterDateLabel(f.from) : "the start")} to ${escapeHtml(f.to ? finFilterDateLabel(f.to) : "today")}` : ""}. Older months keep saved category totals only.</div>` : ""}
       ${manualFormHtml}
-      ${txnListHtml}
+      ${billsHtml}
+      <div class="fin-txn-list" data-fin-txn-list>${txnListHtml}</div>
       ${txnsTruncated ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show all ${shownTxns.length}</button>`
-        : (financeTxnListExpanded && shownTxns.length > FIN_TXN_LIST_CAP ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show fewer</button>` : "")}`}
+        : (financeTxnListExpanded && shownTxns.length > FIN_TXN_LIST_CAP ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show fewer</button>` : "")}
       ${financeLiveLoading || financeLive?.at ? `<div class="fin-txn-status">${financeLiveLoading ? `<span class="fin-txn-status-load">Updating…</span>` : `Updated ${escapeHtml(finUpdatedLabel(financeLive.at))}`}</div>` : ""}
     </div>`;
 
@@ -4375,22 +4963,12 @@ function renderFinancePage() {
         </span>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="close-month">${closeChecks.every((c) => c.ok) ? "Close" : "Close anyway"}</button>
       </div>`;
-  // Personal items the household paid for, by person (finance-settle.js). The
-  // Household view lists everyone who owes; the Personal view only you.
-  const meId = getAuthSession()?.user?.id || "";
-  const inPersonalView = currentViewKey?.() === "personal";
-  const owedRows = [...financeOwedBalances(financeReceiptList(), state.financeSettlements || []).entries()]
-    .filter(([by, p]) => p.balance > 0 && (!inPersonalView || by === meId));
-  const owedBlock = owedRows.map(([by, p]) => {
-    const who = memberName ? memberName(by) : "";
-    const label = who === "You" || by === meId ? "You owe the household" : `${escapeHtml(who || "A household member")} owes the household`;
-    return `
-      <div class="fin-truth-row">
-        <span class="fin-truth-name">${label}<span class="fin-of"> · ${p.items.length} personal item${p.items.length === 1 ? "" : "s"} on household receipts</span></span>
-        <span class="fin-truth-amt">${formatFinMoney(p.balance)}</span>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="settle-owed" data-by="${escapeHtml(by)}" data-amount="${p.balance}">Paid back</button>
-      </div>`;
-  }).join("");
+  // Who owes whom (finance-settle.js financeOwedLedger; Luke, 2026-11-23): one net
+  // balance per person — personal items paid with household money one way,
+  // household things paid with a person's own money the other — with the items
+  // behind it, Settle up, and a matching transfer offered as the settle-up. Kept in
+  // the household's books, so it shows in the Household view.
+  const owedBlock = financeOwesAllowed() ? financeOwedBlockHtml(allTxns) : "";
   const truthCard = (monthLine || closeBlock || owedBlock || (showActuals && (uncatThis.count || staleSaved || skippedMerchants))) ? `
     <div class="fin-card fin-truth-card" data-fin-card="truth">
       ${monthLine}
@@ -4440,36 +5018,24 @@ function renderFinancePage() {
   // Unaddressed = still to review OR swiped-out-but-not-yet-confirmed (red-dot).
   const unconfirmedCount = allTxns.filter(financeTxnNeedsConfirm).length;
   const hasTxnAttention = reviewCount > 0 || unconfirmedCount > 0;
-  const hasAcctAttention = health.needsAttention.length > 0 || Boolean(health.bridgeError);
+  // The Accounts underline follows exactly what the Accounts tab's "Needs your
+  // attention" card lists (dismissed items don't count), so it's always explained.
+  const hasAcctAttention = financeAccountsNeedingAttention().length > 0;
 
-  // Forward-looking: recurring bills not yet posted this month, and what's left
-  // of cash once they clear ("safe to spend").
-  const upcoming = financeUpcomingBills();
-  const safeToSpend = cashOnHand != null ? cashOnHand - upcoming.total : null;
-
-  // Receipts (scanned, email, online orders — the one list): match each to a
-  // spend transaction (the reverse of financeReceiptForTxn). Drives the receipts
-  // inbox + itemize prompt. Only recent receipts: older ones' charges are out of
-  // the loaded transaction window, and the list holds every receipt ever saved.
-  const rCutoff = Date.now() - 45 * 86400000;
-  const rRecent = financeReceiptList()
-    .filter((r) => Number(r.total) > 0 && (!r.date || new Date(r.date).getTime() >= rCutoff))
-    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-  const rMatched = [], rUnmatched = [];
-  const rFits = financeReceiptFits().byReceipt;
-  for (const r of rRecent) {
-    const t = rFits.get(r.id)?.txn;
-    if (t) rMatched.push({ r, t }); else rUnmatched.push(r);
-  }
-  const itemizable = rMatched.filter(({ r, t }) => t.label !== "split" && (r.portions || r.items || []).length > 1);
-
+  // The section tabs are their own bar across the top of the window (Luke,
+  // 2026-11-23): opaque edge to edge, so nothing shows through above or around
+  // them while the page scrolls. The chosen tab is marked by an underline that
+  // slides between tabs, like the Meal Plan's days. A tab with something to look
+  // at carries the red underline under its name.
   const financeTabNav = `
     ${financeStalePullBanner()}
-    <div class="fin-tabs" role="tablist" aria-label="Finance sections">
-      ${FINANCE_TABS.map((t) => {
-        const dot = (t.id === "transactions" && hasTxnAttention) || (t.id === "accounts" && hasAcctAttention);
-        return `<button class="fin-tab${financeTab === t.id ? " is-active" : ""}" type="button" role="tab" id="fin-tab-${t.id}" aria-controls="fin-tabpanel" aria-selected="${financeTab === t.id}" data-fin-action="fin-tab" data-tab="${t.id}">${t.label}${dot ? ` <span class="fin-tab-dot" aria-label="Needs attention"></span>` : ""}</button>`;
-      }).join("")}
+    <div class="fin-tabbar">
+      <div class="fin-tabs" role="tablist" aria-label="Finance sections">
+        ${FINANCE_TABS.map((t) => {
+          const attn = (t.id === "transactions" && hasTxnAttention) || (t.id === "accounts" && hasAcctAttention);
+          return `<button class="fin-tab${financeTab === t.id ? " is-active" : ""}${attn ? " has-attention" : ""}" type="button" role="tab" id="fin-tab-${t.id}" aria-controls="fin-tabpanel" aria-selected="${financeTab === t.id}" data-fin-action="fin-tab" data-tab="${t.id}"${attn ? ` aria-description="Needs attention"` : ""}><span class="fin-tab-label">${t.label}</span></button>`;
+        }).join("")}
+      </div>
     </div>`;
 
   // Two distinct paths instead of one generic button: a returning user who
@@ -4483,8 +5049,8 @@ function renderFinancePage() {
       <div class="fin-empty-title">${hasAccounts ? "No bank connected" : "Set up your finances"}</div>
       <div class="fin-empty-sub">Track balances, spending, and net worth here — link a bank for automatic updates, or keep it manual if you'd rather not connect one.</div>
       <div class="fin-empty-actions">
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Link a bank</button>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Track manually</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-panel" data-panel="bank-link">Link a bank</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="track-manually">Track manually</button>
       </div>
       ${hasAccounts ? "" : `<div class="fin-empty-note">Read-only via SimpleFIN — Live never moves money.</div>`}
     </div>`;
@@ -4518,27 +5084,7 @@ function renderFinancePage() {
         </div>`).join("")}
       ${outlookCategories.length > 6 ? `<div class="fin-hint">+ ${outlookCategories.length - 6} more ${outlookCategories.length - 6 === 1 ? "category" : "categories"}.</div>` : ""}
     </div>` : "";
-  const upcomingBillsCard = `
-    <div class="fin-card fin-insights-card">
-      <div class="fin-subhead fin-accounts-title">Upcoming bills</div>
-      ${upcoming.bills.length ? `
-        ${upcoming.bills.map((b) => `
-          <div class="fin-bill-row${b.overdue ? " is-overdue" : ""}">
-            <span class="fin-bill-day">${b.overdue ? "Due now" : `Day ${b.dueDay}`}</span>
-            <span class="fin-bill-name">${escapeHtml(b.name)}</span>
-            <span class="fin-bill-amt">${formatFinMoney(-Math.abs(b.amount))}</span>
-            ${financeBillPayHtml(b.name)}
-          </div>`).join("")}
-        <div class="fin-bill-total"><span>Total upcoming</span><span>${formatFinMoney(-upcoming.total)}</span></div>
-        ${safeToSpend != null ? `
-        <div class="fin-safe-block">
-          <div class="fin-safe-row"><span>Cash on hand</span><span>${formatFinMoney(cashOnHand)}</span></div>
-          <div class="fin-safe-row"><span>Upcoming bills</span><span>${formatFinMoney(-upcoming.total)}</span></div>
-          <div class="fin-safe-row fin-safe-final"><span>Safe to spend</span><span class="${safeToSpend < 0 ? "is-neg" : ""}">${formatFinMoney(safeToSpend)}</span></div>
-        </div>` : ""}
-      ` : `<div class="fin-hint">No upcoming recurring bills for the rest of this month${!financeLinkStatus?.connected ? " — connect a bank so recurring charges can be detected" : ""}.</div>`}
-    </div>`;
-  const trends = financeSpendTrends(monthKey);
+  const trends = financeSpendTrends(monthKey, uncatByMonth);
   const trendMax = Math.max(1, ...trends.series.map((s) => s.spend || 0));
   const trendsCard = trends.hasData ? `
     <div class="fin-card fin-insights-card">
@@ -4562,10 +5108,10 @@ function renderFinancePage() {
               : `<span class="fin-mover-delta is-over">new</span>`}
           </div>`).join("")}` : ""}
     </div>` : "";
-  const cashflow = financeCashFlow(monthKey);
+  const cashflow = financeCashFlow(monthKey, uncatByMonth);
   const cfMax = Math.max(1, ...cashflow.series.flatMap((s) => [s.income || 0, s.spend || 0]));
   const cfIn = showActuals ? incomeActual : null;
-  const cfOut = monthActualSpend;
+  const cfOut = monthActualSpend != null ? monthActualSpend + (uncatThis.spend || 0) : null;
   const cfNet = (cfIn != null && cfOut != null) ? cfIn - cfOut : null;
   const cfUncat = cashflow.series.reduce((s, m) => s + (uncatByMonth.get(m.month)?.spend || 0), 0);
   const cashFlowCard = cashflow.hasData ? `
@@ -4588,7 +5134,7 @@ function renderFinancePage() {
           </div>`).join("")}
       </div>
       <div class="fin-cf-legend"><span class="fin-cf-key in">Money in</span><span class="fin-cf-key out">Money out</span></div>
-      ${cfUncat > 0 ? `<p class="fin-hint">Money out counts categorized spending. Not counted over these months: ${formatFinMoney(cfUncat)} uncategorized.</p>` : ""}
+      ${cfUncat > 0 ? `<p class="fin-hint">Money out includes ${formatFinMoney(cfUncat)} not categorized yet over these months.</p>` : ""}
     </div>` : "";
   // Subscriptions: every recurring charge with its yearly cost, a price change,
   // a possible duplicate, and where to cancel (finance-plan.js).
@@ -4612,59 +5158,6 @@ function renderFinancePage() {
           </div>
         </div>`).join("")}
     </div>` : "";
-
-  // 30 days ahead for the spending accounts: paychecks in, known bills and
-  // everyday spending out (finance-plan.js). Spending accounts = cash accounts
-  // that aren't the emergency fund.
-  const forecastCard = (() => {
-    if (!haveLive || !isCurrentMonth) return "";
-    const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
-    const emergency = new Set(financeCardAccountIds("emergency"));
-    const spendIds = financeCardAccountIds("cash").filter((id) => !emergency.has(id));
-    const startBalance = financeSumByAccountIds(spendIds, liveById);
-    if (startBalance == null) return "";
-    const today = new Date();
-    const endKey = dateKeyFromDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 31));
-    const paydays = [];
-    for (const p of state.financePeople || []) {
-      const sc = (p.scenarios || []).find((x) => x.id === p.activeScenarioId) || (p.scenarios || [])[0];
-      if (!sc || !(sc.amount > 0) || sc.payFrequency === "monthly") continue;
-      const net = sc.amount - scenarioDeductionPerPeriod(sc);
-      for (const d of scenarioPaydaysInRange(sc, dateKeyFromDate(today), endKey)) paydays.push({ date: d, amount: net });
-    }
-    const monthNow = localMonthKey(today);
-    const bills = (state.financeRecurring || []).filter((r) => r.active !== false && r.lastAmount > 0)
-      .map((r) => ({ name: r.name, day: Math.min(28, Math.max(1, r.expectedDay || 1)), amount: r.lastAmount, paidThisMonth: (r.lastSeen || "").slice(0, 7) === monthNow }));
-    const recurringKeysAll = new Set((state.financeRecurring || []).filter((r) => r.active !== false).map((r) => r.merchantKey));
-    const dailySpend = everydaySpendPerDay(allTxns.map((t) => ({ posted: t.posted, amount: t.amount, merchantKey: financeMerchantKey(t.description || ""), isTransfer: t.label === "mgmt" || t.label === "income" })), { now: today, recurringKeys: recurringKeysAll });
-    const f = cashForecast({ startBalance, today, days: 30, paydays, bills, dailySpend });
-    if (!f.points.length) return "";
-    const vals = [startBalance, ...f.points.map((p) => p.balance)];
-    // Scale to the range the balance moves in; show zero only when it's crossed.
-    const vMin = Math.min(...vals), vMax = Math.max(...vals);
-    const span = Math.max(vMax - vMin, Math.abs(vMax) * 0.1, 50);
-    const lo = vMin < 0 ? Math.min(vMin, 0) - span * 0.1 : vMin - span * 0.15, hi = vMax + span * 0.15;
-    const W = 300, H = 90, P = 6;
-    const x = (i) => P + (i * (W - 2 * P)) / (vals.length - 1);
-    const y = (v) => H - P - ((v - lo) / (hi - lo || 1)) * (H - 2 * P);
-    const path = vals.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
-    const LOW = 500;
-    const warn = f.low.balance < LOW;
-    const lowDate = new Date(f.low.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    const hits = f.points.map((p, i) => `<rect x="${(x(i + 1) - (W - 2 * P) / vals.length / 2).toFixed(1)}" y="0" width="${((W - 2 * P) / vals.length).toFixed(1)}" height="${H}" fill="transparent"><title>${escapeHtml(`${new Date(p.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}: ${formatFinMoney(p.balance)}${p.events.length ? " · " + p.events.join(", ") : ""}`)}</title></rect>`).join("");
-    return `
-    <div class="fin-card fin-insights-card fin-forecast-card">
-      <div class="fin-subhead fin-accounts-title">Next 30 days</div>
-      <div class="fin-subs-total"><span>Spending accounts now ${formatFinMoney(startBalance)}</span><span>${formatFinMoney(f.end)}<span class="fin-of"> in 30 days</span></span></div>
-      <svg class="fin-forecast" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(`Projected balance: lowest ${formatFinMoney(f.low.balance)} on ${lowDate}, ${formatFinMoney(f.end)} in 30 days`)}">
-        ${lo < 0 ? `<line class="fin-forecast-zero" x1="0" x2="${W}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>` : ""}
-        <path d="${path}"/>
-        <circle class="${warn ? "is-low" : ""}" cx="${x(vals.indexOf(f.low.balance)).toFixed(1)}" cy="${y(f.low.balance).toFixed(1)}" r="3.5"/>
-        ${hits}
-      </svg>
-      <p class="fin-hint${warn ? " fin-forecast-warn" : ""}">${warn ? "⚠ " : ""}Lowest point ${formatFinMoney(f.low.balance)} on ${escapeHtml(lowDate)}${warn ? ` — under ${formatFinMoney(LOW)}` : ""}. Counts ${paydays.length} paycheck${paydays.length === 1 ? "" : "s"}, ${bills.length} recurring bill${bills.length === 1 ? "" : "s"} and about ${formatFinMoney(dailySpend)}/day of everyday spending.</p>
-    </div>`;
-  })();
 
   // Reports: where the viewed month's spend went (category breakdown) + CSV export.
   const catSpend = [...catActuals.entries()]
@@ -4716,47 +5209,6 @@ function renderFinancePage() {
           <div class="fin-report-bar"><i style="width:${Math.round((c.amount / reportMax) * 100)}%"></i></div>
         </div>`).join("") : `<div class="fin-hint">No categorized spending yet this month.</div>`}
     </div>` : "";
-  // Notable this month: the biggest spends + merchants first seen this month
-  // (within the loaded window — live txns cover ~45 days).
-  const largestTxns = monthTxns.filter((t) => (t.amount || 0) < 0).sort((a, b) => Math.abs(b.amount || 0) - Math.abs(a.amount || 0)).slice(0, 5);
-  const priorMerchantKeys = new Set(allTxns.filter((t) => (t.posted || "").slice(0, 7) !== monthKey).map((t) => financeMerchantKey(t.description)).filter(Boolean));
-  const newMerchants = [];
-  const seenNewKeys = new Set();
-  for (const t of monthTxns) {
-    const k = financeMerchantKey(t.description);
-    if (!k || priorMerchantKeys.has(k) || seenNewKeys.has(k) || (t.amount || 0) >= 0) continue;
-    seenNewKeys.add(k); newMerchants.push(t);
-  }
-  const notableRow = (t) => `<div class="fin-notable-row"><span class="fin-notable-name">${escapeHtml(t.displayName)}</span><span class="fin-notable-amt is-neg">${formatFinMoney(t.amount || 0)}</span></div>`;
-  const notableCard = (largestTxns.length || newMerchants.length) ? `
-    <div class="fin-card fin-insights-card">
-      <div class="fin-subhead fin-accounts-title">Notable this month</div>
-      ${largestTxns.length ? `<div class="fin-notable-sub">Largest</div>${largestTxns.map(notableRow).join("")}` : ""}
-      ${newMerchants.length ? `<div class="fin-notable-sub">New merchants</div>${newMerchants.slice(0, 5).map(notableRow).join("")}` : ""}
-    </div>` : "";
-  // Receipts inbox — matched (itemizable) + not-yet-matched receipts.
-  const receiptSourceChip = (r) => r.source === "email" && r.externalId
-    ? `<a class="fin-quick-chip" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(r.externalId)}" target="_blank" rel="noopener noreferrer">Email</a>`
-    : `<button class="fin-quick-chip" type="button" data-fin-action="open-receipt" data-id="${escapeHtml(r.id)}">View</button>`;
-  const receiptsCard = rRecent.length ? `
-    <div class="fin-card fin-insights-card">
-      <div class="fin-subhead fin-accounts-title">Receipts</div>
-      ${itemizable.length ? `<div class="fin-hint fin-receipts-prompt">${itemizable.length} transaction${itemizable.length === 1 ? "" : "s"} can be itemized from a matching receipt — one tap builds the split.</div>` : ""}
-      ${rMatched.length ? rMatched.map(({ r, t }) => `
-        <div class="fin-receipt-row">
-          <span class="fin-receipt-tag${t.label === "split" ? " is-done" : ""}">${t.label === "split" ? "✓ split" : "matched"}</span>
-          <span class="fin-receipt-name">${escapeHtml(r.merchant || t.displayName)}${(r.items || []).length ? ` · ${r.items.length} items` : ""}</span>
-          <span class="fin-receipt-amt">${formatFinMoney(-Math.abs(r.total || 0))}</span>
-          ${t.label !== "split" && (r.portions || r.items || []).length > 1 ? `<button class="fin-quick-chip fin-receipt-itemize" type="button" data-fin-action="itemize-email" data-id="${escapeHtml(t.id)}">Itemize</button>` : receiptSourceChip(r)}
-        </div>`).join("") : ""}
-      ${rUnmatched.length ? `<div class="fin-notable-sub">Unmatched — no transaction found yet</div>${rUnmatched.slice(0, 8).map((r) => `
-        <div class="fin-receipt-row">
-          <span class="fin-receipt-tag is-muted">${r.date ? escapeHtml(new Date(r.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
-          <span class="fin-receipt-name">${escapeHtml(r.merchant || "Receipt")}</span>
-          <span class="fin-receipt-amt">${formatFinMoney(-Math.abs(r.total || 0))}</span>
-          ${receiptSourceChip(r)}
-        </div>`).join("")}` : ""}
-    </div>` : "";
   // Tax time: this year's tagged totals and the export (finance-tags.js).
   const taxYear = Number(monthKey.slice(0, 4));
   const taxSummary = taxYearSummary(allTxns.map((t) => ({ ...t, name: t.displayName || t.description || "" })), {
@@ -4780,111 +5232,38 @@ function renderFinancePage() {
         : `<p class="fin-hint">Nothing tagged yet. Tag a transaction as a donation, medical, childcare, a 529 contribution or a business expense from its details; categories with those names are tagged for you.</p>`}
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="export-tax-year" data-year="${taxYear}">Export ${taxYear} for taxes</button>
     </div>`;
-  const insightsView = `${forecastCard}${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}${returnsCard}${taxCard}`;
+  // What Insights held, on the Budget tab now (Luke, 2026-11-23): the charts and
+  // lists that explain the month. "Next 30 days", "Notable this month" and the
+  // receipts list are gone (receipts live with their transactions).
+  const budgetCharts = `${cashFlowCard}${reportsCard}${trendsCard}${budgetOutlookCard}${subsCard}${returnsCard}${taxCard}`;
 
-  // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
-  // bar + on-track note derived on the fly.
-  const goals = state.financeGoals || [];
-  const goalMonthsUntil = (dateStr) => {
-    if (!dateStr) return null;
-    const d = new Date(dateStr + "T12:00:00"); if (isNaN(d.getTime())) return null;
-    const now = new Date();
-    return (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth());
-  };
-  const goalLiveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
-  const goalAccounts = (state.financeAccounts || []).filter((a) => ["cash", "retirement", "investment"].includes(financeAccountKind(a)) || a.kind === "cash");
-  const goalRow = (g) => {
-    const editing = financeExpanded.has(`goal:${g.id}`);
-    // Tied to an account: its balance is the progress, and the balance history
-    // gives a pace and a finish month (finance-plan.js goalProgress).
-    const acct = g.accountId ? (state.financeAccounts || []).find((a) => a.id === g.accountId) : null;
-    const bal = acct ? financeAccountBalance(acct, goalLiveById) : null;
-    const gp = goalProgress(g, { balanceNow: bal, history: financeHistory || {} });
-    const cur = gp.current;
-    const pct = g.target > 0 ? Math.min(100, Math.round((cur / g.target) * 100)) : 0;
-    const reached = g.target > 0 && cur >= g.target;
-    const monthLabel = (ym) => new Date(ym + "-15T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" });
-    let note = "";
-    if (reached) note = "Reached 🎉";
-    else if (gp.etaDate) note = `At ${formatFinMoney(gp.perMonth)}/mo, reached around ${monthLabel(gp.etaDate)}${gp.needPerMonth ? ` · ${formatFinMoney(gp.needPerMonth)}/mo needed for the target date` : ""}`;
-    else if (g.targetDate) {
-      const m = goalMonthsUntil(g.targetDate);
-      if (m != null) note = m <= 0 ? "Target date passed" : `${formatFinMoney((g.target - cur) / m)}/mo to reach by ${new Date(g.targetDate + "T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
-    } else if (g.target > 0) note = `${formatFinMoney(g.target - cur)} to go${gp.linked && gp.perMonth != null && gp.perMonth <= 0 ? " · balance hasn't grown lately" : ""}`;
-    if (gp.linked) note = `${escapeHtml(acct.name || "Account")} · ${note}`;
-    return `
-      <div class="fin-goal">
-        <button class="fin-goal-row" type="button" data-fin-action="toggle-expand" data-id="goal:${escapeHtml(g.id)}" aria-expanded="${editing}">
-          <div class="fin-goal-head-row"><span class="fin-goal-name">${escapeHtml(g.name || "Untitled goal")}</span><span class="fin-goal-nums">${formatFinMoney(cur)} <span class="fin-of">/ ${formatFinMoney(g.target)}</span></span></div>
-          <div class="fin-gauge"><i class="${reached ? "is-done" : ""}" style="width:${pct}%"></i></div>
-          ${note ? `<div class="fin-goal-note${reached ? " is-done" : ""}">${gp.linked ? note : escapeHtml(note)}</div>` : ""}
-        </button>
-        ${editing ? `
-        <div class="fin-goal-editor">
-          <div class="fin-item-row"><input class="fin-item-name" type="text" value="${escapeHtml(g.name)}" placeholder="Goal name (e.g. Vacation fund)" data-fin-edit="goal-name" data-id="${escapeHtml(g.id)}" aria-label="Goal name" /></div>
-          <div class="fin-item-row">
-            ${g.accountId ? "" : `<input class="fin-item-amount" type="text" inputmode="decimal" value="${g.current || ""}" placeholder="Saved" data-fin-edit="goal-current" data-id="${escapeHtml(g.id)}" aria-label="Amount saved" />`}
-            <input class="fin-item-amount" type="text" inputmode="decimal" value="${g.target || ""}" placeholder="Target" data-fin-edit="goal-target" data-id="${escapeHtml(g.id)}" aria-label="Target amount" />
-          </div>
-          <div class="fin-item-row">
-            <select class="fin-item-name" data-fin-edit="goal-account" data-id="${escapeHtml(g.id)}" aria-label="Track an account's balance">
-              <option value="">Typed amount (no account)</option>
-              ${goalAccounts.map((a) => `<option value="${escapeHtml(a.id)}" ${a.id === g.accountId ? "selected" : ""}>Balance of ${escapeHtml(a.name || "account")}</option>`).join("")}
-            </select>
-          </div>
-          <div class="fin-item-row fin-item-row--tools">
-            <input type="date" class="fin-item-name fin-goal-date" value="${escapeHtml(g.targetDate || "")}" data-fin-edit="goal-date" data-id="${escapeHtml(g.id)}" aria-label="Target date (optional)" />
-            <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-goal" data-id="${escapeHtml(g.id)}">Delete goal</button>
-          </div>
-        </div>` : ""}
-      </div>`;
-  };
-  const goalsCard = `
-    <div class="fin-card fin-goals-card">
-      <div class="fin-subhead fin-accounts-title">Savings goals</div>
-      ${goals.length ? goals.map(goalRow).join("") : `<div class="fin-hint">No goals yet — set a savings target to track your progress.</div>`}
-      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-goal">+ Goal</button>
+  // Accounts tab (Luke, 2026-11-23): only the account list, with no box around
+  // it, and a ⋯ at the top right for Edit accounts. Savings goals were removed;
+  // Alerts, the bank link and Personal accounts are in Finance's gear menu; the
+  // savings figures and net worth moved to Budget.
+  const accountsPanel = `
+    ${financeAccountsAttentionCard()}
+    <div class="fin-accounts${financeAcctEditMode ? " is-editing" : ""}">
+      <div class="fin-accounts-tools">
+        ${financeAcctEditMode ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="acct-edit-done">Done</button>` : ""}
+        <button class="icon-btn fin-txn-more" type="button" data-fin-action="acct-more" aria-label="Account options" aria-haspopup="menu">${moreSvg}</button>
+      </div>
+      ${renderFinanceAccountsPanel()}
     </div>`;
-
-  // Route the existing cards into tabs (they keep their own internals + wiring).
-  const accountsPanel = `<div class="fin-card fin-accounts-card"><div class="fin-subhead fin-accounts-title">Accounts</div>${renderFinanceAccountsPanel()}</div>`;
-  // Alerts (moved here from Settings › Finance, Luke 2026-10-14): which finance
-  // alerts appear in the notifications bell. Stored in state.financeAlertPrefs.
-  const alertsCard = `
-    <div class="fin-card fin-alerts-card">
-      <div class="fin-subhead fin-accounts-title">Alerts</div>
-      <div class="fin-hint">Which alerts appear in the notifications bell.</div>
-      ${FINANCE_ALERTS.map((a) => `
-        <label class="fin-alert-pref">
-          <span class="fin-alert-pref-text"><span class="fin-alert-pref-label">${escapeHtml(a.label)}</span><span class="fin-hint">${escapeHtml(a.desc)}</span></span>
-          <input type="checkbox" class="live-toggle" data-fin-edit="alert" data-key="${escapeHtml(a.key)}" aria-label="${escapeHtml(a.label)}" ${financeAlertPref(a.key) ? "checked" : ""} />
-        </label>`).join("")}
-    </div>`;
+  // Budget tab: the month's budget first, then the savings figures and net worth
+  // (from Accounts), then the charts (from Insights).
   const tabBody =
-    financeTab === "budget" ? `${showOnboard ? connectPrompt : ""}${budgetView}${personalCard}`
-    : financeTab === "accounts" ? `${showOnboard ? connectPrompt : ""}${goalsCard}${savingsRow}${netWorthCard}${accountsPanel}${alertsCard}`
-    : financeTab === "insights" ? `${showOnboard ? connectPrompt : ""}${insightsView}`
+    financeTab === "budget" ? `${showOnboard ? connectPrompt : ""}${budgetView}${personalCard}${savingsRow}${netWorthCard}${budgetCharts}`
+    : financeTab === "accounts" ? `${showOnboard ? connectPrompt : ""}${accountsPanel}`
     : (txnsCard || connectPrompt);
 
-  // Personal Finance (FINANCE_SPLIT_DESIGN.md §2.3): this member's own accounts,
-  // with a small read-only summary of the household's and a way over there.
-  const householdSummary = financeScopeNow() === "personal" ? (() => {
-    const days = financeHistoryAll?.days || {};
-    const last = Object.keys(days).sort().at(-1);
-    const nw = last ? Number(days[last]?.netWorth) : NaN;
-    return `
-      <div class="fin-card fin-household-summary">
-        <div class="fin-household-summary-text">
-          <span class="fin-household-summary-label">Household</span>
-          <span class="fin-household-summary-value">${Number.isFinite(nw) ? `Net worth ${escapeHtml(formatFinMoney(nw))}` : "Shared accounts and budget"}</span>
-        </div>
-        <button type="button" class="secondary-btn" data-fin-action="open-household">Open in Household</button>
-      </div>`;
-  })() : "";
+  // Personal Finance used to open with a "Household · Net worth · Open in
+  // Household" card on every tab; Luke removed it (2026-11-24). The views band
+  // already gets you to Household.
+
 
   grid.innerHTML = `
     <section class="fin-panel">
-      ${householdSummary}
       ${financeTabNav}
       <div class="fin-tab-body" id="fin-tabpanel" role="tabpanel" aria-labelledby="fin-tab-${financeTab}" tabindex="0" data-fin-tab-body="${financeTab}">${tabBody}</div>
     </section>`;
@@ -4894,6 +5273,17 @@ function renderFinancePage() {
     grid.addEventListener("click", onFinanceGridClick);
     grid.addEventListener("change", onFinanceGridChange);
     grid.addEventListener("input", (e) => {
+      if (e.target.matches?.("[data-fin-rename-field]")) {
+        // Keep what's typed in the Edit view through a re-render (say, a category
+        // picked after typing a name).
+        const card = e.target.closest(".fin-txn-card");
+        financeRenameDraft = {
+          id: e.target.dataset.finRenameId,
+          name: card?.querySelector('[data-fin-rename-field="name"]')?.value ?? "",
+          note: card?.querySelector('[data-fin-rename-field="note"]')?.value ?? "",
+        };
+        return;
+      }
       if (e.target.matches?.("[data-fin-budget-search]")) {
         financeBudgetSearch = e.target.value;
         applyBudgetSearch(); // live filter, no re-render (keeps the box focused)
@@ -4944,6 +5334,25 @@ function renderFinancePage() {
 
   // Re-apply the budget category filter after a render (edits rebuild the list).
   if (financeTab === "budget" && financeBudgetSearch) applyBudgetSearch();
+
+  updateFinanceTabIndicator();
+  updateFinanceStickyVars();
+  wireFinanceScroll();
+  // Entering the Transactions tab: start at the newest charge, with the upcoming
+  // bills just above the top edge (a scroll up shows them).
+  if (financeTab === "transactions" && financeTxnScrollPending) {
+    const bills = grid.querySelector("[data-fin-bills]");
+    const list = grid.querySelector("[data-fin-txn-list]");
+    if (list && list.querySelector(".fin-txn-row")) {
+      financeTxnScrollPending = false;
+      if (bills) {
+        const scroller = financeScroller();
+        financeScrollTo(financeScrollTopOf(list, scroller) - financeStickyCover({ tools: true }), false);
+      }
+    }
+  }
+  if (financeTab !== "transactions") financeTxnScrollPending = true;
+  refreshFinanceSettingsIfOpen();
 }
 
 // Right-click menu for the Accounts card — the edit/delete/label actions used
@@ -5004,7 +5413,7 @@ function showFinTxnMenu(x, y, txnId) {
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 180)) + "px";
   menu.style.top = Math.min(y, usableViewportBottom() - 90) + "px";
   menu.innerHTML = `
-    <button class="fin-txn-menu-option" type="button" data-menu-action="rename">Rename / add note</button>
+    <button class="fin-txn-menu-option" type="button" data-menu-action="rename">Edit</button>
     ${isManual ? `
     <button class="fin-txn-menu-option" type="button" data-menu-action="edit">Edit transaction</button>
     <button class="fin-txn-menu-option fin-danger" type="button" data-menu-action="delete">Delete transaction</button>` : ""}`;
@@ -5022,6 +5431,189 @@ function showFinTxnMenu(x, y, txnId) {
   });
   document.body.appendChild(menu);
   setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true, capture: true }), 0);
+}
+
+// A small menu under a ⋯ button (right-aligned to it). items: { label, run, danger,
+// checked, sub: [items] } — an item with `sub` swaps the menu to that list, with a
+// back row. Closes on any tap outside it.
+function showFinMenuAt(anchor, items, id = "finMoreMenu") {
+  document.getElementById(id)?.remove();
+  const menu = document.createElement("div");
+  menu.id = id;
+  menu.className = "fin-txn-menu";
+  menu.setAttribute("role", "menu");
+  const draw = (list, back) => {
+    menu.innerHTML = `${back ? `<button class="fin-txn-menu-option fin-menu-back" type="button" role="menuitem" data-i="back">‹ Back</button>` : ""}${list.map((it, i) => `<button class="fin-txn-menu-option${it.danger ? " fin-danger" : ""}${it.checked ? " is-checked" : ""}" type="button" role="menuitem" data-i="${i}">${escapeHtml(it.label)}${it.sub ? `<span class="fin-menu-more" aria-hidden="true">›</span>` : ""}${it.checked ? `<span class="fin-menu-check" aria-hidden="true">✓</span>` : ""}</button>`).join("")}`;
+    menu.onclick = (e) => {
+      const b = e.target.closest("[data-i]");
+      if (!b) return;
+      e.stopPropagation();
+      if (b.dataset.i === "back") { draw(items, null); place(); return; }
+      const it = list[Number(b.dataset.i)];
+      if (it?.sub) { draw(it.sub, list); place(); return; }
+      menu.remove();
+      it?.run?.();
+    };
+  };
+  const place = () => {
+    const r = anchor.getBoundingClientRect();
+    const w = menu.offsetWidth || 200;
+    menu.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) + "px";
+    const h = menu.offsetHeight || 160;
+    const below = r.bottom + 4;
+    menu.style.top = (below + h > usableViewportBottom() - 8 ? Math.max(8, r.top - h - 4) : below) + "px";
+  };
+  draw(items, null);
+  document.body.appendChild(menu);
+  place();
+  setTimeout(() => document.addEventListener("click", function off(e) {
+    if (menu.contains(e.target)) { document.addEventListener("click", off, { once: true, capture: true }); return; }
+    menu.remove();
+  }, { once: true, capture: true }), 0);
+}
+
+// The ⋯ menu on an open transaction card (Luke, 2026-11-23): the editing tools,
+// kept out of the card so it reads cleanly. Most categorizing still happens in
+// the notifications deck.
+function showFinTxnMoreMenu(anchor, txnId) {
+  const t = financeLabeledTxns().find((x) => x.id === txnId);
+  if (!t) return;
+  const spend = (t.amount || 0) < 0;
+  const trips = financeTrips();
+  const tripId = (state.financeTxnTrip || {})[t.id] || "";
+  const items = [{ label: "Edit", run: () => startRenameTxn(t.id) }];
+  if (spend && trips.length) {
+    items.push({ label: "Trip", sub: [
+      { label: "No trip", checked: !tripId, run: () => { financeTagTrip(t.id, ""); renderFinancePage(); } },
+      ...trips.map((tr) => ({ label: tr.name || "Trip", checked: tr.id === tripId, run: () => { financeTagTrip(t.id, tr.id); renderFinancePage(); } })),
+    ] });
+  }
+  if (spend) {
+    items.push({ label: "Split into categories", run: () => startSplitTxn(t.id) });
+    items.push({ label: "Scan receipt", run: () => startScanReceiptForTxn(t.id) });
+  }
+  if (financeTxnNeedsConfirm(t)) items.push({ label: "Mark reviewed", run: () => { financeConfirmTxn(t.id); renderFinancePage(); } });
+  showFinMenuAt(anchor, items);
+}
+
+// The ⋯ at the top right of the Accounts tab: Edit accounts turns on the editing
+// controls (labels, ✎ per account, add an account); Done turns them off.
+function showFinAcctMoreMenu(anchor) {
+  showFinMenuAt(anchor, [
+    { label: financeAcctEditMode ? "Done editing" : "Edit accounts", run: () => { financeAcctEditMode = !financeAcctEditMode; if (!financeAcctEditMode) [...financeExpanded].filter((k) => String(k).startsWith("edit:")).forEach((k) => financeExpanded.delete(k)); renderFinancePage(); } },
+  ]);
+}
+
+// ── Scrolling: pinned bar, tucking tools, pinned dates ──────────────────────
+// The element the Finance page scrolls in (#financeMainPage on a laptop; the page
+// itself where the window grows to fit, as on a phone).
+function financeScroller() {
+  let el = elements.financePlannerGrid?.parentElement;
+  while (el && el !== document.body) {
+    const oy = getComputedStyle(el).overflowY;
+    if (oy === "auto" || oy === "scroll") return el;
+    el = el.parentElement;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+function financeScrollTopOf(el, scroller) {
+  const base = scroller === document.scrollingElement || scroller === document.documentElement ? 0 : scroller.getBoundingClientRect().top;
+  return el.getBoundingClientRect().top - base + scroller.scrollTop;
+}
+// Height covered at the top by the pinned tab bar (and the tools row when out).
+function financeStickyCover({ tools = !financeToolsTucked } = {}) {
+  const grid = elements.financePlannerGrid;
+  const bar = grid?.querySelector(".fin-tabbar");
+  const toolsEl = grid?.querySelector("[data-fin-tools]");
+  return (bar?.offsetHeight || 0) + (tools && toolsEl ? toolsEl.offsetHeight : 0);
+}
+function financeScrollTo(top, smooth) {
+  const scroller = financeScroller();
+  financeProgrammaticScrollUntil = Date.now() + (smooth ? 700 : 120);
+  scroller.scrollTo({ top: Math.max(0, top), behavior: smooth ? "smooth" : "auto" });
+}
+function financeScrollToTop() {
+  financeToolsTucked = false;
+  elements.financePlannerGrid?.querySelector("[data-fin-tools]")?.classList.remove("is-tucked");
+  requestAnimationFrame(() => {
+    const list = elements.financePlannerGrid?.querySelector("[data-fin-card=\"txns\"]");
+    if (list) financeScrollTo(financeScrollTopOf(list, financeScroller()) - financeStickyCover({ tools: false }) , false);
+  });
+}
+// Put an opened charge right under the pinned bar and its day's date. The tools
+// row tucks away so the card gets the room.
+function scrollFinanceTxnToTop(txnId) {
+  requestAnimationFrame(() => {
+    const grid = elements.financePlannerGrid;
+    const row = grid?.querySelector(`.fin-txn-row[data-id="${CSS.escape(txnId)}"]`);
+    if (!row) return;
+    financeToolsTucked = true;
+    grid.querySelector("[data-fin-tools]")?.classList.add("is-tucked");
+    updateFinanceStickyVars();
+    const dayHead = row.closest(".fin-txn-day")?.querySelector(".fin-txn-day-head");
+    const scroller = financeScroller();
+    financeScrollTo(financeScrollTopOf(row, scroller) - financeStickyCover({ tools: false }) - (dayHead?.offsetHeight || 0), true);
+  });
+}
+// The pinned offsets, from the bar's and tools' real heights (they change with
+// the text size and the view).
+function updateFinanceStickyVars() {
+  const grid = elements.financePlannerGrid;
+  if (!grid) return;
+  const bar = grid.querySelector(".fin-tabbar");
+  const tools = grid.querySelector("[data-fin-tools]");
+  const barH = bar?.offsetHeight || 0;
+  const toolsH = tools?.offsetHeight || 0;
+  grid.style.setProperty("--fin-bar-h", `${barH}px`);
+  grid.style.setProperty("--fin-tools-h", `${toolsH}px`);
+  grid.classList.toggle("fin-tools-tucked", Boolean(financeToolsTucked));
+}
+// Tuck the tools row on a scroll down, bring it back on any scroll up. Ignores
+// the page's own scrolls (opening a card, entering the tab).
+function wireFinanceScroll() {
+  const scroller = financeScroller();
+  const target = scroller === document.scrollingElement || scroller === document.documentElement ? window : scroller;
+  if (financeScrollWired === target) return;
+  if (financeScrollWired) financeScrollWired.removeEventListener("scroll", onFinanceScroll);
+  financeScrollWired = target;
+  financeLastScrollTop = scroller.scrollTop;
+  target.addEventListener("scroll", onFinanceScroll, { passive: true });
+}
+let financeLastScrollTop = 0;
+function onFinanceScroll() {
+  if (getActiveAppArea?.() !== "finance" || financeTab !== "transactions") return;
+  const scroller = financeScroller();
+  const top = scroller.scrollTop;
+  const dy = top - financeLastScrollTop;
+  financeLastScrollTop = top;
+  if (Date.now() < financeProgrammaticScrollUntil || Math.abs(dy) < 4) return;
+  const grid = elements.financePlannerGrid;
+  const tools = grid?.querySelector("[data-fin-tools]");
+  if (!tools) return;
+  // Past the tools' own place in the page (measured from their in-flow container,
+  // since the pinned row's position moves with the scroll).
+  const home = tools.closest("[data-fin-card=\"txns\"]") || tools;
+  const pastTools = top > financeScrollTopOf(home, scroller) - financeStickyCover({ tools: false }) + tools.offsetHeight;
+  const tuck = dy > 0 && pastTools;
+  if (tuck === financeToolsTucked && (dy > 0 || !financeToolsTucked)) return;
+  financeToolsTucked = dy > 0 ? tuck : false;
+  tools.classList.toggle("is-tucked", financeToolsTucked);
+  grid.classList.toggle("fin-tools-tucked", financeToolsTucked);
+}
+// The sliding underline under the chosen tab (the Meal Plan day tabs' look): it
+// moves from where it was to the new tab. The offsets live on the grid, which
+// survives each re-render, so the new bar starts where the old one stood.
+function updateFinanceTabIndicator() {
+  const grid = elements.financePlannerGrid;
+  const tabs = grid?.querySelector(".fin-tabs");
+  const active = tabs?.querySelector(".fin-tab.is-active");
+  if (!active) return;
+  void tabs.offsetWidth; // start from the old position (style is resolved first)
+  const set = () => {
+    grid.style.setProperty("--fin-tab-l", `${active.offsetLeft}px`);
+    grid.style.setProperty("--fin-tab-w", `${active.offsetWidth}px`);
+  };
+  if (!grid.style.getPropertyValue("--fin-tab-w")) set(); else requestAnimationFrame(set);
 }
 
 // Resolves a "cat:<group>:<category>" scope to the live category object.
@@ -5060,7 +5652,15 @@ function onFinanceGridClick(e) {
   if (action === "move-cancel") { financeMove.report = null; financeMove.error = ""; renderFinancePage(); return; }
   if (action === "toggle-notifs") { openFinanceTxnReview(); return; }
   if (action === "review-txns") { openFinanceTxnReview(); return; }
-  if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
+  if (action === "fin-tab") {
+    const next = btn.dataset.tab || "transactions";
+    if (next !== financeTab) { financeTab = next; financeToolsTucked = false; financeTxnScrollPending = true; financeScrollTo(0, false); }
+    renderFinancePage();
+    return;
+  }
+  if (action === "acct-more") { showFinAcctMoreMenu(btn); return; }
+  if (action === "acct-edit-done") { financeAcctEditMode = false; [...financeExpanded].filter((k) => String(k).startsWith("edit:")).forEach((k) => financeExpanded.delete(k)); renderFinancePage(); return; }
+  if (action === "open-finance-panel") { openFinanceSettingsPanel(btn.dataset.panel || "bank-link"); return; }
   if (action === "fin-budget-group") { financeBudgetOpenGroup = financeBudgetOpenGroup === btn.dataset.id ? null : btn.dataset.id; renderFinancePage(); return; }
   if (action === "export-csv") { exportFinanceCsv(financeViewMonth); return; }
   if (action === "import-csv") { startFinanceCsvImport(); return; }
@@ -5116,7 +5716,13 @@ function onFinanceGridClick(e) {
     financeNotifOpen = false;
     financeTab = "accounts";
     renderFinancePage();
-    requestAnimationFrame(() => document.querySelector(".fin-accounts-card")?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    openFinanceSettingsPanel("bank-link"); // reconnecting lives in Finance's gear menu › Bank Link
+    return;
+  }
+  if (action === "track-manually") {
+    financeTab = "accounts";
+    financeAcctEditMode = true; // the add-an-account row shows in edit mode
+    renderFinancePage();
     return;
   }
   if (action === "dismiss-alert") {
@@ -5147,6 +5753,53 @@ function onFinanceGridClick(e) {
   }
   if (action === "txn-tag-trip") { financeTagTrip(btn.dataset.id, btn.dataset.trip || ""); renderFinancePage(); return; }
   if (action === "export-tax-year") { exportFinanceTaxYear(Number(btn.dataset.year) || new Date().getFullYear()); return; }
+  // Who owes whom (Luke, 2026-11-23).
+  if (action === "toggle-owed") {
+    const key = `owed:${btn.dataset.by || ""}`;
+    if (financeExpanded.has(key)) financeExpanded.delete(key); else financeExpanded.add(key);
+    renderFinancePage();
+    return;
+  }
+  if (action === "settle-open" || action === "settle-cancel") {
+    financeSettleFormBy = action === "settle-open" ? (btn.dataset.by || "") : "";
+    renderFinancePage();
+    if (financeSettleFormBy) setTimeout(() => document.querySelector("[data-fin-settle-amount]")?.focus(), 0);
+    return;
+  }
+  if (action === "settle-save" || action === "settle-confirm") {
+    // amount > 0: the person paid the household; < 0: the household paid the person.
+    const by = btn.dataset.by || "";
+    let amount;
+    if (action === "settle-save") {
+      const raw = parseFinAmount(btn.closest(".fin-owed-form")?.querySelector("[data-fin-settle-amount]")?.value || "");
+      amount = Math.round(Math.abs(Number(raw) || 0) * 100) / 100 * (btn.dataset.dir === "-1" ? -1 : 1);
+    } else {
+      amount = Math.round((Number(btn.dataset.amount) || 0) * 100) / 100;
+    }
+    if (!by || !amount) return;
+    if (!Array.isArray(state.financeSettlements)) state.financeSettlements = [];
+    const txnId = action === "settle-confirm" ? (btn.dataset.txn || "") : "";
+    state.financeSettlements.push({ id: createId("settle"), by, amount, at: new Date().toISOString(), ...(txnId ? { txnId } : {}) });
+    // The matched transfer is money moving between your own accounts, not income
+    // or spending: file it as Account management unless it already has a label.
+    if (txnId && !(state.financeTxnLabels || {})[txnId]) {
+      if (!state.financeTxnLabels || typeof state.financeTxnLabels !== "object") state.financeTxnLabels = {};
+      state.financeTxnLabels[txnId] = "mgmt";
+      invalidateFinanceLabeled();
+      updateFinanceMonthActuals();
+    }
+    financeSettleFormBy = "";
+    persist();
+    renderFinancePage();
+    showMailToast("Settled up.");
+    return;
+  }
+  if (action === "paid-personally") {
+    openManualTxnForm(null);
+    if (financeManualForm) { financeManualForm.paidBy = getAuthSession()?.user?.id || ""; financeManualForm.account = "Own money"; }
+    renderFinancePage();
+    return;
+  }
   if (action === "settle-owed") {
     // Records that the person paid the household back what they owed right now.
     const by = btn.dataset.by || "";
@@ -5179,7 +5832,7 @@ function onFinanceGridClick(e) {
   }
   if (action === "skip-label-group") {
     if (!state.financeLabelSkips || typeof state.financeLabelSkips !== "object") state.financeLabelSkips = {};
-    if (btn.dataset.key) state.financeLabelSkips[btn.dataset.key] = true;
+    if (btn.dataset.key) state.financeLabelSkips[btn.dataset.key] = dateKeyFromDate(new Date());
     btn.closest(".fin-notif-labelrow")?.remove(); // clear it right away, don't wait on the re-render
     invalidateFinanceLabeled();
     persist();
@@ -5219,11 +5872,34 @@ function onFinanceGridClick(e) {
   }
   if (action === "flip-txn-sign") { toggleFinanceTxnSignFlip(btn.dataset.id); return; }
   if (action === "open-txn-detail") {
-    financeDetailTxnId = financeDetailTxnId === btn.dataset.id ? null : btn.dataset.id;
+    const opening = financeDetailTxnId !== btn.dataset.id;
+    financeDetailTxnId = opening ? btn.dataset.id : null;
+    if (financeRenamingTxnId && financeRenamingTxnId !== financeDetailTxnId) { financeRenamingTxnId = null; financeRenameDraft = null; }
+    renderFinancePage();
+    // Bring the opened charge to the top of the window so its card is in full
+    // view without scrolling (Luke, 2026-11-23).
+    if (opening) scrollFinanceTxnToTop(btn.dataset.id);
+    return;
+  }
+  if (action === "txn-more") { showFinTxnMoreMenu(btn, btn.dataset.id); return; }
+  // Tapping a category or merchant in a card shows only that one (Luke, 2026-11-23).
+  if (action === "filter-category" || action === "filter-merchant") {
+    if (action === "filter-category") financeTxnFilter.kind = btn.dataset.label || "";
+    else financeTxnFilter.merchant = btn.dataset.key || "";
+    financeDetailTxnId = null;
+    financeTxnListExpanded = false;
+    financeTab = "transactions";
+    renderFinancePage();
+    financeScrollToTop();
+    return;
+  }
+  if (action === "clear-txn-scope") {
+    if (btn.dataset.key === "merchant") financeTxnFilter.merchant = "";
+    else financeTxnFilter.kind = "";
     renderFinancePage();
     return;
   }
-  if (action === "close-txn-detail") { financeDetailTxnId = null; renderFinancePage(); return; }
+  if (action === "close-txn-detail") { financeDetailTxnId = null; financeRenamingTxnId = null; financeRenameDraft = null; renderFinancePage(); return; }
   if (action === "txn-filter-open") { openFinanceTxnFilter(); return; }
   if (action === "manual-txn-open") { openManualTxnForm(null); return; }
   if (action === "manual-txn-edit") {
@@ -5239,7 +5915,7 @@ function onFinanceGridClick(e) {
   if (action === "manual-txn-save") {
     const box = btn.closest(".fin-split-editor");
     const field = (name) => box?.querySelector(`[data-fin-manual="${name}"]`)?.value || "";
-    saveManualTxnForm({ id: financeManualForm?.id || null, date: field("date"), desc: field("desc"), amount: field("amount"), account: field("account"), label: field("label") });
+    saveManualTxnForm({ id: financeManualForm?.id || null, date: field("date"), desc: field("desc"), amount: field("amount"), account: field("account"), label: field("label"), paidBy: field("paidBy") });
     return;
   }
   if (action.startsWith("recurring-")) {
@@ -5712,9 +6388,73 @@ function jumpToFinanceMonth(key) {
   renderFinancePage();
 }
 
-// Settings › Finance › Accounts was removed (2026-10-14: the Accounts tab covers it),
-// so there is no settings panel to refresh. Kept as a no-op for its many callers.
-function refreshFinanceSettingsIfOpen() {}
+// ── Finance's gear menu windows (Luke, 2026-11-23) ─────────────────────────
+// Alerts, Bank Link and Personal Accounts moved off the Accounts tab into the
+// gear menu. Each opens in the notifications window's frame; the controls inside
+// are the same ones the page used, handled by the page's own click/change code.
+const FINANCE_PANELS = {
+  alerts: { title: () => "Alerts" },
+  "bank-link": { title: () => "Bank Link · SimpleFIN" },
+  "personal-accounts": { title: () => (financeMoveDirection() === "toPersonal" ? "Personal Accounts" : "Move back to Household") },
+};
+function financePersonalAccountsAvailable() { return Boolean(financeMoveBlock()); }
+function financePanelBodyHtml(kind) {
+  if (kind === "alerts") return `
+      <p class="fin-hint">Which alerts appear in the notifications bell.</p>
+      ${FINANCE_ALERTS.map((a) => `
+        <label class="fin-alert-pref">
+          <span class="fin-alert-pref-text"><span class="fin-alert-pref-label">${escapeHtml(a.label)}</span><span class="fin-hint">${escapeHtml(a.desc)}</span></span>
+          <input type="checkbox" class="live-toggle" data-fin-edit="alert" data-key="${escapeHtml(a.key)}" aria-label="${escapeHtml(a.label)}" ${financeAlertPref(a.key) ? "checked" : ""} />
+        </label>`).join("")}`;
+  if (kind === "bank-link") return financeBankLinkPanelHtml();
+  if (kind === "personal-accounts") return financeMoveBlock().replace(/^\s*<div class="fin-subhead">[^<]*<\/div>/, "") || `<p class="fin-hint">Nothing to move.</p>`;
+  return "";
+}
+function openFinanceSettingsPanel(kind) {
+  if (!FINANCE_PANELS[kind]) return;
+  document.getElementById("finSettingsOverlay")?.remove();
+  financeSettingsPanel = kind;
+  const overlay = document.createElement("div");
+  overlay.id = "finSettingsOverlay";
+  overlay.className = "fin-review-overlay fin-filter-overlay fin-settings-overlay";
+  overlay.innerHTML = `
+    <div class="fin-review-modal fin-filter-modal fin-settings-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(FINANCE_PANELS[kind].title())}">
+      <div class="fin-review-head">
+        <span class="fin-review-title" data-fin-panel-title>${escapeHtml(FINANCE_PANELS[kind].title())}</span>
+        <button class="fin-review-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="fin-filter-body fin-settings-body" data-fin-panel-body>${financePanelBodyHtml(kind)}</div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const place = () => {
+    const modal = overlay.querySelector(".fin-settings-modal");
+    const box = notificationsWindowBox();
+    modal.style.top = box.top + "px";
+    modal.style.left = box.left + "px";
+    modal.style.right = box.right + "px";
+    modal.style.maxHeight = `calc(100% - ${box.top + box.bottom}px)`;
+  };
+  place();
+  window.addEventListener("resize", place);
+  const close = () => { window.removeEventListener("resize", place); overlay.remove(); financeSettingsPanel = ""; };
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay || e.target.closest(".fin-review-close")) { close(); return; }
+    if (e.target.closest("[data-fin-action]")) { onFinanceGridClick(e); refreshFinanceSettingsIfOpen(); }
+  });
+  overlay.addEventListener("change", (e) => { onFinanceGridChange(e); refreshFinanceSettingsIfOpen(); });
+}
+// Redraw the open gear-menu window after a change (many finance actions call
+// this). Leaves it alone while a box inside it is being typed in.
+function refreshFinanceSettingsIfOpen() {
+  if (!financeSettingsPanel) return;
+  const overlay = document.getElementById("finSettingsOverlay");
+  if (!overlay) return;
+  const body = overlay.querySelector("[data-fin-panel-body]");
+  if (!body || body.contains(document.activeElement) && document.activeElement.matches("input[type=text], input[type=password], input:not([type])")) return;
+  body.innerHTML = financePanelBodyHtml(financeSettingsPanel);
+  const title = overlay.querySelector("[data-fin-panel-title]");
+  if (title) title.textContent = FINANCE_PANELS[financeSettingsPanel].title();
+}
 
   // ── Nav-entry glue (showFinanceApp stays in app.js and calls these) ──────────
   // The finance-enter sequence, kept in the module so the shared state (financeViewMonth,
@@ -5731,5 +6471,5 @@ function refreshFinanceSettingsIfOpen() {}
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { financeGroceryPace, financeMonthGlance, financePaydays, financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { openFinanceSettingsPanel, financePersonalAccountsAvailable, financeGroceryPace, financeMonthGlance, financePaydays, financeReturnReminders: () => returnReminderInstances(financeReceiptList()), financeReceiptInfo, financeToCategorizeCount, financeTripSpend, financeTagTrip, onFinanceScopeChanged, financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, refreshFinanceInboxReceipts, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

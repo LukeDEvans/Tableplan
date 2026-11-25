@@ -8,7 +8,7 @@ import { createTestDatabase as createMessagingDatabase, pgliteTransport, USERS }
 
 export { pgliteTransport, USERS };
 
-export const DOC_MIGRATIONS = ["2026-11-03-documents.sql", "2026-11-03b-documents-v2.sql", "2026-11-04-documents-everyday.sql", "2026-11-09-documents-editor.sql", "2026-11-09b-documents-sheet-versions.sql"];
+export const DOC_MIGRATIONS = ["2026-11-03-documents.sql", "2026-11-03b-documents-v2.sql", "2026-11-04-documents-everyday.sql", "2026-11-09-documents-editor.sql", "2026-11-09b-documents-sheet-versions.sql", "2026-11-22-safe-logins.sql"];
 // Supabase provides realtime.messages / realtime.topic(); the word processor's
 // migration adds policies to it, so stand them in here.
 const REALTIME_STUB = `
@@ -19,7 +19,13 @@ const REALTIME_STUB = `
   grant select, insert on realtime.messages to authenticated;
   grant usage on all sequences in schema realtime to authenticated;
   alter table realtime.messages enable row level security;
-  grant execute on function realtime.topic() to authenticated, anon;`;
+  grant execute on function realtime.topic() to authenticated, anon;
+  do $mfa$ begin
+    if not exists (select 1 from pg_proc where proname = 'session_meets_mfa') then
+      create function public.session_meets_mfa() returns boolean language sql stable as 'select true';
+      grant execute on function public.session_meets_mfa() to authenticated;
+    end if;
+  end $mfa$;`;
 const SQL = DOC_MIGRATIONS
   .map((f) => readFileSync(fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)), "utf8"))
   .join("\n");

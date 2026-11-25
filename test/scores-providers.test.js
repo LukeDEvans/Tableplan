@@ -45,7 +45,7 @@ describe.each(CONTRACT_CASES)("provider contract: %s", (_name, parse, count) => 
     }
   });
   it("carries nothing but the model's fields", () => {
-    const keys = ["away", "broadcasts", "detail", "home", "id", "league", "link", "neutral", "note", "possession", "situation", "sport", "start", "state", "venue"];
+    const keys = ["away", "broadcasts", "detail", "home", "id", "league", "link", "live", "neutral", "note", "possession", "situation", "sport", "start", "state", "venue"];
     for (const g of games) expect(Object.keys(g).sort()).toEqual(keys);
   });
 });
@@ -79,7 +79,7 @@ describe("espn adapter", () => {
   it("college football: ranks (99 means unranked), and who has the ball", () => {
     const [uga, gophers, live] = cleanGames(parseScoreboard(ESPN_NCAAF_SCOREBOARD, "ncaaf"));
     expect([uga.home.rank, uga.away.rank]).toEqual([2, null]);
-    expect(uga.home.team.key).toBe("college:georgia-bulldogs");
+    expect(uga.home.team.key).toBe("ncaaf:georgia-bulldogs");
     expect(gophers.home.rank).toBeNull();
     expect(live).toMatchObject({ situation: "2nd & 7", possession: "home" });
   });
