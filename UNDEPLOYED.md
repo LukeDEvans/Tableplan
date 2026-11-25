@@ -10,6 +10,7 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **SoFi link tries the SoFi app's own link** · #313 · client + iOS. Opens the app on its transfer-in page, else the website. Luke (iPhone, TestFlight): tap a SoFi account.
 - **Chase, Bank of America and SoFi links open their apps** · #312 · client + iOS. Chase and BofA use the https links their apps claim; SoFi tries `com.sofi.mobile://`. Luke (iPhone, TestFlight): tap a Chase, BofA and SoFi account.
 - **Email receipts: invisible padding cleaned out; U.S. Bank and Fidelity app links** · #311 · server (`_gmail-shared.js` `htmlToText`) + iOS. Preview-line padding (`&#847;`, `&zwnj;`…) no longer fills the receipt reader's window before the total. Post-deploy, Claude (Luke's Chrome): Send to Finance on the $20 Anthropic receipt reads $20.00. Luke (iPhone, TestFlight): U.S. Bank and Fidelity account links open their apps.
 - **Finance fixes: own-bank errors, no Household card in Personal, Citi app link, $0 email receipts** · #304 · client + server (`_gmail-shared.js` receipt reader), no migration. Post-deploy, Claude (Luke's Chrome): Household › Finance › Accounts has no underline or Apple Card card while Personal › Accounts still shows it; Personal Finance has no Household net-worth card; Mail › the Target Circle 360 email → Send to Finance reads a $0 receipt. Luke (iPhone, TestFlight): a Citi account link opens the Citi app; Send to Finance on the $20 Anthropic receipt.
