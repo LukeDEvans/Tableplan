@@ -3631,7 +3631,7 @@ function renderFinanceAccountsPanel() {
   const finAcctRow = (a) => {
     const live = a.linkedId ? liveById.get(a.linkedId) : null;
     const editing = financeExpanded.has(`edit:${a.id}`);
-    const subs = ownerSubs(a.owner || "Other");
+    const subs = [...new Set(owners.flatMap((o) => ownerSubs(o)))];
     const shownBal = live ? (live.balance ?? 0) : a.manualBalance;
     // The account's name opens its bank's app (or website) when the bank is known
     // — in place of the old "Your banks" buttons. A linked account that has gone
@@ -3657,14 +3657,14 @@ function renderFinanceAccountsPanel() {
         <input class="fin-item-name" type="text" value="${escapeHtml(a.name)}" data-fin-edit="account-name" data-id="${a.id}" aria-label="Account name" />
       </div>
       <div class="fin-item-row">
-        <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-owner" data-id="${a.id}" title="Label" aria-label="Label for ${escapeHtml(a.name)}">
+        <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-owner" data-id="${a.id}" title="Person" aria-label="Person for ${escapeHtml(a.name)}">
           ${owners.map((o) => `<option value="${escapeHtml(o)}" ${o === (a.owner || "Other") ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
-          <option value="__new__">New label…</option>
+          <option value="__new__">New person…</option>
         </select>
-        <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-sub" data-id="${a.id}" title="Sub-label" aria-label="Sub-label for ${escapeHtml(a.name)}">
-          <option value="">no sub-label</option>
+        <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-sub" data-id="${a.id}" title="Category" aria-label="Category for ${escapeHtml(a.name)}">
+          <option value="">no category</option>
           ${subs.map((s) => `<option value="${escapeHtml(s)}" ${s === a.sub ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
-          <option value="__new__">New sub-label…</option>
+          <option value="__new__">New category…</option>
         </select>
       </div>
       <div class="fin-item-row">
@@ -3710,39 +3710,61 @@ function renderFinanceAccountsPanel() {
     </div>` : ""}`;
   };
 
-  const ownerBlocks = owners.map((owner) => {
-    const ownerAccts = (state.financeAccounts || []).filter((x) => (x.owner || "Other") === owner);
-    const subs = ownerSubs(owner);
-    const noSub = ownerAccts.filter((x) => !x.sub);
-    return `
-    <div class="fin-label-head" data-fin-owner="${escapeHtml(owner)}">
-      <span class="fin-subhead">${escapeHtml(owner)}</span>
-      ${!editMode ? "" : `<span class="fin-label-actions">
-        <button class="fin-label-btn" type="button" data-fin-action="add-sublabel" data-label="${escapeHtml(owner)}" title="Add sub-label" aria-label="Add a sub-label under ${escapeHtml(owner)}">＋</button>
-        <button class="fin-label-btn" type="button" data-fin-action="rename-label" data-label="${escapeHtml(owner)}" title="Rename label" aria-label="Rename ${escapeHtml(owner)}">✎</button>
-        <button class="fin-label-btn fin-danger" type="button" data-fin-action="delete-label" data-label="${escapeHtml(owner)}" title="Delete label" aria-label="Delete ${escapeHtml(owner)}">✕</button>
+  // Accounts are listed by kind first, then by person (Luke, 2026-11-25):
+  // Retirement › Luke, Marijane; Credit cards › Luke, Family … The data is
+  // unchanged — `owner` is the person label, `sub` the category — so a category
+  // is simply every account sharing that sub name, whoever owns it. Categories
+  // keep the order they first appear in (walking owners in their label order);
+  // accounts with no category sit under "Other" at the end.
+  const categories = [...new Set(owners.flatMap((o) => ownerSubs(o)))];
+  const catHead = (cat, title) => `
+    <div class="fin-label-head fin-cat-head"${cat ? ` data-fin-sub="${escapeHtml(cat)}"` : ""}>
+      <span class="fin-subhead">${escapeHtml(title)}</span>
+      ${!editMode || !cat ? "" : `<span class="fin-label-actions">
+        <button class="fin-label-btn" type="button" data-fin-action="rename-category" data-sub="${escapeHtml(cat)}" title="Rename category" aria-label="Rename category ${escapeHtml(cat)}">✎</button>
+        <button class="fin-label-btn fin-danger" type="button" data-fin-action="delete-category" data-sub="${escapeHtml(cat)}" title="Delete category" aria-label="Delete category ${escapeHtml(cat)}">✕</button>
       </span>`}
-    </div>
-    ${noSub.map(finAcctRow).join("")}
-    ${subs.map((sub) => `
-      <div class="fin-label-head fin-sublabel-head" data-fin-owner="${escapeHtml(owner)}" data-fin-sub="${escapeHtml(sub)}">
-        <span class="fin-sublabel">${escapeHtml(sub)}</span>
-        ${!editMode ? "" : `<span class="fin-label-actions">
-          <button class="fin-label-btn" type="button" data-fin-action="rename-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Rename sub-label" aria-label="Rename sub-label ${escapeHtml(sub)}">✎</button>
-          <button class="fin-label-btn fin-danger" type="button" data-fin-action="delete-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Delete sub-label" aria-label="Delete sub-label ${escapeHtml(sub)}">✕</button>
-        </span>`}
+    </div>`;
+  const catBody = (inCat) => owners.map((owner) => {
+    const accts = inCat.filter((x) => (x.owner || "Other") === owner);
+    if (!accts.length) return "";
+    return `
+      <div class="fin-label-head fin-sublabel-head" data-fin-owner="${escapeHtml(owner)}">
+        <span class="fin-sublabel">${escapeHtml(owner)}</span>
       </div>
-      <div class="fin-sub-group">
-        ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || (editMode ? `<p class="fin-hint">Empty — open an account's ✎ and pick this sub-label.</p>` : "")}
-      </div>`).join("")}
-    ${!ownerAccts.length && !subs.length && editMode ? `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>` : ""}`;
+      <div class="fin-sub-group">${accts.map(finAcctRow).join("")}</div>`;
   }).join("");
+  const allAccts = state.financeAccounts || [];
+  const categoryBlocks = [
+    ...categories.map((cat) => {
+      const inCat = allAccts.filter((x) => x.sub === cat);
+      if (!inCat.length && !editMode) return "";
+      return `${catHead(cat, cat)}${catBody(inCat) || `<p class="fin-hint">Empty — open an account's ✎ and pick this category.</p>`}`;
+    }),
+    (() => {
+      const unfiled = allAccts.filter((x) => !x.sub);
+      return unfiled.length ? `${catHead("", categories.length ? "Other" : "Accounts")}${catBody(unfiled)}` : "";
+    })(),
+  ].join("");
+
+  // Edit mode keeps the people labels manageable in one place, below the list.
+  const ownerManage = !editMode ? "" : `
+    <div class="fin-subhead fin-owner-manage-head">People</div>
+    ${owners.map((owner) => `
+      <div class="fin-label-head fin-owner-manage" data-fin-owner="${escapeHtml(owner)}">
+        <span class="fin-acct-name">${escapeHtml(owner)}</span>
+        <span class="fin-label-actions">
+          <button class="fin-label-btn" type="button" data-fin-action="rename-label" data-label="${escapeHtml(owner)}" title="Rename" aria-label="Rename ${escapeHtml(owner)}">✎</button>
+          <button class="fin-label-btn fin-danger" type="button" data-fin-action="delete-label" data-label="${escapeHtml(owner)}" title="Delete" aria-label="Delete ${escapeHtml(owner)}">✕</button>
+        </span>
+      </div>`).join("")}`;
 
   // Viewing: labels, names and balances only. Edit accounts (the ⋯) adds the
   // label buttons, a ✎ per account, the bank's unlinked accounts and the add row.
-  if (!editMode) return ownerBlocks || `<p class="fin-hint">No accounts yet — use ⋯ › Edit accounts to add one, or link a bank from the gear menu.</p>`;
+  if (!editMode) return categoryBlocks || `<p class="fin-hint">No accounts yet — use ⋯ › Edit accounts to add one, or link a bank from the gear menu.</p>`;
   return `
-    ${ownerBlocks}
+    ${categoryBlocks}
+    ${ownerManage}
     ${unlinkedLive.length ? `
     <div class="fin-subhead">Live accounts not linked yet</div>
     ${unlinkedLive.map((a) => `
@@ -3751,11 +3773,11 @@ function renderFinanceAccountsPanel() {
         <span class="fin-live-bal${(a.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(a.balance ?? 0)}</span>
       </div>`).join("")}` : ""}
     <div class="fin-account-add">
-      <input class="fin-item-name" type="text" list="finOwnerList" data-fin-new="owner" placeholder="Label (e.g. Family)" />
+      <input class="fin-item-name" type="text" list="finOwnerList" data-fin-new="owner" placeholder="Person (e.g. Family)" />
       <datalist id="finOwnerList">${owners.map((o) => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>
       <input class="fin-item-name" type="text" data-fin-new="name" placeholder="Institution — account" />
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-account">Add</button>
-      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-label">+ Label</button>
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-label">+ Person</button>
     </div>`;
 }
 
@@ -5370,14 +5392,13 @@ function showFinAcctMenu(x, y, opts) {
     ];
   } else if (opts.type === "owner") {
     items = [
-      { label: "Add sub-label", action: "add-sublabel", data: { label: opts.label } },
-      { label: "Rename label", action: "rename-label", data: { label: opts.label } },
-      { label: "Delete label", danger: true, action: "delete-label", data: { label: opts.label } },
+      { label: "Rename person", action: "rename-label", data: { label: opts.label } },
+      { label: "Delete person", danger: true, action: "delete-label", data: { label: opts.label } },
     ];
   } else {
     items = [
-      { label: "Rename sub-label", action: "rename-sublabel", data: { label: opts.label, sub: opts.sub } },
-      { label: "Delete sub-label", danger: true, action: "delete-sublabel", data: { label: opts.label, sub: opts.sub } },
+      { label: "Rename category", action: "rename-category", data: { sub: opts.sub } },
+      { label: "Delete category", danger: true, action: "delete-category", data: { sub: opts.sub } },
     ];
   }
   const menu = document.createElement("div");
@@ -6089,7 +6110,7 @@ function onFinanceGridClick(e) {
     state.financeAccounts = state.financeAccounts.filter((a) => a.id !== btn.dataset.id);
     recordDeletion("financeAccounts", btn.dataset.id);
   } else if (action === "add-label") {
-    const name = prompt("New label name?");
+    const name = prompt("New person?");
     if (!name?.trim()) return;
     if (!Array.isArray(state.financeAccountLabels)) state.financeAccountLabels = [];
     if (!state.financeAccountLabels.includes(name.trim())) state.financeAccountLabels.push(name.trim());
@@ -6106,12 +6127,35 @@ function onFinanceGridClick(e) {
     const old = btn.dataset.label;
     const count = state.financeAccounts.filter((a) => (a.owner || "Other") === old).length;
     const msg = count
-      ? `Delete the label "${old}"? Its ${count} account${count === 1 ? "" : "s"} will move to "Other".`
-      : `Delete the label "${old}"?`;
+      ? `Delete "${old}"? Their ${count} account${count === 1 ? "" : "s"} will move to "Other".`
+      : `Delete "${old}"?`;
     if (!confirm(msg)) return;
     state.financeAccountLabels = (state.financeAccountLabels || []).filter((l) => l !== old);
     if (state.financeAccountSubLabels) delete state.financeAccountSubLabels[old];
     state.financeAccounts.forEach((a) => { if ((a.owner || "Other") === old) a.owner = "Other"; });
+  } else if (action === "rename-category") {
+    // A category is every account with that sub name, under any person.
+    const old = btn.dataset.sub;
+    const name = prompt(`Rename "${old}" to:`, old);
+    if (!name?.trim() || name.trim() === old) return;
+    const label = name.trim();
+    const subs = state.financeAccountSubLabels && typeof state.financeAccountSubLabels === "object" ? state.financeAccountSubLabels : (state.financeAccountSubLabels = {});
+    for (const owner of Object.keys(subs)) {
+      if (!Array.isArray(subs[owner]) || !subs[owner].includes(old)) continue;
+      subs[owner] = [...new Set(subs[owner].map((x) => (x === old ? label : x)))];
+    }
+    state.financeAccounts.forEach((a) => { if (a.sub === old) a.sub = label; });
+  } else if (action === "delete-category") {
+    const sub = btn.dataset.sub;
+    const count = state.financeAccounts.filter((a) => a.sub === sub).length;
+    if (!confirm(count ? `Delete the category "${sub}"? Its ${count} account${count === 1 ? "" : "s"} move to "Other".` : `Delete the category "${sub}"?`)) return;
+    const subs = state.financeAccountSubLabels || {};
+    for (const owner of Object.keys(subs)) {
+      if (!Array.isArray(subs[owner])) continue;
+      subs[owner] = subs[owner].filter((x) => x !== sub);
+      if (!subs[owner].length) delete subs[owner];
+    }
+    state.financeAccounts.forEach((a) => { if (a.sub === sub) a.sub = ""; });
   } else if (action === "add-sublabel") {
     const owner = btn.dataset.label;
     const name = prompt(`New sub-label under "${owner}"?`);
@@ -6270,7 +6314,7 @@ function onFinanceGridChange(e) {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (!a) return;
     if (el.value === "__new__") {
-      const name = prompt("New label name?");
+      const name = prompt("New person?");
       if (!name?.trim()) { renderFinancePage(); return; } // reset the select
       const label = name.trim();
       if (!Array.isArray(state.financeAccountLabels)) state.financeAccountLabels = [];
@@ -6279,12 +6323,19 @@ function onFinanceGridChange(e) {
     } else {
       a.owner = el.value;
     }
-    a.sub = ""; // sub-labels belong to an owner; moving owners unfiles it
+    // Categories are shared across people now (Accounts lists by category,
+    // then person), so moving an account to another person keeps its category;
+    // register it under the new person so the stored per-person list agrees.
+    if (a.sub) {
+      if (!state.financeAccountSubLabels || typeof state.financeAccountSubLabels !== "object") state.financeAccountSubLabels = {};
+      const list = state.financeAccountSubLabels[a.owner] || [];
+      if (!list.includes(a.sub)) state.financeAccountSubLabels[a.owner] = [...list, a.sub];
+    }
   } else if (kind === "account-sub") {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (!a) return;
     if (el.value === "__new__") {
-      const name = prompt("New sub-label name?");
+      const name = prompt("New category name?");
       if (!name?.trim()) { renderFinancePage(); return; }
       const sub = name.trim();
       const owner = a.owner || "Other";

@@ -23119,6 +23119,10 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   padding-top: 4px;
 }
 .fin-sub-group { padding-left: 10px; border-left: 2px solid color-mix(in srgb, var(--window-border) 18%, transparent); margin: 0 0 2px 2px; }
+/* Accounts by category, then person (2026-11-25): a little air between categories. */
+.fin-cat-head:not(:first-child) { margin-top: 10px; }
+.fin-owner-manage-head { margin-top: 14px; }
+.fin-owner-manage { min-height: 26px; }
 
 /* Finance: transaction labels + notifications bell */
 .fin-summary-row { display: flex; align-items: flex-start; gap: 10px; }
