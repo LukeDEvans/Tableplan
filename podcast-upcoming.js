@@ -27,6 +27,16 @@ const SERIES_PART_RE = /\b(?:part|pt\.?)\s*(\d{1,3})\b(?:\s*(?:of|\/)\s*(\d{1,3}
 const BRACKETED_PART_RE = /[([]\s*(?:part|pt\.?)\s*\d{1,3}\s*(?:(?:of|\/)\s*\d{1,3})?\s*[)\]]/i;
 const EDGE_PUNCT_RE = /^[\s:–—\-|,]+|[\s:–—\-|,]+$/g;
 
+// Feeds often number their titles and Apple doesn't: the feed's
+// "725. The Death of Captain Cook: At World's End (Part 1)" is Apple's
+// "The Death of Captain Cook: …" (seen 2026-11-25). Drop a leading episode
+// number written "725. ", "#725 ", "Ep 725:", "Episode 725 -". A bare year with
+// a colon ("1066: …") is part of the title and stays.
+const EPISODE_NUMBER_RE = /^\s*(?:#\s*\d{1,5}\s*[.:\-–—|]?|(?:ep(?:isode)?\.?)\s*\d{1,5}\s*[.:\-–—|]|\d{1,5}\.)\s+/i;
+export function stripEpisodeNumber(title) {
+  return String(title || "").replace(EPISODE_NUMBER_RE, "");
+}
+
 // Feed URLs as stored by different code paths differ in scheme, case and a
 // trailing slash; compare them in one form.
 export function normalizeFeedUrl(url) {
@@ -35,8 +45,7 @@ export function normalizeFeedUrl(url) {
 
 // Titles from Apple and from the feed can differ in quotes, dashes and spacing.
 export function normalizeTitle(title) {
-  return String(title || "")
-    .normalize("NFKC")
+  return stripEpisodeNumber(String(title || "").normalize("NFKC"))
     .replace(/[‘’ʼ`´]/g, "'")
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, "-")
@@ -54,7 +63,7 @@ export function normalizeTitle(title) {
 // as a series of its own and nothing was ever grouped.)
 export function parseSeriesPart(title) {
   if (!title) return null;
-  const s = String(title);
+  const s = stripEpisodeNumber(title);
   const m = s.match(SERIES_PART_RE);
   if (!m) return null;
   const part = parseInt(m[1], 10);
@@ -71,7 +80,7 @@ export function parseSeriesPart(title) {
 export function upcomingLabel(title) {
   const info = parseSeriesPart(title);
   if (!info) return String(title || "");
-  const rest = String(title).replace(BRACKETED_PART_RE, " ").replace(SERIES_PART_RE, " ");
+  const rest = stripEpisodeNumber(title).replace(BRACKETED_PART_RE, " ").replace(SERIES_PART_RE, " ");
   const subtitle = rest.split(":").slice(1).join(":").replace(EDGE_PUNCT_RE, "").replace(/\s+/g, " ").trim();
   return `Part ${info.part}${subtitle ? ` · ${subtitle}` : ` · ${info.seriesName}`}`;
 }
@@ -129,14 +138,29 @@ export function activeUpcoming(rows, episodes, now = Date.now()) {
 }
 
 // Series of one show still waiting on a part: key → { name, coming: [titles] }.
+//
+// Apple lists only the NEXT part ahead of time (seen 2026-11-25: Part 2 of
+// Captain Cook, a day before it went free), not the whole series. So when that
+// part reaches the feed, the list has nothing left for the series until the next
+// daily check shows whether Part 3 is announced. Until then the series stays
+// held: a row whose episode arrived AFTER the row was fetched still counts
+// (`coming` stays empty for it, so the panel shows nothing extra).
 export function seriesStillComing(rows, episodes, now = Date.now()) {
   const out = new Map();
-  for (const u of activeUpcoming(rows, episodes, now)) {
-    const info = parseSeriesPart(u.title);
-    if (!info) continue;
+  const add = (title, u) => {
+    const info = parseSeriesPart(title);
+    if (!info) return;
     const k = seriesKey(info.seriesName);
     if (!out.has(k)) out.set(k, { name: info.seriesName, coming: [] });
-    out.get(k).coming.push(u);
+    if (u) out.get(k).coming.push(u);
+  };
+  for (const u of activeUpcoming(rows, episodes, now)) add(u.title, u);
+  if (rows?.length && upcomingIsFresh(rows, now)) {
+    const arrived = new Map((episodes || []).map((e) => [normalizeTitle(e.title), Date.parse(e.pubDate) || 0]));
+    for (const r of rows) {
+      const pub = arrived.get(normalizeTitle(r.title));
+      if (pub && pub > (Date.parse(r.fetched_at) || 0)) add(r.title, null);
+    }
   }
   return out;
 }

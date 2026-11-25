@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseSeriesPart, seriesKey, seriesIdFor, normalizeFeedUrl, normalizeTitle, groupUpcomingByFeed,
-  upcomingIsFresh, activeUpcoming, heldSeriesForShow, heldEpisodeIds, upcomingLabel,
+  upcomingIsFresh, activeUpcoming, heldSeriesForShow, heldEpisodeIds, upcomingLabel, stripEpisodeNumber,
   UPCOMING_STALE_MS, UPCOMING_UNDATED_MAX_MS,
 } from "../podcast-upcoming.js";
 import { upcomingFromPage, serializedData, findAppleId } from "../supabase/functions/podcast-upcoming/apple.js";
@@ -164,3 +164,53 @@ describe("Apple adapter", () => {
     expect(await findAppleId("https://nope/feed", "The Rest Is History", fake)).toBeNull();
   });
 });
+
+// The real first early-access sighting, 2026-11-25: the feed numbers its titles,
+// Apple doesn't, and Apple lists only the next part (its date = when it goes free).
+describe("Captain Cook, as seen 2026-11-25", () => {
+  const T0 = Date.parse("2026-11-25T16:00:00Z");
+  const FETCHED = "2026-11-25T09:23:10Z";
+  const show = { id: "trih", url: FEED, episodes: [
+    { id: "c1", title: "725. The Death of Captain Cook: At World’s End (Part 1)", pubDate: "Mon, 23 Nov 2026 00:05:00 -0000" },
+    { id: "lb4", title: "724. The Charge of the Light Brigade: Into The Valley of Death (Part 4)", pubDate: "Thu, 19 Nov 2026 00:05:00 -0000" },
+  ] };
+  const rows = [{ feed_url: FEED, title: "The Death of Captain Cook: Massacre on the Beach (Part 2)", expected_at: "2026-11-26T00:00:00Z", fetched_at: FETCHED, first_seen_at: FETCHED }];
+
+  it("drops the feed's episode number", () => {
+    expect(stripEpisodeNumber("725. The Death of Captain Cook (Part 1)")).toBe("The Death of Captain Cook (Part 1)");
+    expect(stripEpisodeNumber("#12 Title")).toBe("Title");
+    expect(stripEpisodeNumber("Ep 7: Title")).toBe("Title");
+    expect(stripEpisodeNumber("1066: The Year")).toBe("1066: The Year");
+    expect(parseSeriesPart(show.episodes[0].title).seriesName).toBe("The Death of Captain Cook");
+    expect(upcomingLabel(show.episodes[0].title)).toBe("Part 1 · At World’s End");
+  });
+  it("holds Part 1 while Part 2 is announced", () => {
+    expect([...heldEpisodeIds([show], groupUpcomingByFeed(rows), { now: T0 })]).toEqual(["c1"]);
+    expect(activeUpcoming(rows, show.episodes, T0).map((u) => u.title)).toEqual([rows[0].title]);
+  });
+  it("keeps holding after Part 2 lands, until the next check", () => {
+    const later = Date.parse("2026-11-26T03:00:00Z");
+    const withP2 = { ...show, episodes: [...show.episodes, { id: "c2", title: "726. The Death of Captain Cook: Massacre on the Beach (Part 2)", pubDate: "Thu, 26 Nov 2026 00:05:00 -0000" }] };
+    expect(activeUpcoming(rows, withP2.episodes, later)).toEqual([]); // nothing left to show
+    expect([...heldEpisodeIds([withP2], groupUpcomingByFeed(rows), { now: later })].sort()).toEqual(["c1", "c2"]);
+    const [g] = heldSeriesForShow(withP2, rows, { now: later });
+    expect(g.coming).toEqual([]);
+    // Next morning's check: Apple announces nothing more → the job writes no rows → released.
+    expect(heldEpisodeIds([withP2], groupUpcomingByFeed([]), { now: later }).size).toBe(0);
+    // …or it announces Part 3 → still held.
+    const p3 = [{ ...rows[0], title: "The Death of Captain Cook: Part Three (Part 3)", expected_at: "2026-11-30T00:00:00Z", fetched_at: "2026-11-26T09:23:00Z" }];
+    expect(heldEpisodeIds([withP2], groupUpcomingByFeed(p3), { now: Date.parse("2026-11-26T10:00:00Z") }).size).toBe(2);
+  });
+});
+
+describe("Apple adapter on the real early-access lockup", () => {
+  it("lists it with its free date", () => {
+    const real = { adamId: "1000802944463", showTitle: "The Rest Is History", showAdamId: "1537788786", $kind: "LegacyEpisodeLockup", id: "1000802944463",
+      title: "The Death of Captain Cook: Massacre on the Beach (Part 2)", releaseDate: "2026-11-26T00:00:00Z", episodeType: "full",
+      entitlementState: "unentitled", hasFreeVersion: false, subscriptionName: "The Rest is History Club", caption: "Nov 26" };
+    const data = serializedData(page([real]));
+    expect(upcomingFromPage(data, "1537788786", Date.parse("2026-11-25T09:23:00Z")).upcoming)
+      .toEqual([{ title: real.title, expectedAt: "2026-11-26T00:00:00.000Z" }]);
+  });
+});
+
