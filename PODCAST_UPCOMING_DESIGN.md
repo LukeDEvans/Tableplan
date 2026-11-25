@@ -1,6 +1,6 @@
 # Listen: upcoming podcast episodes from Apple, kept easy to remove — design & as built
 
-Status: **Built 2026-11-19 (Luke: "Start building now").** Server side live in Supabase (table, daily job, Apple adapter). App side merged, reaching the iPhone by TestFlight and the web app on the next deploy. **One piece is waiting on real data:** how Apple marks an early-access episode and its free date (§6). Until a series is in early access, Apple lists nothing upcoming, so the feature shows and holds nothing.
+Status: **Built 2026-11-19 (Luke: "Start building now").** Server side live in Supabase (table, daily job, Apple adapter). App side merged, reaching the iPhone by TestFlight and the web app on the next deploy. The early-access shape was confirmed on 2026-11-25 (§6).
 
 ## 1. What Luke wants
 
@@ -52,13 +52,28 @@ The free release date is set in Apple Podcasts Connect, not in the RSS feed. The
 - `test/media-podcast-upcoming.test.js` (23): series key on the real Light Brigade titles, freshness, matching, the hold, Release now, the Apple adapter on page-shaped data (future date counts; bonus, trailer, other shows and already-out subscriber-only episodes don't), exact feed matching.
 - `node scripts/qa-podcast-upcoming.mjs` (14, headless Chrome at 390 px against `npm run dev:local`, delete `data/tableplan-state.json` first): queue holds parts 1–2, panel rows and card, Release now, All episodes, stale rows hold nothing, no sideways scroll, no page errors.
 - Full suite, `vite build`, `npm run boot:check`.
-- **Not verified:** the iPhone app; a real early-access episode (§6).
+- **Not verified:** the iPhone app.
+- `test/media-podcast-upcoming.test.js` also replays the real 2026-11-25 Captain Cook data (numbered feed titles, one-part-ahead listing, the hold across the gap).
 
-## 6. Waiting on real data
+## 6. The early-access shape (confirmed 2026-11-25)
 
-The spike (2026-11-19) confirmed the page is readable server-side and carries `LegacyEpisodeLockup` items with `title`, `releaseDate`, `episodeType` (`full`/`bonus`/`trailer`), `entitlementState`, `hasFreeVersion`. It could not show an early-access episode: The Charge of the Light Brigade Part 4 went free that day and the next series wasn't listed yet.
+The 2026-11-25 run found the first real early-access episode, a day before it went free:
 
-**Current rule:** an episode is upcoming only if a date-like field on it is in the future. A first, looser rule (any full episode with no free version) produced 13 false rows from a show whose subscriber-only episodes are already out and never go free, so it was dropped. Those lockups, and any future-dated ones, are logged by the job as `[podcast-upcoming] candidates`. When the next Rest Is History series appears, read that log entry and tighten `upcomingFromPage` to the real shape (and its free-date field). A re-check is scheduled every few days.
+| Field | Value |
+|---|---|
+| title | `The Death of Captain Cook: Massacre on the Beach (Part 2)` |
+| episodeType | `full` |
+| entitlementState | `unentitled` |
+| hasFreeVersion | `false` |
+| **releaseDate** | `2026-11-26T00:00:00Z`, which **is the free date** (the feed had it at 00:05Z) |
+| caption | `Nov 26` |
+
+So the rule "a future date on a show's own episode = upcoming, dated by it" is right, and `releaseDate` is the free date. Already-out subscriber-only episodes (NYT shows: past `releaseDate`, `hasFreeVersion: false`) are still correctly ignored.
+
+What the sighting changed (2026-11-25):
+- **Feed titles carry an episode number Apple's don't** (`725. The Death of Captain Cook: …`). Titles are compared, and series named, with a leading `725. ` / `#725` / `Ep 725:` removed (`stripEpisodeNumber`); a year with a colon (`1066: …`) stays.
+- **Apple lists only the next part**, not the whole series. When that part lands in the feed, the list has nothing left for the series until the next daily check. A row whose episode arrived after the row was fetched therefore still holds its series. The next check either lists the following part (still held) or lists nothing (the series is released). The card then reads "2 parts out · checking for more before it joins your queue".
+- Consequence: a finished series joins the queue up to a day after its last part, at the morning check (09:23 UTC).
 
 ## 7. Removing Apple later
 

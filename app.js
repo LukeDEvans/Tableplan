@@ -33703,11 +33703,14 @@ function podcastUpcomingHtml(show) {
   if (!upcoming.length && !held.length) return "";
   const heldHtml = held.map((g) => {
     const out = g.eps.length, known = out + g.coming.length;
+    const meta = g.coming.length
+      ? `${out} of ${known} parts out · held from your queue`
+      : `${out} part${out === 1 ? "" : "s"} out · checking for more before it joins your queue`;
     return `
       <div class="podcast-bundle-card" data-series-id="${escapeHtml(g.seriesId)}">
         <div class="podcast-bundle-card-main">
           <div class="podcast-bundle-card-title">${escapeHtml(g.name)}</div>
-          <div class="podcast-bundle-card-meta">${out} of ${known} parts out · held from your queue</div>
+          <div class="podcast-bundle-card-meta">${meta}</div>
         </div>
         <button class="secondary-btn compact-btn podcast-bundle-release" type="button" data-release-series="${escapeHtml(g.seriesId)}">Release now</button>
       </div>`;
