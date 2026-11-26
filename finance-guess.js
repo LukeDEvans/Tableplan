@@ -202,6 +202,14 @@ const NAME_PREFIX_WORDS = /^(?:(?:pos|debit|credit|card|ach|recurring|checkcard|
 const STATES = "al|ak|az|ar|ca|co|ct|de|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy";
 const KEEP_UPPER = new Set(["bp", "cvs", "ups", "usps", "ikea", "hbo", "atm", "llc", "us", "tj", "rei", "ymca", "mn", "dmv"]);
 
+// The key the transaction list's merchant filter groups by (Luke, 2026-11-25): the
+// cleaned name the card shows, so every Amazon charge filters together even though
+// each carries its own order code ("AMAZON MKTPL*JH3KM5KI3", "Amazon.com*CP4PN3ZB3")
+// and so gets its own financeMerchantKey.
+export function financeMerchantFilterKey(description) {
+  return cleanMerchantName(description).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 export function cleanMerchantName(description) {
   let s = String(description || "").replace(/\s+/g, " ").trim();
   if (!s) return "";

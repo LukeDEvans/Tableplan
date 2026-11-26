@@ -11,7 +11,7 @@ import { linkOutAttrs } from './link-out.js';
 import { matchReceipts, receiptStatus, RECEIPT_STATUS_LABEL, receiptAutoSplit } from './receipt-matcher.js';
 import { duplicateMap } from './receipt-duplicates.js';
 import { financeOwedLedger, suggestSettlement, oweLabel, owedByLabel } from './finance-settle.js';
-import { merchantDecision, guessForMerchant, guessForLine, splitFromLines, addCount, itemKey, cleanMerchantName, ITEM_PREFIX, AI_PREFIX } from './finance-guess.js';
+import { merchantDecision, guessForMerchant, guessForLine, splitFromLines, addCount, itemKey, cleanMerchantName, financeMerchantFilterKey, ITEM_PREFIX, AI_PREFIX } from './finance-guess.js';
 import { subscriptionReview, cashForecast, everydaySpendPerDay, goalProgress } from './finance-plan.js';
 import { TAX_KINDS, taxLabel, taxTagFor, taxYearSummary, taxYearCsv, tripCandidates, tripCharges } from './finance-tags.js';
 import { upcomingReturns, returnReminderInstances } from './receipt-returns.js';
@@ -2101,7 +2101,7 @@ function openFinanceTxnFilter() {
   const oldest = dates[0] || "";
   const today = new Date().toISOString().slice(0, 10);
   const merchantLabel = () => {
-    const t = allTxns.find((x) => financeMerchantKey(x.description || "") === f.merchant);
+    const t = allTxns.find((x) => financeMerchantFilterKey(x.description || "") === f.merchant);
     const n = t?.displayName || "";
     return (n.includes(" - ") ? n.slice(0, n.indexOf(" - ")) : n) || "This merchant";
   };
@@ -4422,7 +4422,7 @@ function renderFinancePage() {
   const receiptMonthRows = receiptRows.filter((t) => (t.posted || "").slice(0, 7) === monthKey);
   let shownTxns = (query || hasRange || f.merchant ? [...allTxns, ...receiptRows] : [...monthTxns, ...receiptMonthRows])
     .sort((x, y) => (y.posted || "").localeCompare(x.posted || "")); // receipt rows slot in by date
-  if (f.merchant) shownTxns = shownTxns.filter((t) => financeMerchantKey(t.description || "") === f.merchant);
+  if (f.merchant) shownTxns = shownTxns.filter((t) => financeMerchantFilterKey(t.description || "") === f.merchant);
   if (f.from) shownTxns = shownTxns.filter((t) => (t.posted || "").slice(0, 10) >= f.from);
   if (f.to) shownTxns = shownTxns.filter((t) => (t.posted || "").slice(0, 10) && (t.posted || "").slice(0, 10) <= f.to);
   if (query) shownTxns = shownTxns.filter((t) => `${t.description || ""} ${t.displayName || ""}`.toLowerCase().includes(query));
@@ -4666,7 +4666,7 @@ function renderFinancePage() {
     const head = `
       <div class="fin-txn-card-head">
         <div class="fin-txn-card-title">
-          <button class="fin-txn-card-merchant fin-link-text" type="button" data-fin-action="filter-merchant" data-key="${escapeHtml(merchantKey)}" title="Show only ${escapeHtml(merchantName)}">${escapeHtml(merchantName)}</button>
+          <button class="fin-txn-card-merchant fin-link-text" type="button" data-fin-action="filter-merchant" data-key="${escapeHtml(financeMerchantFilterKey(raw))}" title="Show only ${escapeHtml(merchantName)}">${escapeHtml(merchantName)}</button>
           ${currentNote ? `<span class="fin-txn-card-note-sub">${escapeHtml(currentNote)}</span>` : ""}
         </div>
         <button class="icon-btn fin-txn-more" type="button" data-fin-action="txn-more" data-id="${escapeHtml(t.id)}" aria-label="More for this transaction" aria-haspopup="menu">${moreSvg}</button>
