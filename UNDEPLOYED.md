@@ -10,5 +10,6 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+- **Finance: notifications "link to budget line" dropdown no longer dismisses the card** · PR (fix/finance-notif-budget-select) · client only (TestFlight / next deploy). Tapping the select on a New-recurring-charge card used to remove the card before it opened; now only buttons advance on click, and the select advances once a real line is picked. Post-deploy: Claude checks a recurring alert card in Luke's Chrome if one is pending.
 - **Finance: accounts listed by category, then person** · PR #318 · client only (TestFlight / next deploy). Accounts tab groups by category (Retirement, Credit cards…) with people as subsections; category rename/delete apply across everyone. Post-deploy: Claude checks the Accounts tab (view + ⋯ › Edit accounts) in Luke's Chrome.
 - **Listen: series hold fixes from the first real early-access episode** · PR (podcast-upcoming-fixes) · client only (TestFlight / next deploy). Numbered feed titles (`725. …`) now match Apple's, and a series stays held after the announced part lands until the next morning's check. Post-deploy: nothing extra beyond the #271 entry; Claude checks the Captain Cook hold in Luke's Chrome if a series is mid-release.

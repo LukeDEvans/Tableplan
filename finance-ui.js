@@ -2863,15 +2863,22 @@ function wireFinanceReviewDeck(overlay) {
   // Alert cards (account/recurring) reuse the finance page's own handlers. After
   // an action resolves the alert, drop its card from the deck (advance). The
   // change path covers the "link to budget line" select.
-  const advanceAlertCard = (e, handler) => {
+  // Clicks only advance on a real button ([data-fin-action]); a click on a
+  // select merely opens it, so selects advance on "change" — and only once an
+  // actual option (not the "link to budget line…" placeholder) is picked.
+  // (Previously a click on the select matched [data-fin-edit] and removed the
+  // card before the dropdown could open.)
+  const advanceAlertCard = (e, handler, selector) => {
     const alertCard = e.target.closest(".fin-notif-alert-card");
-    if (!alertCard || !e.target.closest("[data-fin-action], [data-fin-edit]")) return;
+    const ctl = e.target.closest(selector);
+    if (!alertCard || !ctl) return;
+    if (e.type === "change" && !ctl.value) return;
     handler(e);
     alertCard.remove();
     updateFinanceReviewProgress(deck);
   };
-  deck.addEventListener("click", (e) => advanceAlertCard(e, onFinanceGridClick));
-  deck.addEventListener("change", (e) => advanceAlertCard(e, onFinanceGridChange));
+  deck.addEventListener("click", (e) => advanceAlertCard(e, onFinanceGridClick, "[data-fin-action]"));
+  deck.addEventListener("change", (e) => advanceAlertCard(e, onFinanceGridChange, "[data-fin-edit]"));
 
   deck.addEventListener("scroll", () => updateFinanceReviewProgress(deck), { passive: true });
 
