@@ -16,6 +16,8 @@
 //   add   { items ≤100 }                     → { ids }   (records + this device as source)
 //   sign  { items ≤25: [{ id, size }] }      → { urls: [{ url, headers }] }  PUT ph/<id>/thumb
 //   done  { ids ≤200, bytes ≤200 }           → { count }
+//   update { items ≤100 }                    → { count }  (a photo changed on the phone)
+//   gone  { ids ≤200 }                       → { count }  (photos deleted on the phone)
 //
 // Secrets: DOC_S3_* (the R2 bucket, shared with doc-storage). Provided by Supabase:
 // SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY.
@@ -84,10 +86,11 @@ const int = (v: unknown, lo: number, hi: number) => { const n = num(v, lo, hi); 
 const isoOrNull = (v: unknown) => { if (typeof v !== "string") return null; const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d.toISOString(); };
 
 // Only the fields a record may carry, each checked; anything else is dropped.
-function cleanItem(raw: Record<string, unknown>) {
+// `update` sends the same shape without local_id (the id already names the photo).
+function cleanItem(raw: Record<string, unknown>, needLocalId = true) {
   if (!raw || typeof raw !== "object" || !UUID_RE.test(String(raw.id || ""))) return null;
   const localId = typeof raw.local_id === "string" && raw.local_id.length >= 1 && raw.local_id.length <= 300 ? raw.local_id : null;
-  if (!localId) return null;
+  if (!localId && needLocalId) return null;
   const kind = raw.kind === "video" ? "video" : "photo";
   return {
     id: String(raw.id).toLowerCase(),
@@ -204,6 +207,22 @@ Deno.serve(async (req) => {
       const bytes = Array.isArray(body.bytes) && body.bytes.every((b) => Number.isInteger(b) && b >= 0 && b <= MAX_THUMB) ? body.bytes as number[] : null;
       if (!ids || !bytes || bytes.length !== ids.length) return reply(400, { error: "ids" }, origin);
       const count = await rpc("photo_sync_done", { ...dev, p_ids: ids, p_bytes: bytes });
+      return reply(200, { count: Number(count) || 0 }, origin);
+    }
+
+    if (op === "update") {
+      const raw = Array.isArray(body.items) ? body.items : null;
+      if (!raw || raw.length < 1 || raw.length > 100) return reply(400, { error: "items" }, origin);
+      const items = raw.map((r) => cleanItem(r as Record<string, unknown>, false));
+      if (items.some((i) => !i)) return reply(400, { error: "item" }, origin);
+      const count = await rpc("photo_sync_update", { ...dev, p_items: items });
+      return reply(200, { count: Number(count) || 0 }, origin);
+    }
+
+    if (op === "gone") {
+      const ids = uuids(body.ids, 200);
+      if (!ids) return reply(400, { error: "ids" }, origin);
+      const count = await rpc("photo_sync_gone", { ...dev, p_ids: ids });
       return reply(200, { count: Number(count) || 0 }, origin);
     }
 
