@@ -74,6 +74,7 @@ What the sighting changed (2026-11-25):
 - **Feed titles carry an episode number Apple's don't** (`725. The Death of Captain Cook: …`). Titles are compared, and series named, with a leading `725. ` / `#725` / `Ep 725:` removed (`stripEpisodeNumber`); a year with a colon (`1066: …`) stays.
 - **Apple lists only the next part**, not the whole series. When that part lands in the feed, the list has nothing left for the series until the next daily check. A row whose episode arrived after the row was fetched therefore still holds its series. The next check either lists the following part (still held) or lists nothing (the series is released). The card then reads "2 parts out · checking for more before it joins your queue".
 - Consequence: a finished series joins the queue up to a day after its last part, at the morning check (09:23 UTC).
+- **Seen 2026-11-26:** after Part 2 went free, the 09:23 UTC check listed nothing upcoming for The Rest Is History (no Part 3 yet), so Captain Cook Parts 1–2 were released to the queue as designed. Apple announces only about one part a day ahead, so for this show the hold keeps a series together only while the next part is already listed; it can't hold a whole series to the end.
 
 ## 7. Removing Apple later
 
